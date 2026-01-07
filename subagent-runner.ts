@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getArtifactPaths } from "./artifacts.js";
+import { pathToFileURL } from "node:url";
+import { appendJsonl, getArtifactPaths } from "./artifacts.js";
 import {
 	type ArtifactConfig,
 	type ArtifactPaths,
@@ -31,6 +33,9 @@ interface SubagentRunConfig {
 	maxOutput?: MaxOutputConfig;
 	artifactsDir?: string;
 	artifactConfig?: Partial<ArtifactConfig>;
+	share?: boolean;
+	sessionDir?: string;
+	asyncDir: string;
 }
 
 interface StepResult {
@@ -41,19 +46,234 @@ interface StepResult {
 	truncated?: boolean;
 }
 
-function runSubagent(config: SubagentRunConfig): void {
+const require = createRequire(import.meta.url);
+
+function findLatestSessionFile(sessionDir: string): string | null {
+	try {
+		const files = fs
+			.readdirSync(sessionDir)
+			.filter((f) => f.endsWith(".jsonl"))
+			.map((f) => path.join(sessionDir, f));
+		if (files.length === 0) return null;
+		files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+		return files[0] ?? null;
+	} catch {
+		return null;
+	}
+}
+
+async function exportSessionHtml(sessionFile: string, outputDir: string): Promise<string> {
+	const pkgRoot = path.dirname(require.resolve("@mariozechner/pi-coding-agent/package.json"));
+	const exportModulePath = path.join(pkgRoot, "dist", "core", "export-html", "index.js");
+	const moduleUrl = pathToFileURL(exportModulePath).href;
+	const mod = await import(moduleUrl);
+	const exportFromFile = (mod as { exportFromFile?: (inputPath: string, options?: { outputPath?: string }) => string })
+		.exportFromFile;
+	if (typeof exportFromFile !== "function") {
+		throw new Error("exportFromFile not available");
+	}
+	const outputPath = path.join(outputDir, `${path.basename(sessionFile, ".jsonl")}.html`);
+	return exportFromFile(sessionFile, { outputPath });
+}
+
+function createShareLink(htmlPath: string): { shareUrl: string; gistUrl: string } | { error: string } {
+	try {
+		const auth = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
+		if (auth.status !== 0) {
+			return { error: "GitHub CLI is not logged in. Run 'gh auth login' first." };
+		}
+	} catch {
+		return { error: "GitHub CLI (gh) is not installed." };
+	}
+
+	try {
+		const result = spawnSync("gh", ["gist", "create", htmlPath], { encoding: "utf-8" });
+		if (result.status !== 0) {
+			const err = (result.stderr || "").trim() || "Failed to create gist.";
+			return { error: err };
+		}
+		const gistUrl = (result.stdout || "").trim();
+		const gistId = gistUrl.split("/").pop();
+		if (!gistId) return { error: "Failed to parse gist ID." };
+		const shareUrl = `https://shittycodingagent.ai/session/?${gistId}`;
+		return { shareUrl, gistUrl };
+	} catch (err) {
+		return { error: String(err) };
+	}
+}
+
+function writeJson(filePath: string, payload: object): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
+}
+
+function formatDuration(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+	const minutes = Math.floor(ms / 60000);
+	const seconds = Math.floor((ms % 60000) / 1000);
+	return `${minutes}m${seconds}s`;
+}
+
+function writeRunLog(
+	logPath: string,
+	input: {
+		id: string;
+		mode: "single" | "chain";
+		cwd: string;
+		startedAt: number;
+		endedAt: number;
+		steps: Array<{
+			agent: string;
+			status: string;
+			durationMs?: number;
+		}>;
+		summary: string;
+		truncated: boolean;
+		artifactsDir?: string;
+		sessionFile?: string;
+		shareUrl?: string;
+		shareError?: string;
+	},
+): void {
+	const lines: string[] = [];
+	lines.push(`# Subagent run ${input.id}`);
+	lines.push("");
+	lines.push(`- **Mode:** ${input.mode}`);
+	lines.push(`- **CWD:** ${input.cwd}`);
+	lines.push(`- **Started:** ${new Date(input.startedAt).toISOString()}`);
+	lines.push(`- **Ended:** ${new Date(input.endedAt).toISOString()}`);
+	lines.push(`- **Duration:** ${formatDuration(input.endedAt - input.startedAt)}`);
+	if (input.sessionFile) lines.push(`- **Session:** ${input.sessionFile}`);
+	if (input.shareUrl) lines.push(`- **Share:** ${input.shareUrl}`);
+	if (input.shareError) lines.push(`- **Share error:** ${input.shareError}`);
+	if (input.artifactsDir) lines.push(`- **Artifacts:** ${input.artifactsDir}`);
+	lines.push("");
+	lines.push("## Steps");
+	lines.push("| Step | Agent | Status | Duration |");
+	lines.push("| --- | --- | --- | --- |");
+	input.steps.forEach((step, i) => {
+		const duration = step.durationMs !== undefined ? formatDuration(step.durationMs) : "-";
+		lines.push(`| ${i + 1} | ${step.agent} | ${step.status} | ${duration} |`);
+	});
+	lines.push("");
+	lines.push("## Summary");
+	if (input.truncated) {
+		lines.push("_Output truncated_");
+		lines.push("");
+	}
+	lines.push(input.summary.trim() || "(no output)");
+	lines.push("");
+	fs.writeFileSync(logPath, lines.join("\n"), "utf-8");
+}
+
+async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
 	let previousOutput = "";
 	const results: StepResult[] = [];
 	const overallStartTime = Date.now();
+	const shareEnabled = config.share === true;
+	const sessionEnabled = Boolean(config.sessionDir) || shareEnabled;
+	const asyncDir = config.asyncDir;
+	const statusPath = path.join(asyncDir, "status.json");
+	const eventsPath = path.join(asyncDir, "events.jsonl");
+	const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
+
+	const statusPayload: {
+		runId: string;
+		mode: "single" | "chain";
+		state: "queued" | "running" | "complete" | "failed";
+		startedAt: number;
+		endedAt?: number;
+		lastUpdate: number;
+		pid: number;
+		cwd: string;
+		currentStep: number;
+		steps: Array<{
+			agent: string;
+			status: "pending" | "running" | "complete" | "failed";
+			startedAt?: number;
+			endedAt?: number;
+			durationMs?: number;
+			exitCode?: number | null;
+			error?: string;
+		}>;
+		artifactsDir?: string;
+		sessionFile?: string;
+		shareUrl?: string;
+		gistUrl?: string;
+		shareError?: string;
+		error?: string;
+	} = {
+		runId: id,
+		mode: steps.length > 1 ? "chain" : "single",
+		state: "running",
+		startedAt: overallStartTime,
+		lastUpdate: overallStartTime,
+		pid: process.pid,
+		cwd,
+		currentStep: 0,
+		steps: steps.map((step) => ({ agent: step.agent, status: "pending" })),
+		artifactsDir,
+	};
+
+	fs.mkdirSync(asyncDir, { recursive: true });
+	writeJson(statusPath, statusPayload);
+	appendJsonl(
+		eventsPath,
+		JSON.stringify({
+			type: "subagent.run.started",
+			ts: overallStartTime,
+			runId: id,
+			mode: statusPayload.mode,
+			cwd,
+			pid: process.pid,
+		}),
+	);
 
 	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
 		const step = steps[stepIndex];
 		const stepStartTime = Date.now();
-		const args = ["-p", "--no-session"];
+		statusPayload.currentStep = stepIndex;
+		statusPayload.steps[stepIndex].status = "running";
+		statusPayload.steps[stepIndex].startedAt = stepStartTime;
+		statusPayload.lastUpdate = stepStartTime;
+		writeJson(statusPath, statusPayload);
+		appendJsonl(
+			eventsPath,
+			JSON.stringify({
+				type: "subagent.step.started",
+				ts: stepStartTime,
+				runId: id,
+				stepIndex,
+				agent: step.agent,
+			}),
+		);
+		const args = ["-p"];
+		if (!sessionEnabled) {
+			args.push("--no-session");
+		}
+		if (config.sessionDir) {
+			try {
+				fs.mkdirSync(config.sessionDir, { recursive: true });
+			} catch {}
+			args.push("--session-dir", config.sessionDir);
+		}
 		if (step.model) args.push("--model", step.model);
-		if (step.tools?.length) args.push("--tools", step.tools.join(","));
+		if (step.tools?.length) {
+			const builtinTools: string[] = [];
+			const extensionPaths: string[] = [];
+			for (const tool of step.tools) {
+				if (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")) {
+					extensionPaths.push(tool);
+				} else {
+					builtinTools.push(tool);
+				}
+			}
+			if (builtinTools.length > 0) args.push("--tools", builtinTools.join(","));
+			for (const extPath of extensionPaths) args.push("--extension", extPath);
+		}
 
 		let tmpDir: string | null = null;
 		if (step.systemPrompt) {
@@ -126,6 +346,25 @@ function runSubagent(config: SubagentRunConfig): void {
 		}
 
 		results.push(stepResult);
+		const stepEndTime = Date.now();
+		statusPayload.steps[stepIndex].status = result.status === 0 ? "complete" : "failed";
+		statusPayload.steps[stepIndex].endedAt = stepEndTime;
+		statusPayload.steps[stepIndex].durationMs = stepEndTime - stepStartTime;
+		statusPayload.steps[stepIndex].exitCode = result.status;
+		statusPayload.lastUpdate = stepEndTime;
+		writeJson(statusPath, statusPayload);
+		appendJsonl(
+			eventsPath,
+			JSON.stringify({
+				type: result.status === 0 ? "subagent.step.completed" : "subagent.step.failed",
+				ts: stepEndTime,
+				runId: id,
+				stepIndex,
+				agent: step.agent,
+				exitCode: result.status,
+				durationMs: stepEndTime - stepStartTime,
+			}),
+		);
 
 		if (result.status !== 0) break;
 	}
@@ -144,6 +383,74 @@ function runSubagent(config: SubagentRunConfig): void {
 	}
 
 	const agentName = steps.length === 1 ? steps[0].agent : `chain:${steps.map((s) => s.agent).join("->")}`;
+	let sessionFile: string | undefined;
+	let shareUrl: string | undefined;
+	let gistUrl: string | undefined;
+	let shareError: string | undefined;
+
+	if (shareEnabled && config.sessionDir) {
+		sessionFile = findLatestSessionFile(config.sessionDir) ?? undefined;
+		if (sessionFile) {
+			try {
+				const htmlPath = await exportSessionHtml(sessionFile, config.sessionDir);
+				const share = createShareLink(htmlPath);
+				if ("error" in share) shareError = share.error;
+				else {
+					shareUrl = share.shareUrl;
+					gistUrl = share.gistUrl;
+				}
+			} catch (err) {
+				shareError = String(err);
+			}
+		} else {
+			shareError = "Session file not found.";
+		}
+	}
+
+	const runEndedAt = Date.now();
+	statusPayload.state = results.every((r) => r.success) ? "complete" : "failed";
+	statusPayload.endedAt = runEndedAt;
+	statusPayload.lastUpdate = runEndedAt;
+	statusPayload.sessionFile = sessionFile;
+	statusPayload.shareUrl = shareUrl;
+	statusPayload.gistUrl = gistUrl;
+	statusPayload.shareError = shareError;
+	if (statusPayload.state === "failed") {
+		const failedStep = statusPayload.steps.find((s) => s.status === "failed");
+		if (failedStep?.agent) {
+			statusPayload.error = `Step failed: ${failedStep.agent}`;
+		}
+	}
+	writeJson(statusPath, statusPayload);
+	appendJsonl(
+		eventsPath,
+		JSON.stringify({
+			type: "subagent.run.completed",
+			ts: runEndedAt,
+			runId: id,
+			status: statusPayload.state,
+			durationMs: runEndedAt - overallStartTime,
+		}),
+	);
+	writeRunLog(logPath, {
+		id,
+		mode: statusPayload.mode,
+		cwd,
+		startedAt: overallStartTime,
+		endedAt: runEndedAt,
+		steps: statusPayload.steps.map((step) => ({
+			agent: step.agent,
+			status: step.status,
+			durationMs: step.durationMs,
+		})),
+		summary,
+		truncated,
+		artifactsDir,
+		sessionFile,
+		shareUrl,
+		shareError,
+	});
+
 	fs.mkdirSync(path.dirname(resultPath), { recursive: true });
 	fs.writeFileSync(
 		resultPath,
@@ -165,6 +472,11 @@ function runSubagent(config: SubagentRunConfig): void {
 			truncated,
 			artifactsDir,
 			cwd,
+			asyncDir,
+			sessionFile,
+			shareUrl,
+			gistUrl,
+			shareError,
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
 		}),
@@ -179,7 +491,10 @@ if (configArg) {
 		try {
 			fs.unlinkSync(configArg);
 		} catch {}
-		runSubagent(config);
+		runSubagent(config).catch((runErr) => {
+			console.error("Subagent runner error:", runErr);
+			process.exit(1);
+		});
 	} catch (err) {
 		console.error("Subagent runner error:", err);
 		process.exit(1);
@@ -193,7 +508,10 @@ if (configArg) {
 	process.stdin.on("end", () => {
 		try {
 			const config = JSON.parse(input) as SubagentRunConfig;
-			runSubagent(config);
+			runSubagent(config).catch((runErr) => {
+				console.error("Subagent runner error:", runErr);
+				process.exit(1);
+			});
 		} catch (err) {
 			console.error("Subagent runner error:", err);
 			process.exit(1);

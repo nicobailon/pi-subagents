@@ -1,0 +1,10 @@
+{
+  "name": "subagent-extension-pack",
+  "private": true,
+  "pi": {
+    "extensions": [
+      "./index.ts",
+      "./notify.ts"
+    ]
+  }
+}
