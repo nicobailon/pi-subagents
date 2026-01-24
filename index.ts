@@ -21,7 +21,6 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
-import { StringEnum } from "@mariozechner/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
@@ -47,7 +46,7 @@ import {
 	type ParallelTaskResult,
 	type ResolvedTemplates,
 } from "./settings.js";
-import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.js";
+import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride } from "./chain-clarify.js";
 import {
 	appendJsonl,
 	cleanupOldArtifacts,
@@ -132,6 +131,10 @@ interface Details {
 		originalLines?: number;
 		artifactPath?: string;
 	};
+	// Chain metadata for observability
+	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
+	totalSteps?: number;         // Total steps in chain
+	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 }
 
 type DisplayItem = { type: "text"; text: string } | { type: "tool"; name: string; args: Record<string, unknown> };
@@ -833,12 +836,12 @@ const SequentialStepSchema = Type.Object({
 	// Chain behavior overrides
 	output: Type.Optional(Type.Union([
 		Type.String(),
-		Type.Literal(false),
-	], { description: "Override output filename, or false for text-only" })),
+		Type.Boolean(),
+	], { description: "Override output filename (string), or false for text-only" })),
 	reads: Type.Optional(Type.Union([
 		Type.Array(Type.String()),
-		Type.Literal(false),
-	], { description: "Override files to read from {chain_dir}, or false to disable" })),
+		Type.Boolean(),
+	], { description: "Override files to read from {chain_dir} (array), or false to disable" })),
 	progress: Type.Optional(Type.Boolean({ description: "Override progress tracking" })),
 });
 
@@ -849,12 +852,12 @@ const ParallelTaskSchema = Type.Object({
 	cwd: Type.Optional(Type.String()),
 	output: Type.Optional(Type.Union([
 		Type.String(),
-		Type.Literal(false),
-	], { description: "Override output filename, or false for text-only" })),
+		Type.Boolean(),
+	], { description: "Override output filename (string), or false for text-only" })),
 	reads: Type.Optional(Type.Union([
 		Type.Array(Type.String()),
-		Type.Literal(false),
-	], { description: "Override files to read from {chain_dir}, or false to disable" })),
+		Type.Boolean(),
+	], { description: "Override files to read from {chain_dir} (array), or false to disable" })),
 	progress: Type.Optional(Type.Boolean({ description: "Override progress tracking" })),
 });
 
@@ -876,12 +879,12 @@ const MaxOutputSchema = Type.Optional(
 );
 
 const Params = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Agent name (single mode)" })),
-	task: Type.Optional(Type.String({ description: "Task (single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Parallel tasks" })),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "Sequential chain" })),
+	agent: Type.Optional(Type.String({ description: "Agent name (SINGLE mode)" })),
+	task: Type.Optional(Type.String({ description: "Task (SINGLE mode)" })),
+	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task}, ...]" })),
+	chain: Type.Optional(Type.Array(ChainItem, { description: "CHAIN mode: [{agent}, {agent, task:'{previous}'}] - sequential pipeline" })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
-	agentScope: Type.Optional(StringEnum(["user", "project", "both"] as const, { default: "user" })),
+	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'user')" })),
 	cwd: Type.Optional(Type.String()),
 	maxOutput: MaxOutputSchema,
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),
@@ -895,8 +898,8 @@ const Params = Type.Object({
 	// Solo agent output override
 	output: Type.Optional(Type.Union([
 		Type.String(),
-		Type.Literal(false),
-	], { description: "Override output file for single agent (uses agent default if omitted)" })),
+		Type.Boolean(),
+	], { description: "Override output file for single agent (string), or false to disable (uses agent default if omitted)" })),
 });
 
 const StatusParams = Type.Object({
@@ -997,7 +1000,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const tool: ToolDefinition<typeof Params, Details> = {
 		name: "subagent",
 		label: "Subagent",
-		description: "Delegate tasks to subagents (single, parallel, chain) with optional async mode, artifacts, and truncation.",
+		description: `Delegate to subagents. Use exactly ONE mode:
+• SINGLE: { agent, task } - one task
+• CHAIN: { chain: [{agent:"scout"}, {agent:"planner"}] } - sequential, {previous} passes output
+• PARALLEL: { tasks: [{agent,task}, ...] } - concurrent
+For "scout → planner" or multi-step flows, use chain (not multiple single calls).`,
 		parameters: Params,
 
 		async execute(_id, params, onUpdate, ctx, signal) {
@@ -1276,6 +1283,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				// Cast chain to typed steps
 				const chainSteps = params.chain as ChainStep[];
 
+				// Compute chain metadata for observability
+				const chainAgents: string[] = chainSteps.map((step) =>
+					isParallelStep(step)
+						? `[${step.parallel.map((t) => t.agent).join("+")}]`
+						: (step as SequentialStep).agent,
+				);
+				const totalSteps = chainSteps.length;
+
 				// Get original task from first step
 				const firstStep = chainSteps[0]!;
 				const originalTask = isParallelStep(firstStep)
@@ -1295,6 +1310,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				// For TUI: only show if no parallel steps (TUI v1 doesn't support parallel display)
 				// TODO: Update TUI to support parallel steps
 				const shouldClarify = params.clarify !== false && ctx.hasUI && !hasParallelSteps;
+
+				// Behavior overrides from TUI (set if TUI is shown, undefined otherwise)
+				let tuiBehaviorOverrides: (BehaviorOverride | undefined)[] | undefined;
 
 				if (shouldClarify) {
 					// Sequential-only chain: use existing TUI
@@ -1331,8 +1349,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					const flatTemplates = templates as string[];
 
 					const result = await ctx.ui.custom<ChainClarifyResult>(
-						(_tui, theme, _kb, done) =>
+						(tui, theme, _kb, done) =>
 							new ChainClarifyComponent(
+								tui,
 								theme,
 								agentConfigs,
 								flatTemplates,
@@ -1356,6 +1375,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					}
 					// Update templates from TUI result
 					templates = result.templates;
+					// Store behavior overrides from TUI (used below in sequential step execution)
+					tuiBehaviorOverrides = result.behaviorOverrides;
 				}
 
 				// Execute chain (handles both sequential and parallel steps)
@@ -1411,15 +1432,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 								}
 
 								// Build task string
-								let taskStr = parallelTemplates[taskIndex] ?? "{previous}";
+								const taskTemplate = parallelTemplates[taskIndex] ?? "{previous}";
+								const templateHasPrevious = taskTemplate.includes("{previous}");
+								let taskStr = taskTemplate;
 								taskStr = taskStr.replace(/\{task\}/g, originalTask);
 								taskStr = taskStr.replace(/\{previous\}/g, prev);
 								taskStr = taskStr.replace(/\{chain_dir\}/g, chainDir);
 
-								// Add chain instructions
+								// Add chain instructions (include previous summary only if not already in template)
 								const behavior = parallelBehaviors[taskIndex]!;
 								// For parallel, no single "first progress" - each manages independently
-								taskStr += buildChainInstructions(behavior, chainDir, false);
+								taskStr += buildChainInstructions(behavior, chainDir, false, templateHasPrevious ? undefined : prev);
 
 								const r = await runSync(ctx.cwd, agents, task.agent, taskStr, {
 									cwd: task.cwd ?? params.cwd,
@@ -1438,6 +1461,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 														mode: "chain",
 														results: [...results, ...(p.details?.results || [])],
 														progress: [...allProgress, ...(p.details?.progress || [])],
+														chainAgents,
+														totalSteps,
+														currentStepIndex: stepIndex,
 													},
 												})
 										: undefined,
@@ -1481,6 +1507,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 									results,
 									progress: params.includeProgress ? allProgress : undefined,
 									artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
+									chainAgents,
+									totalSteps,
+									currentStepIndex: stepIndex,
 								},
 								isError: true,
 							};
@@ -1511,17 +1540,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 							};
 						}
 
-						// Build task string
+						// Build task string (check if template has {previous} before replacement)
+						const templateHasPrevious = stepTemplate.includes("{previous}");
 						let stepTask = stepTemplate;
 						stepTask = stepTask.replace(/\{task\}/g, originalTask);
 						stepTask = stepTask.replace(/\{previous\}/g, prev);
 						stepTask = stepTask.replace(/\{chain_dir\}/g, chainDir);
 
-						// Resolve behavior
+						// Resolve behavior (TUI overrides take precedence over step config)
+						const tuiOverride = tuiBehaviorOverrides?.[stepIndex];
 						const stepOverride: StepOverrides = {
-							output: seqStep.output,
-							reads: seqStep.reads,
-							progress: seqStep.progress,
+							output: tuiOverride?.output !== undefined ? tuiOverride.output : seqStep.output,
+							reads: tuiOverride?.reads !== undefined ? tuiOverride.reads : seqStep.reads,
+							progress: tuiOverride?.progress !== undefined ? tuiOverride.progress : seqStep.progress,
 						};
 						const behavior = resolveStepBehavior(agentConfig, stepOverride);
 
@@ -1531,8 +1562,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 							progressCreated = true;
 						}
 
-						// Add chain instructions
-						stepTask += buildChainInstructions(behavior, chainDir, isFirstProgress);
+						// Add chain instructions (include previous summary only if not already in template)
+						stepTask += buildChainInstructions(behavior, chainDir, isFirstProgress, templateHasPrevious ? undefined : prev);
 
 						// Run step
 						const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
@@ -1552,6 +1583,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 												mode: "chain",
 												results: [...results, ...(p.details?.results || [])],
 												progress: [...allProgress, ...(p.details?.progress || [])],
+												chainAgents,
+												totalSteps,
+												currentStepIndex: stepIndex,
 											},
 										})
 								: undefined,
@@ -1575,6 +1609,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 									results,
 									progress: params.includeProgress ? allProgress : undefined,
 									artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
+									chainAgents,
+									totalSteps,
+									currentStepIndex: stepIndex,
 								},
 								isError: true,
 							};
@@ -1595,6 +1632,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 						results,
 						progress: params.includeProgress ? allProgress : undefined,
 						artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
+						chainAgents,
+						totalSteps,
+						// currentStepIndex omitted for completed chains
 					},
 				};
 			}
@@ -1848,7 +1888,34 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					: "";
 
 			const modeLabel = d.mode === "parallel" ? "parallel (no live progress)" : d.mode;
-			const stepInfo = hasRunning ? ` ${ok + 1}/${d.results.length}` : ` ${ok}/${d.results.length}`;
+			// Use chain metadata for accurate step counts
+			const totalStepsCount = d.totalSteps ?? d.results.length;
+			const currentStep = d.currentStepIndex !== undefined ? d.currentStepIndex + 1 : ok + 1;
+			const stepInfo = hasRunning ? ` ${currentStep}/${totalStepsCount}` : ` ${ok}/${totalStepsCount}`;
+			
+			// Build chain visualization: "scout → planner" with status icons
+			// Note: Only works correctly for sequential chains. Chains with parallel steps
+			// (indicated by "[agent1+agent2]" format) have multiple results per step,
+			// breaking the 1:1 mapping between chainAgents and results.
+			const hasParallelInChain = d.chainAgents?.some((a) => a.startsWith("["));
+			const chainVis = d.chainAgents?.length && !hasParallelInChain
+				? d.chainAgents
+						.map((agent, i) => {
+							const result = d.results[i];
+							const isFailed = result && result.exitCode !== 0 && result.progress?.status !== "running";
+							const isComplete = result && result.exitCode === 0 && result.progress?.status !== "running";
+							const isCurrent = i === (d.currentStepIndex ?? d.results.length);
+							const icon = isFailed
+								? theme.fg("error", "✗")
+								: isComplete
+									? theme.fg("success", "✓")
+									: isCurrent && hasRunning
+										? theme.fg("warning", "●")
+										: theme.fg("dim", "○");
+							return `${icon}${agent}`;
+						})
+						.join(theme.fg("dim", " → "))
+				: null;
 
 			if (expanded) {
 				const c = new Container();
@@ -1859,6 +1926,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 						0,
 					),
 				);
+				// Show chain visualization in expanded view
+				if (chainVis) {
+					c.addChild(new Text(`  ${chainVis}`, 0, 0));
+				}
 				for (let i = 0; i < d.results.length; i++) {
 					const r = d.results[i];
 					c.addChild(new Spacer(1));
@@ -1905,11 +1976,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 
 			const lines = [`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${stepInfo}${summaryStr}`];
+			// Show chain visualization if available
+			if (chainVis) {
+				lines.push(`  ${chainVis}`);
+			}
 			// Find running progress from d.progress array (more reliable) or d.results
 			const runningProgress = d.progress?.find((p) => p.status === "running") 
 				|| d.results.find((r) => r.progress?.status === "running")?.progress;
 			if (runningProgress) {
-				lines.push(theme.fg("dim", `  ${runningProgress.agent}:`));
 				if (runningProgress.currentTool) {
 					const toolLine = runningProgress.currentToolArgs
 						? `${runningProgress.currentTool}: ${runningProgress.currentToolArgs.slice(0, 50)}${runningProgress.currentToolArgs.length > 50 ? "..." : ""}`

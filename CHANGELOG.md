@@ -1,6 +1,44 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-01-24
+
+### Added
+- **Full edit mode for chain TUI** - Press `e`, `o`, or `r` to enter a full-screen editor with:
+  - Word wrapping for long text that spans multiple display lines
+  - Scrolling viewport (12 lines visible) with scroll indicators (↑↓)
+  - Full cursor navigation: Up/Down move by display line, Page Up/Down by viewport
+  - Home/End go to start/end of current display line, Ctrl+Home/End for start/end of text
+  - Auto-scroll to keep cursor visible
+  - Esc saves, Ctrl+C discards changes
+
+### Improved
+- **Tool description now explicitly shows the three modes** (SINGLE, CHAIN, PARALLEL) with syntax - helps agents pick the right mode when user says "scout → planner"
+- **Chain execution observability** - Now shows:
+  - Chain visualization with status icons: `✓scout → ●planner` (✓=done, ●=running, ○=pending, ✗=failed) - sequential chains only
+  - Accurate step counter: "step 1/2" instead of misleading "1/1"
+  - Current tool and recent output for running step
+
+## [0.2.0] - 2026-01-24
+
+### Changed
+- **Rebranded to `pi-subagents`** (was `pi-async-subagents`)
+- Now installable via `npx pi-subagents`
+
+### Added
+- Chain TUI now supports editing output paths, reads lists, and toggling progress per step
+- New keybindings: `o` (output), `r` (reads), `p` (progress toggle)
+- Output and reads support full file paths, not just relative to chain_dir
+- Each step shows all editable fields: task, output, reads, progress
+
+### Fixed
+- Chain clarification TUI edit mode now properly re-renders after state changes (was unresponsive)
+- Changed edit shortcut from Tab to 'e' (Tab can be problematic in terminals)
+- Edit mode cursor now starts at beginning of first line for better UX
+- Footer shows context-sensitive keybinding hints for navigation vs edit mode
+- Edit mode is now single-line only (Enter disabled) - UI only displays first line, so multi-line was confusing
+- Added Ctrl+C in edit mode to discard changes (Esc saves, Ctrl+C discards)
+- Footer now shows "Done" instead of "Save" for clarity
+- Absolute paths for output/reads now work correctly (were incorrectly prepended with chainDir)
 
 ### Added
 - Parallel-in-chain execution with `{ parallel: [...] }` step syntax for fan-out/fan-in patterns

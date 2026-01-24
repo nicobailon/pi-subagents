@@ -330,6 +330,13 @@ export function findFirstProgressAgentIndex(
 // =============================================================================
 
 /**
+ * Resolve a file path: absolute paths pass through, relative paths get chainDir prepended.
+ */
+function resolveChainPath(filePath: string, chainDir: string): string {
+	return path.isAbsolute(filePath) ? filePath : `${chainDir}/${filePath}`;
+}
+
+/**
  * Build chain instructions from resolved behavior.
  * These are appended to the task to tell the agent what to read/write.
  */
@@ -337,18 +344,25 @@ export function buildChainInstructions(
 	behavior: ResolvedStepBehavior,
 	chainDir: string,
 	isFirstProgressAgent: boolean,
+	previousSummary?: string,
 ): string {
 	const instructions: string[] = [];
 
-	// Reads
-	if (behavior.reads && behavior.reads.length > 0) {
-		const files = behavior.reads.map((f) => `${chainDir}/${f}`).join(", ");
-		instructions.push(`Read from chain directory: ${files}`);
+	// Include previous step's summary if available (prose output from prior agent)
+	if (previousSummary && previousSummary.trim()) {
+		instructions.push(`Previous step summary:\n\n${previousSummary.trim()}`);
 	}
 
-	// Output
+	// Reads (supports both absolute and relative paths)
+	if (behavior.reads && behavior.reads.length > 0) {
+		const files = behavior.reads.map((f) => resolveChainPath(f, chainDir)).join(", ");
+		instructions.push(`Read these files: ${files}`);
+	}
+
+	// Output (supports both absolute and relative paths)
 	if (behavior.output) {
-		instructions.push(`Write your output to: ${chainDir}/${behavior.output}`);
+		const outputPath = resolveChainPath(behavior.output, chainDir);
+		instructions.push(`Write your output to: ${outputPath}`);
 	}
 
 	// Progress
@@ -392,10 +406,18 @@ export function resolveParallelBehaviors(
 		const subdir = `parallel-${stepIndex}/${taskIndex}-${task.agent}`;
 
 		// Output: task override > agent default (namespaced) > false
+		// Absolute paths pass through unchanged; relative paths get namespaced under subdir
 		let output: string | false = false;
 		if (task.output !== undefined) {
-			output = task.output === false ? false : `${subdir}/${task.output}`;
+			if (task.output === false) {
+				output = false;
+			} else if (path.isAbsolute(task.output)) {
+				output = task.output; // Absolute path: use as-is
+			} else {
+				output = `${subdir}/${task.output}`; // Relative: namespace under subdir
+			}
 		} else if (config.output) {
+			// Agent defaults are always relative, so namespace them
 			output = `${subdir}/${config.output}`;
 		}
 

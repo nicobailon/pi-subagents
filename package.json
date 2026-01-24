@@ -1,6 +1,34 @@
 {
-  "name": "subagent-extension-pack",
-  "private": true,
+  "name": "pi-subagents",
+  "version": "0.3.0",
+  "description": "Pi extension for delegating tasks to subagents with chains, parallel execution, and TUI clarification",
+  "author": "Nico Bailon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicobailon/pi-subagents.git"
+  },
+  "homepage": "https://github.com/nicobailon/pi-subagents#readme",
+  "bugs": {
+    "url": "https://github.com/nicobailon/pi-subagents/issues"
+  },
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "subagents",
+    "ai",
+    "agents",
+    "cli"
+  ],
+  "bin": {
+    "pi-subagents": "./install.mjs"
+  },
+  "files": [
+    "*.ts",
+    "*.mjs",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "pi": {
     "extensions": [
       "./index.ts",

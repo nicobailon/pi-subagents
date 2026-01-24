@@ -1,6 +1,22 @@
-# pi-async-subagents
+<p>
+  <img src="banner.png" alt="pi-subagents" width="1100">
+</p>
 
-Pi extension for delegating tasks to subagents with async support, chain clarification TUI, output truncation, debug artifacts, progress tracking, and optional session sharing.
+# pi-subagents
+
+Pi extension for delegating tasks to subagents with chains, parallel execution, TUI clarification, and async support.
+
+## Installation
+
+```bash
+npx pi-subagents
+```
+
+This clones the extension to `~/.pi/agent/extensions/subagent/`. To update, run the same command. To remove:
+
+```bash
+npx pi-subagents --remove
+```
 
 ## Features (beyond base)
 
@@ -26,6 +42,45 @@ Pi extension for delegating tasks to subagents with async support, chain clarifi
 | Parallel | Sync only | `{ tasks: [{agent, task}...] }` - auto-downgrades if async requested |
 
 *Chain defaults to sync with TUI clarification. Use `clarify: false` to enable async (sequential-only chains; parallel-in-chain requires sync mode).
+
+**Chain clarification TUI keybindings:**
+
+*Navigation mode:*
+- `Enter` - Run the chain
+- `Esc` - Cancel
+- `↑↓` - Navigate between steps
+- `e` - Edit task/template
+- `o` - Edit output path
+- `r` - Edit reads list
+- `p` - Toggle progress tracking on/off
+
+*Edit mode (full-screen editor with word wrapping):*
+- `Esc` - Save changes and exit
+- `Ctrl+C` - Discard changes and exit
+- `←→` - Move cursor left/right
+- `↑↓` - Move cursor up/down by display line (auto-scrolls)
+- `Page Up/Down` or `Shift+↑↓` - Move cursor by viewport (12 lines)
+- `Home/End` - Start/end of current display line
+- `Ctrl+Home/End` - Start/end of text
+
+## Agent Frontmatter
+
+Agents can declare default chain behavior in their frontmatter:
+
+```yaml
+---
+name: scout
+description: Fast codebase recon
+tools: read, grep, find, ls, bash
+model: claude-haiku-4-5
+output: context.md           # writes to {chain_dir}/context.md
+defaultReads: context.md     # comma-separated files to read
+defaultProgress: true        # maintain progress.md
+interactive: true            # (parsed but not enforced in v1)
+---
+```
+
+**Resolution priority:** step override > agent frontmatter > disabled
 
 ## Usage
 
@@ -140,25 +195,6 @@ Status tool:
 |------|-------------|
 | `subagent_status` | Inspect async run status by id or dir |
 
-## Agent Frontmatter
-
-Agents can declare default chain behavior in their frontmatter:
-
-```yaml
----
-name: scout
-description: Fast codebase recon
-tools: read, grep, find, ls, bash
-model: claude-haiku-4-5
-output: context.md           # writes to {chain_dir}/context.md
-defaultReads: context.md     # comma-separated files to read
-defaultProgress: true        # maintain progress.md
-interactive: true            # (parsed but not enforced in v1)
----
-```
-
-**Resolution priority:** step override > agent frontmatter > disabled
-
 ## Chain Variables
 
 Templates support three variables:
@@ -211,12 +247,15 @@ Session files (JSONL) are stored under a per-run session dir (temp by default). 
 ## Live progress (sync mode)
 
 During sync execution, the collapsed view shows:
-- Current step (for chains): `... chain 2/3 | 8 tools, 1.4k tok, 38s`
-- Current agent and tool: `scout: > read: packages/tui/src/...`
+- Header: `... chain 1/2 | 8 tools, 1.4k tok, 38s`
+- Chain visualization with status: `✓scout → ●planner` (✓=done, ●=running, ○=pending, ✗=failed)
+- Current tool: `> read: packages/tui/src/...`
 - Recent output lines (last 2-3 lines)
 - Hint: `(ctrl+o to expand)`
 
-Press **Ctrl+O** to expand the full streaming view with complete output.
+Press **Ctrl+O** to expand the full streaming view with complete output per step.
+
+> **Note:** Chain visualization is only shown for sequential chains. Chains with parallel steps show the header and progress but not the step-by-step visualization.
 
 ## Async observability
 
