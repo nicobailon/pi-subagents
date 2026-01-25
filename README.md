@@ -6,6 +6,8 @@
 
 Pi extension for delegating tasks to subagents with chains, parallel execution, TUI clarification, and async support.
 
+https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1
+
 ## Installation
 
 ```bash
