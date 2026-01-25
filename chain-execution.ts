@@ -250,18 +250,22 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 						artifactConfig,
 						onUpdate: onUpdate
-							? (p) =>
+							? (p) => {
+									// Use concat instead of spread for better performance
+									const stepResults = p.details?.results || [];
+									const stepProgress = p.details?.progress || [];
 									onUpdate({
 										...p,
 										details: {
 											mode: "chain",
-											results: [...results, ...(p.details?.results || [])],
-											progress: [...allProgress, ...(p.details?.progress || [])],
+											results: results.concat(stepResults),
+											progress: allProgress.concat(stepProgress),
 											chainAgents,
 											totalSteps,
 											currentStepIndex: stepIndex,
 										},
-									})
+									});
+								}
 							: undefined,
 					});
 
@@ -372,18 +376,22 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
 				onUpdate: onUpdate
-					? (p) =>
+					? (p) => {
+							// Use concat instead of spread for better performance
+							const stepResults = p.details?.results || [];
+							const stepProgress = p.details?.progress || [];
 							onUpdate({
 								...p,
 								details: {
 									mode: "chain",
-									results: [...results, ...(p.details?.results || [])],
-									progress: [...allProgress, ...(p.details?.progress || [])],
+									results: results.concat(stepResults),
+									progress: allProgress.concat(stepProgress),
 									chainAgents,
 									totalSteps,
 									currentStepIndex: stepIndex,
 								},
-							})
+							});
+						}
 					: undefined,
 			});
 

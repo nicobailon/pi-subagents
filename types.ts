@@ -222,7 +222,7 @@ export const MAX_CONCURRENCY = 4;
 export const RESULTS_DIR = "/tmp/pi-async-subagent-results";
 export const ASYNC_DIR = "/tmp/pi-async-subagent-runs";
 export const WIDGET_KEY = "subagent-async";
-export const POLL_INTERVAL_MS = 1000;
+export const POLL_INTERVAL_MS = 500;
 export const MAX_WIDGET_JOBS = 4;
 
 // ============================================================================

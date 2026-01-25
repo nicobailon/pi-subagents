@@ -132,6 +132,42 @@ export async function runSync(
 		const proc = spawn("pi", args, { cwd: cwd ?? runtimeCwd, stdio: ["ignore", "pipe", "pipe"] });
 		let buf = "";
 
+		// Throttled update mechanism - consolidates all updates
+		let lastUpdateTime = 0;
+		let updatePending = false;
+		const UPDATE_THROTTLE_MS = 50; // Reduced from 75ms for faster responsiveness
+
+		const scheduleUpdate = () => {
+			if (!onUpdate) return;
+			const now = Date.now();
+			const elapsed = now - lastUpdateTime;
+
+			if (elapsed >= UPDATE_THROTTLE_MS) {
+				// Enough time passed, update immediately
+				lastUpdateTime = now;
+				updatePending = false;
+				progress.durationMs = now - startTime;
+				onUpdate({
+					content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+					details: { mode: "single", results: [result], progress: [progress] },
+				});
+			} else if (!updatePending) {
+				// Schedule update for later
+				updatePending = true;
+				setTimeout(() => {
+					if (updatePending) {
+						updatePending = false;
+						lastUpdateTime = Date.now();
+						progress.durationMs = Date.now() - startTime;
+						onUpdate({
+							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+							details: { mode: "single", results: [result], progress: [progress] },
+						});
+					}
+				}, UPDATE_THROTTLE_MS - elapsed);
+			}
+		};
+
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
 			jsonlLines.push(line);
@@ -144,11 +180,9 @@ export async function runSync(
 					progress.toolCount++;
 					progress.currentTool = evt.toolName;
 					progress.currentToolArgs = extractToolArgsPreview((evt.args || {}) as Record<string, unknown>);
-					if (onUpdate)
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-							details: { mode: "single", results: [result], progress: [progress] },
-						});
+					// Tool start is important - update immediately by forcing throttle reset
+					lastUpdateTime = 0;
+					scheduleUpdate();
 				}
 
 				if (evt.type === "tool_execution_end") {
@@ -164,11 +198,7 @@ export async function runSync(
 					}
 					progress.currentTool = undefined;
 					progress.currentToolArgs = undefined;
-					if (onUpdate)
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-							details: { mode: "single", results: [result], progress: [progress] },
-						});
+					scheduleUpdate();
 				}
 
 				if (evt.type === "message_end" && evt.message) {
@@ -197,11 +227,7 @@ export async function runSync(
 							progress.recentOutput = [...progress.recentOutput, ...lines].slice(-50);
 						}
 					}
-					if (onUpdate)
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-							details: { mode: "single", results: [result], progress: [progress] },
-						});
+					scheduleUpdate();
 				}
 				if (evt.type === "tool_result_end" && evt.message) {
 					result.messages.push(evt.message);
@@ -215,18 +241,12 @@ export async function runSync(
 						// Append to existing recentOutput (keep last 50 total)
 						progress.recentOutput = [...progress.recentOutput, ...toolLines].slice(-50);
 					}
-					if (onUpdate)
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-							details: { mode: "single", results: [result], progress: [progress] },
-						});
+					scheduleUpdate();
 				}
 			} catch {}
 		};
 
 		let stderrBuf = "";
-		let lastUpdateTime = 0;
-		const UPDATE_THROTTLE_MS = 75;
 
 		proc.stdout.on("data", (d) => {
 			buf += d.toString();
@@ -234,16 +254,8 @@ export async function runSync(
 			buf = lines.pop() || "";
 			lines.forEach(processLine);
 
-			// Throttled periodic update for smoother progress display
-			const now = Date.now();
-			if (onUpdate && now - lastUpdateTime > UPDATE_THROTTLE_MS) {
-				lastUpdateTime = now;
-				progress.durationMs = now - startTime;
-				onUpdate({
-					content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
-					details: { mode: "single", results: [result], progress: [progress] },
-				});
-			}
+			// Also schedule an update on data received (handles streaming output)
+			scheduleUpdate();
 		});
 		proc.stderr.on("data", (d) => {
 			stderrBuf += d.toString();

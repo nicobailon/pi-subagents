@@ -16,15 +16,37 @@ import { getFinalOutput, getDisplayItems, getOutputTail, getLastActivity } from 
 
 type Theme = ExtensionContext["ui"]["theme"];
 
+// Track last rendered widget state to avoid no-op re-renders
+let lastWidgetHash = "";
+
+/**
+ * Compute a simple hash of job states for change detection
+ */
+function computeWidgetHash(jobs: AsyncJobState[]): string {
+	return jobs.slice(0, MAX_WIDGET_JOBS).map(job =>
+		`${job.asyncId}:${job.status}:${job.currentStep}:${job.updatedAt}:${job.totalTokens?.total ?? 0}`
+	).join("|");
+}
+
 /**
  * Render the async jobs widget
  */
 export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
 	if (!ctx.hasUI) return;
 	if (jobs.length === 0) {
-		ctx.ui.setWidget(WIDGET_KEY, undefined);
+		if (lastWidgetHash !== "") {
+			lastWidgetHash = "";
+			ctx.ui.setWidget(WIDGET_KEY, undefined);
+		}
 		return;
 	}
+
+	// Check if anything changed since last render
+	const newHash = computeWidgetHash(jobs);
+	if (newHash === lastWidgetHash) {
+		return; // Skip re-render, nothing changed
+	}
+	lastWidgetHash = newHash;
 
 	const theme = ctx.ui.theme;
 	const lines: string[] = [];
