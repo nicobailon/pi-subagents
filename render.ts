@@ -55,7 +55,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	const lines: string[] = [];
 	lines.push(theme.fg("accent", "Async subagents"));
 
-	for (const job of jobs.slice(0, MAX_WIDGET_JOBS)) {
+	for (const job of displayedJobs) {
 		const id = job.asyncId.slice(0, 6);
 		const status =
 			job.status === "complete"
