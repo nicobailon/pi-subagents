@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig } from "./agents.js";
+import { normalizeSkillInput } from "./skills.js";
 
 const CHAIN_RUNS_DIR = "/tmp/pi-chain-runs";
 const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -17,12 +18,14 @@ export interface ResolvedStepBehavior {
 	output: string | false;
 	reads: string[] | false;
 	progress: boolean;
+	skills: string[] | false;
 }
 
 export interface StepOverrides {
 	output?: string | false;
 	reads?: string[] | false;
 	progress?: boolean;
+	skills?: string[] | false;
 }
 
 // =============================================================================
@@ -37,6 +40,7 @@ export interface SequentialStep {
 	output?: string | false;
 	reads?: string[] | false;
 	progress?: boolean;
+	skill?: string | string[] | false;
 }
 
 /** Parallel task item within a parallel step */
@@ -47,6 +51,7 @@ export interface ParallelTaskItem {
 	output?: string | false;
 	reads?: string[] | false;
 	progress?: boolean;
+	skill?: string | string[] | false;
 }
 
 /** Parallel step: multiple agents running concurrently */
@@ -156,6 +161,7 @@ export function resolveChainTemplates(
 export function resolveStepBehavior(
 	agentConfig: AgentConfig,
 	stepOverrides: StepOverrides,
+	chainSkills?: string[],
 ): ResolvedStepBehavior {
 	// Output: step override > frontmatter > false (no output)
 	const output =
@@ -175,7 +181,22 @@ export function resolveStepBehavior(
 			? stepOverrides.progress
 			: agentConfig.defaultProgress ?? false;
 
-	return { output, reads, progress };
+	let skills: string[] | false;
+	if (stepOverrides.skills === false) {
+		skills = false;
+	} else if (stepOverrides.skills !== undefined) {
+		skills = [...stepOverrides.skills];
+		if (chainSkills && chainSkills.length > 0) {
+			skills = [...new Set([...skills, ...chainSkills])];
+		}
+	} else {
+		skills = agentConfig.skills ? [...agentConfig.skills] : [];
+		if (chainSkills && chainSkills.length > 0) {
+			skills = [...new Set([...skills, ...chainSkills])];
+		}
+	}
+
+	return { output, reads, progress, skills };
 }
 
 // =============================================================================
@@ -252,6 +273,7 @@ export function resolveParallelBehaviors(
 	tasks: ParallelTaskItem[],
 	agentConfigs: AgentConfig[],
 	stepIndex: number,
+	chainSkills?: string[],
 ): ResolvedStepBehavior[] {
 	return tasks.map((task, taskIndex) => {
 		const config = agentConfigs.find((a) => a.name === task.agent);
@@ -288,7 +310,23 @@ export function resolveParallelBehaviors(
 				? task.progress
 				: config.defaultProgress ?? false;
 
-		return { output, reads, progress };
+		const taskSkillInput = normalizeSkillInput(task.skill);
+		let skills: string[] | false;
+		if (taskSkillInput === false) {
+			skills = false;
+		} else if (taskSkillInput !== undefined) {
+			skills = [...taskSkillInput];
+			if (chainSkills && chainSkills.length > 0) {
+				skills = [...new Set([...skills, ...chainSkills])];
+			}
+		} else {
+			skills = config.skills ? [...config.skills] : [];
+			if (chainSkills && chainSkills.length > 0) {
+				skills = [...new Set([...skills, ...chainSkills])];
+			}
+		}
+
+		return { output, reads, progress, skills };
 	});
 }
 
@@ -328,5 +366,4 @@ export function aggregateParallelOutputs(results: ParallelTaskResult[]): string 
 		})
 		.join("\n\n");
 }
-
 

@@ -11,6 +11,9 @@ import { matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui"
 import type { AgentConfig } from "./agents.js";
 import type { ResolvedStepBehavior } from "./settings.js";
 
+/** Clarify TUI mode */
+export type ClarifyMode = 'single' | 'parallel' | 'chain';
+
 /** Model info for display */
 export interface ModelInfo {
 	provider: string;
@@ -24,6 +27,7 @@ export interface BehaviorOverride {
 	reads?: string[] | false;
 	progress?: boolean;
 	model?: string;  // Override agent's default model (format: "provider/id")
+	skills?: string[] | false;
 }
 
 export interface ChainClarifyResult {
@@ -33,7 +37,7 @@ export interface ChainClarifyResult {
 	behaviorOverrides: (BehaviorOverride | undefined)[];
 }
 
-type EditMode = "template" | "output" | "reads" | "model" | "thinking";
+type EditMode = "template" | "output" | "reads" | "model" | "thinking" | "skills";
 
 /** Valid thinking levels */
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
@@ -70,19 +74,28 @@ export class ChainClarifyComponent implements Component {
 	/** Thinking level selector state */
 	private thinkingSelectedIndex: number = 0;
 
+	/** Skill selector state */
+	private skillSearchQuery: string = "";
+	private skillSelectedNames: Set<string> = new Set();
+	private skillCursorIndex: number = 0;
+	private filteredSkills: Array<{ name: string; source: string; description?: string }> = [];
+
 	constructor(
 		private tui: TUI,
 		private theme: Theme,
 		private agentConfigs: AgentConfig[],
 		private templates: string[],
 		private originalTask: string,
-		private chainDir: string,
+		private chainDir: string | undefined,  // undefined for single/parallel modes
 		private resolvedBehaviors: ResolvedStepBehavior[],
 		private availableModels: ModelInfo[],
+		private availableSkills: Array<{ name: string; source: string; description?: string }>,
 		private done: (result: ChainClarifyResult) => void,
+		private mode: ClarifyMode = 'chain',   // Mode: 'single', 'parallel', or 'chain'
 	) {
 		// Initialize filtered models
 		this.filteredModels = [...availableModels];
+		this.filteredSkills = [...availableSkills];
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
@@ -222,11 +235,17 @@ export class ChainClarifyComponent implements Component {
 		// Header (truncate agent name to prevent overflow)
 		const fieldName = this.editMode === "template" ? "task" : this.editMode;
 		const rawAgentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
-		const maxAgentLen = innerW - 30; // Reserve space for " Editing X (Step N: ) "
+		const maxAgentLen = innerW - 30; // Reserve space for " Editing X (Step/Task N: ) "
 		const agentName = rawAgentName.length > maxAgentLen
 			? rawAgentName.slice(0, maxAgentLen - 1) + "…"
 			: rawAgentName;
-		const headerText = ` Editing ${fieldName} (Step ${this.editingStep! + 1}: ${agentName}) `;
+		// Use mode-appropriate terminology
+		const stepLabel = this.mode === 'single' 
+			? agentName 
+			: this.mode === 'parallel' 
+				? `Task ${this.editingStep! + 1}: ${agentName}` 
+				: `Step ${this.editingStep! + 1}: ${agentName}`;
+		const headerText = ` Editing ${fieldName} (${stepLabel}) `;
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
 
@@ -280,6 +299,7 @@ export class ChainClarifyComponent implements Component {
 			output: override.output !== undefined ? override.output : base.output,
 			reads: override.reads !== undefined ? override.reads : base.reads,
 			progress: override.progress !== undefined ? override.progress : base.progress,
+			skills: override.skills !== undefined ? override.skills : base.skills,
 			model: override.model,
 		};
 	}
@@ -330,6 +350,8 @@ export class ChainClarifyComponent implements Component {
 				this.handleModelSelectorInput(data);
 			} else if (this.editMode === "thinking") {
 				this.handleThinkingSelectorInput(data);
+			} else if (this.editMode === "skills") {
+				this.handleSkillSelectorInput(data);
 			} else {
 				this.handleEditInput(data);
 			}
@@ -365,26 +387,54 @@ export class ChainClarifyComponent implements Component {
 			return;
 		}
 
-		// 'e' to edit template
+		// 'e' to edit template (all modes)
 		if (data === "e") {
 			this.enterEditMode("template");
 			return;
 		}
 
-		// 'w' to edit writes (output file)
-		if (data === "w") {
+		// 'm' to select model (all modes)
+		if (data === "m") {
+			this.enterModelSelector();
+			return;
+		}
+
+		// 't' to select thinking level (all modes)
+		if (data === "t") {
+			this.enterThinkingSelector();
+			return;
+		}
+
+		// 's' to select skills (all modes)
+		if (data === "s") {
+			this.editingStep = this.selectedStep;
+			this.editMode = "skills";
+			this.skillSearchQuery = "";
+			this.skillCursorIndex = 0;
+			this.filteredSkills = [...this.availableSkills];
+			const current = this.getEffectiveBehavior(this.selectedStep).skills;
+			this.skillSelectedNames.clear();
+			if (current !== false && current.length > 0) {
+				current.forEach((skillName) => this.skillSelectedNames.add(skillName));
+			}
+			this.tui.requestRender();
+			return;
+		}
+
+		// 'w' to edit writes (single and chain only - not parallel)
+		if (data === "w" && this.mode !== 'parallel') {
 			this.enterEditMode("output");
 			return;
 		}
 
-		// 'r' to edit reads
-		if (data === "r") {
+		// 'r' to edit reads (chain only)
+		if (data === "r" && this.mode === 'chain') {
 			this.enterEditMode("reads");
 			return;
 		}
 
-		// 'p' to toggle progress for ALL steps (chains share a single progress.md)
-		if (data === "p") {
+		// 'p' to toggle progress for ALL steps (chain only - chains share a single progress.md)
+		if (data === "p" && this.mode === 'chain') {
 			// Check if any step has progress enabled
 			const anyEnabled = this.agentConfigs.some((_, i) => this.getEffectiveBehavior(i).progress);
 			// Toggle all steps to the opposite state
@@ -393,18 +443,6 @@ export class ChainClarifyComponent implements Component {
 				this.updateBehavior(i, "progress", newState);
 			}
 			this.tui.requestRender();
-			return;
-		}
-
-		// 'm' to select model
-		if (data === "m") {
-			this.enterModelSelector();
-			return;
-		}
-
-		// 't' to select thinking level
-		if (data === "t") {
-			this.enterThinkingSelector();
 			return;
 		}
 	}
@@ -595,6 +633,84 @@ export class ChainClarifyComponent implements Component {
 		// Apply new thinking level (don't add suffix for "off")
 		const newModel = level === "off" ? baseModel : `${baseModel}:${level}`;
 		this.updateBehavior(stepIndex, "model", newModel);
+	}
+
+	private filterSkills(): void {
+		const query = this.skillSearchQuery.toLowerCase();
+		if (!query) {
+			this.filteredSkills = [...this.availableSkills];
+		} else {
+			this.filteredSkills = this.availableSkills.filter((s) =>
+				s.name.toLowerCase().includes(query) ||
+				(s.description?.toLowerCase().includes(query) ?? false),
+			);
+		}
+		this.skillCursorIndex = Math.min(this.skillCursorIndex, Math.max(0, this.filteredSkills.length - 1));
+	}
+
+	private handleSkillSelectorInput(data: string): void {
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.exitEditMode();
+			return;
+		}
+
+		if (matchesKey(data, "return")) {
+			const selected = [...this.skillSelectedNames];
+			this.updateBehavior(this.editingStep!, "skills", selected);
+			this.exitEditMode();
+			return;
+		}
+
+		if (data === " ") {
+			if (this.filteredSkills.length > 0) {
+				const skill = this.filteredSkills[this.skillCursorIndex];
+				if (skill) {
+					if (this.skillSelectedNames.has(skill.name)) {
+						this.skillSelectedNames.delete(skill.name);
+					} else {
+						this.skillSelectedNames.add(skill.name);
+					}
+				}
+			}
+			this.tui.requestRender();
+			return;
+		}
+
+		if (matchesKey(data, "up")) {
+			if (this.filteredSkills.length > 0) {
+				this.skillCursorIndex = this.skillCursorIndex === 0
+					? this.filteredSkills.length - 1
+					: this.skillCursorIndex - 1;
+			}
+			this.tui.requestRender();
+			return;
+		}
+
+		if (matchesKey(data, "down")) {
+			if (this.filteredSkills.length > 0) {
+				this.skillCursorIndex = this.skillCursorIndex === this.filteredSkills.length - 1
+					? 0
+					: this.skillCursorIndex + 1;
+			}
+			this.tui.requestRender();
+			return;
+		}
+
+		if (matchesKey(data, "backspace")) {
+			if (this.skillSearchQuery.length > 0) {
+				this.skillSearchQuery = this.skillSearchQuery.slice(0, -1);
+				this.filterSkills();
+			}
+			this.tui.requestRender();
+			return;
+		}
+
+		if (data.length === 1 && data.charCodeAt(0) >= 32) {
+			this.skillSearchQuery += data;
+			this.filterSkills();
+			this.tui.requestRender();
+			return;
+		}
 	}
 
 	private handleEditInput(data: string): void {
@@ -807,9 +923,17 @@ export class ChainClarifyComponent implements Component {
 			if (this.editMode === "thinking") {
 				return this.renderThinkingSelector();
 			}
+			if (this.editMode === "skills") {
+				return this.renderSkillSelector();
+			}
 			return this.renderFullEditMode();
 		}
-		return this.renderNavigationMode();
+		// Mode-based navigation rendering
+		switch (this.mode) {
+			case 'single': return this.renderSingleMode();
+			case 'parallel': return this.renderParallelMode();
+			case 'chain': return this.renderChainMode();
+		}
 	}
 
 	/** Render the model selector view */
@@ -818,9 +942,14 @@ export class ChainClarifyComponent implements Component {
 		const th = this.theme;
 		const lines: string[] = [];
 
-		// Header
+		// Header (mode-aware terminology)
 		const agentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
-		const headerText = ` Select Model (Step ${this.editingStep! + 1}: ${agentName}) `;
+		const stepLabel = this.mode === 'single' 
+			? agentName 
+			: this.mode === 'parallel' 
+				? `Task ${this.editingStep! + 1}: ${agentName}` 
+				: `Step ${this.editingStep! + 1}: ${agentName}`;
+		const headerText = ` Select Model (${stepLabel}) `;
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
 
@@ -898,9 +1027,14 @@ export class ChainClarifyComponent implements Component {
 		const th = this.theme;
 		const lines: string[] = [];
 
-		// Header
+		// Header (mode-aware terminology)
 		const agentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
-		const headerText = ` Thinking Level (Step ${this.editingStep! + 1}: ${agentName}) `;
+		const stepLabel = this.mode === 'single' 
+			? agentName 
+			: this.mode === 'parallel' 
+				? `Task ${this.editingStep! + 1}: ${agentName}` 
+				: `Step ${this.editingStep! + 1}: ${agentName}`;
+		const headerText = ` Thinking Level (${stepLabel}) `;
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
 
@@ -947,8 +1081,203 @@ export class ChainClarifyComponent implements Component {
 		return lines;
 	}
 
-	/** Render navigation mode (step selection, preview) */
-	private renderNavigationMode(): string[] {
+	private renderSkillSelector(): string[] {
+		const innerW = this.width - 2;
+		const th = this.theme;
+		const lines: string[] = [];
+
+		const agentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
+		const stepLabel = this.mode === 'single'
+			? agentName
+			: this.mode === 'parallel'
+				? `Task ${this.editingStep! + 1}: ${agentName}`
+				: `Step ${this.editingStep! + 1}: ${agentName}`;
+		lines.push(this.renderHeader(` Select Skills (${stepLabel}) `));
+		lines.push(this.row(""));
+
+		const cursor = "\x1b[7m \x1b[27m";
+		lines.push(this.row(` ${th.fg("dim", "Search: ")}${this.skillSearchQuery}${cursor}`));
+		lines.push(this.row(""));
+
+		const selected = [...this.skillSelectedNames].join(", ") || th.fg("dim", "(none)");
+		lines.push(this.row(` ${th.fg("dim", "Selected: ")}${truncateToWidth(selected, innerW - 12)}`));
+		lines.push(this.row(""));
+
+		const selectorHeight = 10;
+		if (this.filteredSkills.length === 0) {
+			lines.push(this.row(` ${th.fg("dim", "No matching skills")}`));
+		} else {
+			let startIdx = 0;
+			if (this.filteredSkills.length > selectorHeight) {
+				startIdx = Math.max(0, this.skillCursorIndex - Math.floor(selectorHeight / 2));
+				startIdx = Math.min(startIdx, this.filteredSkills.length - selectorHeight);
+			}
+			const endIdx = Math.min(startIdx + selectorHeight, this.filteredSkills.length);
+
+			if (startIdx > 0) {
+				lines.push(this.row(` ${th.fg("dim", `  ↑ ${startIdx} more`)}`));
+			}
+
+			for (let i = startIdx; i < endIdx; i++) {
+				const skill = this.filteredSkills[i]!;
+				const isCursor = i === this.skillCursorIndex;
+				const isSelected = this.skillSelectedNames.has(skill.name);
+
+				const prefix = isCursor ? th.fg("accent", "→ ") : "  ";
+				const checkbox = isSelected ? th.fg("success", "[x]") : "[ ]";
+				const nameText = isCursor ? th.fg("accent", skill.name) : skill.name;
+				const sourceBadge = th.fg("dim", ` [${skill.source}]`);
+				const desc = skill.description
+					? th.fg("dim", ` - ${truncateToWidth(skill.description, 25)}`)
+					: "";
+
+				lines.push(this.row(` ${prefix}${checkbox} ${nameText}${sourceBadge}${desc}`));
+			}
+
+			const remaining = this.filteredSkills.length - endIdx;
+			if (remaining > 0) {
+				lines.push(this.row(` ${th.fg("dim", `  ↓ ${remaining} more`)}`));
+			}
+		}
+
+		const targetHeight = 18;
+		for (let i = lines.length; i < targetHeight; i++) {
+			lines.push(this.row(""));
+		}
+
+		lines.push(this.renderFooter(" [Enter] Confirm • [Space] Toggle • [Esc] Cancel "));
+		return lines;
+	}
+
+	/** Get footer text based on mode */
+	private getFooterText(): string {
+		switch (this.mode) {
+			case 'single':
+				return ' [Enter] Run • [Esc] Cancel • [e]dit [m]odel [t]hink [w]rite [s]kill ';
+			case 'parallel':
+				return ' [Enter] Run • [Esc] Cancel • [e]dit [m]odel [t]hink [s]kill • ↑↓ Nav ';
+			case 'chain':
+				return ' [Enter] Run • [Esc] Cancel • e m t w r p s • ↑↓ Nav ';
+		}
+	}
+
+	/** Render single agent mode (simplified view) */
+	private renderSingleMode(): string[] {
+		const innerW = this.width - 2;
+		const th = this.theme;
+		const lines: string[] = [];
+
+		// Header with agent name
+		const agentName = this.agentConfigs[0]?.name ?? "unknown";
+		const maxHeaderLen = innerW - 4;
+		const headerText = ` Agent: ${truncateToWidth(agentName, maxHeaderLen - 9)} `;
+		lines.push(this.renderHeader(headerText));
+		lines.push(this.row(""));
+
+		// Single step - always index 0, always selected
+		const config = this.agentConfigs[0]!;
+		const behavior = this.getEffectiveBehavior(0);
+
+		// Agent name with selection indicator
+		const stepLabel = config.name;
+		lines.push(this.row(` ${th.fg("accent", "▶ " + stepLabel)}`));
+
+		// Task line
+		const template = (this.templates[0] ?? "").split("\n")[0] ?? "";
+		const taskLabel = th.fg("dim", "task: ");
+		lines.push(this.row(`     ${taskLabel}${truncateToWidth(template, innerW - 12)}`));
+
+		// Model line
+		const effectiveModel = this.getEffectiveModel(0);
+		const override = this.behaviorOverrides.get(0);
+		const isOverridden = override?.model !== undefined;
+		const modelValue = isOverridden
+			? th.fg("warning", effectiveModel) + th.fg("dim", " ✎")
+			: effectiveModel;
+		const modelLabel = th.fg("dim", "model: ");
+		lines.push(this.row(`     ${modelLabel}${truncateToWidth(modelValue, innerW - 13)}`));
+
+		// Writes line (output file)
+		const writesValue = behavior.output === false
+			? th.fg("dim", "(disabled)")
+			: (behavior.output || th.fg("dim", "(none)"));
+		const writesLabel = th.fg("dim", "writes: ");
+		lines.push(this.row(`     ${writesLabel}${truncateToWidth(writesValue, innerW - 14)}`));
+
+		const skillsValue = behavior.skills === false
+			? th.fg("dim", "(disabled)")
+			: (behavior.skills?.length ? behavior.skills.join(", ") : th.fg("dim", "(none)"));
+		const skillsLabel = th.fg("dim", "skills: ");
+		lines.push(this.row(`     ${skillsLabel}${truncateToWidth(skillsValue, innerW - 14)}`));
+
+		lines.push(this.row(""));
+
+		// Footer
+		lines.push(this.renderFooter(this.getFooterText()));
+
+		return lines;
+	}
+
+	/** Render parallel mode (multi-task view without chain features) */
+	private renderParallelMode(): string[] {
+		const innerW = this.width - 2;
+		const th = this.theme;
+		const lines: string[] = [];
+
+		// Header with task count
+		const headerText = ` Parallel Tasks (${this.agentConfigs.length}) `;
+		lines.push(this.renderHeader(headerText));
+		lines.push(this.row(""));
+
+		// Each task
+		for (let i = 0; i < this.agentConfigs.length; i++) {
+			const config = this.agentConfigs[i]!;
+			const isSelected = i === this.selectedStep;
+
+			// Task header (truncate agent name to prevent overflow)
+			const color = isSelected ? "accent" : "dim";
+			const prefix = isSelected ? "▶ " : "  ";
+			const taskPrefix = `Task ${i + 1}: `;
+			const maxNameLen = innerW - 4 - prefix.length - taskPrefix.length;
+			const agentName = config.name.length > maxNameLen
+				? config.name.slice(0, maxNameLen - 1) + "…"
+				: config.name;
+			const taskLabel = `${taskPrefix}${agentName}`;
+			lines.push(this.row(` ${th.fg(color, prefix + taskLabel)}`));
+
+			// Task line
+			const template = (this.templates[i] ?? "").split("\n")[0] ?? "";
+			const taskTextLabel = th.fg("dim", "task: ");
+			lines.push(this.row(`     ${taskTextLabel}${truncateToWidth(template, innerW - 12)}`));
+
+			// Model line
+			const effectiveModel = this.getEffectiveModel(i);
+			const override = this.behaviorOverrides.get(i);
+			const isOverridden = override?.model !== undefined;
+			const modelValue = isOverridden
+				? th.fg("warning", effectiveModel) + th.fg("dim", " ✎")
+				: effectiveModel;
+			const modelLabel = th.fg("dim", "model: ");
+			lines.push(this.row(`     ${modelLabel}${truncateToWidth(modelValue, innerW - 13)}`));
+
+			const behavior = this.getEffectiveBehavior(i);
+			const skillsValue = behavior.skills === false
+				? th.fg("dim", "(disabled)")
+				: (behavior.skills?.length ? behavior.skills.join(", ") : th.fg("dim", "(none)"));
+			const skillsLabel = th.fg("dim", "skills: ");
+			lines.push(this.row(`     ${skillsLabel}${truncateToWidth(skillsValue, innerW - 14)}`));
+
+			lines.push(this.row(""));
+		}
+
+		// Footer
+		lines.push(this.renderFooter(this.getFooterText()));
+
+		return lines;
+	}
+
+	/** Render chain mode (step selection, preview) */
+	private renderChainMode(): string[] {
 		const innerW = this.width - 2;
 		const th = this.theme;
 		const lines: string[] = [];
@@ -964,7 +1293,8 @@ export class ChainClarifyComponent implements Component {
 		// Original task (truncated) and chain dir
 		const taskPreview = truncateToWidth(this.originalTask, innerW - 16);
 		lines.push(this.row(` Original Task: ${taskPreview}`));
-		const chainDirPreview = truncateToWidth(this.chainDir, innerW - 12);
+		// chainDir is guaranteed to be defined in chain mode
+		const chainDirPreview = truncateToWidth(this.chainDir ?? "", innerW - 12);
 		lines.push(this.row(` Chain Dir: ${th.fg("dim", chainDirPreview)}`));
 
 		// Chain-wide progress setting
@@ -1028,6 +1358,12 @@ export class ChainClarifyComponent implements Component {
 			const readsLabel = th.fg("dim", "reads: ");
 			lines.push(this.row(`     ${readsLabel}${truncateToWidth(readsValue, innerW - 13)}`));
 
+			const skillsValue = behavior.skills === false
+				? th.fg("dim", "(disabled)")
+				: (behavior.skills?.length ? behavior.skills.join(", ") : th.fg("dim", "(none)"));
+			const skillsLabel = th.fg("dim", "skills: ");
+			lines.push(this.row(`     ${skillsLabel}${truncateToWidth(skillsValue, innerW - 14)}`));
+
 			// Progress line - show when chain-wide progress is enabled
 			// First step creates & updates, subsequent steps read & update
 			if (progressEnabled) {
@@ -1053,8 +1389,7 @@ export class ChainClarifyComponent implements Component {
 		}
 
 		// Footer with keybindings
-		const footerText = " [Enter] Run • [Esc] Cancel • [e]dit [m]odel [t]hinking [w]rites [r]eads [p]rogress ";
-		lines.push(this.renderFooter(footerText));
+		lines.push(this.renderFooter(this.getFooterText()));
 
 		return lines;
 	}

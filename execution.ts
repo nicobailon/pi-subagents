@@ -32,6 +32,7 @@ import {
 	extractToolArgsPreview,
 	extractTextFromContent,
 } from "./utils.js";
+import { buildSkillInjection, resolveSkills } from "./skills.js";
 
 /**
  * Run a subagent synchronously (blocking until complete)
@@ -89,9 +90,18 @@ export async function runSync(
 		}
 	}
 
+	const skillNames = options.skills ?? agent.skills ?? [];
+	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkills(skillNames, runtimeCwd);
+
+	let systemPrompt = agent.systemPrompt?.trim() || "";
+	if (resolvedSkills.length > 0) {
+		const skillInjection = buildSkillInjection(resolvedSkills);
+		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
+	}
+
 	let tmpDir: string | null = null;
-	if (agent.systemPrompt?.trim()) {
-		const tmp = writePrompt(agent.name, agent.systemPrompt);
+	if (systemPrompt) {
+		const tmp = writePrompt(agent.name, systemPrompt);
 		tmpDir = tmp.dir;
 		args.push("--append-system-prompt", tmp.path);
 	}
@@ -104,6 +114,8 @@ export async function runSync(
 		messages: [],
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
 		model: effectiveModel,  // Initialize with the model we're using
+		skills: resolvedSkills.length > 0 ? resolvedSkills.map((s) => s.name) : undefined,
+		skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
 	};
 
 	const progress: AgentProgress = {
@@ -111,6 +123,7 @@ export async function runSync(
 		agent: agentName,
 		status: "running",
 		task,
+		skills: resolvedSkills.length > 0 ? resolvedSkills.map((s) => s.name) : undefined,
 		recentTools: [],
 		recentOutput: [],
 		toolCount: 0,
@@ -342,20 +355,22 @@ export async function runSync(
 				appendJsonl(artifactPathsResult.jsonlPath, line);
 			}
 		}
-		if (artifactConfig?.includeMetadata !== false) {
-			writeMetadata(artifactPathsResult.metadataPath, {
-				runId,
-				agent: agentName,
-				task,
-				exitCode: result.exitCode,
-				usage: result.usage,
-				model: result.model,
-				durationMs: progress.durationMs,
-				toolCount: progress.toolCount,
-				error: result.error,
-				timestamp: Date.now(),
-			});
-		}
+				if (artifactConfig?.includeMetadata !== false) {
+					writeMetadata(artifactPathsResult.metadataPath, {
+						runId,
+						agent: agentName,
+						task,
+						exitCode: result.exitCode,
+						usage: result.usage,
+						model: result.model,
+						durationMs: progress.durationMs,
+						toolCount: progress.toolCount,
+						error: result.error,
+						skills: result.skills,
+						skillsWarning: result.skillsWarning,
+						timestamp: Date.now(),
+					});
+				}
 
 		if (maxOutput) {
 			const config = { ...DEFAULT_MAX_OUTPUT, ...maxOutput };

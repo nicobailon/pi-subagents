@@ -24,6 +24,7 @@ import {
 	type ParallelTaskResult,
 	type ResolvedTemplates,
 } from "./settings.js";
+import { discoverAvailableSkills, normalizeSkillInput } from "./skills.js";
 import { runSync } from "./execution.js";
 import { buildChainSummary } from "./formatters.js";
 import { getFinalOutput, mapConcurrent } from "./utils.js";
@@ -72,6 +73,7 @@ export interface ChainExecutionParams {
 	includeProgress?: boolean;
 	clarify?: boolean;
 	onUpdate?: (r: AgentToolResult<Details>) => void;
+	chainSkills?: string[];
 }
 
 export interface ChainExecutionResult {
@@ -98,7 +100,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		includeProgress,
 		clarify,
 		onUpdate,
+		chainSkills: chainSkillsParam,
 	} = params;
+	const chainSkills = chainSkillsParam ?? [];
 
 	const allProgress: AgentProgress[] = [];
 	const allArtifactPaths: ArtifactPaths[] = [];
@@ -138,6 +142,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		id: m.id,
 		fullId: `${m.provider}/${m.id}`,
 	}));
+	const availableSkills = discoverAvailableSkills(ctx.cwd);
 
 	if (shouldClarify) {
 		// Sequential-only chain: use existing TUI
@@ -163,11 +168,12 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			output: step.output,
 			reads: step.reads,
 			progress: step.progress,
+			skills: normalizeSkillInput(step.skill),
 		}));
 
 		// Pre-resolve behaviors for TUI display
 		const resolvedBehaviors = agentConfigs.map((config, i) =>
-			resolveStepBehavior(config, stepOverrides[i]!),
+			resolveStepBehavior(config, stepOverrides[i]!, chainSkills),
 		);
 
 		// Flatten templates for TUI (all strings for sequential)
@@ -184,6 +190,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					chainDir,
 					resolvedBehaviors,
 					availableModels,
+					availableSkills,
 					done,
 				),
 			{
@@ -226,7 +233,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			createParallelDirs(chainDir, stepIndex, step.parallel.length, agentNames);
 
 			// Resolve behaviors for parallel tasks
-			const parallelBehaviors = resolveParallelBehaviors(step.parallel, agents, stepIndex);
+			const parallelBehaviors = resolveParallelBehaviors(step.parallel, agents, stepIndex, chainSkills);
 
 			// If any parallel task has progress enabled and progress.md hasn't been created,
 			// create it now to avoid race conditions
@@ -293,6 +300,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 						artifactConfig,
 						modelOverride: effectiveModel,
+						skills: behavior.skills === false ? [] : behavior.skills,
 						onUpdate: onUpdate
 							? (p) => {
 									// Use concat instead of spread for better performance
@@ -390,8 +398,12 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				output: tuiOverride?.output !== undefined ? tuiOverride.output : seqStep.output,
 				reads: tuiOverride?.reads !== undefined ? tuiOverride.reads : seqStep.reads,
 				progress: tuiOverride?.progress !== undefined ? tuiOverride.progress : seqStep.progress,
+				skills:
+					tuiOverride?.skills !== undefined
+						? tuiOverride.skills
+						: normalizeSkillInput(seqStep.skill),
 			};
-			const behavior = resolveStepBehavior(agentConfig, stepOverride);
+			const behavior = resolveStepBehavior(agentConfig, stepOverride, chainSkills);
 
 			// Determine if this is the first agent to create progress.md
 			const isFirstProgress = behavior.progress && !progressCreated;
@@ -431,6 +443,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
 				modelOverride: effectiveModel,
+				skills: behavior.skills === false ? [] : behavior.skills,
 				onUpdate: onUpdate
 					? (p) => {
 							// Use concat instead of spread for better performance

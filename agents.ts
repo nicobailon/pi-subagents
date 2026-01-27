@@ -16,6 +16,7 @@ export interface AgentConfig {
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
+	skills?: string[];
 	// Chain behavior fields
 	output?: string;
 	defaultReads?: string[];
@@ -101,6 +102,12 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			.map((f) => f.trim())
 			.filter(Boolean);
 
+		const skillStr = frontmatter.skill || frontmatter.skills;
+		const skills = skillStr
+			?.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean);
+
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
@@ -109,6 +116,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			systemPrompt: body,
 			source,
 			filePath,
+			skills: skills && skills.length > 0 ? skills : undefined,
 			// Chain behavior fields
 			output: frontmatter.output,
 			defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,

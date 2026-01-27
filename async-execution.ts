@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
-import { isParallelStep, type ChainStep, type SequentialStep } from "./settings.js";
+import { isParallelStep, resolveStepBehavior, type ChainStep, type SequentialStep, type StepOverrides } from "./settings.js";
+import { buildSkillInjection, normalizeSkillInput, resolveSkills } from "./skills.js";
 import {
 	type ArtifactConfig,
 	type Details,
@@ -44,6 +45,7 @@ export interface AsyncChainParams {
 	artifactConfig: ArtifactConfig;
 	shareEnabled: boolean;
 	sessionRoot?: string;
+	chainSkills?: string[];
 }
 
 export interface AsyncSingleParams {
@@ -57,6 +59,7 @@ export interface AsyncSingleParams {
 	artifactConfig: ArtifactConfig;
 	shareEnabled: boolean;
 	sessionRoot?: string;
+	skills?: string[];
 }
 
 export interface AsyncExecutionResult {
@@ -99,6 +102,7 @@ export function executeAsyncChain(
 	params: AsyncChainParams,
 ): AsyncExecutionResult {
 	const { chain, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot } = params;
+	const chainSkills = params.chainSkills ?? [];
 	
 	// Async mode doesn't support parallel steps (v1 limitation)
 	const hasParallelInChain = chain.some(isParallelStep);
@@ -129,8 +133,19 @@ export function executeAsyncChain(
 		fs.mkdirSync(asyncDir, { recursive: true });
 	} catch {}
 
-	const steps = seqSteps.map((s, i) => {
+	const steps = seqSteps.map((s) => {
 		const a = agents.find((x) => x.name === s.agent)!;
+		const stepSkillInput = normalizeSkillInput(s.skill);
+		const stepOverrides: StepOverrides = { skills: stepSkillInput };
+		const behavior = resolveStepBehavior(a, stepOverrides, chainSkills);
+		const skillNames = behavior.skills === false ? [] : behavior.skills;
+		const { resolved: resolvedSkills } = resolveSkills(skillNames, ctx.cwd);
+
+		let systemPrompt = a.systemPrompt?.trim() || null;
+		if (resolvedSkills.length > 0) {
+			const injection = buildSkillInjection(resolvedSkills);
+			systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
+		}
 		return {
 			agent: s.agent,
 			// First step validated to have task; others default to {previous} (replaced by runner)
@@ -138,7 +153,9 @@ export function executeAsyncChain(
 			cwd: s.cwd,
 			model: a.model,
 			tools: a.tools,
-			systemPrompt: a.systemPrompt?.trim() || null,
+			systemPrompt,
+			// Only track skills that were actually resolved (consistent with single mode)
+			skills: resolvedSkills.map((r) => r.name),
 		};
 	});
 
@@ -200,6 +217,13 @@ export function executeAsyncSingle(
 	params: AsyncSingleParams,
 ): AsyncExecutionResult {
 	const { agent, task, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot } = params;
+	const skillNames = params.skills ?? agentConfig.skills ?? [];
+	const { resolved: resolvedSkills } = resolveSkills(skillNames, ctx.cwd);
+	let systemPrompt = agentConfig.systemPrompt?.trim() || null;
+	if (resolvedSkills.length > 0) {
+		const injection = buildSkillInjection(resolvedSkills);
+		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
+	}
 
 	const asyncDir = path.join(ASYNC_DIR, id);
 	try {
@@ -217,7 +241,9 @@ export function executeAsyncSingle(
 					cwd,
 					model: agentConfig.model,
 					tools: agentConfig.tools,
-					systemPrompt: agentConfig.systemPrompt?.trim() || null,
+					systemPrompt,
+					// Only track skills that were actually resolved
+					skills: resolvedSkills.map((r) => r.name),
 				},
 			],
 			resultPath: path.join(RESULTS_DIR, `${id}.json`),

@@ -4,10 +4,17 @@
 
 import { Type } from "@sinclair/typebox";
 
+const SkillOverride = Type.Union([
+	Type.String({ description: "Skill name(s) to inject (comma-separated)" }),
+	Type.Array(Type.String()),
+	Type.Boolean({ description: "false disables skills, true uses default" }),
+]);
+
 export const TaskItem = Type.Object({ 
 	agent: Type.String(), 
 	task: Type.String(), 
-	cwd: Type.Optional(Type.String()) 
+	cwd: Type.Optional(Type.String()),
+	skill: Type.Optional(SkillOverride),
 });
 
 // Sequential chain step (single agent)
@@ -27,6 +34,7 @@ export const SequentialStepSchema = Type.Object({
 		Type.Boolean(),
 	], { description: "Files to read from {chain_dir} before running (array of filenames), or false to disable" })),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
+	skill: Type.Optional(SkillOverride),
 });
 
 // Parallel task item (within a parallel step)
@@ -43,6 +51,7 @@ export const ParallelTaskSchema = Type.Object({
 		Type.Boolean(),
 	], { description: "Files to read from {chain_dir} before running (array of filenames), or false to disable" })),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
+	skill: Type.Optional(SkillOverride),
 });
 
 // Parallel chain step (multiple agents running concurrently)
@@ -77,13 +86,14 @@ export const SubagentParams = Type.Object({
 	sessionDir: Type.Optional(
 		Type.String({ description: "Directory to store session logs (default: temp; enables sessions even if share=false)" }),
 	),
-	// Chain clarification TUI
-	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to clarify chain templates (default: true for chains). Implies sync mode." })),
+	// Clarification TUI
+	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution (default: true for chains, false for single/parallel). Implies sync mode." })),
 	// Solo agent output override
 	output: Type.Optional(Type.Union([
 		Type.String(),
 		Type.Boolean(),
 	], { description: "Override output file for single agent (string), or false to disable (uses agent default if omitted)" })),
+	skill: Type.Optional(SkillOverride),
 });
 
 export const StatusParams = Type.Object({

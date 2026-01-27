@@ -137,6 +137,12 @@ export function renderSubagentResult(
 
 		if (output) c.addChild(new Markdown(output, 0, 0, mdTheme));
 		c.addChild(new Spacer(1));
+		if (r.skills?.length) {
+			c.addChild(new Text(theme.fg("dim", `Skills: ${r.skills.join(", ")}`), 0, 0));
+		}
+		if (r.skillsWarning) {
+			c.addChild(new Text(theme.fg("warning", `⚠️ ${r.skillsWarning}`), 0, 0));
+		}
 		c.addChild(new Text(theme.fg("dim", formatUsage(r.usage, r.model)), 0, 0));
 		if (r.sessionFile) {
 			c.addChild(new Text(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`), 0, 0));
@@ -277,7 +283,17 @@ export function renderSubagentResult(
 			c.addChild(new Text(theme.fg("dim", `    output: ${outputMatch[1]}`), 0, 0));
 		}
 
+		if (r.skills?.length) {
+			c.addChild(new Text(theme.fg("dim", `    skills: ${r.skills.join(", ")}`), 0, 0));
+		}
+		if (r.skillsWarning) {
+			c.addChild(new Text(theme.fg("warning", `    ⚠️ ${r.skillsWarning}`), 0, 0));
+		}
+
 		if (rRunning && rProg) {
+			if (rProg.skills?.length) {
+				c.addChild(new Text(theme.fg("accent", `    skills: ${rProg.skills.join(", ")}`), 0, 0));
+			}
 			// Current tool for running step
 			if (rProg.currentTool) {
 				const toolLine = rProg.currentToolArgs

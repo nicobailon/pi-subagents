@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-27
+
+### Added
+- **Skill support** - Agents can declare skills in frontmatter that get injected into system prompts
+  - Agent frontmatter: `skill: tmux, chrome-devtools` (comma-separated)
+  - Runtime override: `skill: "name"` or `skill: false` to disable all skills
+  - Chain-level skills additive to agent skills, step-level override supported
+  - Skills injected as XML: `<skill name="...">content</skill>` after agent system prompt
+  - Missing skills warn but continue execution (warning shown in result summary)
+- **TUI skill selector** - Press `[s]` to browse and select skills for any step
+  - Multi-select with space bar
+  - Fuzzy search by name or description
+  - Shows skill source (project/user) and description
+  - Project skills (`.pi/skills/`) override user skills (`~/.pi/agent/skills/`)
+- **Skill display** - Skills shown in TUI, progress tracking, summary, artifacts, and async status
+- **Parallel task skills** - Each parallel task can specify its own skills via `skill` parameter
+
+### Fixed
+- **Chain summary formatting** - Fixed extra blank line when no skills are present
+- **Duplicate skill deduplication** - `skill: "foo,foo"` now correctly deduplicates to `["foo"]`
+- **Consistent skill tracking in async mode** - Both chain and single modes now track only resolved skills
+
 ## [0.4.1] - 2026-01-26
 
 ### Changed

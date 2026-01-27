@@ -37,6 +37,17 @@ export interface TokenUsage {
 }
 
 // ============================================================================
+// Skills
+// ============================================================================
+
+export interface ResolvedSkill {
+	name: string;
+	path: string;
+	content: string;
+	source: "project" | "user";
+}
+
+// ============================================================================
 // Progress Tracking
 // ============================================================================
 
@@ -45,6 +56,7 @@ export interface AgentProgress {
 	agent: string;
 	status: "pending" | "running" | "completed" | "failed";
 	task: string;
+	skills?: string[];
 	currentTool?: string;
 	currentToolArgs?: string;
 	recentTools: Array<{ tool: string; args: string; endMs: number }>;
@@ -75,6 +87,8 @@ export interface SingleResult {
 	model?: string;
 	error?: string;
 	sessionFile?: string;
+	skills?: string[];
+	skillsWarning?: string;
 	progress?: AgentProgress;
 	progressSummary?: ProgressSummary;
 	artifactPaths?: ArtifactPaths;
@@ -136,7 +150,7 @@ export interface AsyncStatus {
 	endedAt?: number;
 	lastUpdate?: number;
 	currentStep?: number;
-	steps?: Array<{ agent: string; status: string; durationMs?: number; tokens?: TokenUsage }>;
+	steps?: Array<{ agent: string; status: string; durationMs?: number; tokens?: TokenUsage; skills?: string[] }>;
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
@@ -195,6 +209,8 @@ export interface RunSyncOptions {
 	share?: boolean;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Skills to inject (overrides agent default if provided) */
+	skills?: string[];
 }
 
 export interface ExtensionConfig {

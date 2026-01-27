@@ -22,9 +22,10 @@ npx pi-subagents --remove
 
 ## Features (beyond base)
 
+- **Skill Injection**: Agents declare skills in frontmatter; skills get injected into system prompts
 - **Parallel-in-Chain**: Fan-out/fan-in patterns with `{ parallel: [...] }` steps within chains
 - **Chain Clarification TUI**: Interactive preview/edit of chain templates and behaviors before execution
-- **Agent Frontmatter Extensions**: Agents declare default chain behavior (`output`, `defaultReads`, `defaultProgress`)
+- **Agent Frontmatter Extensions**: Agents declare default chain behavior (`output`, `defaultReads`, `defaultProgress`, `skill`)
 - **Chain Artifacts**: Shared directory at `/tmp/pi-chain-runs/{runId}/` for inter-step files
 - **Solo Agent Output**: Agents with `output` write to temp dir and return path to caller
 - **Live Progress Display**: Real-time visibility during sync execution showing current tool, recent output, tokens, and duration
@@ -45,18 +46,31 @@ npx pi-subagents --remove
 
 *Chain defaults to sync with TUI clarification. Use `clarify: false` to enable async (sequential-only chains; parallel-in-chain requires sync mode).
 
-**Chain clarification TUI keybindings:**
+**Clarify TUI for single/parallel:**
+
+Single and parallel modes also support the clarify TUI for previewing/editing parameters before execution. Unlike chains, they default to no TUI - use `clarify: true` to enable:
+
+```typescript
+// Single agent with clarify TUI
+{ agent: "scout", task: "Analyze the codebase", clarify: true }
+
+// Parallel tasks with clarify TUI
+{ tasks: [{agent: "scout", task: "Analyze frontend"}, ...], clarify: true }
+```
+
+**Clarification TUI keybindings:**
 
 *Navigation mode:*
-- `Enter` - Run the chain
+- `Enter` - Run
 - `Esc` - Cancel
-- `↑↓` - Navigate between steps
-- `e` - Edit task/template
-- `m` - Select model (fuzzy search with all available models)
-- `t` - Select thinking level (off, minimal, low, medium, high, xhigh)
-- `w` - Edit writes (output file path)
-- `r` - Edit reads list
-- `p` - Toggle progress tracking for ALL steps (chains share one progress.md)
+- `↑↓` - Navigate between steps/tasks (parallel, chain)
+- `e` - Edit task/template (all modes)
+- `m` - Select model (all modes)
+- `t` - Select thinking level (all modes)
+- `s` - Select skills (all modes)
+- `w` - Edit writes/output file (single, chain only)
+- `r` - Edit reads list (chain only)
+- `p` - Toggle progress tracking (chain only)
 
 *Model selector mode:*
 - `↑↓` - Navigate model list
@@ -68,6 +82,13 @@ npx pi-subagents --remove
 - `↑↓` - Navigate level list
 - `Enter` - Select level
 - `Esc` - Cancel (keep current level)
+
+*Skill selector mode:*
+- `↑↓` - Navigate skill list
+- `Space` - Toggle skill selection
+- `Enter` - Confirm selection
+- `Esc` - Cancel (keep current skills)
+- Type to filter (fuzzy search by name or description)
 
 *Edit mode (full-screen editor with word wrapping):*
 - `Esc` - Save changes and exit
@@ -88,6 +109,7 @@ name: scout
 description: Fast codebase recon
 tools: read, grep, find, ls, bash
 model: claude-haiku-4-5
+skill: safe-bash, chrome-devtools  # comma-separated skills to inject
 output: context.md           # writes to {chain_dir}/context.md
 defaultReads: context.md     # comma-separated files to read
 defaultProgress: true        # maintain progress.md
@@ -96,6 +118,44 @@ interactive: true            # (parsed but not enforced in v1)
 ```
 
 **Resolution priority:** step override > agent frontmatter > disabled
+
+## Skills
+
+Skills are specialized instructions loaded from SKILL.md files and injected into the agent's system prompt.
+
+**Skill locations:**
+- Project: `.pi/skills/{name}/SKILL.md` (higher priority)
+- User: `~/.pi/agent/skills/{name}/SKILL.md`
+
+**Usage:**
+```typescript
+// Agent with skills from frontmatter
+{ agent: "scout", task: "..." }  // uses agent's default skills
+
+// Override skills at runtime
+{ agent: "scout", task: "...", skill: "tmux, safe-bash" }
+
+// Disable all skills (including agent defaults)
+{ agent: "scout", task: "...", skill: false }
+
+// Chain with chain-level skills (additive to agent skills)
+{ chain: [...], skill: "code-review" }
+
+// Chain step with skill override
+{ chain: [
+  { agent: "scout", skill: "safe-bash" },  // only safe-bash
+  { agent: "worker", skill: false }        // no skills at all
+]}
+```
+
+**Skill injection format:**
+```xml
+<skill name="safe-bash">
+[skill content from SKILL.md, frontmatter stripped]
+</skill>
+```
+
+**Missing skills:** If a skill cannot be found, execution continues with a warning shown in the result summary.
 
 ## Usage
 
@@ -160,7 +220,8 @@ interactive: true            # (parsed but not enforced in v1)
 | `agent` | string | - | Agent name (single mode) |
 | `task` | string | - | Task string (single mode) |
 | `output` | `string \| false` | agent default | Override output file for single agent |
-| `tasks` | `{agent, task, cwd?}[]` | - | Parallel tasks (sync only) |
+| `skill` | `string \| string[] \| false` | agent default | Override skills (comma-separated string, array, or false to disable) |
+| `tasks` | `{agent, task, cwd?, skill?}[]` | - | Parallel tasks (sync only) |
 | `chain` | ChainItem[] | - | Sequential steps with behavior overrides (see below) |
 | `clarify` | boolean | true (chains) | Show TUI to preview/edit chain; implies sync mode |
 | `agentScope` | `"user" \| "project" \| "both"` | `user` | Agent discovery scope |
@@ -184,6 +245,7 @@ interactive: true            # (parsed but not enforced in v1)
 | `output` | `string \| false` | agent default | Override output filename or disable |
 | `reads` | `string[] \| false` | agent default | Override files to read from chain dir |
 | `progress` | boolean | agent default | Override progress.md tracking |
+| `skill` | `string \| string[] \| false` | agent default | Override skills or disable all |
 
 *Parallel step fields:*
 
@@ -203,6 +265,7 @@ interactive: true            # (parsed but not enforced in v1)
 | `output` | `string \| false` | agent default | Override output (namespaced to parallel-N/M-agent/) |
 | `reads` | `string[] \| false` | agent default | Override files to read |
 | `progress` | boolean | agent default | Override progress tracking |
+| `skill` | `string \| string[] \| false` | agent default | Override skills or disable all |
 
 Status tool:
 
@@ -306,9 +369,17 @@ Legacy events (still emitted):
 ```
 ├── index.ts           # Main extension (registerTool)
 ├── agents.ts          # Agent discovery + frontmatter parsing
+├── skills.ts          # Skill resolution, caching, and discovery
 ├── settings.ts        # Chain behavior resolution, templates, chain dir
 ├── chain-clarify.ts   # TUI component for chain clarification
+├── chain-execution.ts # Chain orchestration (sequential + parallel)
+├── async-execution.ts # Async/background execution support
+├── execution.ts       # Core runSync for single agent execution
+├── render.ts          # TUI rendering (widget, tool result display)
 ├── artifacts.ts       # Artifact management
+├── formatters.ts      # Output formatting utilities
+├── schemas.ts         # TypeBox parameter schemas
+├── utils.ts           # Shared utility functions
 ├── types.ts           # Shared types
 ├── subagent-runner.ts # Async runner
 └── notify.ts          # Async completion notifications

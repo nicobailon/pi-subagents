@@ -20,6 +20,7 @@ interface SubagentStep {
 	model?: string;
 	tools?: string[];
 	systemPrompt?: string | null;
+	skills?: string[];
 }
 
 interface SubagentRunConfig {
@@ -263,6 +264,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			exitCode?: number | null;
 			error?: string;
 			tokens?: TokenUsage;
+			skills?: string[];
 		}>;
 		artifactsDir?: string;
 		sessionDir?: string;
@@ -282,7 +284,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		pid: process.pid,
 		cwd,
 		currentStep: 0,
-		steps: steps.map((step) => ({ agent: step.agent, status: "pending" })),
+		steps: steps.map((step) => ({ agent: step.agent, status: "pending", skills: step.skills })),
 		artifactsDir,
 		sessionDir: config.sessionDir,
 		outputFile,
@@ -307,6 +309,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		const stepStartTime = Date.now();
 		statusPayload.currentStep = stepIndex;
 		statusPayload.steps[stepIndex].status = "running";
+		statusPayload.steps[stepIndex].skills = step.skills;
 		statusPayload.steps[stepIndex].startedAt = stepStartTime;
 		statusPayload.lastUpdate = stepStartTime;
 		writeJson(statusPath, statusPayload);
@@ -413,6 +416,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							task,
 							exitCode: result.exitCode,
 							durationMs: Date.now() - stepStartTime,
+							skills: step.skills,
 							timestamp: Date.now(),
 						},
 						null,

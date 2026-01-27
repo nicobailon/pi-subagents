@@ -19,7 +19,8 @@ import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
-import { cleanupOldChainDirs, getStepAgents, isParallelStep, type ChainStep, type SequentialStep } from "./settings.js";
+import { cleanupOldChainDirs, getStepAgents, isParallelStep, resolveStepBehavior, type ChainStep, type SequentialStep } from "./settings.js";
+import { ChainClarifyComponent, type ChainClarifyResult, type ModelInfo } from "./chain-clarify.js";
 import { cleanupOldArtifacts, getArtifactsDir } from "./artifacts.js";
 import {
 	type AgentProgress,
@@ -45,6 +46,7 @@ import { renderWidget, renderSubagentResult } from "./render.js";
 import { SubagentParams, StatusParams } from "./schemas.js";
 import { executeChain } from "./chain-execution.js";
 import { isAsyncAvailable, executeAsyncChain, executeAsyncSingle } from "./async-execution.js";
+import { discoverAvailableSkills, normalizeSkillInput } from "./skills.js";
 
 // ExtensionConfig is now imported from ./types.js
 
@@ -188,8 +190,13 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 			const requestedAsync = params.async ?? asyncByDefault;
 			const parallelDowngraded = hasTasks && requestedAsync;
 			// clarify implies sync mode (TUI is blocking)
-			// If user requested async without explicit clarify: false, downgrade to sync for chains
-			const effectiveAsync = requestedAsync && !hasTasks && (hasChain ? params.clarify === false : true);
+			// - Chains default to TUI (clarify: true), so async requires explicit clarify: false
+			// - Single defaults to no TUI, so async is allowed unless clarify: true is passed
+			const effectiveAsync = requestedAsync && !hasTasks && (
+				hasChain 
+					? params.clarify === false    // chains: only async if TUI explicitly disabled
+					: params.clarify !== true     // single: async unless TUI explicitly enabled
+			);
 
 			const artifactConfig: ArtifactConfig = {
 				...DEFAULT_ARTIFACT_CONFIG,
@@ -276,6 +283,8 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 				const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId! };
 
 				if (hasChain && params.chain) {
+					const normalized = normalizeSkillInput(params.skill);
+					const chainSkills = normalized === false ? [] : (normalized ?? []);
 					return executeAsyncChain(id, {
 						chain: params.chain as ChainStep[],
 						agents,
@@ -286,6 +295,7 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 						artifactConfig,
 						shareEnabled,
 						sessionRoot,
+						chainSkills,
 					});
 				}
 
@@ -309,6 +319,12 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 						artifactConfig,
 						shareEnabled,
 						sessionRoot,
+						skills: (() => {
+							const normalized = normalizeSkillInput(params.skill);
+							if (normalized === false) return [];
+							if (normalized === undefined) return undefined;
+							return normalized;
+						})(),
 					});
 				}
 			}
@@ -317,6 +333,8 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 			const allArtifactPaths: ArtifactPaths[] = [];
 
 			if (hasChain && params.chain) {
+				const normalized = normalizeSkillInput(params.skill);
+				const chainSkills = normalized === false ? [] : (normalized ?? []);
 				// Use extracted chain execution module
 				return executeChain({
 					chain: params.chain as ChainStep[],
@@ -332,18 +350,92 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 					includeProgress: params.includeProgress,
 					clarify: params.clarify,
 					onUpdate,
+					chainSkills,
 				});
 			}
 
 			if (hasTasks && params.tasks) {
+				// MAX_PARALLEL check first (fail fast before TUI)
 				if (params.tasks.length > MAX_PARALLEL)
 					return {
 						content: [{ type: "text", text: `Max ${MAX_PARALLEL} tasks` }],
 						isError: true,
-						details: { mode: "single" as const, results: [] },
+						details: { mode: "parallel" as const, results: [] },
 					};
-				const results = await mapConcurrent(params.tasks, MAX_CONCURRENCY, async (t, i) =>
-					runSync(ctx.cwd, agents, t.agent, t.task, {
+
+				// Validate all agents exist
+				const agentConfigs: AgentConfig[] = [];
+				for (const t of params.tasks) {
+					const config = agents.find(a => a.name === t.agent);
+					if (!config) {
+						return {
+							content: [{ type: "text", text: `Unknown agent: ${t.agent}` }],
+							isError: true,
+							details: { mode: "parallel" as const, results: [] },
+						};
+					}
+					agentConfigs.push(config);
+				}
+
+				// Mutable copies for TUI modifications
+				let tasks = params.tasks.map(t => t.task);
+				const modelOverrides: (string | undefined)[] = new Array(params.tasks.length).fill(undefined);
+				// Initialize skill overrides from task-level skill params (may be overridden by TUI)
+				const skillOverrides: (string[] | false | undefined)[] = params.tasks.map(t => 
+					normalizeSkillInput((t as { skill?: string | string[] | boolean }).skill)
+				);
+
+				// Show clarify TUI if requested
+				if (params.clarify === true && ctx.hasUI) {
+					// Get available models (same pattern as chain-execution.ts)
+					const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
+						provider: m.provider,
+						id: m.id,
+						fullId: `${m.provider}/${m.id}`,
+					}));
+
+					// Resolve behaviors with task-level skill overrides for TUI display
+					const behaviors = agentConfigs.map((c, i) => 
+						resolveStepBehavior(c, { skills: skillOverrides[i] })
+					);
+					const availableSkills = discoverAvailableSkills(ctx.cwd);
+
+					const result = await ctx.ui.custom<ChainClarifyResult>(
+						(tui, theme, _kb, done) =>
+							new ChainClarifyComponent(
+								tui, theme,
+								agentConfigs,
+								tasks,
+								'',          // no originalTask for parallel (each task is independent)
+								undefined,   // no chainDir for parallel
+								behaviors,
+								availableModels,
+								availableSkills,
+								done,
+								'parallel',  // mode
+							),
+						{ overlay: true, overlayOptions: { anchor: 'center', width: 84, maxHeight: '80%' } },
+					);
+
+					if (!result || !result.confirmed) {
+						return { content: [{ type: 'text', text: 'Cancelled' }], details: { mode: 'parallel', results: [] } };
+					}
+
+					// Apply TUI overrides
+					tasks = result.templates;
+					for (let i = 0; i < result.behaviorOverrides.length; i++) {
+						const override = result.behaviorOverrides[i];
+						if (override?.model) modelOverrides[i] = override.model;
+						if (override?.skills !== undefined) skillOverrides[i] = override.skills;
+					}
+				}
+
+				// Execute with overrides (tasks array has same length as params.tasks)
+				const behaviors = agentConfigs.map(c => resolveStepBehavior(c, {}));
+				const results = await mapConcurrent(params.tasks, MAX_CONCURRENCY, async (t, i) => {
+					const overrideSkills = skillOverrides[i];
+					const effectiveSkills = overrideSkills === undefined ? behaviors[i]?.skills : overrideSkills;
+					return runSync(ctx.cwd, agents, t.agent, tasks[i]!, {
 						cwd: t.cwd ?? params.cwd,
 						signal,
 						runId,
@@ -353,8 +445,10 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 						artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 						artifactConfig,
 						maxOutput: params.maxOutput,
-					}),
-				);
+						modelOverride: modelOverrides[i],
+						skills: effectiveSkills === false ? [] : effectiveSkills,
+					});
+				});
 
 				for (const r of results) {
 					if (r.progress) allProgress.push(r.progress);
@@ -377,25 +471,78 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 			if (hasSingle) {
 				// Look up agent config for output handling
 				const agentConfig = agents.find((a) => a.name === params.agent);
-				// Note: runSync already handles unknown agent, but we need config for output
+				if (!agentConfig) {
+					return {
+						content: [{ type: 'text', text: `Unknown agent: ${params.agent}` }],
+						isError: true,
+						details: { mode: 'single', results: [] },
+					};
+				}
 
 				let task = params.task!;
-				let outputPath: string | undefined;
+				let modelOverride: string | undefined;
+				let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
+				// Normalize output: true means "use default" (same as undefined), false means disable
+				const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
+				let effectiveOutput: string | false | undefined = rawOutput === true ? agentConfig.output : rawOutput;
 
-				// Check if agent has output and it's not disabled
-				if (agentConfig) {
-					const effectiveOutput =
-						params.output !== undefined ? params.output : agentConfig.output;
+				// Show clarify TUI if requested
+				if (params.clarify === true && ctx.hasUI) {
+					// Get available models (same pattern as chain-execution.ts)
+					const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
+						provider: m.provider,
+						id: m.id,
+						fullId: `${m.provider}/${m.id}`,
+					}));
 
-					if (effectiveOutput && effectiveOutput !== false) {
-						const outputDir = `/tmp/pi-${agentConfig.name}-${runId}`;
-						fs.mkdirSync(outputDir, { recursive: true });
-						outputPath = `${outputDir}/${effectiveOutput}`;
+					const behavior = resolveStepBehavior(agentConfig, { output: effectiveOutput, skills: skillOverride });
+					const availableSkills = discoverAvailableSkills(ctx.cwd);
 
-						// Inject output instruction into task
-						task += `\n\n---\n**Output:** Write your findings to: ${outputPath}`;
+					const result = await ctx.ui.custom<ChainClarifyResult>(
+						(tui, theme, _kb, done) =>
+							new ChainClarifyComponent(
+								tui, theme,
+								[agentConfig],
+								[task],
+								task,
+								undefined,  // no chainDir for single
+								[behavior],
+								availableModels,
+								availableSkills,
+								done,
+								'single',   // mode
+							),
+						{ overlay: true, overlayOptions: { anchor: 'center', width: 84, maxHeight: '80%' } },
+					);
+
+					if (!result || !result.confirmed) {
+						return { content: [{ type: 'text', text: 'Cancelled' }], details: { mode: 'single', results: [] } };
 					}
+
+					// Apply TUI overrides
+					task = result.templates[0]!;
+					const override = result.behaviorOverrides[0];
+					if (override?.model) modelOverride = override.model;
+					if (override?.output !== undefined) effectiveOutput = override.output;
+					if (override?.skills !== undefined) skillOverride = override.skills;
 				}
+
+				// Compute output path at runtime (uses effectiveOutput which may be TUI-modified)
+				let outputPath: string | undefined;
+				if (typeof effectiveOutput === 'string' && effectiveOutput) {
+					const outputDir = `/tmp/pi-${agentConfig.name}-${runId}`;
+					fs.mkdirSync(outputDir, { recursive: true });
+					outputPath = `${outputDir}/${effectiveOutput}`;
+
+					// Inject output instruction into task
+					task += `\n\n---\n**Output:** Write your findings to: ${outputPath}`;
+				}
+
+				const effectiveSkills = skillOverride === false
+					? []
+					: skillOverride === undefined
+						? undefined
+						: skillOverride;
 
 				const r = await runSync(ctx.cwd, agents, params.agent!, task, {
 					cwd: params.cwd,
@@ -407,6 +554,8 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 					artifactConfig,
 					maxOutput: params.maxOutput,
 					onUpdate,
+					modelOverride,
+					skills: effectiveSkills,
 				});
 
 				if (r.progress) allProgress.push(r.progress);
