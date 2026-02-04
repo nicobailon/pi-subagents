@@ -50,6 +50,68 @@ import { discoverAvailableSkills, normalizeSkillInput } from "./skills.js";
 
 // ExtensionConfig is now imported from ./types.js
 
+const USER_AGENTS_DIR = path.join(os.homedir(), ".pi", "agent", "agents");
+const SOURCE_LABELS: Record<AgentConfig["source"], string> = {
+	user: "[user]",
+	project: "[project]",
+};
+
+function parseArgs(args?: string): string[] {
+	if (!args) return [];
+	return args.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
+}
+
+function sortAgentsByName(agents: AgentConfig[]): AgentConfig[] {
+	return [...agents].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function pad(value: string, width: number): string {
+	return value.padEnd(width, " ");
+}
+
+function formatAgentsTable(agents: AgentConfig[]): string {
+	if (agents.length === 0) return "No subagents found.";
+	const rows = agents.map((agent) => ({
+		name: agent.name,
+		source: SOURCE_LABELS[agent.source],
+		description: agent.description ?? "",
+	}));
+	const nameWidth = Math.max("Name".length, ...rows.map((row) => row.name.length));
+	const sourceWidth = Math.max("Source".length, ...rows.map((row) => row.source.length));
+	const header = `${pad("Name", nameWidth)}  ${pad("Source", sourceWidth)}  Description`;
+	const divider = `${"-".repeat(nameWidth)}  ${"-".repeat(sourceWidth)}  ${"-".repeat("Description".length)}`;
+	const lines = rows.map((row) => `${pad(row.name, nameWidth)}  ${pad(row.source, sourceWidth)}  ${row.description}`);
+	return [header, divider, ...lines].join("\n");
+}
+
+function sanitizeAgentFileName(name: string): string {
+	return name.trim().replace(/[\\/]/g, "-").replace(/\s+/g, "-");
+}
+
+function shellEscape(value: string): string {
+	return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+async function pickAgent(
+	ctx: ExtensionContext,
+	agents: AgentConfig[],
+	title: string,
+): Promise<AgentConfig | null> {
+	if (!ctx.hasUI) return null;
+	const options = agents.map((agent) => `${agent.name} ${SOURCE_LABELS[agent.source]}`);
+	const choice = await ctx.ui.select(title, options);
+	if (!choice) return null;
+	const index = options.indexOf(choice);
+	return index >= 0 ? agents[index] ?? null : null;
+}
+
+async function promptForName(ctx: ExtensionContext, label: string): Promise<string | null> {
+	if (!ctx.hasUI) return null;
+	const input = await ctx.ui.input(label, "");
+	const trimmed = input?.trim();
+	return trimmed ? trimmed : null;
+}
+
 function loadConfig(): ExtensionConfig {
 	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent", "config.json");
 	try {
@@ -712,6 +774,175 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 			};
 		},
 	};
+
+	const subagentUsage = [
+		"Usage:",
+		"  /subagent list",
+		"  /subagent add <name> [global|local]",
+		"  /subagent edit [name]",
+		"  /subagent promote [name]",
+	].join("\n");
+
+	pi.registerCommand("subagent", {
+		description: "Manage subagents (list, add, edit, promote)",
+		handler: async (args, ctx) => {
+			const tokens = parseArgs(args);
+			const subcommand = tokens[0];
+
+			if (!subcommand) {
+				ctx.ui.notify(subagentUsage, "info");
+				return;
+			}
+
+			switch (subcommand) {
+				case "list": {
+					const { agents } = discoverAgents(ctx.cwd, "both");
+					const sorted = sortAgentsByName(agents);
+					ctx.ui.notify(formatAgentsTable(sorted), "info");
+					return;
+				}
+				case "add": {
+					let name = tokens[1];
+					if (!name) {
+						name = await promptForName(ctx, "Agent name:") ?? "";
+					}
+					if (!name) {
+						ctx.ui.notify("Agent name is required.", "error");
+						return;
+					}
+
+					const scopeArg = tokens[2]?.toLowerCase();
+					let targetScope: "user" | "project" = "project";
+					if (scopeArg && scopeArg !== "local" && scopeArg !== "global") {
+						ctx.ui.notify("Scope must be 'local' or 'global'.", "error");
+						return;
+					}
+					if (scopeArg === "global") targetScope = "user";
+
+					const discovery = discoverAgents(ctx.cwd, "both");
+					if (discovery.agents.some((agent) => agent.name === name)) {
+						ctx.ui.notify(`Agent "${name}" already exists.`, "error");
+						return;
+					}
+
+					const targetDir = targetScope === "user"
+						? USER_AGENTS_DIR
+						: (discovery.projectAgentsDir ?? path.join(ctx.cwd, ".pi", "agents"));
+					fs.mkdirSync(targetDir, { recursive: true });
+
+					const fileName = `${sanitizeAgentFileName(name)}.md`;
+					const filePath = path.join(targetDir, fileName);
+					if (fs.existsSync(filePath)) {
+						ctx.ui.notify(`Agent file already exists: ${filePath}`, "error");
+						return;
+					}
+
+					let description = "";
+					if (ctx.hasUI) {
+						description = (await ctx.ui.input("Agent description:", ""))?.trim() ?? "";
+					}
+					const finalDescription = description || "TODO: describe this agent";
+					const template = [
+						"---",
+						`name: ${name}`,
+						`description: ${finalDescription}`,
+						"---",
+						"",
+						"Describe the agent's system prompt here.",
+						"",
+					].join("\n");
+
+					fs.writeFileSync(filePath, template, "utf-8");
+					ctx.ui.notify(`Created agent at ${filePath}`, "info");
+					return;
+				}
+				case "edit": {
+					const { agents } = discoverAgents(ctx.cwd, "both");
+					if (agents.length === 0) {
+						ctx.ui.notify("No agents found.", "error");
+						return;
+					}
+
+					let agent: AgentConfig | null = null;
+					const name = tokens[1];
+					if (name) {
+						agent = agents.find((entry) => entry.name === name) ?? null;
+					} else {
+						agent = await pickAgent(ctx, sortAgentsByName(agents), "Select agent to edit:");
+					}
+
+					if (!agent) {
+						ctx.ui.notify("Agent not found.", "error");
+						return;
+					}
+
+					const editor = process.env.EDITOR;
+					if (!editor) {
+						ctx.ui.notify("$EDITOR is not set.", "error");
+						return;
+					}
+
+					const result = await pi.exec("sh", ["-c", `${editor} ${shellEscape(agent.filePath)}`]);
+					if (result.code !== 0) {
+						ctx.ui.notify(result.stderr || `Editor exited with code ${result.code}.`, "error");
+						return;
+					}
+
+					ctx.ui.notify(`Updated ${agent.name}.`, "info");
+					return;
+				}
+				case "promote": {
+					const projectDiscovery = discoverAgents(ctx.cwd, "project");
+					const projectAgents = sortAgentsByName(projectDiscovery.agents);
+					if (projectAgents.length === 0) {
+						ctx.ui.notify("No project agents available to promote.", "error");
+						return;
+					}
+
+					let agent: AgentConfig | null = null;
+					const name = tokens[1];
+					if (name) {
+						agent = projectAgents.find((entry) => entry.name === name) ?? null;
+					} else {
+						agent = await pickAgent(ctx, projectAgents, "Select agent to promote:");
+					}
+
+					if (!agent) {
+						ctx.ui.notify("Agent not found.", "error");
+						return;
+					}
+
+					const userDiscovery = discoverAgents(ctx.cwd, "user");
+					if (userDiscovery.agents.some((entry) => entry.name === agent?.name)) {
+						ctx.ui.notify(`A user agent named "${agent.name}" already exists.`, "error");
+						return;
+					}
+
+					fs.mkdirSync(USER_AGENTS_DIR, { recursive: true });
+					const targetPath = path.join(USER_AGENTS_DIR, path.basename(agent.filePath));
+					if (fs.existsSync(targetPath)) {
+						ctx.ui.notify(`Target file already exists: ${targetPath}`, "error");
+						return;
+					}
+
+					try {
+						fs.renameSync(agent.filePath, targetPath);
+					} catch {
+						fs.copyFileSync(agent.filePath, targetPath);
+						fs.unlinkSync(agent.filePath);
+					}
+
+					ctx.ui.notify(`Promoted ${agent.name} to ${targetPath}.`, "info");
+					return;
+				}
+				default: {
+					ctx.ui.notify(`Unknown subcommand: ${subcommand}`, "error");
+					ctx.ui.notify(subagentUsage, "info");
+					return;
+				}
+			}
+		},
+	});
 
 	pi.registerTool(tool);
 	pi.registerTool(statusTool);

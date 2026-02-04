@@ -195,6 +195,15 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
 
 ## Usage
 
+### Commands
+
+The extension registers TUI slash commands for managing subagents:
+
+- `/subagent list` - list agents sorted by name with `[user]` or `[project]` tags.
+- `/subagent add <name> [global|local]` - create a new agent (defaults to local).
+- `/subagent edit [name]` - open an agent in `$EDITOR` (prompts if omitted).
+- `/subagent promote [name]` - move a project agent to the user scope (prompts if omitted).
+
 **subagent tool:**
 ```typescript
 // Single agent
