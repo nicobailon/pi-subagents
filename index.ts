@@ -877,17 +877,34 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 					}
 
 					const editor = process.env.EDITOR;
-					if (!editor) {
-						ctx.ui.notify("$EDITOR is not set.", "error");
+					const canSpawnEditor = Boolean(editor) && Boolean(process.stdin.isTTY);
+
+					if (canSpawnEditor) {
+						const result = await pi.exec("sh", ["-c", `${editor} ${shellEscape(agent.filePath)}`]);
+						if (result.code === 0) {
+							ctx.ui.notify(`Updated ${agent.name}.`, "info");
+							return;
+						}
+
+						if (!ctx.hasUI) {
+							ctx.ui.notify(result.stderr || `Editor exited with code ${result.code}.`, "error");
+							return;
+						}
+					}
+
+					if (!ctx.hasUI) {
+						ctx.ui.notify("$EDITOR is not available and no UI is present.", "error");
 						return;
 					}
 
-					const result = await pi.exec("sh", ["-c", `${editor} ${shellEscape(agent.filePath)}`]);
-					if (result.code !== 0) {
-						ctx.ui.notify(result.stderr || `Editor exited with code ${result.code}.`, "error");
+					const current = fs.readFileSync(agent.filePath, "utf-8");
+					const updated = await ctx.ui.editor(`Edit ${agent.name}:`, current);
+					if (updated === undefined || updated === current) {
+						ctx.ui.notify("No changes made.", "info");
 						return;
 					}
 
+					fs.writeFileSync(agent.filePath, updated, "utf-8");
 					ctx.ui.notify(`Updated ${agent.name}.`, "info");
 					return;
 				}
