@@ -187,55 +187,65 @@ export function getDisplayItems(messages: Message[]): DisplayItem[] {
  * Detect errors in subagent execution from messages
  */
 export function detectSubagentError(messages: Message[]): ErrorInfo {
-	for (const msg of messages) {
-		if (msg.role === "toolResult" && (msg as any).isError) {
-			const text = msg.content.find((c) => c.type === "text");
-			const details = text && "text" in text ? text.text : undefined;
-			const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-			return {
-				hasError: true,
-				exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
-				errorType: (msg as any).toolName || "tool",
-				details: details?.slice(0, 200),
-			};
-		}
+	// Only check the LAST tool result to determine success/failure.
+	// Earlier errors that the agent recovered from should not cause false negatives.
+	// For example, `grep` returning exit code 1 (no matches) is normal and the agent
+	// may have handled it correctly and completed all work successfully.
+	const lastToolResult = findLastToolResult(messages);
+	if (!lastToolResult) return { hasError: false };
+
+	if ((lastToolResult as any).isError) {
+		const text = lastToolResult.content.find((c) => c.type === "text");
+		const details = text && "text" in text ? text.text : undefined;
+		const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+		return {
+			hasError: true,
+			exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
+			errorType: (lastToolResult as any).toolName || "tool",
+			details: details?.slice(0, 200),
+		};
 	}
 
-	for (const msg of messages) {
-		if (msg.role !== "toolResult") continue;
-		const toolName = (msg as any).toolName;
-		if (toolName !== "bash") continue;
+	const toolName = (lastToolResult as any).toolName;
+	if (toolName === "bash") {
+		const text = lastToolResult.content.find((c) => c.type === "text");
+		if (text && "text" in text) {
+			const output = text.text;
 
-		const text = msg.content.find((c) => c.type === "text");
-		if (!text || !("text" in text)) continue;
-		const output = text.text;
-
-		const exitMatch = output.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-		if (exitMatch) {
-			const code = parseInt(exitMatch[1], 10);
-			if (code !== 0) {
-				return { hasError: true, exitCode: code, errorType: "bash", details: output.slice(0, 200) };
+			const exitMatch = output.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+			if (exitMatch) {
+				const code = parseInt(exitMatch[1], 10);
+				if (code !== 0) {
+					return { hasError: true, exitCode: code, errorType: "bash", details: output.slice(0, 200) };
+				}
 			}
-		}
 
-		const errorPatterns = [
-			/command not found/i,
-			/permission denied/i,
-			/no such file or directory/i,
-			/segmentation fault/i,
-			/killed|terminated/i,
-			/out of memory/i,
-			/connection refused/i,
-			/timeout/i,
-		];
-		for (const pattern of errorPatterns) {
-			if (pattern.test(output)) {
-				return { hasError: true, exitCode: 1, errorType: "bash", details: output.slice(0, 200) };
+			const errorPatterns = [
+				/command not found/i,
+				/permission denied/i,
+				/no such file or directory/i,
+				/segmentation fault/i,
+				/killed|terminated/i,
+				/out of memory/i,
+				/connection refused/i,
+				/timeout/i,
+			];
+			for (const pattern of errorPatterns) {
+				if (pattern.test(output)) {
+					return { hasError: true, exitCode: 1, errorType: "bash", details: output.slice(0, 200) };
+				}
 			}
 		}
 	}
 
 	return { hasError: false };
+}
+
+function findLastToolResult(messages: Message[]): Message | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "toolResult") return messages[i];
+	}
+	return undefined;
 }
 
 /**
