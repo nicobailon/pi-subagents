@@ -7,7 +7,6 @@ import * as fs from "node:fs";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
 import {
-	appendJsonl,
 	ensureArtifactsDir,
 	getArtifactPaths,
 	writeArtifact,
@@ -139,14 +138,19 @@ export async function runSync(
 	result.progress = progress;
 
 	const startTime = Date.now();
-	const jsonlLines: string[] = [];
 
 	let artifactPathsResult: ArtifactPaths | undefined;
+	let jsonlStream: fs.WriteStream | null = null;
 	if (artifactsDir && artifactConfig?.enabled !== false) {
 		artifactPathsResult = getArtifactPaths(artifactsDir, runId, agentName, index);
 		ensureArtifactsDir(artifactsDir);
 		if (artifactConfig?.includeInput !== false) {
 			writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${task}`);
+		}
+		if (artifactConfig?.includeJsonl !== false) {
+			try {
+				jsonlStream = fs.createWriteStream(artifactPathsResult.jsonlPath, { flags: "a" });
+			} catch {}
 		}
 	}
 
@@ -167,6 +171,7 @@ export async function runSync(
 		let updatePending = false;
 		let pendingTimer: ReturnType<typeof setTimeout> | null = null;
 		let processClosed = false;
+		let jsonlBackpressure = false;
 		const UPDATE_THROTTLE_MS = 50; // Reduced from 75ms for faster responsiveness
 
 		const scheduleUpdate = () => {
@@ -208,7 +213,19 @@ export async function runSync(
 
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
-			jsonlLines.push(line);
+			if (jsonlStream) {
+				try {
+					const ok = jsonlStream.write(`${line}\n`);
+					if (!ok && !jsonlBackpressure) {
+						jsonlBackpressure = true;
+						proc.stdout.pause();
+						jsonlStream.once("drain", () => {
+							jsonlBackpressure = false;
+							proc.stdout.resume();
+						});
+					}
+				} catch {}
+			}
 			try {
 				const evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
 				const now = Date.now();
@@ -331,6 +348,12 @@ export async function runSync(
 	if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 	result.exitCode = exitCode;
 
+	if (jsonlStream) {
+		try {
+			await new Promise<void>((resolve) => jsonlStream.end(() => resolve()));
+		} catch {}
+	}
+
 	if (exitCode === 0 && !result.error) {
 		const errInfo = detectSubagentError(result.messages);
 		if (errInfo.hasError) {
@@ -364,11 +387,7 @@ export async function runSync(
 		if (artifactConfig?.includeOutput !== false) {
 			writeArtifact(artifactPathsResult.outputPath, fullOutput);
 		}
-		if (artifactConfig?.includeJsonl !== false) {
-			for (const line of jsonlLines) {
-				appendJsonl(artifactPathsResult.jsonlPath, line);
-			}
-		}
+		// JSONL event stream (if enabled) is written incrementally during execution to avoid unbounded memory growth.
 		if (artifactConfig?.includeMetadata !== false) {
 			writeMetadata(artifactPathsResult.metadataPath, {
 				runId,

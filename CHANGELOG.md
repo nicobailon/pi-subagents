@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Stream JSONL artifact capture to disk during sync runs (instead of buffering all JSONL lines in memory), preventing Node/V8 OOM crashes in `subagent parallel`.
+
 ## [0.8.0] - 2026-02-09
 
 ### Added

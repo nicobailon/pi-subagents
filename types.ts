@@ -230,6 +230,8 @@ export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	enabled: true,
 	includeInput: true,
 	includeOutput: true,
+	// JSONL capture can be extremely large (message_update events). It is streamed to disk
+	// during execution to avoid OOMs from in-memory buffering.
 	includeJsonl: true,
 	includeMetadata: true,
 	cleanupDays: 7,
