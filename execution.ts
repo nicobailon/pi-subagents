@@ -151,6 +151,12 @@ export async function runSync(
 	}
 
 	const spawnEnv = { ...process.env };
+	// Recursion guard propagation: mark spawned `pi` process as running "inside" a subagent.
+	const parentDepth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+	const nextDepth = Number.isFinite(parentDepth) ? parentDepth + 1 : 1;
+	spawnEnv.PI_SUBAGENT_DEPTH = String(nextDepth);
+	spawnEnv.PI_SUBAGENT_MAX_DEPTH = process.env.PI_SUBAGENT_MAX_DEPTH ?? "2";
+
 	const mcpDirect = agent.mcpDirectTools;
 	if (mcpDirect?.length) {
 		spawnEnv.MCP_DIRECT_TOOLS = mcpDirect.join(",");
@@ -210,7 +216,12 @@ export async function runSync(
 			if (!line.trim()) return;
 			jsonlLines.push(line);
 			try {
-				const evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
+				const evt = JSON.parse(line) as {
+					type?: string;
+					message?: Message;
+					toolName?: string;
+					args?: unknown;
+				};
 				const now = Date.now();
 				progress.durationMs = now - startTime;
 
@@ -222,6 +233,7 @@ export async function runSync(
 					lastUpdateTime = 0;
 					scheduleUpdate();
 				}
+
 
 				if (evt.type === "tool_execution_end") {
 					if (progress.currentTool) {

@@ -189,6 +189,27 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				}
 				return handleManagementAction(params.action, params, ctx);
 			}
+
+			// Hard recursion guard: prevent subagents from calling the subagent tool again.
+			// We propagate PI_SUBAGENT_DEPTH into spawned `pi` processes (see execution.ts/subagent-runner.ts).
+			const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+			const maxDepth = Number(process.env.PI_SUBAGENT_MAX_DEPTH ?? "2");
+			if (Number.isFinite(depth) && Number.isFinite(maxDepth) && depth >= maxDepth) {
+				// Don't hard-fail: return guidance so the calling agent can recover without marking the whole run failed.
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Nested subagent call blocked (PI_SUBAGENT_DEPTH=${depth}, PI_SUBAGENT_MAX_DEPTH=${maxDepth}). ` +
+								"This tool call is a no-op to prevent runaway recursion. " +
+								"Convert this into a top-level chain/parallel plan and execute it from your main session instead (still no nesting beyond the limit). " +
+								"If you really need deeper nesting, set PI_SUBAGENT_MAX_DEPTH before starting pi.",
+						},
+					],
+					details: { mode: "single" as const, results: [] },
+				};
+			}
 			const scope: AgentScope = params.agentScope ?? "user";
 			currentSessionId = ctx.sessionManager.getSessionFile() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			const agents = discoverAgents(ctx.cwd, scope).agents;

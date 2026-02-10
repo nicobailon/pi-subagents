@@ -594,6 +594,25 @@ Press **Ctrl+O** to expand the full streaming view with complete output per step
 
 > **Note:** Chain visualization (the `✓scout → ●planner` line) is only shown for sequential chains. Chains with parallel steps show per-step cards instead.
 
+## Nested subagent recursion guard
+
+`pi-subagents` can spawn `pi` processes which themselves have access to the `subagent` tool. Unbounded nesting can easily lead to runaway recursion (slow, expensive, and hard to observe).
+
+By default, nesting is limited to:
+
+- `main session → subagent → subsubagent`
+
+Further nested `subagent` calls are blocked and return guidance (no hard error).
+
+Override with an environment variable **set before starting `pi`**:
+
+```bash
+export PI_SUBAGENT_MAX_DEPTH=2  # default
+export PI_SUBAGENT_MAX_DEPTH=3  # allow one more level (use with caution)
+```
+
+> Increasing the max depth increases the chance of accidental recursion and token cost.
+
 ## Async observability
 
 Async runs write a dedicated observability folder:

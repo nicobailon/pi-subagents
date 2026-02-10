@@ -102,8 +102,13 @@ function runPiStreaming(
 ): Promise<{ stdout: string; exitCode: number | null }> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
-		const spawnEnv = env ? { ...process.env, ...env } : undefined;
-		const child = spawn("pi", args, { cwd, stdio: ["ignore", "pipe", "pipe"], ...(spawnEnv && { env: spawnEnv }) });
+		const spawnEnv = { ...process.env, ...(env ?? {}) };
+		// Recursion guard propagation for async runner: spawned `pi` processes are "inside" subagent execution.
+		const parentDepth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+		const nextDepth = Number.isFinite(parentDepth) ? parentDepth + 1 : 1;
+		spawnEnv.PI_SUBAGENT_DEPTH = String(nextDepth);
+		spawnEnv.PI_SUBAGENT_MAX_DEPTH = process.env.PI_SUBAGENT_MAX_DEPTH ?? "2";
+		const child = spawn("pi", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: spawnEnv });
 		let stdout = "";
 
 		child.stdout.on("data", (chunk: Buffer) => {
