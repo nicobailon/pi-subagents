@@ -24,7 +24,6 @@ import {
 	writePrompt,
 	getFinalOutput,
 	findLatestSessionFile,
-	detectSubagentError,
 	extractToolArgsPreview,
 	extractTextFromContent,
 } from "./utils.js";
@@ -139,6 +138,50 @@ export async function runSync(
 
 	const startTime = Date.now();
 
+	// Keep memory bounded: only retain what we need for streaming UI + final output + error reporting.
+	let finalOutputText = "";
+	let lastToolError: { toolName: string; exitCode?: number; details?: string } | null = null;
+	const MAX_STORED_MESSAGES = 200;
+	const MAX_TAIL_CHARS = 20_000;
+	const MAX_STDERR_CHARS = 200_000;
+
+	const pushMessage = (msg: Message) => {
+		result.messages.push(msg);
+		if (result.messages.length > MAX_STORED_MESSAGES) {
+			result.messages.splice(0, result.messages.length - MAX_STORED_MESSAGES);
+		}
+	};
+
+	const parseExitCode = (text: string | undefined): number | undefined => {
+		if (!text) return undefined;
+		const m = text.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+		if (!m) return undefined;
+		const code = parseInt(m[1], 10);
+		return Number.isFinite(code) ? code : undefined;
+	};
+
+	// Tail helper that avoids allocating large arrays via `split("\n")`.
+	const tailLines = (text: string, maxLines: number, maxChars: number = MAX_TAIL_CHARS): string[] => {
+		if (!text) return [];
+		let s = text;
+		if (s.length > maxChars) s = s.slice(-maxChars);
+		const out: string[] = [];
+		let end = s.length;
+		for (let i = s.length - 1; i >= 0 && out.length < maxLines; i--) {
+			if (s.charCodeAt(i) === 10 /* \n */) {
+				const seg = s.slice(i + 1, end).trim();
+				if (seg) out.push(seg);
+				end = i;
+			}
+		}
+		if (out.length < maxLines) {
+			const first = s.slice(0, end).trim();
+			if (first) out.push(first);
+		}
+		out.reverse();
+		return out.length > maxLines ? out.slice(-maxLines) : out;
+	};
+
 	let artifactPathsResult: ArtifactPaths | undefined;
 	let jsonlStream: fs.WriteStream | null = null;
 	if (artifactsDir && artifactConfig?.enabled !== false) {
@@ -190,7 +233,7 @@ export async function runSync(
 				updatePending = false;
 				progress.durationMs = now - startTime;
 				onUpdate({
-					content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+					content: [{ type: "text", text: finalOutputText || "(running...)" }],
 					details: { mode: "single", results: [result], progress: [progress] },
 				});
 			} else if (!updatePending) {
@@ -203,7 +246,7 @@ export async function runSync(
 						lastUpdateTime = Date.now();
 						progress.durationMs = Date.now() - startTime;
 						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+							content: [{ type: "text", text: finalOutputText || "(running...)" }],
 							details: { mode: "single", results: [result], progress: [progress] },
 						});
 					}
@@ -239,7 +282,6 @@ export async function runSync(
 					lastUpdateTime = 0;
 					scheduleUpdate();
 				}
-
 				if (evt.type === "tool_execution_end") {
 					if (progress.currentTool) {
 						progress.recentTools.unshift({
@@ -257,8 +299,9 @@ export async function runSync(
 				}
 
 				if (evt.type === "message_end" && evt.message) {
-					result.messages.push(evt.message);
+					// Only retain assistant messages (tool results are handled separately) to avoid unbounded memory growth.
 					if (evt.message.role === "assistant") {
+						pushMessage(evt.message);
 						result.usage.turns++;
 						const u = evt.message.usage;
 						if (u) {
@@ -274,34 +317,48 @@ export async function runSync(
 
 						const text = extractTextFromContent(evt.message.content);
 						if (text) {
-							const lines = text
-								.split("\n")
-								.filter((l) => l.trim())
-								.slice(-10);
+							finalOutputText = text;
+							const lines = tailLines(text, 10);
 							// Append to existing recentOutput (keep last 50 total) - mutate in place for efficiency
 							progress.recentOutput.push(...lines);
 							if (progress.recentOutput.length > 50) {
 								progress.recentOutput.splice(0, progress.recentOutput.length - 50);
 							}
 						}
+					} else if (evt.message.errorMessage) {
+						// Preserve error information even if we don't store the whole message.
+						result.error = evt.message.errorMessage;
 					}
 					scheduleUpdate();
 				}
 				if (evt.type === "tool_result_end" && evt.message) {
-					result.messages.push(evt.message);
-					// Also capture tool result text in recentOutput for streaming display
-					const toolText = extractTextFromContent(evt.message.content);
+					const msg = evt.message;
+					const toolName = ((msg as any).toolName as string | undefined) || evt.toolName || "tool";
+					const isError = Boolean((msg as any).isError);
+
+					// Capture a small tail of tool output for streaming display.
+					const toolText = extractTextFromContent(msg.content);
 					if (toolText) {
-						const toolLines = toolText
-							.split("\n")
-							.filter((l) => l.trim())
-							.slice(-10);
-						// Append to existing recentOutput (keep last 50 total) - mutate in place for efficiency
+						const toolLines = tailLines(toolText, 10);
 						progress.recentOutput.push(...toolLines);
 						if (progress.recentOutput.length > 50) {
 							progress.recentOutput.splice(0, progress.recentOutput.length - 50);
 						}
 					}
+
+					const exitCode = toolName === "bash" ? parseExitCode(toolText) : undefined;
+					if (isError || (toolName === "bash" && exitCode !== undefined && exitCode !== 0)) {
+						lastToolError = {
+							toolName,
+							exitCode: exitCode ?? 1,
+							details: toolText ? toolText.slice(0, 200) : undefined,
+						};
+						pushMessage(msg);
+					} else {
+						// Any successful tool result after an error clears the error.
+						lastToolError = null;
+					}
+
 					scheduleUpdate();
 				}
 			} catch {}
@@ -311,15 +368,20 @@ export async function runSync(
 
 		proc.stdout.on("data", (d) => {
 			buf += d.toString();
-			const lines = buf.split("\n");
-			buf = lines.pop() || "";
-			lines.forEach(processLine);
+			let idx = buf.indexOf("\n");
+			while (idx !== -1) {
+				const line = buf.slice(0, idx);
+				buf = buf.slice(idx + 1);
+				processLine(line);
+				idx = buf.indexOf("\n");
+			}
 
 			// Also schedule an update on data received (handles streaming output)
 			scheduleUpdate();
 		});
 		proc.stderr.on("data", (d) => {
 			stderrBuf += d.toString();
+			if (stderrBuf.length > MAX_STDERR_CHARS) stderrBuf = stderrBuf.slice(-MAX_STDERR_CHARS);
 		});
 		proc.on("close", (code) => {
 			processClosed = true;
@@ -354,14 +416,11 @@ export async function runSync(
 		} catch {}
 	}
 
-	if (exitCode === 0 && !result.error) {
-		const errInfo = detectSubagentError(result.messages);
-		if (errInfo.hasError) {
-			result.exitCode = errInfo.exitCode ?? 1;
-			result.error = errInfo.details
-				? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
-				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
-		}
+	if (exitCode === 0 && !result.error && lastToolError) {
+		result.exitCode = lastToolError.exitCode ?? 1;
+		result.error = lastToolError.details
+			? `${lastToolError.toolName} failed (exit ${result.exitCode}): ${lastToolError.details}`
+			: `${lastToolError.toolName} failed with exit code ${result.exitCode}`;
 	}
 
 	progress.status = result.exitCode === 0 ? "completed" : "failed";
@@ -382,7 +441,7 @@ export async function runSync(
 
 	if (artifactPathsResult && artifactConfig?.enabled !== false) {
 		result.artifactPaths = artifactPathsResult;
-		const fullOutput = getFinalOutput(result.messages);
+		const fullOutput = finalOutputText || getFinalOutput(result.messages);
 
 		if (artifactConfig?.includeOutput !== false) {
 			writeArtifact(artifactPathsResult.outputPath, fullOutput);
@@ -414,7 +473,7 @@ export async function runSync(
 		}
 	} else if (maxOutput) {
 		const config = { ...DEFAULT_MAX_OUTPUT, ...maxOutput };
-		const fullOutput = getFinalOutput(result.messages);
+		const fullOutput = finalOutputText || getFinalOutput(result.messages);
 		const truncationResult = truncateOutput(fullOutput, config);
 		if (truncationResult.truncated) {
 			result.truncation = truncationResult;
