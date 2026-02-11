@@ -203,6 +203,12 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); target.skills = skills.length ? skills : undefined; }
 		else return "config.skills must be a comma-separated string or false when provided.";
 	}
+	if (hasKey(cfg, "extensions")) {
+		if (cfg.extensions === false) target.extensions = undefined;
+		else if (cfg.extensions === "") target.extensions = [];
+		else if (typeof cfg.extensions === "string") { target.extensions = parseCsv(cfg.extensions); }
+		else return "config.extensions must be a comma-separated string, empty string, or false when provided.";
+	}
 	if (hasKey(cfg, "thinking")) {
 		if (cfg.thinking === false || cfg.thinking === "") target.thinking = undefined;
 		else if (typeof cfg.thinking === "string") target.thinking = cfg.thinking.trim() || undefined;
@@ -273,6 +279,7 @@ export function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.model) lines.push(`Model: ${agent.model}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
+	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.thinking) lines.push(`Thinking: ${agent.thinking}`);
 	if (agent.output) lines.push(`Output: ${agent.output}`);
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);

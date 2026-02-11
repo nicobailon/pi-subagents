@@ -64,6 +64,10 @@ function buildDetailLines(
 	lines.push(renderFieldLine("Tools:", tools, contentWidth, theme));
 	lines.push(renderFieldLine("MCP:", mcp, contentWidth, theme));
 	lines.push(renderFieldLine("Skills:", skillsList, contentWidth, theme));
+	const extensionsList = agent.extensions !== undefined
+		? (agent.extensions.length > 0 ? agent.extensions.join(", ") : "(none)")
+		: "(all)";
+	lines.push(renderFieldLine("Extensions:", extensionsList, contentWidth, theme));
 	lines.push(renderFieldLine("Output:", output, contentWidth, theme));
 	lines.push(renderFieldLine("Reads:", reads, contentWidth, theme));
 	lines.push(renderFieldLine("Progress:", progress, contentWidth, theme));

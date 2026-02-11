@@ -95,6 +95,15 @@ export async function runSync(
 			args.push("--extension", extPath);
 		}
 	}
+	// Extensions whitelist: when the agent defines an `extensions` field,
+	// disable auto-discovered extensions and load only the listed ones.
+	// If `extensions` is absent (undefined), all extensions load (backward compat).
+	if (agent.extensions !== undefined) {
+		args.push("--no-extensions");
+		for (const extPath of agent.extensions) {
+			args.push("--extension", extPath);
+		}
+	}
 
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkills(skillNames, runtimeCwd);
