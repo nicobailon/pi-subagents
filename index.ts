@@ -158,7 +158,7 @@ EXECUTION (use exactly ONE mode):
 CHAIN TEMPLATE VARIABLES (use in task strings):
 • {task} - The original task/request from the user
 • {previous} - Text response from the previous step (empty for first step)
-• {chain_dir} - Shared directory for chain files (e.g., /tmp/pi-chain-runs/abc123/)
+• {chain_dir} - Shared directory for chain files (e.g., <tmpdir>/pi-chain-runs/abc123/)
 
 CHAIN DATA FLOW:
 1. Each step's text response automatically becomes {previous} for the next step
@@ -583,7 +583,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				const cleanTask = task;
 				let outputPath: string | undefined;
 				if (typeof effectiveOutput === 'string' && effectiveOutput) {
-					const outputDir = `/tmp/pi-${agentConfig.name}-${runId}`;
+					const outputDir = path.join(os.tmpdir(), `pi-${agentConfig.name}-${runId}`);
 					fs.mkdirSync(outputDir, { recursive: true });
 					outputPath = `${outputDir}/${effectiveOutput}`;
 

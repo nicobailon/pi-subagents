@@ -2,6 +2,8 @@
  * Type definitions for the subagent extension
  */
 
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 
 // ============================================================================
@@ -237,8 +239,8 @@ export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 
 export const MAX_PARALLEL = 8;
 export const MAX_CONCURRENCY = 4;
-export const RESULTS_DIR = "/tmp/pi-async-subagent-results";
-export const ASYNC_DIR = "/tmp/pi-async-subagent-runs";
+export const RESULTS_DIR = path.join(os.tmpdir(), "pi-async-subagent-results");
+export const ASYNC_DIR = path.join(os.tmpdir(), "pi-async-subagent-runs");
 export const WIDGET_KEY = "subagent-async";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
