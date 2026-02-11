@@ -158,8 +158,11 @@ export function renderSubagentResult(
 	const hasRunning = d.progress?.some((p) => p.status === "running") 
 		|| d.results.some((r) => r.progress?.status === "running");
 	const ok = d.results.filter((r) => r.progress?.status === "completed" || (r.exitCode === 0 && r.progress?.status !== "running")).length;
+	const emptyOk = d.results.filter((r) => r.exitCode === 0 && r.progress?.status !== "running" && !getFinalOutput(r.messages)?.trim()).length;
 	const icon = hasRunning
 		? theme.fg("warning", "...")
+		: emptyOk > 0
+			? theme.fg("warning", "⚠")
 		: ok === d.results.length
 			? theme.fg("success", "ok")
 			: theme.fg("error", "X");
@@ -205,9 +208,12 @@ export function renderSubagentResult(
 					const result = d.results[i];
 					const isFailed = result && result.exitCode !== 0 && result.progress?.status !== "running";
 					const isComplete = result && result.exitCode === 0 && result.progress?.status !== "running";
+					const isEmpty = isComplete && !getFinalOutput(result.messages)?.trim();
 					const isCurrent = i === (d.currentStepIndex ?? d.results.length);
 					const icon = isFailed
 						? theme.fg("error", "✗")
+						: isEmpty
+							? theme.fg("warning", "⚠")
 						: isComplete
 							? theme.fg("success", "✓")
 							: isCurrent && hasRunning
@@ -259,12 +265,15 @@ export function renderSubagentResult(
 		const rProg = r.progress || progressFromArray || r.progressSummary;
 		const rRunning = rProg?.status === "running";
 
-		// Step header with status
+		// Step header with status (⚠ for exit 0 but empty output — e.g. API quota errors)
+		const hasOutput = !!getFinalOutput(r.messages)?.trim();
 		const statusIcon = rRunning
 			? theme.fg("warning", "●")
-			: r.exitCode === 0
-				? theme.fg("success", "✓")
-				: theme.fg("error", "✗");
+			: r.exitCode !== 0
+				? theme.fg("error", "✗")
+				: hasOutput
+					? theme.fg("success", "✓")
+					: theme.fg("warning", "⚠");
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
 		// Show model if available (full provider/model format)
 		const modelDisplay = r.model ? theme.fg("dim", ` (${r.model})`) : "";
