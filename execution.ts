@@ -159,7 +159,30 @@ export async function runSync(
 	}
 
 	const exitCode = await new Promise<number>((resolve) => {
-		const proc = spawn("pi", args, { cwd: cwd ?? runtimeCwd, env: spawnEnv, stdio: ["ignore", "pipe", "pipe"] });
+		// On Windows, spawn("pi", args) fails with ENOENT because "pi" is a cmd/sh wrapper,
+		// and spawn("pi", args, { shell: true }) splits unquoted args on spaces (DEP0190),
+		// fragmenting task strings into multiple user messages.
+		// Fix: spawn node directly with the pi CLI script, bypassing cmd.exe entirely.
+		let spawnCmd: string;
+		let spawnArgs: string[];
+		let useShell: boolean;
+		if (process.platform === "win32") {
+			const piCli = process.argv[1];
+			if (piCli && (piCli.endsWith(".js") || piCli.endsWith(".mjs")) && fs.existsSync(piCli)) {
+				spawnCmd = process.execPath;
+				spawnArgs = [piCli, ...args];
+				useShell = false;
+			} else {
+				spawnCmd = "pi";
+				spawnArgs = args.map((a) => (a.includes(" ") ? `"${a.replace(/"/g, '\\"')}"` : a));
+				useShell = true;
+			}
+		} else {
+			spawnCmd = "pi";
+			spawnArgs = args;
+			useShell = false;
+		}
+		const proc = spawn(spawnCmd, spawnArgs, { cwd: cwd ?? runtimeCwd, env: spawnEnv, stdio: ["ignore", "pipe", "pipe"], shell: useShell });
 		let buf = "";
 
 		// Throttled update mechanism - consolidates all updates

@@ -103,7 +103,29 @@ function runPiStreaming(
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
 		const spawnEnv = env ? { ...process.env, ...env } : undefined;
-		const child = spawn("pi", args, { cwd, stdio: ["ignore", "pipe", "pipe"], ...(spawnEnv && { env: spawnEnv }) });
+		// On Windows, spawn("pi") fails with ENOENT (no shell to resolve the wrapper),
+		// and shell: true splits args on spaces (DEP0190), breaking task strings.
+		// Fix: spawn node directly with the pi CLI script, bypassing cmd.exe entirely.
+		let spawnCmd: string;
+		let spawnArgs: string[];
+		let useShell: boolean;
+		if (process.platform === "win32") {
+			const piCli = process.argv[1];
+			if (piCli && (piCli.endsWith(".js") || piCli.endsWith(".mjs")) && fs.existsSync(piCli)) {
+				spawnCmd = process.execPath;
+				spawnArgs = [piCli, ...args];
+				useShell = false;
+			} else {
+				spawnCmd = "pi";
+				spawnArgs = args.map((a) => (a.includes(" ") ? `"${a.replace(/"/g, '\\"')}"` : a));
+				useShell = true;
+			}
+		} else {
+			spawnCmd = "pi";
+			spawnArgs = args;
+			useShell = false;
+		}
+		const child = spawn(spawnCmd, spawnArgs, { cwd, stdio: ["ignore", "pipe", "pipe"], ...(spawnEnv && { env: spawnEnv }), shell: useShell });
 		let stdout = "";
 
 		child.stdout.on("data", (chunk: Buffer) => {
