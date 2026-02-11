@@ -509,8 +509,13 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 
 				const ok = results.filter((r) => r.exitCode === 0).length;
 				const downgradeNote = parallelDowngraded ? " (async not supported for parallel)" : "";
+				const outputs = results.map((r) => {
+					const output = r.truncation?.text || getFinalOutput(r.messages);
+					const status = r.exitCode === 0 ? "completed" : "FAILED";
+					return `## [${r.agent}] ${status}\n\n${output || "(no output)"}`;
+				});
 				return {
-					content: [{ type: "text", text: `${ok}/${results.length} succeeded${downgradeNote}` }],
+					content: [{ type: "text", text: `${ok}/${results.length} succeeded${downgradeNote}\n\n${outputs.join("\n\n---\n\n")}` }],
 					details: {
 						mode: "parallel",
 						results,
