@@ -583,9 +583,13 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				const cleanTask = task;
 				let outputPath: string | undefined;
 				if (typeof effectiveOutput === 'string' && effectiveOutput) {
-					const outputDir = `/tmp/pi-${agentConfig.name}-${runId}`;
-					fs.mkdirSync(outputDir, { recursive: true });
-					outputPath = `${outputDir}/${effectiveOutput}`;
+					// Resolve: absolute path -> use as-is, relative -> resolve against cwd
+					if (path.isAbsolute(effectiveOutput)) {
+						outputPath = effectiveOutput;
+					} else {
+						outputPath = path.resolve(params.cwd ?? ctx.cwd, effectiveOutput);
+					}
+					fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
 					// Inject output instruction into task
 					task += `\n\n---\n**Output:** Write your findings to: ${outputPath}`;
@@ -618,6 +622,9 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				// Get output and append file path if applicable
 				let output = r.truncation?.text || getFinalOutput(r.messages);
 				if (outputPath && r.exitCode === 0) {
+					// Save agent response to output path (works even with read-only agents)
+					fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+					fs.writeFileSync(outputPath, output, "utf-8");
 					output += `\n\n📄 Output saved to: ${outputPath}`;
 				}
 
