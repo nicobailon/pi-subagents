@@ -363,12 +363,23 @@ export interface ParallelTaskResult {
 /**
  * Aggregate outputs from parallel tasks into a single string for {previous}.
  * Uses clear separators so the next agent can parse all outputs.
+ * Surfaces errors and empty outputs so downstream steps can react.
  */
 export function aggregateParallelOutputs(results: ParallelTaskResult[]): string {
 	return results
 		.map((r, i) => {
 			const header = `=== Parallel Task ${i + 1} (${r.agent}) ===`;
-			return `${header}\n${r.output}`;
+			const status = r.exitCode !== 0
+				? `⚠️ FAILED (exit code ${r.exitCode})${r.error ? `: ${r.error}` : ""}`
+				: r.error
+					? `⚠️ WARNING: ${r.error}`
+					: !r.output?.trim()
+						? "⚠️ EMPTY OUTPUT (no content returned — possible API quota or model error)"
+						: "";
+			const body = status
+				? (r.output?.trim() ? `${status}\n${r.output}` : status)
+				: r.output;
+			return `${header}\n${body}`;
 		})
 		.join("\n\n");
 }
