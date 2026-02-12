@@ -7,7 +7,6 @@ import * as fs from "node:fs";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
 import {
-	appendJsonl,
 	ensureArtifactsDir,
 	getArtifactPaths,
 	writeArtifact,
@@ -32,6 +31,7 @@ import {
 } from "./utils.js";
 import { buildSkillInjection, resolveSkills } from "./skills.js";
 import { getPiSpawnCommand } from "./pi-spawn.js";
+import { createJsonlWriter } from "./jsonl-writer.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -151,14 +151,17 @@ export async function runSync(
 	result.progress = progress;
 
 	const startTime = Date.now();
-	const jsonlLines: string[] = [];
 
 	let artifactPathsResult: ArtifactPaths | undefined;
+	let jsonlPath: string | undefined;
 	if (artifactsDir && artifactConfig?.enabled !== false) {
 		artifactPathsResult = getArtifactPaths(artifactsDir, runId, agentName, index);
 		ensureArtifactsDir(artifactsDir);
 		if (artifactConfig?.includeInput !== false) {
 			writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${task}`);
+		}
+		if (artifactConfig?.includeJsonl !== false) {
+			jsonlPath = artifactPathsResult.jsonlPath;
 		}
 	}
 
@@ -170,6 +173,7 @@ export async function runSync(
 		spawnEnv.MCP_DIRECT_TOOLS = "__none__";
 	}
 
+	let closeJsonlWriter: (() => Promise<void>) | undefined;
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
@@ -177,6 +181,8 @@ export async function runSync(
 			env: spawnEnv,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
+		const jsonlWriter = createJsonlWriter(jsonlPath, proc.stdout);
+		closeJsonlWriter = () => jsonlWriter.close();
 		let buf = "";
 
 		// Throttled update mechanism - consolidates all updates
@@ -225,7 +231,7 @@ export async function runSync(
 
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
-			jsonlLines.push(line);
+			jsonlWriter.writeLine(line);
 			try {
 				const evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
 				const now = Date.now();
@@ -345,6 +351,12 @@ export async function runSync(
 		}
 	});
 
+	if (closeJsonlWriter) {
+		try {
+			await closeJsonlWriter();
+		} catch {}
+	}
+
 	if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 	result.exitCode = exitCode;
 
@@ -380,11 +392,6 @@ export async function runSync(
 
 		if (artifactConfig?.includeOutput !== false) {
 			writeArtifact(artifactPathsResult.outputPath, fullOutput);
-		}
-		if (artifactConfig?.includeJsonl !== false) {
-			for (const line of jsonlLines) {
-				appendJsonl(artifactPathsResult.jsonlPath, line);
-			}
 		}
 		if (artifactConfig?.includeMetadata !== false) {
 			writeMetadata(artifactPathsResult.metadataPath, {
