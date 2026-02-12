@@ -78,7 +78,10 @@ export async function runSync(
 	}
 	const effectiveModel = modelOverride ?? agent.model;
 	const modelArg = applyThinkingSuffix(effectiveModel, agent.thinking);
-	if (modelArg) args.push("--model", modelArg);
+	// Use --models (not --model) because pi CLI silently ignores --model
+	// without a companion --provider flag. --models resolves the provider
+	// automatically via resolveModelScope. See: #8
+	if (modelArg) args.push("--models", modelArg);
 	if (agent.tools?.length) {
 		const builtinTools: string[] = [];
 		const extensionPaths: string[] = [];

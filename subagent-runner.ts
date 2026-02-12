@@ -337,7 +337,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			} catch {}
 			args.push("--session-dir", config.sessionDir);
 		}
-		if (step.model) args.push("--model", step.model);
+		// Use --models (not --model) because pi CLI silently ignores --model
+		// without a companion --provider flag. --models resolves the provider
+		// automatically via resolveModelScope. See: #8
+		if (step.model) args.push("--models", step.model);
 		if (step.tools?.length) {
 			const builtinTools: string[] = [];
 			const extensionPaths: string[] = [];

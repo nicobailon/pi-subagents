@@ -11,6 +11,7 @@ export const TaskItem = Type.Object({
 	agent: Type.String(), 
 	task: Type.String(), 
 	cwd: Type.Optional(Type.String()),
+	model: Type.Optional(Type.String({ description: "Override model for this task (e.g. 'google/gemini-3-pro')" })),
 	skill: Type.Optional(SkillOverride),
 });
 

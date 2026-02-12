@@ -425,7 +425,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 
 				// Mutable copies for TUI modifications
 				let tasks = params.tasks.map(t => t.task);
-				const modelOverrides: (string | undefined)[] = new Array(params.tasks.length).fill(undefined);
+				const modelOverrides: (string | undefined)[] = params.tasks.map(t => (t as { model?: string }).model);
 				// Initialize skill overrides from task-level skill params (may be overridden by TUI)
 				const skillOverrides: (string[] | false | undefined)[] = params.tasks.map(t => 
 					normalizeSkillInput((t as { skill?: string | string[] | boolean }).skill)
