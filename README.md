@@ -31,7 +31,7 @@ Agents are markdown files with YAML frontmatter that define specialized subagent
 | User | `~/.pi/agent/agents/{name}.md` |
 | Project | `.pi/agents/{name}.md` (searches up directory tree) |
 
-Use `agentScope` parameter to control discovery: `"user"` (default), `"project"`, or `"both"` (project takes priority).
+Use `agentScope` parameter to control discovery: `"user"`, `"project"`, or `"both"` (default; project takes priority).
 
 **Agent frontmatter:**
 
@@ -503,7 +503,7 @@ Notes:
 | `chain` | ChainItem[] | - | Sequential steps with behavior overrides (see below) |
 | `chainDir` | string | `/tmp/pi-chain-runs/` | Persistent directory for chain artifacts (default auto-cleaned after 24h) |
 | `clarify` | boolean | true (chains) | Show TUI to preview/edit chain; implies sync mode |
-| `agentScope` | `"user" \| "project" \| "both"` | `user` | Agent discovery scope |
+| `agentScope` | `"user" \| "project" \| "both"` | `both` | Agent discovery scope (project wins on name collisions) |
 | `async` | boolean | false | Background execution (requires `clarify: false` for chains) |
 | `cwd` | string | - | Override working directory |
 | `maxOutput` | `{bytes?, lines?}` | 200KB, 5000 lines | Truncation limits for final output |

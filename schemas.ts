@@ -78,7 +78,7 @@ export const SubagentParams = Type.Object({
 	chain: Type.Optional(Type.Array(ChainItem, { description: "CHAIN mode: sequential pipeline where each step's response becomes {previous} for the next. Use {task}, {previous}, {chain_dir} in task templates." })),
 	chainDir: Type.Optional(Type.String({ description: "Persistent directory for chain artifacts. Default: <tmpdir>/pi-chain-runs/ (auto-cleaned after 24h)" })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
-	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'user')" })),
+	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String()),
 	maxOutput: MaxOutputSchema,
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),

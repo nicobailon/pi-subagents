@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { KNOWN_FIELDS } from "./agent-serializer.js";
 import { parseChain } from "./chain-serializer.js";
+import { mergeAgentsForScope } from "./agent-selection.js";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -245,19 +246,9 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 
 	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
+	const agents = mergeAgentsForScope(scope, userAgents, projectAgents);
 
-	const agentMap = new Map<string, AgentConfig>();
-
-	if (scope === "both") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	} else if (scope === "user") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-	} else {
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	}
-
-	return { agents: Array.from(agentMap.values()), projectAgentsDir };
+	return { agents, projectAgentsDir };
 }
 
 export function discoverAgentsAll(cwd: string): {

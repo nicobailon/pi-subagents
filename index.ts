@@ -19,6 +19,7 @@ import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { type AgentConfig, type AgentScope, discoverAgents, discoverAgentsAll } from "./agents.js";
+import { resolveExecutionAgentScope } from "./agent-scope.js";
 import { cleanupOldChainDirs, getStepAgents, isParallelStep, resolveStepBehavior, type ChainStep, type SequentialStep } from "./settings.js";
 import { ChainClarifyComponent, type ChainClarifyResult, type ModelInfo } from "./chain-clarify.js";
 import { cleanupOldArtifacts, getArtifactsDir } from "./artifacts.js";
@@ -209,7 +210,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				};
 			}
 
-			const scope: AgentScope = params.agentScope ?? "user";
+			const scope: AgentScope = resolveExecutionAgentScope(params.agentScope);
 			currentSessionId = ctx.sessionManager.getSessionFile() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			const agents = discoverAgents(ctx.cwd, scope).agents;
 			const runId = randomUUID().slice(0, 8);
