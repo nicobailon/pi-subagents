@@ -187,18 +187,23 @@ export function makeMinimalCtx(cwd: string): any {
 // ---------------------------------------------------------------------------
 
 /**
- * Try to dynamically import a module from the project root.
- * Path is relative to the project root (e.g., "./utils.ts").
- * Returns null if import fails (e.g., because pi packages aren't installed).
+ * Try to dynamically import a module.
+ * - Bare specifiers (e.g., "@marcfargas/pi-test-harness") are imported as-is.
+ * - Relative paths (e.g., "./utils.ts") are resolved from the project root.
+ * Returns null if import fails (e.g., because packages aren't installed).
  */
-export async function tryImport<T>(relativePath: string): Promise<T | null> {
+export async function tryImport<T>(specifier: string): Promise<T | null> {
 	try {
-		// Resolve relative to project root (parent of test/)
-		const projectRoot = path.resolve(__dirname, "..");
-		const abs = path.resolve(projectRoot, relativePath);
-		// Convert to file:// URL for Windows compatibility with dynamic import()
-		const url = `file:///${abs.replace(/\\/g, "/")}`;
-		return await import(url) as T;
+		if (specifier.startsWith(".") || specifier.startsWith("/")) {
+			// Resolve relative to project root (parent of test/)
+			const projectRoot = path.resolve(__dirname, "..");
+			const abs = path.resolve(projectRoot, specifier);
+			// Convert to file:// URL for Windows compatibility with dynamic import()
+			const url = `file:///${abs.replace(/\\/g, "/")}`;
+			return await import(url) as T;
+		}
+		// Bare specifier — import directly (node_modules resolution)
+		return await import(specifier) as T;
 	} catch {
 		return null;
 	}

@@ -36,6 +36,7 @@
   "scripts": {
     "test": "node --experimental-strip-types --test *.test.ts",
     "test:integration": "node --experimental-transform-types --import ./test/register-loader.mjs --test test/*.test.ts",
+    "test:e2e": "node --experimental-transform-types --import ./test/register-loader.mjs --test test/e2e-*.test.ts",
     "test:all": "node --experimental-transform-types --import ./test/register-loader.mjs --test *.test.ts test/*.test.ts"
   },
   "pi": {
@@ -43,5 +44,11 @@
       "./index.ts",
       "./notify.ts"
     ]
+  },
+  "devDependencies": {
+    "@marcfargas/pi-test-harness": "^0.4.0",
+    "@mariozechner/pi-agent-core": "^0.54.0",
+    "@mariozechner/pi-ai": "^0.54.0",
+    "@mariozechner/pi-coding-agent": "^0.54.0"
   }
 }
