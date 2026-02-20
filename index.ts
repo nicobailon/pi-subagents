@@ -67,9 +67,29 @@ function loadConfig(): ExtensionConfig {
 	return {};
 }
 
+/**
+ * Create a directory and verify it is actually accessible.
+ * On Windows with Azure AD/Entra ID, directories created shortly after
+ * wake-from-sleep can end up with broken NTFS ACLs (null DACL) when the
+ * cloud SID cannot be resolved without network connectivity. This leaves
+ * the directory completely inaccessible to the creating user.
+ */
+function ensureAccessibleDir(dirPath: string): void {
+	fs.mkdirSync(dirPath, { recursive: true });
+	try {
+		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+	} catch {
+		// Directory exists but is inaccessible — remove and recreate
+		try {
+			fs.rmSync(dirPath, { recursive: true, force: true });
+		} catch {}
+		fs.mkdirSync(dirPath, { recursive: true });
+	}
+}
+
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
-	fs.mkdirSync(RESULTS_DIR, { recursive: true });
-	fs.mkdirSync(ASYNC_DIR, { recursive: true });
+	ensureAccessibleDir(RESULTS_DIR);
+	ensureAccessibleDir(ASYNC_DIR);
 
 	// Cleanup old chain directories on startup (after 24h)
 	cleanupOldChainDirs();
