@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { getPiSpawnCommand, resolveWindowsPiCliScript, type PiSpawnDeps } from "./pi-spawn.ts";
 
@@ -55,7 +56,10 @@ describe("getPiSpawnCommand", () => {
 
 	it("resolves CLI script from package bin when argv1 is not runnable JS", () => {
 		const packageJsonPath = "/opt/pi/package.json";
-		const cliPath = "/opt/pi/dist/cli/index.js";
+		// Compute expected path the same way the production code does:
+		// path.resolve(path.dirname(packageJsonPath), binPath) — which on Windows
+		// prepends the current drive letter to POSIX absolute paths.
+		const cliPath = path.resolve(path.dirname(packageJsonPath), "dist/cli/index.js");
 		const deps = makeDeps({
 			platform: "win32",
 			execPath: "/usr/local/bin/node",
@@ -84,7 +88,7 @@ describe("getPiSpawnCommand", () => {
 describe("resolveWindowsPiCliScript", () => {
 	it("supports package bin as string", () => {
 		const packageJsonPath = "/opt/pi/package.json";
-		const cliPath = "/opt/pi/dist/cli/index.mjs";
+		const cliPath = path.resolve(path.dirname(packageJsonPath), "dist/cli/index.mjs");
 		const deps = makeDeps({
 			platform: "win32",
 			argv1: "/opt/pi/subagent-runner.ts",
