@@ -186,18 +186,29 @@ export function getDisplayItems(messages: Message[]): DisplayItem[] {
  * Detect errors in subagent execution from messages (only errors with no subsequent success)
  */
 export function detectSubagentError(messages: Message[]): ErrorInfo {
-	let lastSuccessfulToolIndex = -1;
+	// Step 1: Find the last assistant message with text content.
+	// If the agent produced a text response after encountering errors,
+	// it had a chance to recover — only errors AFTER this point matter.
+	let lastAssistantTextIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "toolResult" && !(msg as any).isError) {
-			lastSuccessfulToolIndex = i;
-			break;
+		if (msg.role === "assistant") {
+			const hasText = Array.isArray(msg.content) && msg.content.some(
+				(c) => c.type === "text" && "text" in c && (c.text as string).trim().length > 0,
+			);
+			if (hasText) {
+				lastAssistantTextIndex = i;
+				break;
+			}
 		}
 	}
 
-	for (let i = messages.length - 1; i >= 0; i--) {
-		if (i < lastSuccessfulToolIndex) break;
+	// Step 2: Only scan tool results AFTER the last assistant text message.
+	// Errors before the agent's final response are implicitly recovered.
+	const scanStart = lastAssistantTextIndex >= 0 ? lastAssistantTextIndex + 1 : 0;
 
+	// Step 3: Check tool results in the post-response window
+	for (let i = messages.length - 1; i >= scanStart; i--) {
 		const msg = messages[i];
 		if (msg.role !== "toolResult") continue;
 
@@ -228,6 +239,9 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 			}
 		}
 
+		// NOTE: These patterns can match legitimate output (grep results, logs,
+		// testing). With the assistant-message check above, most false positives
+		// are mitigated since the agent will have responded after routine errors.
 		const fatalPatterns = [
 			/command not found/i,
 			/permission denied/i,
