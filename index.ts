@@ -172,13 +172,40 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	const resultFileCoalescer = createFileCoalescer(handleResult, 50);
-	const watcher = fs.watch(RESULTS_DIR, (ev, file) => {
-		if (ev !== "rename" || !file) return;
-		const fileName = file.toString();
-		if (!fileName.endsWith(".json")) return;
-		resultFileCoalescer.schedule(fileName);
-	});
-	watcher.unref?.();
+	let watcher: fs.FSWatcher | null = null;
+
+	function startResultWatcher(): void {
+		try {
+			watcher = fs.watch(RESULTS_DIR, (ev, file) => {
+				if (ev !== "rename" || !file) return;
+				const fileName = file.toString();
+				if (!fileName.endsWith(".json")) return;
+				resultFileCoalescer.schedule(fileName);
+			});
+			watcher.on("error", (_err) => {
+				// Watcher died (directory deleted, ACL change, etc.) — restart after delay
+				watcher = null;
+				setTimeout(() => {
+					try {
+						fs.mkdirSync(RESULTS_DIR, { recursive: true });
+						startResultWatcher();
+					} catch {}
+				}, 3000);
+			});
+			watcher.unref?.();
+		} catch {
+			// fs.watch can throw if directory is inaccessible — retry after delay
+			watcher = null;
+			setTimeout(() => {
+				try {
+					fs.mkdirSync(RESULTS_DIR, { recursive: true });
+					startResultWatcher();
+				} catch {}
+			}, 3000);
+		}
+	}
+
+	startResultWatcher();
 	fs.readdirSync(RESULTS_DIR)
 		.filter((f) => f.endsWith(".json"))
 		.forEach((file) => resultFileCoalescer.schedule(file, 0));
@@ -1212,7 +1239,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		}
 	});
 	pi.on("session_shutdown", () => {
-		watcher.close();
+		watcher?.close();
 		if (poller) clearInterval(poller);
 		poller = null;
 		// Clear all pending cleanup timers
