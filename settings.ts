@@ -213,7 +213,7 @@ export function resolveStepBehavior(
  * Resolve a file path: absolute paths pass through, relative paths get chainDir prepended.
  */
 function resolveChainPath(filePath: string, chainDir: string): string {
-	return path.isAbsolute(filePath) ? filePath : `${chainDir}/${filePath}`;
+	return path.isAbsolute(filePath) ? filePath : path.join(chainDir, filePath);
 }
 
 /**
@@ -243,7 +243,7 @@ export function buildChainInstructions(
 
 	// Progress instructions in suffix (less critical)
 	if (behavior.progress) {
-		const progressPath = `${chainDir}/progress.md`;
+		const progressPath = path.join(chainDir, "progress.md");
 		if (isFirstProgressAgent) {
 			suffixParts.push(`Create and maintain progress at: ${progressPath}`);
 		} else {
@@ -299,11 +299,11 @@ export function resolveParallelBehaviors(
 			} else if (path.isAbsolute(task.output)) {
 				output = task.output; // Absolute path: use as-is
 			} else {
-				output = `${subdir}/${task.output}`; // Relative: namespace under subdir
+				output = path.join(subdir, task.output); // Relative: namespace under subdir
 			}
 		} else if (config.output) {
 			// Agent defaults are always relative, so namespace them
-			output = `${subdir}/${config.output}`;
+			output = path.join(subdir, config.output);
 		}
 
 		// Reads: task override > agent default > false
