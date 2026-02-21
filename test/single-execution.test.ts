@@ -115,7 +115,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 
 		assert.equal(result.exitCode, 0);
-		assert.ok(result.messages.length > 0);
+		assert.equal(result.model, "openai/gpt-4o");
 	});
 
 	it("tracks usage from message events", async () => {

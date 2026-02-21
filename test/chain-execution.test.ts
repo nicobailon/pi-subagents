@@ -130,9 +130,9 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError);
-		// Chain dir should be referenced in the summary
 		const summary = result.content[0].text;
-		assert.ok(summary.includes("Chain dir:") || summary.length > 0);
+		assert.ok(summary.includes("✅ Chain completed:"), `missing completion marker: ${summary}`);
+		assert.ok(summary.includes("📁 Artifacts:"), `missing artifacts marker: ${summary}`);
 	});
 
 	it("stops chain on step failure", async () => {
@@ -293,9 +293,16 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.ok(!result.isError);
 		assert.equal(result.details.results.length, 3); // 2 parallel + 1 sequential
-		// Synthesizer's task should contain aggregated parallel outputs
+		// Synthesizer's task should contain both parallel task blocks
 		const synthTask = result.details.results[2].task;
-		assert.ok(synthTask.includes("Review findings"), "synthesizer should receive parallel outputs");
+		assert.ok(
+			synthTask.includes("=== Parallel Task 1 (reviewer-a) ==="),
+			"synthesizer should include reviewer-a output block",
+		);
+		assert.ok(
+			synthTask.includes("=== Parallel Task 2 (reviewer-b) ==="),
+			"synthesizer should include reviewer-b output block",
+		);
 	});
 
 	it("fails chain on parallel step failure", async () => {

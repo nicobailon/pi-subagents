@@ -190,11 +190,15 @@ export function makeMinimalCtx(cwd: string): any {
  * Try to dynamically import a module.
  * - Bare specifiers (e.g., "@marcfargas/pi-test-harness") are imported as-is.
  * - Relative paths (e.g., "./utils.ts") are resolved from the project root.
- * Returns null if import fails (e.g., because packages aren't installed).
+ *
+ * Only swallows MODULE_NOT_FOUND / ERR_MODULE_NOT_FOUND when the missing module
+ * is exactly the requested bare specifier (expected optional dependency).
+ * All other errors are rethrown to avoid hiding real breakage.
  */
 export async function tryImport<T>(specifier: string): Promise<T | null> {
+	const isBare = !(specifier.startsWith(".") || specifier.startsWith("/"));
 	try {
-		if (specifier.startsWith(".") || specifier.startsWith("/")) {
+		if (!isBare) {
 			// Resolve relative to project root (parent of test/)
 			const projectRoot = path.resolve(__dirname, "..");
 			const abs = path.resolve(projectRoot, specifier);
@@ -204,8 +208,17 @@ export async function tryImport<T>(specifier: string): Promise<T | null> {
 		}
 		// Bare specifier — import directly (node_modules resolution)
 		return await import(specifier) as T;
-	} catch {
-		return null;
+	} catch (error: any) {
+		const code = error?.code;
+		const isModuleNotFound = code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND";
+		if (isBare && isModuleNotFound) {
+			const msg = String(error?.message ?? "");
+			const missing = msg.match(/Cannot find (?:package|module) ['\"]([^'\"]+)['\"]/i)?.[1];
+			if (missing === specifier || msg.includes(`'${specifier}'`) || msg.includes(`\"${specifier}\"`)) {
+				return null;
+			}
+		}
+		throw error;
 	}
 }
 

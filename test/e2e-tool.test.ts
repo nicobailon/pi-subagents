@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setupMockPi, teardownMockPi, resetMockEnv, tryImport } from "./helpers.ts";
+import type { ToolBlockedError } from "@marcfargas/pi-test-harness";
 
 const harness = await tryImport<any>("@marcfargas/pi-test-harness");
 const available = !!harness;
