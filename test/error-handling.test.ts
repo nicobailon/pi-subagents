@@ -10,10 +10,9 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
+import type { MockPi } from "./helpers.ts";
 import {
-	setupMockPi,
-	teardownMockPi,
-	resetMockEnv,
+	createMockPi,
 	createTempDir,
 	removeTempDir,
 	makeAgentConfigs,
@@ -114,13 +113,20 @@ describe("detectSubagentError", { skip: !detectSubagentError ? "utils not import
 
 describe("runSync error handling", { skip: !piAvailable ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
+	let mockPi: MockPi;
 
-	before(() => setupMockPi());
-	after(() => teardownMockPi());
+	before(() => {
+		mockPi = createMockPi();
+		mockPi.install();
+	});
+
+	after(() => {
+		mockPi.uninstall();
+	});
 
 	beforeEach(() => {
 		tempDir = createTempDir();
-		resetMockEnv();
+		mockPi.reset();
 	});
 
 	afterEach(() => {
@@ -128,8 +134,7 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 	});
 
 	it("captures stderr on non-zero exit", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "2";
-		process.env.MOCK_PI_STDERR = "Fatal: out of memory";
+		mockPi.onCall({ exitCode: 2, stderr: "Fatal: out of memory" });
 		const agents = makeAgentConfigs(["crash"]);
 
 		const result = await runSync(tempDir, agents, "crash", "Do heavy work", {});
@@ -139,12 +144,13 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 	});
 
 	it("detectSubagentError overrides exit 0 on hidden failure", async () => {
-		const jsonl = [
-			events.toolStart("bash", { command: "deploy" }),
-			events.toolEnd("bash"),
-			events.toolResult("bash", "connection refused"),
-		];
-		process.env.MOCK_PI_JSONL = JSON.stringify(jsonl);
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("bash", { command: "deploy" }),
+				events.toolEnd("bash"),
+				events.toolResult("bash", "connection refused"),
+			],
+		});
 		const agents = makeAgentConfigs(["deployer"]);
 
 		const result = await runSync(tempDir, agents, "deployer", "Deploy app", {});
@@ -154,7 +160,7 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 	});
 
 	it("handles abort signal (completes faster than delay)", async () => {
-		process.env.MOCK_PI_DELAY_MS = "10000";
+		mockPi.onCall({ delay: 10000 });
 		const agents = makeAgentConfigs(["slow"]);
 		const controller = new AbortController();
 
@@ -177,13 +183,20 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 
 describe("chain error propagation", { skip: !chainAvailable ? "chain module not available" : undefined }, () => {
 	let tempDir: string;
+	let mockPi: MockPi;
 
-	before(() => setupMockPi());
-	after(() => teardownMockPi());
+	before(() => {
+		mockPi = createMockPi();
+		mockPi.install();
+	});
+
+	after(() => {
+		mockPi.uninstall();
+	});
 
 	beforeEach(() => {
 		tempDir = createTempDir();
-		resetMockEnv();
+		mockPi.reset();
 	});
 
 	afterEach(() => {
@@ -205,8 +218,7 @@ describe("chain error propagation", { skip: !chainAvailable ? "chain module not 
 	}
 
 	it("preserves error context from failed step", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
-		process.env.MOCK_PI_STDERR = "Step 1 exploded";
+		mockPi.onCall({ exitCode: 1, stderr: "Step 1 exploded" });
 		const agents = [makeAgent("step1"), makeAgent("step2")];
 
 		const result = await executeChain(
@@ -223,7 +235,7 @@ describe("chain error propagation", { skip: !chainAvailable ? "chain module not 
 	});
 
 	it("reports currentStepIndex on failure", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
+		mockPi.onCall({ exitCode: 1 });
 		const agents = [makeAgent("a"), makeAgent("b"), makeAgent("c")];
 
 		const result = await executeChain(

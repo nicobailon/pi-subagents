@@ -5,22 +5,27 @@
  * playbook-scripted model actions. The extension loads for real, tools
  * register for real, hooks fire for real — only the model is replaced.
  *
- * For execution tests (single, chain, parallel), mock-pi.mjs handles
- * the spawned subagent processes.
+ * For execution tests (single, chain, parallel), createMockPi() from
+ * @marcfargas/pi-test-harness handles the spawned subagent processes.
  */
 
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { setupMockPi, teardownMockPi, resetMockEnv, tryImport } from "./helpers.ts";
-import type { ToolBlockedError } from "@marcfargas/pi-test-harness";
+import type { MockPi } from "./helpers.ts";
+import { createMockPi, tryImport } from "./helpers.ts";
 
 const harness = await tryImport<any>("@marcfargas/pi-test-harness");
 const available = !!harness;
 
-// Set up mock pi for execution tests
-if (available) setupMockPi();
+// Install mock pi for execution tests
+let mockPi: MockPi | undefined;
+if (available) {
+	mockPi = createMockPi();
+	mockPi.install();
+	process.on("exit", () => mockPi?.uninstall());
+}
 
 const EXTENSION = path.resolve("index.ts");
 
@@ -52,7 +57,7 @@ describe("subagent tool — management", { skip: !available ? "pi-test-harness n
 
 	afterEach(() => {
 		t?.dispose();
-		resetMockEnv();
+		mockPi?.reset();
 	});
 
 	it("action: list returns discovered agents (project scope)", async () => {
@@ -114,7 +119,7 @@ describe("subagent tool — validation", { skip: !available ? "pi-test-harness n
 
 	afterEach(() => {
 		t?.dispose();
-		resetMockEnv();
+		mockPi?.reset();
 	});
 
 	it("rejects invalid action", async () => {
@@ -230,11 +235,11 @@ describe("subagent tool — single execution", { skip: !available ? "pi-test-har
 
 	afterEach(() => {
 		t?.dispose();
-		resetMockEnv();
+		mockPi?.reset();
 	});
 
 	it("executes single agent and returns output", async () => {
-		process.env.MOCK_PI_OUTPUT = "Hello from the subagent!";
+		mockPi?.onCall({ output: "Hello from the subagent!" });
 
 		t = await createTestSession({
 			extensions: [EXTENSION],
@@ -257,8 +262,7 @@ describe("subagent tool — single execution", { skip: !available ? "pi-test-har
 	});
 
 	it("returns error for failed agent", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
-		process.env.MOCK_PI_STDERR = "Agent crashed hard";
+		mockPi?.onCall({ exitCode: 1, stderr: "Agent crashed hard" });
 
 		t = await createTestSession({
 			extensions: [EXTENSION],
@@ -279,8 +283,3 @@ describe("subagent tool — single execution", { skip: !available ? "pi-test-har
 		assert.ok(results[0].isError, "should be an error");
 	});
 });
-
-// Clean up mock pi on process exit
-if (available) {
-	process.on("exit", () => teardownMockPi());
-}

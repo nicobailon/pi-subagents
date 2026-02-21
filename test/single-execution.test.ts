@@ -1,8 +1,8 @@
 /**
  * Integration tests for single (sync) agent execution.
  *
- * Uses mock-pi.mjs to simulate the pi CLI. Tests the full spawn→parse→result
- * pipeline in runSync without needing a real LLM.
+ * Uses createMockPi() from @marcfargas/pi-test-harness to simulate the pi CLI.
+ * Tests the full spawn→parse→result pipeline in runSync without a real LLM.
  *
  * These tests require pi packages to be importable (they run inside a pi
  * environment or with pi packages installed). If unavailable, tests skip
@@ -13,10 +13,9 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { MockPi } from "./helpers.ts";
 import {
-	setupMockPi,
-	teardownMockPi,
-	resetMockEnv,
+	createMockPi,
 	createTempDir,
 	removeTempDir,
 	makeAgentConfigs,
@@ -35,13 +34,20 @@ const getFinalOutput = utils?.getFinalOutput;
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
+	let mockPi: MockPi;
 
-	before(() => setupMockPi());
-	after(() => teardownMockPi());
+	before(() => {
+		mockPi = createMockPi();
+		mockPi.install();
+	});
+
+	after(() => {
+		mockPi.uninstall();
+	});
 
 	beforeEach(() => {
 		tempDir = createTempDir();
-		resetMockEnv();
+		mockPi.reset();
 	});
 
 	afterEach(() => {
@@ -49,7 +55,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("spawns agent and captures output", async () => {
-		process.env.MOCK_PI_OUTPUT = "Hello from mock agent";
+		mockPi.onCall({ output: "Hello from mock agent" });
 		const agents = makeAgentConfigs(["echo"]);
 
 		const result = await runSync(tempDir, agents, "echo", "Say hello", {});
@@ -71,8 +77,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("captures non-zero exit code", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
-		process.env.MOCK_PI_STDERR = "Something went wrong";
+		mockPi.onCall({ exitCode: 1, stderr: "Something went wrong" });
 		const agents = makeAgentConfigs(["fail"]);
 
 		const result = await runSync(tempDir, agents, "fail", "Do something", {});
@@ -82,7 +87,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("handles long tasks via temp file (ENAMETOOLONG prevention)", async () => {
-		process.env.MOCK_PI_OUTPUT = "Got it";
+		mockPi.onCall({ output: "Got it" });
 		const longTask = "Analyze ".repeat(2000); // ~16KB
 		const agents = makeAgentConfigs(["echo"]);
 
@@ -94,7 +99,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("uses agent model config", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4" })];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {});
@@ -107,7 +112,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("model override from options takes precedence", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4" })];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
@@ -119,7 +124,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("tracks usage from message events", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = makeAgentConfigs(["echo"]);
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {});
@@ -130,7 +135,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("tracks progress during execution", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = makeAgentConfigs(["echo"]);
 
 		const result = await runSync(tempDir, agents, "echo", "Task", { index: 3 });
@@ -143,7 +148,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("sets progress.status to failed on non-zero exit", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
+		mockPi.onCall({ exitCode: 1 });
 		const agents = makeAgentConfigs(["fail"]);
 
 		const result = await runSync(tempDir, agents, "fail", "Task", {});
@@ -152,13 +157,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("handles multi-turn conversation from JSONL", async () => {
-		const jsonl = [
-			events.toolStart("bash", { command: "ls" }),
-			events.toolEnd("bash"),
-			events.toolResult("bash", "file1.txt\nfile2.txt"),
-			events.assistantMessage("Found 2 files: file1.txt and file2.txt"),
-		];
-		process.env.MOCK_PI_JSONL = JSON.stringify(jsonl);
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("bash", { command: "ls" }),
+				events.toolEnd("bash"),
+				events.toolResult("bash", "file1.txt\nfile2.txt"),
+				events.assistantMessage("Found 2 files: file1.txt and file2.txt"),
+			],
+		});
 		const agents = makeAgentConfigs(["scout"]);
 
 		const result = await runSync(tempDir, agents, "scout", "List files", {});
@@ -170,7 +176,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("writes artifacts when configured", async () => {
-		process.env.MOCK_PI_OUTPUT = "Result text";
+		mockPi.onCall({ output: "Result text" });
 		const agents = makeAgentConfigs(["echo"]);
 		const artifactsDir = path.join(tempDir, "artifacts");
 
@@ -186,7 +192,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("handles abort signal (completes faster than delay)", async () => {
-		process.env.MOCK_PI_DELAY_MS = "10000"; // Long delay — process should be killed before this
+		mockPi.onCall({ delay: 10000 }); // Long delay — process should be killed before this
 		const agents = makeAgentConfigs(["slow"]);
 		const controller = new AbortController();
 
@@ -205,9 +211,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("handles stderr without exit code as info (not error)", async () => {
-		process.env.MOCK_PI_OUTPUT = "Success";
-		process.env.MOCK_PI_STDERR = "Warning: something";
-		process.env.MOCK_PI_EXIT_CODE = "0";
+		mockPi.onCall({ output: "Success", stderr: "Warning: something", exitCode: 0 });
 		const agents = makeAgentConfigs(["echo"]);
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {});

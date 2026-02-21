@@ -10,10 +10,9 @@
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import type { MockPi } from "./helpers.ts";
 import {
-	setupMockPi,
-	teardownMockPi,
-	resetMockEnv,
+	createMockPi,
 	createTempDir,
 	removeTempDir,
 	makeAgentConfigs,
@@ -86,13 +85,20 @@ describe("mapConcurrent", { skip: !mapConcurrent ? "utils not importable" : unde
 
 describe("parallel agent execution", { skip: !piAvailable ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
+	let mockPi: MockPi;
 
-	before(() => setupMockPi());
-	after(() => teardownMockPi());
+	before(() => {
+		mockPi = createMockPi();
+		mockPi.install();
+	});
+
+	after(() => {
+		mockPi.uninstall();
+	});
 
 	beforeEach(() => {
 		tempDir = createTempDir();
-		resetMockEnv();
+		mockPi.reset();
 	});
 
 	afterEach(() => {
@@ -100,7 +106,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	});
 
 	it("runs multiple agents concurrently via mapConcurrent + runSync", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = makeAgentConfigs(["agent-a", "agent-b", "agent-c"]);
 		const tasks = ["Task A", "Task B", "Task C"];
 
@@ -120,7 +126,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	});
 
 	it("all agents get independent results", async () => {
-		process.env.MOCK_PI_OUTPUT = "Result";
+		mockPi.onCall({ output: "Result" });
 		const agents = makeAgentConfigs(["a", "b"]);
 
 		const results = await mapConcurrent(

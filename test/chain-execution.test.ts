@@ -1,8 +1,9 @@
 /**
  * Integration tests for chain execution (sequential and parallel steps).
  *
- * Uses mock-pi.mjs to simulate subagent processes. Tests the full chain
- * pipeline: template resolution → spawn → output capture → {previous} passing.
+ * Uses createMockPi() from @marcfargas/pi-test-harness to simulate subagent
+ * processes. Tests the full chain pipeline: template resolution → spawn →
+ * output capture → {previous} passing.
  *
  * Requires pi packages to be importable. Skips gracefully if unavailable.
  */
@@ -11,10 +12,9 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { MockPi } from "./helpers.ts";
 import {
-	setupMockPi,
-	teardownMockPi,
-	resetMockEnv,
+	createMockPi,
 	createTempDir,
 	removeTempDir,
 	makeAgent,
@@ -30,14 +30,21 @@ const executeChain = chainMod?.executeChain;
 describe("chain execution — sequential", { skip: !available ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
 	let artifactsDir: string;
+	let mockPi: MockPi;
 
-	before(() => setupMockPi());
-	after(() => teardownMockPi());
+	before(() => {
+		mockPi = createMockPi();
+		mockPi.install();
+	});
+
+	after(() => {
+		mockPi.uninstall();
+	});
 
 	beforeEach(() => {
 		tempDir = createTempDir();
 		artifactsDir = path.join(tempDir, "artifacts");
-		resetMockEnv();
+		mockPi.reset();
 	});
 
 	afterEach(() => {
@@ -60,7 +67,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	}
 
 	it("runs a 2-step chain", async () => {
-		process.env.MOCK_PI_OUTPUT = "Analysis complete: found 3 issues";
+		mockPi.onCall({ output: "Analysis complete: found 3 issues" });
 		const agents = [makeAgent("analyst"), makeAgent("reporter")];
 
 		const result = await executeChain(
@@ -79,7 +86,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	it("passes {previous} between steps (step 2 receives step 1 output)", async () => {
 		// Mock echoes the task by default, so step 2's output will contain step 1's output
 		// if {previous} was properly substituted
-		process.env.MOCK_PI_OUTPUT = "Step 1 unique output: MARKER_ABC_123";
+		mockPi.onCall({ output: "Step 1 unique output: MARKER_ABC_123" });
 		const agents = [makeAgent("step1"), makeAgent("step2")];
 
 		const result = await executeChain(
@@ -99,7 +106,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("substitutes {task} in templates", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("worker")];
 
 		const result = await executeChain(
@@ -119,7 +126,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("creates and uses chain_dir", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("worker")];
 
 		const result = await executeChain(
@@ -136,8 +143,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("stops chain on step failure", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
-		process.env.MOCK_PI_STDERR = "Agent crashed";
+		mockPi.onCall({ exitCode: 1, stderr: "Agent crashed" });
 		const agents = [makeAgent("step1"), makeAgent("step2")];
 
 		const result = await executeChain(
@@ -153,7 +159,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("runs a 3-step chain end-to-end", async () => {
-		process.env.MOCK_PI_OUTPUT = "Step output";
+		mockPi.onCall({ output: "Step output" });
 		const agents = [makeAgent("scout"), makeAgent("planner"), makeAgent("executor")];
 
 		const result = await executeChain(
@@ -187,7 +193,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("tracks chain metadata (chainAgents, totalSteps)", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("a"), makeAgent("b")];
 
 		const result = await executeChain(
@@ -203,7 +209,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("uses custom chainDir when provided", async () => {
-		process.env.MOCK_PI_OUTPUT = "Done";
+		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("worker")];
 		const customChainDir = path.join(tempDir, "my-chain");
 
@@ -222,13 +228,20 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 describe("chain execution — parallel steps", { skip: !available ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
+	let mockPi: MockPi;
 
-	before(() => setupMockPi());
-	after(() => teardownMockPi());
+	before(() => {
+		mockPi = createMockPi();
+		mockPi.install();
+	});
+
+	after(() => {
+		mockPi.uninstall();
+	});
 
 	beforeEach(() => {
 		tempDir = createTempDir();
-		resetMockEnv();
+		mockPi.reset();
 	});
 
 	afterEach(() => {
@@ -251,7 +264,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	}
 
 	it("runs parallel tasks within a chain step", async () => {
-		process.env.MOCK_PI_OUTPUT = "Parallel task done";
+		mockPi.onCall({ output: "Parallel task done" });
 		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b")];
 
 		const result = await executeChain(
@@ -273,7 +286,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	});
 
 	it("aggregates parallel outputs for next sequential step", async () => {
-		process.env.MOCK_PI_OUTPUT = "Review findings here";
+		mockPi.onCall({ output: "Review findings here" });
 		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b"), makeAgent("synthesizer")];
 
 		const result = await executeChain(
@@ -306,8 +319,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	});
 
 	it("fails chain on parallel step failure", async () => {
-		process.env.MOCK_PI_EXIT_CODE = "1";
-		process.env.MOCK_PI_STDERR = "Parallel task failed";
+		mockPi.onCall({ exitCode: 1, stderr: "Parallel task failed" });
 		const agents = [makeAgent("a"), makeAgent("b")];
 
 		const result = await executeChain(
@@ -328,7 +340,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 	});
 
 	it("sequential → parallel → sequential (mixed chain)", async () => {
-		process.env.MOCK_PI_OUTPUT = "Step complete";
+		mockPi.onCall({ output: "Step complete" });
 		const agents = [makeAgent("scout"), makeAgent("rev-a"), makeAgent("rev-b"), makeAgent("writer")];
 
 		const result = await executeChain(
