@@ -15,23 +15,19 @@ import {
 	truncateOutput,
 	getSubagentDepthEnv,
 } from "./types.js";
-
-interface SubagentStep {
-	agent: string;
-	task: string;
-	cwd?: string;
-	model?: string;
-	tools?: string[];
-	extensions?: string[];
-	mcpDirectTools?: string[];
-	systemPrompt?: string | null;
-	skills?: string[];
-	outputPath?: string;
-}
+import {
+	type RunnerSubagentStep as SubagentStep,
+	type RunnerStep,
+	isParallelGroup,
+	flattenSteps,
+	mapConcurrent,
+	aggregateParallelOutputs,
+	MAX_PARALLEL_CONCURRENCY as MAX_CONCURRENCY,
+} from "./parallel-utils.js";
 
 interface SubagentRunConfig {
 	id: string;
-	steps: SubagentStep[];
+	steps: RunnerStep[];
 	resultPath: string;
 	cwd: string;
 	placeholder: string;
@@ -51,6 +47,7 @@ interface StepResult {
 	agent: string;
 	output: string;
 	success: boolean;
+	skipped?: boolean;
 	artifactPaths?: ArtifactPaths;
 	truncated?: boolean;
 }
@@ -241,6 +238,132 @@ function writeRunLog(
 	fs.writeFileSync(logPath, lines.join("\n"), "utf-8");
 }
 
+/** Context for running a single step (shared between sequential and parallel execution) */
+interface SingleStepContext {
+	previousOutput: string;
+	placeholder: string;
+	cwd: string;
+	sessionEnabled: boolean;
+	sessionDir?: string;
+	artifactsDir?: string;
+	artifactConfig?: Partial<ArtifactConfig>;
+	id: string;
+	flatIndex: number;
+	flatStepCount: number;
+	outputFile: string;
+	piPackageRoot?: string;
+}
+
+/** Run a single pi agent step, returning output and exit code */
+async function runSingleStep(
+	step: SubagentStep,
+	ctx: SingleStepContext,
+): Promise<{ agent: string; output: string; exitCode: number | null; artifactPaths?: ArtifactPaths }> {
+	const args = ["-p"];
+	if (!ctx.sessionEnabled) {
+		args.push("--no-session");
+	}
+	if (ctx.sessionDir) {
+		try { fs.mkdirSync(ctx.sessionDir, { recursive: true }); } catch {}
+		args.push("--session-dir", ctx.sessionDir);
+	}
+	// Use --models (not --model) because pi CLI silently ignores --model
+	// without a companion --provider flag. --models resolves the provider
+	// automatically via resolveModelScope. See: #8
+	if (step.model) args.push("--models", step.model);
+	const toolExtensionPaths: string[] = [];
+	if (step.tools?.length) {
+		const builtinTools: string[] = [];
+		for (const tool of step.tools) {
+			if (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")) {
+				toolExtensionPaths.push(tool);
+			} else {
+				builtinTools.push(tool);
+			}
+		}
+		if (builtinTools.length > 0) args.push("--tools", builtinTools.join(","));
+	}
+	if (step.extensions !== undefined) {
+		args.push("--no-extensions");
+		for (const extPath of step.extensions) args.push("--extension", extPath);
+	} else {
+		for (const extPath of toolExtensionPaths) args.push("--extension", extPath);
+	}
+
+	let tmpDir: string | null = null;
+	if (step.systemPrompt) {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+		const promptPath = path.join(tmpDir, "prompt.md");
+		fs.writeFileSync(promptPath, step.systemPrompt);
+		args.push("--append-system-prompt", promptPath);
+	}
+
+	const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+	const task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
+	args.push(`Task: ${task}`);
+
+	let artifactPaths: ArtifactPaths | undefined;
+	if (ctx.artifactsDir && ctx.artifactConfig?.enabled !== false) {
+		const index = ctx.flatStepCount > 1 ? ctx.flatIndex : undefined;
+		artifactPaths = getArtifactPaths(ctx.artifactsDir, ctx.id, step.agent, index);
+		fs.mkdirSync(ctx.artifactsDir, { recursive: true });
+
+		if (ctx.artifactConfig?.includeInput !== false) {
+			fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
+		}
+	}
+
+	const mcpEnv: Record<string, string | undefined> = {};
+	if (step.mcpDirectTools?.length) {
+		mcpEnv.MCP_DIRECT_TOOLS = step.mcpDirectTools.join(",");
+	} else {
+		mcpEnv.MCP_DIRECT_TOOLS = "__none__";
+	}
+
+	const result = await runPiStreaming(args, step.cwd ?? ctx.cwd, ctx.outputFile, mcpEnv, ctx.piPackageRoot);
+
+	if (tmpDir) {
+		try { fs.rmSync(tmpDir, { recursive: true }); } catch {}
+	}
+
+	const output = (result.stdout || "").trim();
+	let outputForSummary = output;
+	if (step.outputPath && result.exitCode === 0) {
+		const persisted = persistSingleOutput(step.outputPath, output);
+		if (persisted.savedPath) {
+			outputForSummary = output
+				? `${output}\n\n📄 Output saved to: ${persisted.savedPath}`
+				: `📄 Output saved to: ${persisted.savedPath}`;
+		} else if (persisted.error) {
+			outputForSummary = output
+				? `${output}\n\n⚠️ Failed to save output to: ${step.outputPath}\n${persisted.error}`
+				: `⚠️ Failed to save output to: ${step.outputPath}\n${persisted.error}`;
+		}
+	}
+
+	if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
+		if (ctx.artifactConfig?.includeOutput !== false) {
+			fs.writeFileSync(artifactPaths.outputPath, output, "utf-8");
+		}
+		if (ctx.artifactConfig?.includeMetadata !== false) {
+			fs.writeFileSync(
+				artifactPaths.metadataPath,
+				JSON.stringify({
+					runId: ctx.id,
+					agent: step.agent,
+					task,
+					exitCode: result.exitCode,
+					skills: step.skills,
+					timestamp: Date.now(),
+				}, null, 2),
+				"utf-8",
+			);
+		}
+	}
+
+	return { agent: step.agent, output: outputForSummary, exitCode: result.exitCode, artifactPaths };
+}
+
 async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
@@ -254,6 +377,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const eventsPath = path.join(asyncDir, "events.jsonl");
 	const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
+
+	// Flatten steps for status tracking (parallel groups expand to individual entries)
+	const flatSteps = flattenSteps(steps);
 
 	const outputFile = path.join(asyncDir, "output.log");
 	const statusPayload: {
@@ -288,14 +414,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		error?: string;
 	} = {
 		runId: id,
-		mode: steps.length > 1 ? "chain" : "single",
+		mode: flatSteps.length > 1 ? "chain" : "single",
 		state: "running",
 		startedAt: overallStartTime,
 		lastUpdate: overallStartTime,
 		pid: process.pid,
 		cwd,
 		currentStep: 0,
-		steps: steps.map((step) => ({ agent: step.agent, status: "pending", skills: step.skills })),
+		steps: flatSteps.map((step) => ({ agent: step.agent, status: "pending", skills: step.skills })),
 		artifactsDir,
 		sessionDir: config.sessionDir,
 		outputFile,
@@ -315,184 +441,235 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		}),
 	);
 
+	// Track the flat index into statusPayload.steps across sequential + parallel steps
+	let flatIndex = 0;
+	let chainFailed = false;
+
 	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
 		const step = steps[stepIndex];
-		const stepStartTime = Date.now();
-		statusPayload.currentStep = stepIndex;
-		statusPayload.steps[stepIndex].status = "running";
-		statusPayload.steps[stepIndex].skills = step.skills;
-		statusPayload.steps[stepIndex].startedAt = stepStartTime;
-		statusPayload.lastUpdate = stepStartTime;
-		writeJson(statusPath, statusPayload);
-		appendJsonl(
-			eventsPath,
-			JSON.stringify({
-				type: "subagent.step.started",
-				ts: stepStartTime,
+
+		if (isParallelGroup(step)) {
+			// === PARALLEL STEP GROUP ===
+			// Tasks run concurrently up to `concurrency` limit. With failFast,
+			// tasks not yet started are skipped after the first failure, but
+			// tasks already running complete normally (concurrent semantics).
+			const group = step;
+			const concurrency = group.concurrency ?? MAX_CONCURRENCY;
+			const failFast = group.failFast ?? false;
+			const groupStartFlatIndex = flatIndex;
+			let aborted = false;
+
+			// Mark all tasks in the group as running
+			const groupStartTime = Date.now();
+			for (let t = 0; t < group.parallel.length; t++) {
+				const fi = groupStartFlatIndex + t;
+				statusPayload.steps[fi].status = "running";
+				statusPayload.steps[fi].startedAt = groupStartTime;
+			}
+			statusPayload.currentStep = groupStartFlatIndex;
+			statusPayload.lastUpdate = groupStartTime;
+			writeJson(statusPath, statusPayload);
+
+			appendJsonl(eventsPath, JSON.stringify({
+				type: "subagent.parallel.started",
+				ts: groupStartTime,
 				runId: id,
 				stepIndex,
-				agent: step.agent,
-			}),
-		);
-		const args = ["-p"];
-		if (!sessionEnabled) {
-			args.push("--no-session");
-		}
-		if (config.sessionDir) {
-			try {
-				fs.mkdirSync(config.sessionDir, { recursive: true });
-			} catch {}
-			args.push("--session-dir", config.sessionDir);
-		}
-		// Use --models (not --model) because pi CLI silently ignores --model
-		// without a companion --provider flag. --models resolves the provider
-		// automatically via resolveModelScope. See: #8
-		if (step.model) args.push("--models", step.model);
-		const toolExtensionPaths: string[] = [];
-		if (step.tools?.length) {
-			const builtinTools: string[] = [];
-			for (const tool of step.tools) {
-				if (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")) {
-					toolExtensionPaths.push(tool);
-				} else {
-					builtinTools.push(tool);
+				agents: group.parallel.map((t) => t.agent),
+				count: group.parallel.length,
+			}));
+
+			const parallelResults = await mapConcurrent(
+				group.parallel,
+				concurrency,
+				async (task, taskIdx) => {
+					if (aborted && failFast) {
+						return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, success: false, skipped: true };
+					}
+
+					const fi = groupStartFlatIndex + taskIdx;
+					const taskStartTime = Date.now();
+
+					appendJsonl(eventsPath, JSON.stringify({
+						type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent,
+					}));
+
+					// Each parallel task gets its own session subdirectory so
+					// token parsing doesn't conflict between concurrent pi processes.
+					const taskSessionDir = config.sessionDir
+						? path.join(config.sessionDir, `parallel-${taskIdx}`)
+						: undefined;
+
+					const singleResult = await runSingleStep(task, {
+						previousOutput, placeholder, cwd, sessionEnabled,
+						sessionDir: taskSessionDir,
+						artifactsDir, artifactConfig, id,
+						flatIndex: fi, flatStepCount: flatSteps.length,
+						outputFile: path.join(asyncDir, `output-${fi}.log`),
+						piPackageRoot: config.piPackageRoot,
+					});
+
+					const taskEndTime = Date.now();
+					const taskDuration = taskEndTime - taskStartTime;
+
+					// Note: concurrent writes to status.json from parallel workers may
+					// produce transient inconsistencies (last-writer-wins). Status converges
+					// once the parallel group completes. Acceptable for monitoring/UI.
+					statusPayload.steps[fi].status = singleResult.exitCode === 0 ? "complete" : "failed";
+					statusPayload.steps[fi].endedAt = taskEndTime;
+					statusPayload.steps[fi].durationMs = taskDuration;
+					statusPayload.steps[fi].exitCode = singleResult.exitCode;
+					statusPayload.lastUpdate = taskEndTime;
+					writeJson(statusPath, statusPayload);
+
+					appendJsonl(eventsPath, JSON.stringify({
+						type: singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+						ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
+						exitCode: singleResult.exitCode, durationMs: taskDuration,
+					}));
+
+					if (singleResult.exitCode !== 0 && failFast) aborted = true;
+					return singleResult;
+				},
+			);
+
+			flatIndex += group.parallel.length;
+
+			// Aggregate token usage from parallel task session dirs.
+			// Each task got its own session subdirectory to avoid concurrent write conflicts.
+			if (config.sessionDir) {
+				for (let t = 0; t < group.parallel.length; t++) {
+					const taskSessionDir = path.join(config.sessionDir, `parallel-${t}`);
+					const taskTokens = parseSessionTokens(taskSessionDir);
+					if (taskTokens) {
+						const fi = groupStartFlatIndex + t;
+						statusPayload.steps[fi].tokens = taskTokens;
+						previousCumulativeTokens = {
+							input: previousCumulativeTokens.input + taskTokens.input,
+							output: previousCumulativeTokens.output + taskTokens.output,
+							total: previousCumulativeTokens.total + taskTokens.total,
+						};
+					}
 				}
-			}
-			if (builtinTools.length > 0) args.push("--tools", builtinTools.join(","));
-		}
-		if (step.extensions !== undefined) {
-			args.push("--no-extensions");
-			for (const extPath of step.extensions) args.push("--extension", extPath);
-		} else {
-			for (const extPath of toolExtensionPaths) args.push("--extension", extPath);
-		}
-
-		let tmpDir: string | null = null;
-		if (step.systemPrompt) {
-			tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-			const promptPath = path.join(tmpDir, "prompt.md");
-			fs.writeFileSync(promptPath, step.systemPrompt);
-			args.push("--append-system-prompt", promptPath);
-		}
-
-		const placeholderRegex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-		const task = step.task.replace(placeholderRegex, () => previousOutput);
-		args.push(`Task: ${task}`);
-
-		let artifactPaths: ArtifactPaths | undefined;
-		if (artifactsDir && artifactConfig?.enabled !== false) {
-			const index = taskIndex !== undefined ? taskIndex : steps.length > 1 ? stepIndex : undefined;
-			artifactPaths = getArtifactPaths(artifactsDir, id, step.agent, index);
-			fs.mkdirSync(artifactsDir, { recursive: true });
-
-			if (artifactConfig?.includeInput !== false) {
-				fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
-			}
-		}
-
-		const mcpEnv: Record<string, string | undefined> = {};
-		if (step.mcpDirectTools?.length) {
-			mcpEnv.MCP_DIRECT_TOOLS = step.mcpDirectTools.join(",");
-		} else {
-			mcpEnv.MCP_DIRECT_TOOLS = "__none__";
-		}
-
-		const result = await runPiStreaming(args, step.cwd ?? cwd, outputFile, mcpEnv, config.piPackageRoot);
-
-		if (tmpDir) {
-			try {
-				fs.rmSync(tmpDir, { recursive: true });
-			} catch {}
-		}
-
-		const output = (result.stdout || "").trim();
-		previousOutput = output;
-		let outputForSummary = output;
-		if (step.outputPath && result.exitCode === 0) {
-			const persisted = persistSingleOutput(step.outputPath, output);
-			if (persisted.savedPath) {
-				outputForSummary = output
-					? `${output}\n\n📄 Output saved to: ${persisted.savedPath}`
-					: `📄 Output saved to: ${persisted.savedPath}`;
-			} else if (persisted.error) {
-				outputForSummary = output
-					? `${output}\n\n⚠️ Failed to save output to: ${step.outputPath}\n${persisted.error}`
-					: `⚠️ Failed to save output to: ${step.outputPath}\n${persisted.error}`;
-			}
-		}
-
-		const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
-		const stepTokens: TokenUsage | null = cumulativeTokens
-			? {
-					input: cumulativeTokens.input - previousCumulativeTokens.input,
-					output: cumulativeTokens.output - previousCumulativeTokens.output,
-					total: cumulativeTokens.total - previousCumulativeTokens.total,
-				}
-			: null;
-		if (cumulativeTokens) {
-			previousCumulativeTokens = cumulativeTokens;
-		}
-
-		const stepResult: StepResult = {
-			agent: step.agent,
-			output: outputForSummary,
-			success: result.exitCode === 0,
-			artifactPaths,
-		};
-
-		if (artifactPaths && artifactConfig?.enabled !== false) {
-			if (artifactConfig?.includeOutput !== false) {
-				fs.writeFileSync(artifactPaths.outputPath, output, "utf-8");
+				statusPayload.totalTokens = { ...previousCumulativeTokens };
+				statusPayload.lastUpdate = Date.now();
+				writeJson(statusPath, statusPayload);
 			}
 
-			if (artifactConfig?.includeMetadata !== false) {
-				fs.writeFileSync(
-					artifactPaths.metadataPath,
-					JSON.stringify(
-						{
-							runId: id,
-							agent: step.agent,
-							task,
-							exitCode: result.exitCode,
-							durationMs: Date.now() - stepStartTime,
-							skills: step.skills,
-							timestamp: Date.now(),
-						},
-						null,
-						2,
-					),
-					"utf-8",
-				);
+			// Collect results
+			for (const pr of parallelResults) {
+				results.push({
+					agent: pr.agent,
+					output: pr.output,
+					success: pr.exitCode === 0,
+					skipped: (pr as StepResult).skipped,
+					artifactPaths: (pr as StepResult).artifactPaths,
+				});
 			}
-		}
 
-		results.push(stepResult);
-		const stepEndTime = Date.now();
-		statusPayload.steps[stepIndex].status = result.exitCode === 0 ? "complete" : "failed";
-		statusPayload.steps[stepIndex].endedAt = stepEndTime;
-		statusPayload.steps[stepIndex].durationMs = stepEndTime - stepStartTime;
-		statusPayload.steps[stepIndex].exitCode = result.exitCode;
-		if (stepTokens) {
-			statusPayload.steps[stepIndex].tokens = stepTokens;
-			statusPayload.totalTokens = { ...previousCumulativeTokens };
-		}
-		statusPayload.lastUpdate = stepEndTime;
-		writeJson(statusPath, statusPayload);
-		appendJsonl(
-			eventsPath,
-			JSON.stringify({
-				type: result.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
-				ts: stepEndTime,
+			// Aggregate parallel outputs for {previous}
+			previousOutput = aggregateParallelOutputs(
+				parallelResults.map((r) => ({
+					agent: r.agent,
+					output: r.output,
+					exitCode: r.exitCode,
+				})),
+			);
+
+			appendJsonl(eventsPath, JSON.stringify({
+				type: "subagent.parallel.completed",
+				ts: Date.now(),
 				runId: id,
 				stepIndex,
-				agent: step.agent,
-				exitCode: result.exitCode,
-				durationMs: stepEndTime - stepStartTime,
-				tokens: stepTokens,
-			}),
-		);
+				success: parallelResults.every((r) => r.exitCode === 0),
+			}));
 
-		if (result.exitCode !== 0) break;
+			// If any parallel task failed, stop the chain
+			if (parallelResults.some((r) => r.exitCode !== 0 && r.exitCode !== -1)) {
+				chainFailed = true;
+				break;
+			}
+		} else {
+			// === SEQUENTIAL STEP ===
+			const seqStep = step as SubagentStep;
+			const stepStartTime = Date.now();
+			statusPayload.currentStep = flatIndex;
+			statusPayload.steps[flatIndex].status = "running";
+			statusPayload.steps[flatIndex].skills = seqStep.skills;
+			statusPayload.steps[flatIndex].startedAt = stepStartTime;
+			statusPayload.lastUpdate = stepStartTime;
+			writeJson(statusPath, statusPayload);
+			appendJsonl(
+				eventsPath,
+				JSON.stringify({
+					type: "subagent.step.started",
+					ts: stepStartTime,
+					runId: id,
+					stepIndex: flatIndex,
+					agent: seqStep.agent,
+				}),
+			);
+
+			const singleResult = await runSingleStep(seqStep, {
+				previousOutput, placeholder, cwd, sessionEnabled,
+				sessionDir: config.sessionDir,
+				artifactsDir, artifactConfig, id,
+				flatIndex, flatStepCount: flatSteps.length,
+				outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
+				piPackageRoot: config.piPackageRoot,
+			});
+
+			previousOutput = singleResult.output;
+			results.push({
+				agent: singleResult.agent,
+				output: singleResult.output,
+				success: singleResult.exitCode === 0,
+				artifactPaths: (singleResult as StepResult).artifactPaths,
+			});
+
+			const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
+			const stepTokens: TokenUsage | null = cumulativeTokens
+				? {
+						input: cumulativeTokens.input - previousCumulativeTokens.input,
+						output: cumulativeTokens.output - previousCumulativeTokens.output,
+						total: cumulativeTokens.total - previousCumulativeTokens.total,
+					}
+				: null;
+			if (cumulativeTokens) {
+				previousCumulativeTokens = cumulativeTokens;
+			}
+
+			const stepEndTime = Date.now();
+			statusPayload.steps[flatIndex].status = singleResult.exitCode === 0 ? "complete" : "failed";
+			statusPayload.steps[flatIndex].endedAt = stepEndTime;
+			statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
+			statusPayload.steps[flatIndex].exitCode = singleResult.exitCode;
+			if (stepTokens) {
+				statusPayload.steps[flatIndex].tokens = stepTokens;
+				statusPayload.totalTokens = { ...previousCumulativeTokens };
+			}
+			statusPayload.lastUpdate = stepEndTime;
+			writeJson(statusPath, statusPayload);
+			appendJsonl(
+				eventsPath,
+				JSON.stringify({
+					type: singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+					ts: stepEndTime,
+					runId: id,
+					stepIndex: flatIndex,
+					agent: seqStep.agent,
+					exitCode: singleResult.exitCode,
+					durationMs: stepEndTime - stepStartTime,
+					tokens: stepTokens,
+				}),
+			);
+
+			flatIndex++;
+			if (singleResult.exitCode !== 0) {
+				chainFailed = true;
+				break;
+			}
+		}
 	}
 
 	let summary = results.map((r) => `${r.agent}:\n${r.output}`).join("\n\n");
@@ -508,7 +685,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		}
 	}
 
-	const agentName = steps.length === 1 ? steps[0].agent : `chain:${steps.map((s) => s.agent).join("->")}`;
+	const agentName = flatSteps.length === 1
+		? flatSteps[0].agent
+		: `chain:${flatSteps.map((s) => s.agent).join("->")}`;
 	let sessionFile: string | undefined;
 	let shareUrl: string | undefined;
 	let gistUrl: string | undefined;
@@ -590,6 +769,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					agent: r.agent,
 					output: r.output,
 					success: r.success,
+					skipped: r.skipped || undefined,
 					artifactPaths: r.artifactPaths,
 					truncated: r.truncated,
 				})),

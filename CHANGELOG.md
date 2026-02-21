@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- Async chain execution now supports parallel steps. Previously, chains with `{ parallel: [...] }` were rejected in async mode. The async runner now spawns concurrent pi processes for parallel step groups with configurable `concurrency` and `failFast` options.
+- Per-task token tracking for parallel steps — each parallel task gets its own session subdirectory so token usage is parsed and aggregated reliably after the group completes.
+- `skipped` field on async runner results to distinguish tasks skipped by fail-fast (exitCode -1) from actually failed tasks.
+
+### Fixed
+- Output file collision in async mixed chains — sequential and parallel steps now use per-step output files (`output-N.log`) instead of sharing a single `output.log` that the last step would overwrite.
+
 ## [0.9.2] - 2026-02-19
 
 ### Fixed
