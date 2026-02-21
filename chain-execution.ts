@@ -493,7 +493,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			// Validate expected output file was created
 			if (behavior.output && r.exitCode === 0) {
 				try {
-					const expectedPath = behavior.output.startsWith("/") 
+					const expectedPath = path.isAbsolute(behavior.output)
 						? behavior.output 
 						: path.join(chainDir, behavior.output);
 					if (!fs.existsSync(expectedPath)) {

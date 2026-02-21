@@ -4,6 +4,8 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
 import {
@@ -123,7 +125,20 @@ export async function runSync(
 		tmpDir = tmp.dir;
 		args.push("--append-system-prompt", tmp.path);
 	}
-	args.push(`Task: ${task}`);
+
+	// When the task is too long for a CLI argument (Windows ENAMETOOLONG),
+	// write it to a temp file and use pi's @file syntax instead.
+	const TASK_ARG_LIMIT = 8000;
+	if (task.length > TASK_ARG_LIMIT) {
+		if (!tmpDir) {
+			tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+		}
+		const taskFilePath = path.join(tmpDir, "task.md");
+		fs.writeFileSync(taskFilePath, `Task: ${task}`, { mode: 0o600 });
+		args.push(`@${taskFilePath}`);
+	} else {
+		args.push(`Task: ${task}`);
+	}
 
 	const result: SingleResult = {
 		agent: agentName,
