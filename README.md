@@ -270,10 +270,10 @@ Chains can be created from the Agents Manager template picker ("Blank Chain"), o
 | Mode | Async Support | Notes |
 |------|---------------|-------|
 | Single | Yes | `{ agent, task }` - agents with `output` write to temp dir |
-| Chain | Yes* | `{ chain: [{agent, task}...] }` with `{task}`, `{previous}`, `{chain_dir}` variables |
+| Chain | Yes | `{ chain: [{agent, task}...] }` with `{task}`, `{previous}`, `{chain_dir}` variables |
 | Parallel | Sync only | `{ tasks: [{agent, task}...] }` - auto-downgrades if async requested |
 
-*Chain defaults to sync with TUI clarification. Use `clarify: false` to enable async (sequential-only chains; parallel-in-chain requires sync mode).
+*Chain defaults to sync with TUI clarification. Use `clarify: false` to enable async. Chains with parallel steps (`{ parallel: [...] }`) are fully supported in async mode — parallel tasks run concurrently with configurable `concurrency` and `failFast` options.
 
 **Clarify TUI for single/parallel:**
 
@@ -395,7 +395,7 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
   { agent: "reviewer" }
 ]}
 
-// Chain without TUI (enables async)
+// Chain without TUI (enables async — works with parallel steps too)
 { chain: [...], clarify: false, async: true }
 
 // Chain with behavior overrides
@@ -423,6 +423,16 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
     { agent: "worker", task: "Refactor module C" }
   ], concurrency: 2, failFast: true }  // limit concurrency, stop on first failure
 ]}
+
+// Async chain with parallel step (runs in background)
+{ chain: [
+  { agent: "scout", task: "Gather context" },
+  { parallel: [
+    { agent: "worker", task: "Implement auth based on {previous}", model: "anthropic/claude-sonnet-4-5" },
+    { agent: "worker", task: "Implement API based on {previous}", model: "openai-codex/gpt-5.3-codex" }
+  ]},
+  { agent: "reviewer", task: "Review all changes from {previous}" }
+], clarify: false, async: true }
 ```
 
 **subagent_status tool:**
