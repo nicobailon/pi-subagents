@@ -105,6 +105,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): number | undefin
 		cwd,
 		detached: true,
 		stdio: "ignore",
+		windowsHide: true,
 	});
 	proc.unref();
 	return proc.pid;
