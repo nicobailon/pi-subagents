@@ -85,6 +85,25 @@ describe("getPiSpawnCommand", () => {
 	});
 });
 
+describe("getPiSpawnCommand with piPackageRoot", () => {
+	it("resolves CLI script via piPackageRoot when argv1 is not runnable", () => {
+		const packageJsonPath = "/opt/pi/package.json";
+		const cliPath = path.resolve(path.dirname(packageJsonPath), "dist/cli/index.js");
+		const deps = makeDeps({
+			platform: "win32",
+			execPath: "/usr/local/bin/node",
+			argv1: "/opt/pi/subagent-runner.ts",
+			packageJsonPath,
+			packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli/index.js" } }),
+			existing: [packageJsonPath, cliPath],
+		});
+		deps.piPackageRoot = "/opt/pi";
+		const result = getPiSpawnCommand(["-p", "Task: hello"], deps);
+		assert.equal(result.command, "/usr/local/bin/node");
+		assert.equal(result.args[0], cliPath);
+	});
+});
+
 describe("resolveWindowsPiCliScript", () => {
 	it("supports package bin as string", () => {
 		const packageJsonPath = "/opt/pi/package.json";

@@ -105,11 +105,12 @@ function runPiStreaming(
 	cwd: string,
 	outputFile: string,
 	env?: Record<string, string | undefined>,
+	piPackageRoot?: string,
 ): Promise<{ stdout: string; exitCode: number | null }> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv() };
-		const spawnSpec = getPiSpawnCommand(args);
+		const spawnSpec = getPiSpawnCommand(args, piPackageRoot ? { piPackageRoot } : undefined);
 		const child = spawn(spawnSpec.command, spawnSpec.args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: spawnEnv });
 		let stdout = "";
 
@@ -396,7 +397,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			mcpEnv.MCP_DIRECT_TOOLS = "__none__";
 		}
 
-		const result = await runPiStreaming(args, step.cwd ?? cwd, outputFile, mcpEnv);
+		const result = await runPiStreaming(args, step.cwd ?? cwd, outputFile, mcpEnv, config.piPackageRoot);
 
 		if (tmpDir) {
 			try {
