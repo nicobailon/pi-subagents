@@ -300,7 +300,20 @@ async function runSingleStep(
 
 	const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
 	const task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
-	args.push(`Task: ${task}`);
+
+	// When the task is too long for a CLI argument (Windows ENAMETOOLONG),
+	// write it to a temp file and use pi's @file syntax instead.
+	const TASK_ARG_LIMIT = 8000;
+	if (task.length > TASK_ARG_LIMIT) {
+		if (!tmpDir) {
+			tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+		}
+		const taskFilePath = path.join(tmpDir, "task.md");
+		fs.writeFileSync(taskFilePath, `Task: ${task}`, { mode: 0o600 });
+		args.push(`@${taskFilePath}`);
+	} else {
+		args.push(`Task: ${task}`);
+	}
 
 	let artifactPaths: ArtifactPaths | undefined;
 	if (ctx.artifactsDir && ctx.artifactConfig?.enabled !== false) {
@@ -381,7 +394,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	// Flatten steps for status tracking (parallel groups expand to individual entries)
 	const flatSteps = flattenSteps(steps);
 
-	const outputFile = path.join(asyncDir, "output.log");
+	const outputFile = path.join(asyncDir, "output-0.log");
 	const statusPayload: {
 		runId: string;
 		mode: "single" | "chain";
@@ -598,6 +611,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].skills = seqStep.skills;
 			statusPayload.steps[flatIndex].startedAt = stepStartTime;
 			statusPayload.lastUpdate = stepStartTime;
+			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
 			writeJson(statusPath, statusPayload);
 			appendJsonl(
 				eventsPath,

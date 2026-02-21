@@ -50,6 +50,7 @@ export async function mapConcurrent<T, R>(
 	limit: number,
 	fn: (item: T, i: number) => Promise<R>,
 ): Promise<R[]> {
+	const safe = Math.max(1, Math.floor(limit || items.length));
 	const results: R[] = new Array(items.length);
 	let next = 0;
 	async function worker(): Promise<void> {
@@ -58,7 +59,7 @@ export async function mapConcurrent<T, R>(
 			results[i] = await fn(items[i], i);
 		}
 	}
-	const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+	const workers = Array.from({ length: Math.min(safe, items.length) }, () => worker());
 	await Promise.all(workers);
 	return results;
 }

@@ -160,6 +160,16 @@ describe("mapConcurrent", () => {
 		indices.sort((a, b) => a - b);
 		assert.deepEqual(indices, [0, 1, 2]);
 	});
+
+	it("clamps limit=0 to 1 and processes all items", async () => {
+		const results = await mapConcurrent([1, 2, 3], 0, async (item) => item * 10);
+		assert.deepEqual(results, [10, 20, 30]);
+	});
+
+	it("clamps limit=-1 to 1 and processes all items", async () => {
+		const results = await mapConcurrent([1, 2, 3], -1, async (item) => item * 10);
+		assert.deepEqual(results, [10, 20, 30]);
+	});
 });
 
 // ---------------------------------------------------------------------------
