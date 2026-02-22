@@ -396,9 +396,14 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
 { agent: "worker", task: "refactor auth" }
 { agent: "scout", task: "find todos", maxOutput: { lines: 1000 } }
 { agent: "scout", task: "investigate", output: false }  // disable file output
+{ agent: "scout", task: "find auth", piArgs: ["--sandbox-profile", "intro-sec"] } // pass extra pi CLI args
 
 // Parallel (sync only)
 { tasks: [{ agent: "scout", task: "a" }, { agent: "scout", task: "b" }] }
+{ tasks: [
+  { agent: "scout", task: "recon", piArgs: ["--sandbox-profile", "intro"] },
+  { agent: "worker", task: "implement", piArgs: ["--sandbox-profile", "engineering"] }
+] }
 
 // Chain with TUI clarification (default)
 { chain: [
@@ -413,8 +418,8 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
 
 // Chain with behavior overrides
 { chain: [
-  { agent: "scout", task: "find issues", output: false },  // text-only, no file
-  { agent: "worker", progress: false }  // disable progress tracking
+  { agent: "scout", task: "find issues", output: false, piArgs: ["--sandbox-profile", "intro"] },  // text-only, no file
+  { agent: "worker", progress: false, piArgs: ["--sandbox-profile", "engineering"] }  // disable progress tracking
 ]}
 
 // Chain with parallel step (fan-out/fan-in)
@@ -527,8 +532,9 @@ Notes:
 | `output` | `string \| false` | agent default | Override output file for single agent (absolute path as-is, relative path resolved against cwd) |
 | `skill` | `string \| string[] \| false` | agent default | Override skills (comma-separated string, array, or false to disable) |
 | `model` | string | agent default | Override model for single agent |
-| `tasks` | `{agent, task, cwd?, skill?}[]` | - | Parallel tasks (sync only) |
-| `chain` | ChainItem[] | - | Sequential steps with behavior overrides (see below) |
+| `piArgs` | `string[]` | - | Extra CLI args passed to child `pi` process (single mode) |
+| `tasks` | `{agent, task, cwd?, model?, skill?, piArgs?}[]` | - | Parallel tasks (sync only) |
+| `chain` | ChainItem[] | - | Sequential steps with behavior overrides (including per-step `piArgs`) |
 | `chainDir` | string | `<tmpdir>/pi-chain-runs/` | Persistent directory for chain artifacts (default auto-cleaned after 24h) |
 | `clarify` | boolean | true (chains) | Show TUI to preview/edit chain; implies sync mode |
 | `agentScope` | `"user" \| "project" \| "both"` | `both` | Agent discovery scope (project wins on name collisions) |
@@ -539,6 +545,8 @@ Notes:
 | `includeProgress` | boolean | false | Include full progress in result |
 | `share` | boolean | false | Upload session to GitHub Gist (see [Session Sharing](#session-sharing)) |
 | `sessionDir` | string | temp | Directory to store session logs |
+
+`piArgs` rejects reserved internal flags: `--mode`, `-p`, `--print`, `--no-session`, `--session`.
 
 **ChainItem** can be either a sequential step or a parallel step:
 
@@ -554,6 +562,7 @@ Notes:
 | `progress` | boolean | agent default | Override progress.md tracking |
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all |
 | `model` | string | agent default | Override model for this step |
+| `piArgs` | `string[]` | - | Extra CLI args passed to child `pi` process for this step |
 
 *Parallel step fields:*
 
@@ -575,6 +584,7 @@ Notes:
 | `progress` | boolean | agent default | Override progress tracking |
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all |
 | `model` | string | agent default | Override model for this task |
+| `piArgs` | `string[]` | - | Extra CLI args passed to child `pi` process for this task |
 
 Status tool:
 

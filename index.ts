@@ -440,6 +440,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 							return normalized;
 						})(),
 						output: effectiveOutput,
+						piArgs: params.piArgs,
 					});
 				}
 			}
@@ -626,6 +627,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 						maxOutput: params.maxOutput,
 						modelOverride: modelOverrides[i],
 						skills: effectiveSkills === false ? [] : effectiveSkills,
+						piArgs: t.piArgs,
 						onUpdate: onUpdate
 							? (p) => {
 									const stepResults = p.details?.results || [];
@@ -802,6 +804,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					onUpdate,
 					modelOverride,
 					skills: effectiveSkills,
+					piArgs: params.piArgs,
 				});
 				recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 
