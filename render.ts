@@ -22,7 +22,45 @@ function getTermWidth(): number {
 
 function truncLine(text: string, maxWidth: number): string {
 	if (visibleWidth(text) <= maxWidth) return text;
-	return truncateToWidth(text, maxWidth - 1) + "…";
+	// truncateToWidth adds \x1b[0m before its ellipsis which breaks TUI background
+	// Instead: manually truncate to leave room for "..." and append it with proper styling
+	const targetWidth = maxWidth - 3;
+	let result = "";
+	let currentWidth = 0;
+	let activeStyle = ""; // Track current style (excluding reset codes)
+	let i = 0;
+
+	while (i < text.length) {
+		// Check for ANSI code
+		const ansiMatch = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+		if (ansiMatch) {
+			const code = ansiMatch[0];
+			result += code;
+			// Only track non-reset codes as active style
+			if (code !== "\x1b[0m" && code !== "\x1b[m") {
+				activeStyle = code;
+			} else {
+				activeStyle = "";
+			}
+			i += code.length;
+			continue;
+		}
+
+		// Get next character (handle Unicode properly)
+		const char = text[i];
+		const charWidth = visibleWidth(char);
+
+		if (currentWidth + charWidth > targetWidth) {
+			break;
+		}
+
+		result += char;
+		currentWidth += charWidth;
+		i++;
+	}
+
+	// Append ellipsis with the active style to preserve background color
+	return result + activeStyle + "...";
 }
 
 // Track last rendered widget state to avoid no-op re-renders
@@ -319,7 +357,9 @@ export function renderSubagentResult(
 		c.addChild(new Text(truncLine(stepHeader, w), 0, 0));
 
 		const taskMaxLen = Math.max(20, w - 12);
-		const taskPreview = r.task.slice(0, taskMaxLen) + (r.task.length > taskMaxLen ? "..." : "");
+		const taskPreview = r.task.length > taskMaxLen
+			? `${r.task.slice(0, taskMaxLen)}...`
+			: r.task;
 		c.addChild(new Text(truncLine(theme.fg("dim", `    task: ${taskPreview}`), w), 0, 0));
 
 		const outputTarget = extractOutputTarget(r.task);
@@ -340,22 +380,31 @@ export function renderSubagentResult(
 			}
 			// Current tool for running step
 			if (rProg.currentTool) {
-				const toolLine = rProg.currentToolArgs
-					? `${rProg.currentTool}: ${rProg.currentToolArgs.slice(0, 100)}${rProg.currentToolArgs.length > 100 ? "..." : ""}`
+				const maxToolLen = Math.max(50, w - 20);
+				const toolArgsPreview = rProg.currentToolArgs
+					? (rProg.currentToolArgs.length > maxToolLen
+						? `${rProg.currentToolArgs.slice(0, maxToolLen)}...`
+						: rProg.currentToolArgs)
+					: "";
+				const toolLine = toolArgsPreview
+					? `${rProg.currentTool}: ${toolArgsPreview}`
 					: rProg.currentTool;
 				c.addChild(new Text(truncLine(theme.fg("warning", `    > ${toolLine}`), w), 0, 0));
 			}
 			// Recent tools
 			if (rProg.recentTools?.length) {
 				for (const t of rProg.recentTools.slice(0, 3)) {
-					const args = t.args.slice(0, 90) + (t.args.length > 90 ? "..." : "");
-					c.addChild(new Text(truncLine(theme.fg("dim", `      ${t.tool}: ${args}`), w), 0, 0));
+					const maxArgsLen = Math.max(40, w - 30);
+					const argsPreview = t.args.length > maxArgsLen
+						? `${t.args.slice(0, maxArgsLen)}...`
+						: t.args;
+					c.addChild(new Text(truncLine(theme.fg("dim", `      ${t.tool}: ${argsPreview}`), w), 0, 0));
 				}
 			}
 			// Recent output (limited)
 			const recentLines = (rProg.recentOutput ?? []).slice(-5);
 			for (const line of recentLines) {
-				c.addChild(new Text(truncLine(theme.fg("dim", `      ${line.slice(0, 100)}${line.length > 100 ? "..." : ""}`), w), 0, 0));
+				c.addChild(new Text(truncLine(theme.fg("dim", `      ${line}`), w), 0, 0));
 			}
 		}
 
