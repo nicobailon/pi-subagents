@@ -2,6 +2,7 @@
  * Skill resolution and caching for subagent extension
  */
 
+import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -89,11 +90,31 @@ function getPackageSkillPaths(packageRoot: string): string[] {
 	}
 }
 
+let cachedGlobalNpmRoot: string | null = null;
+
+function getGlobalNpmRoot(): string | null {
+	if (cachedGlobalNpmRoot !== null) return cachedGlobalNpmRoot;
+	try {
+		cachedGlobalNpmRoot = execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim();
+		return cachedGlobalNpmRoot;
+	} catch {
+		cachedGlobalNpmRoot = ""; // Empty string means "tried but failed"
+		return null;
+	}
+}
+
 function collectPackageSkillPaths(cwd: string): string[] {
 	const dirs = [
 		path.join(cwd, CONFIG_DIR, "npm", "node_modules"),
 		path.join(AGENT_DIR, "npm", "node_modules"),
 	];
+	
+	// Add global npm root if available (where pi installs global packages)
+	const globalRoot = getGlobalNpmRoot();
+	if (globalRoot) {
+		dirs.push(globalRoot);
+	}
+	
 	const results: string[] = [];
 
 	for (const dir of dirs) {
@@ -178,6 +199,8 @@ function inferSkillSource(rawSource: unknown, filePath: string, cwd: string): Sk
 	const projectRoot = path.resolve(cwd, CONFIG_DIR);
 	const isProjectScoped = isWithinPath(filePath, projectRoot);
 	const isUserScoped = isWithinPath(filePath, AGENT_DIR);
+	const globalRoot = getGlobalNpmRoot();
+	const isGlobalPackage = globalRoot ? isWithinPath(filePath, globalRoot) : false;
 
 	if (source === "project") return "project";
 	if (source === "user") return "user";
@@ -188,7 +211,7 @@ function inferSkillSource(rawSource: unknown, filePath: string, cwd: string): Sk
 	}
 	if (source === "package") {
 		if (isProjectScoped) return "project-package";
-		if (isUserScoped) return "user-package";
+		if (isUserScoped || isGlobalPackage) return "user-package";
 		return "unknown";
 	}
 	if (source === "extension") return "extension";
@@ -196,6 +219,7 @@ function inferSkillSource(rawSource: unknown, filePath: string, cwd: string): Sk
 
 	if (isProjectScoped) return "project";
 	if (isUserScoped) return "user";
+	if (isGlobalPackage) return "user-package";
 	return "unknown";
 }
 
