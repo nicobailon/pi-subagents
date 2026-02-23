@@ -105,11 +105,12 @@ function runPiStreaming(
 	cwd: string,
 	outputFile: string,
 	env?: Record<string, string | undefined>,
+	piPackageRoot?: string,
 ): Promise<{ stdout: string; exitCode: number | null }> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv() };
-		const spawnSpec = getPiSpawnCommand(args);
+		const spawnSpec = getPiSpawnCommand(args, piPackageRoot ? { piPackageRoot } : undefined);
 		const child = spawn(spawnSpec.command, spawnSpec.args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: spawnEnv });
 		let stdout = "";
 
@@ -392,7 +393,20 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 		const placeholderRegex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
 		const task = step.task.replace(placeholderRegex, () => previousOutput);
-		args.push(`Task: ${task}`);
+
+		// When the task is too long for a CLI argument (Windows ENAMETOOLONG),
+		// write it to a temp file and use pi's @file syntax instead.
+		const TASK_ARG_LIMIT = 8000;
+		if (task.length > TASK_ARG_LIMIT) {
+			if (!tmpDir) {
+				tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+			}
+			const taskFilePath = path.join(tmpDir, "task.md");
+			fs.writeFileSync(taskFilePath, `Task: ${task}`, { mode: 0o600 });
+			args.push(`@${taskFilePath}`);
+		} else {
+			args.push(`Task: ${task}`);
+		}
 
 		let artifactPaths: ArtifactPaths | undefined;
 		if (artifactsDir && artifactConfig?.enabled !== false) {
@@ -412,7 +426,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			mcpEnv.MCP_DIRECT_TOOLS = "__none__";
 		}
 
-		const result = await runPiStreaming(args, step.cwd ?? cwd, outputFile, mcpEnv);
+		const result = await runPiStreaming(args, step.cwd ?? cwd, outputFile, mcpEnv, config.piPackageRoot);
 
 		if (tmpDir) {
 			try {

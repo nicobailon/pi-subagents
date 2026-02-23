@@ -67,9 +67,31 @@ function loadConfig(): ExtensionConfig {
 	return {};
 }
 
+/**
+ * Create a directory and verify it is actually accessible.
+ * On Windows with Azure AD/Entra ID, directories created shortly after
+ * wake-from-sleep can end up with broken NTFS ACLs (null DACL) when the
+ * cloud SID cannot be resolved without network connectivity. This leaves
+ * the directory completely inaccessible to the creating user.
+ */
+function ensureAccessibleDir(dirPath: string): void {
+	fs.mkdirSync(dirPath, { recursive: true });
+	try {
+		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+	} catch {
+		// Directory exists but is inaccessible — remove and recreate
+		try {
+			fs.rmSync(dirPath, { recursive: true, force: true });
+		} catch {}
+		fs.mkdirSync(dirPath, { recursive: true });
+		// Verify recovery succeeded
+		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+	}
+}
+
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
-	fs.mkdirSync(RESULTS_DIR, { recursive: true });
-	fs.mkdirSync(ASYNC_DIR, { recursive: true });
+	ensureAccessibleDir(RESULTS_DIR);
+	ensureAccessibleDir(ASYNC_DIR);
 
 	// Cleanup old chain directories on startup (after 24h)
 	cleanupOldChainDirs();
@@ -152,13 +174,42 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	const resultFileCoalescer = createFileCoalescer(handleResult, 50);
-	const watcher = fs.watch(RESULTS_DIR, (ev, file) => {
-		if (ev !== "rename" || !file) return;
-		const fileName = file.toString();
-		if (!fileName.endsWith(".json")) return;
-		resultFileCoalescer.schedule(fileName);
-	});
-	watcher.unref?.();
+	let watcher: fs.FSWatcher | null = null;
+	let watcherRestartTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function startResultWatcher(): void {
+		watcherRestartTimer = null;
+		try {
+			watcher = fs.watch(RESULTS_DIR, (ev, file) => {
+				if (ev !== "rename" || !file) return;
+				const fileName = file.toString();
+				if (!fileName.endsWith(".json")) return;
+				resultFileCoalescer.schedule(fileName);
+			});
+			watcher.on("error", () => {
+				// Watcher died (directory deleted, ACL change, etc.) — restart after delay
+				watcher = null;
+				watcherRestartTimer = setTimeout(() => {
+					try {
+						fs.mkdirSync(RESULTS_DIR, { recursive: true });
+						startResultWatcher();
+					} catch {}
+				}, 3000);
+			});
+			watcher.unref?.();
+		} catch {
+			// fs.watch can throw if directory is inaccessible — retry after delay
+			watcher = null;
+			watcherRestartTimer = setTimeout(() => {
+				try {
+					fs.mkdirSync(RESULTS_DIR, { recursive: true });
+					startResultWatcher();
+				} catch {}
+			}, 3000);
+		}
+	}
+
+	startResultWatcher();
 	fs.readdirSync(RESULTS_DIR)
 		.filter((f) => f.endsWith(".json"))
 		.forEach((file) => resultFileCoalescer.schedule(file, 0));
@@ -1216,7 +1267,9 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		}
 	});
 	pi.on("session_shutdown", () => {
-		watcher.close();
+		watcher?.close();
+		if (watcherRestartTimer) clearTimeout(watcherRestartTimer);
+		watcherRestartTimer = null;
 		if (poller) clearInterval(poller);
 		poller = null;
 		// Clear all pending cleanup timers
