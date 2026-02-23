@@ -83,7 +83,7 @@ export const SubagentParams = Type.Object({
 	maxOutput: MaxOutputSchema,
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),
 	includeProgress: Type.Optional(Type.Boolean({ description: "Include full progress in result (default: false)" })),
-	share: Type.Optional(Type.Boolean({ description: "Create shareable session log (default: true)", default: true })),
+	share: Type.Optional(Type.Boolean({ description: "Upload session to GitHub Gist for sharing (default: false)" })),
 	sessionDir: Type.Optional(
 		Type.String({ description: "Directory to store session logs (default: temp; enables sessions even if share=false)" }),
 	),

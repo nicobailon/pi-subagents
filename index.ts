@@ -229,7 +229,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			currentSessionId = ctx.sessionManager.getSessionFile() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			const agents = discoverAgents(ctx.cwd, scope).agents;
 			const runId = randomUUID().slice(0, 8);
-			const shareEnabled = params.share !== false;
+			const shareEnabled = params.share === true;
 			const sessionEnabled = shareEnabled || Boolean(params.sessionDir);
 			const sessionRoot = sessionEnabled
 				? params.sessionDir
@@ -851,7 +851,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
 		return {
 			runId,
-			shareEnabled: true,
+			shareEnabled: false,
 			sessionDirForIndex: (idx?: number) => path.join(sessionRoot, `run-${idx ?? 0}`),
 			artifactsDir: getArtifactsDir(ctx.sessionManager.getSessionFile() ?? null),
 			artifactConfig: { ...DEFAULT_ARTIFACT_CONFIG } as ArtifactConfig,

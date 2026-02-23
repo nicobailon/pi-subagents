@@ -514,7 +514,7 @@ Notes:
 | `maxOutput` | `{bytes?, lines?}` | 200KB, 5000 lines | Truncation limits for final output |
 | `artifacts` | boolean | true | Write debug artifacts |
 | `includeProgress` | boolean | false | Include full progress in result |
-| `share` | boolean | true | Create shareable session log |
+| `share` | boolean | false | Upload session to GitHub Gist (see [Session Sharing](#session-sharing)) |
 | `sessionDir` | string | temp | Directory to store session logs |
 
 **ChainItem** can be either a sequential step or a parallel step:
@@ -607,6 +607,25 @@ Files per task:
 ## Session Logs
 
 Session files (JSONL) are stored under a per-run session dir (temp by default). The session file path is shown in output. Set `sessionDir` to keep session logs outside `<tmpdir>`.
+
+## Session Sharing
+
+When `share: true` is passed, the extension will:
+
+1. Export the full session (all tool calls, file contents, outputs) to an HTML file
+2. Upload it to a GitHub Gist using your `gh` CLI credentials
+3. Return a shareable URL (`https://shittycodingagent.ai/session/?<gistId>`)
+
+**This is disabled by default.** Session data may contain sensitive information like source code, file paths, environment variables, or credentials that appear in tool outputs.
+
+To enable sharing for a specific run:
+```typescript
+{ agent: "scout", task: "...", share: true }
+```
+
+Requirements:
+- GitHub CLI (`gh`) must be installed and authenticated (`gh auth login`)
+- Gists are created as "secret" (unlisted but accessible to anyone with the URL)
 
 ## Live progress (sync mode)
 
