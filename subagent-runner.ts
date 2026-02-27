@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { appendJsonl, getArtifactPaths } from "./artifacts.js";
+import { validatePiArgs } from "./pi-args-validation.js";
 import { getPiSpawnCommand } from "./pi-spawn.js";
 import { persistSingleOutput } from "./single-output.js";
 import {
@@ -310,6 +311,12 @@ async function runSingleStep(
 		const promptPath = path.join(tmpDir, "prompt.md");
 		fs.writeFileSync(promptPath, step.systemPrompt);
 		args.push("--append-system-prompt", promptPath);
+	}
+
+	// Generic piArgs pass-through
+	if (step.piArgs?.length) {
+		validatePiArgs(step.piArgs);
+		args.push(...step.piArgs);
 	}
 
 	const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");

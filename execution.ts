@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.js";
+import { validatePiArgs } from "./pi-args-validation.js";
 import {
 	ensureArtifactsDir,
 	getArtifactPaths,
@@ -124,6 +125,12 @@ export async function runSync(
 		const tmp = writePrompt(agent.name, systemPrompt);
 		tmpDir = tmp.dir;
 		args.push("--append-system-prompt", tmp.path);
+	}
+
+	// Generic piArgs pass-through
+	if (options.piArgs?.length) {
+		validatePiArgs(options.piArgs);
+		args.push(...options.piArgs);
 	}
 
 	// When the task is too long for a CLI argument (Windows ENAMETOOLONG),

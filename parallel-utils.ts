@@ -15,6 +15,7 @@ export interface RunnerSubagentStep {
 	mcpDirectTools?: string[];
 	systemPrompt?: string | null;
 	skills?: string[];
+	piArgs?: string[];
 	outputPath?: string;
 }
 
