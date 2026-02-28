@@ -89,6 +89,7 @@ export const SubagentParams = Type.Object({
 	),
 	// Clarification TUI
 	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution (default: true for chains, false for single/parallel). Implies sync mode." })),
+	stream: Type.Optional(Type.Boolean({ description: "Stream mode: show live step output instead of compact view (chains only)" })),
 	// Solo agent overrides
 	output: Type.Optional(Type.Any({ description: "Override output file for single agent (string), or false to disable (uses agent default if omitted). Absolute paths are used as-is; relative paths resolve against cwd." })),
 	skill: Type.Optional(SkillOverride),

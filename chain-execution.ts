@@ -27,6 +27,7 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "./skills.js";
 import { runSync } from "./execution.js";
 import { buildChainSummary } from "./formatters.js";
+import { updateChainStatusWidget, clearChainStatusWidget } from "./render.js";
 import { getFinalOutput, mapConcurrent } from "./utils.js";
 import { recordRun } from "./run-history.js";
 import {
@@ -77,6 +78,7 @@ export interface ChainExecutionParams {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	chainSkills?: string[];
 	chainDir?: string;
+	stream?: boolean;
 }
 
 export interface ChainExecutionResult {
@@ -110,6 +112,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		onUpdate,
 		chainSkills: chainSkillsParam,
 		chainDir: chainDirBase,
+		stream: streamParam,
 	} = params;
 	const chainSkills = chainSkillsParam ?? [];
 
@@ -143,6 +146,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 
 	// Behavior overrides from TUI (set if TUI is shown, undefined otherwise)
 	let tuiBehaviorOverrides: (BehaviorOverride | undefined)[] | undefined;
+	let tuiStream: boolean | undefined;
 
 	// Get available models for model resolution (used in TUI and execution)
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
@@ -201,6 +205,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					availableModels,
 					availableSkills,
 					done,
+					'chain',
+					streamParam ?? false,
 				),
 			{
 				overlay: true,
@@ -244,7 +250,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		templates = result.templates;
 		// Store behavior overrides from TUI (used below in sequential step execution)
 		tuiBehaviorOverrides = result.behaviorOverrides;
+		tuiStream = result.stream;
 	}
+
+	// Resolve stream mode: TUI toggle takes precedence over tool param
+	const stream = tuiStream ?? streamParam ?? false;
 
 	// Execute chain (handles both sequential and parallel steps)
 	const results: SingleResult[] = [];
@@ -252,7 +262,20 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let globalTaskIndex = 0; // For unique artifact naming
 	let progressCreated = false; // Track if progress.md has been created
 
-	for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
+	// Initialize stream mode widget + periodic refresh for animation/elapsed time
+	let streamStepIndex = 0;
+	let streamResults: SingleResult[] = results; // Tracks latest combined results (includes running step)
+	let streamInterval: ReturnType<typeof setInterval> | undefined;
+	if (stream) {
+		updateChainStatusWidget(ctx, chainAgents, results, 0, true);
+		streamInterval = setInterval(() => {
+			updateChainStatusWidget(ctx, chainAgents, streamResults, streamStepIndex, true);
+		}, 500);
+	}
+
+	try {
+		for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
+		streamStepIndex = stepIndex;
 		const step = chainSteps[stepIndex]!;
 		const stepTemplates = templates[stepIndex]!;
 
@@ -343,17 +366,20 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 									// Use concat instead of spread for better performance
 									const stepResults = p.details?.results || [];
 									const stepProgress = p.details?.progress || [];
+									const combined = results.concat(stepResults);
 									onUpdate({
 										...p,
 										details: {
 											mode: "chain",
-											results: results.concat(stepResults),
+											results: combined,
 											progress: allProgress.concat(stepProgress),
 											chainAgents,
 											totalSteps,
 											currentStepIndex: stepIndex,
+											stream: stream || undefined,
 										},
 									});
+									if (stream) { streamResults = combined; updateChainStatusWidget(ctx, chainAgents, combined, stepIndex, true); }
 								}
 							: undefined,
 					});
@@ -390,6 +416,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					index: stepIndex,
 					error: errorMsg,
 				});
+				if (stream) clearChainStatusWidget(ctx);
 				return {
 					content: [{ type: "text", text: summary }],
 					details: {
@@ -400,6 +427,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						chainAgents,
 						totalSteps,
 						currentStepIndex: stepIndex,
+						stream: stream || undefined,
 					},
 					isError: true,
 				};
@@ -431,6 +459,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const agentConfig = agents.find((a) => a.name === seqStep.agent);
 			if (!agentConfig) {
 				removeChainDir(chainDir);
+				if (stream) clearChainStatusWidget(ctx);
 				return {
 					content: [{ type: "text", text: `Unknown agent: ${seqStep.agent}` }],
 					isError: true,
@@ -499,17 +528,20 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 							// Use concat instead of spread for better performance
 							const stepResults = p.details?.results || [];
 							const stepProgress = p.details?.progress || [];
+							const combined = results.concat(stepResults);
 							onUpdate({
 								...p,
 								details: {
 									mode: "chain",
-									results: results.concat(stepResults),
+									results: combined,
 									progress: allProgress.concat(stepProgress),
 									chainAgents,
 									totalSteps,
 									currentStepIndex: stepIndex,
+									stream: stream || undefined,
 								},
 							});
+							if (stream) { streamResults = combined; updateChainStatusWidget(ctx, chainAgents, combined, stepIndex, true); }
 						}
 					: undefined,
 			});
@@ -547,6 +579,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					index: stepIndex,
 					error: r.error || "Chain failed",
 				});
+				if (stream) clearChainStatusWidget(ctx);
 				return {
 					content: [{ type: "text", text: summary }],
 					details: {
@@ -557,6 +590,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						chainAgents,
 						totalSteps,
 						currentStepIndex: stepIndex,
+						stream: stream || undefined,
 					},
 					isError: true,
 				};
@@ -566,20 +600,25 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		}
 	}
 
-	// Chain complete - return summary with paths
-	// Chain dir left for inspection (cleaned up after 24h)
-	const summary = buildChainSummary(chainSteps, results, chainDir, "completed");
+		// Chain complete - return summary with paths
+		// Chain dir left for inspection (cleaned up after 24h)
+		const summary = buildChainSummary(chainSteps, results, chainDir, "completed");
 
-	return {
-		content: [{ type: "text", text: summary }],
-		details: {
-			mode: "chain",
-			results,
-			progress: includeProgress ? allProgress : undefined,
-			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
-			chainAgents,
-			totalSteps,
-			// currentStepIndex omitted for completed chains
-		},
-	};
+		return {
+			content: [{ type: "text", text: summary }],
+			details: {
+				mode: "chain",
+				results,
+				progress: includeProgress ? allProgress : undefined,
+				artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
+				chainAgents,
+				totalSteps,
+				stream: stream || undefined,
+				// currentStepIndex omitted for completed chains
+			},
+		};
+	} finally {
+		if (streamInterval) clearInterval(streamInterval);
+		if (stream) clearChainStatusWidget(ctx);
+	}
 }

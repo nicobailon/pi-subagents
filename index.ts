@@ -98,6 +98,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const config = loadConfig();
 	const asyncByDefault = config.asyncByDefault === true;
+	const streamByDefault = config.streamModeByDefault !== false;
 
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
@@ -468,6 +469,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					onUpdate,
 					chainSkills,
 					chainDir: params.chainDir,
+					stream: params.stream ?? streamByDefault,
 				});
 
 				// User requested async via TUI - dispatch to async executor
@@ -1008,13 +1010,32 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		return { name: token.slice(0, bracket), config: parseInlineConfig(token.slice(bracket + 1, end !== -1 ? end : undefined)) };
 	};
 
-	/** Extract --bg flag from end of args, return cleaned args and whether flag was present */
-	const extractBgFlag = (args: string): { args: string; bg: boolean } => {
-		// Only match --bg at the very end to avoid false positives in quoted strings
-		if (args.endsWith(" --bg") || args === "--bg") {
-			return { args: args.slice(0, args.length - (args === "--bg" ? 4 : 5)).trim(), bg: true };
+	/** Extract trailing flags from end of args */
+	const extractFlags = (
+		args: string,
+		opts: { allowBg?: boolean; allowStream?: boolean } = {},
+	): { args: string; bg: boolean; stream: boolean } => {
+		const allowBg = opts.allowBg !== false;
+		const allowStream = opts.allowStream === true;
+		let bg = false;
+		let stream = false;
+		let cleaned = args.trimEnd();
+
+		while (true) {
+			if (allowBg && (cleaned.endsWith(" --bg") || cleaned === "--bg")) {
+				cleaned = cleaned.slice(0, cleaned.length - (cleaned === "--bg" ? 4 : 5)).trimEnd();
+				bg = true;
+				continue;
+			}
+			if (allowStream && (cleaned.endsWith(" --stream") || cleaned === "--stream")) {
+				cleaned = cleaned.slice(0, cleaned.length - (cleaned === "--stream" ? 8 : 9)).trimEnd();
+				stream = true;
+				continue;
+			}
+			break;
 		}
-		return { args, bg: false };
+
+		return { args: cleaned.trim(), bg, stream };
 	};
 
 	const setupDirectRun = (ctx: ExtensionContext) => {
@@ -1144,7 +1165,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		description: "Run a subagent directly: /run agent[output=file] task [--bg]",
 		getArgumentCompletions: makeAgentCompletions(false),
 		handler: async (args, ctx) => {
-			const { args: cleanedArgs, bg } = extractBgFlag(args);
+			const { args: cleanedArgs, bg } = extractFlags(args, { allowBg: true });
 			const input = cleanedArgs.trim();
 			const firstSpace = input.indexOf(" ");
 			if (firstSpace === -1) { ctx.ui.notify("Usage: /run <agent> <task> [--bg]", "error"); return; }
@@ -1241,10 +1262,10 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 	};
 
 	pi.registerCommand("chain", {
-		description: "Run agents in sequence: /chain scout \"task\" -> planner [--bg]",
+		description: "Run agents in sequence: /chain scout \"task\" -> planner [--stream] [--bg]",
 		getArgumentCompletions: makeAgentCompletions(true),
 		handler: async (args, ctx) => {
-			const { args: cleanedArgs, bg } = extractBgFlag(args);
+			const { args: cleanedArgs, bg, stream } = extractFlags(args, { allowBg: true, allowStream: true });
 			const parsed = parseAgentArgs(cleanedArgs, "chain", ctx);
 			if (!parsed) return;
 			const chain = parsed.steps.map(({ name, config, task: stepTask }, i) => ({
@@ -1257,6 +1278,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				...(config.progress !== undefined ? { progress: config.progress } : {}),
 			}));
 			const params: Record<string, unknown> = { chain, task: parsed.task, clarify: false, agentScope: "both" };
+			if (stream) params.stream = true;
 			if (bg) params.async = true;
 			pi.sendUserMessage(`Call the subagent tool with these exact parameters: ${JSON.stringify(params)}`);
 		},
@@ -1266,7 +1288,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		description: "Run agents in parallel: /parallel scout \"task1\" -> reviewer \"task2\" [--bg]",
 		getArgumentCompletions: makeAgentCompletions(true),
 		handler: async (args, ctx) => {
-			const { args: cleanedArgs, bg } = extractBgFlag(args);
+			const { args: cleanedArgs, bg } = extractFlags(args, { allowBg: true });
 			const parsed = parseAgentArgs(cleanedArgs, "parallel", ctx);
 			if (!parsed) return;
 			if (parsed.steps.length > MAX_PARALLEL) { ctx.ui.notify(`Max ${MAX_PARALLEL} parallel tasks`, "error"); return; }
