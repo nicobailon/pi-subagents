@@ -219,6 +219,7 @@ export interface RunSyncOptions {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	streamModeByDefault?: boolean;
 }
 
 // ============================================================================

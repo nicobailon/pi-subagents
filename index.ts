@@ -98,6 +98,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const config = loadConfig();
 	const asyncByDefault = config.asyncByDefault === true;
+	const streamByDefault = config.streamModeByDefault !== false;
 
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
@@ -468,7 +469,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					onUpdate,
 					chainSkills,
 					chainDir: params.chainDir,
-					stream: params.stream,
+					stream: params.stream ?? streamByDefault,
 				});
 
 				// User requested async via TUI - dispatch to async executor
