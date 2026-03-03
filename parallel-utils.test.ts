@@ -83,7 +83,7 @@ describe("flattenSteps", () => {
 describe("mapConcurrent", () => {
 	it("processes all items and preserves order", async () => {
 		const items = [10, 20, 30, 40];
-		const results = await mapConcurrent(items, 2, async (item) => item * 2);
+		const results = await mapConcurrent(items, 2, async (item) => item * 2, 0);
 		assert.deepEqual(results, [20, 40, 60, 80]);
 	});
 
@@ -97,13 +97,13 @@ describe("mapConcurrent", () => {
 			maxRunning = Math.max(maxRunning, running);
 			await new Promise((r) => setTimeout(r, 10));
 			running--;
-		});
+		}, 0);
 
 		assert.ok(maxRunning <= 2, `max concurrent was ${maxRunning}, expected <= 2`);
 	});
 
 	it("handles empty input", async () => {
-		const results = await mapConcurrent([], 4, async (item: number) => item);
+		const results = await mapConcurrent([], 4, async (item: number) => item, 0);
 		assert.deepEqual(results, []);
 	});
 
@@ -117,7 +117,7 @@ describe("mapConcurrent", () => {
 			await new Promise((r) => setTimeout(r, 10));
 			running--;
 			return item * 10;
-		});
+		}, 0);
 		assert.equal(maxRunning, 1, "should run sequentially with limit=0");
 	});
 
@@ -131,8 +131,41 @@ describe("mapConcurrent", () => {
 			await new Promise((r) => setTimeout(r, 10));
 			running--;
 			return item * 10;
-		});
+		}, 0);
 		assert.equal(maxRunning, 1, "should run sequentially with limit=-1");
+	});
+
+	it("staggers worker starts when staggerMs > 0", async () => {
+		const workerStarts: number[] = [];
+		const items = [1, 2, 3];
+
+		// Each item takes 500ms so workers stay busy past the stagger window
+		await mapConcurrent(items, 3, async (_item, i) => {
+			workerStarts.push(Date.now());
+			await new Promise((r) => setTimeout(r, 500));
+		}, 100);
+
+		// Worker 0 starts immediately, worker 1 after ~100ms, worker 2 after ~200ms
+		const d1 = workerStarts[1]! - workerStarts[0]!;
+		const d2 = workerStarts[2]! - workerStarts[0]!;
+		assert.ok(d1 >= 80, `worker 1 should start ~100ms after worker 0, got ${d1}ms`);
+		assert.ok(d2 >= 160, `worker 2 should start ~200ms after worker 0, got ${d2}ms`);
+	});
+
+	it("skips stagger when staggerMs is 0", async () => {
+		const startTimes: number[] = [];
+		const items = [1, 2, 3];
+
+		await mapConcurrent(items, 3, async (_item, i) => {
+			startTimes[i] = Date.now();
+			await new Promise((r) => setTimeout(r, 10));
+		}, 0);
+
+		// All workers should start nearly simultaneously
+		const d1 = startTimes[1]! - startTimes[0]!;
+		const d2 = startTimes[2]! - startTimes[0]!;
+		assert.ok(d1 < 20, `worker 1 should start immediately, got ${d1}ms delay`);
+		assert.ok(d2 < 20, `worker 2 should start immediately, got ${d2}ms delay`);
 	});
 });
 
