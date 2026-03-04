@@ -1008,13 +1008,77 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		return { name: token.slice(0, bracket), config: parseInlineConfig(token.slice(bracket + 1, end !== -1 ? end : undefined)) };
 	};
 
-	/** Extract --bg flag from end of args, return cleaned args and whether flag was present */
-	const extractBgFlag = (args: string): { args: string; bg: boolean } => {
-		// Only match --bg at the very end to avoid false positives in quoted strings
-		if (args.endsWith(" --bg") || args === "--bg") {
-			return { args: args.slice(0, args.length - (args === "--bg" ? 4 : 5)).trim(), bg: true };
+	const stripSurroundingQuotes = (value: string): string => {
+		if (
+			value.length >= 2 &&
+			((value[0] === '"' && value[value.length - 1] === '"') || (value[0] === "'" && value[value.length - 1] === "'"))
+		) {
+			return value.slice(1, -1);
 		}
-		return { args, bg: false };
+		return value;
+	};
+
+	const takeTrailingArg = (input: string): { arg: string; start: number } | null => {
+		let end = input.length;
+		while (end > 0 && /\s/.test(input[end - 1])) end--;
+		if (end === 0) return null;
+
+		let i = end - 1;
+		let quote: "'" | '"' | null = null;
+		while (i >= 0) {
+			const ch = input[i];
+			if (quote === null) {
+				if (ch === '"' || ch === "'") {
+					quote = ch;
+				} else if (/\s/.test(ch)) {
+					break;
+				}
+			} else if (ch === quote) {
+				quote = null;
+			}
+			i--;
+		}
+
+		const start = i + 1;
+		return { arg: input.slice(start, end), start };
+	};
+
+	/** Extract trailing --bg and --dir flags from args, return cleaned args and parsed values */
+	const extractTrailingFlags = (args: string, commandCwd: string): { args: string; bg: boolean; dir?: string } => {
+		let working = args.trim();
+		let bg = false;
+		let dir: string | undefined;
+
+		while (true) {
+			const trailing = takeTrailingArg(working);
+			if (!trailing) break;
+			const token = trailing.arg;
+
+			if (token === "--bg") {
+				bg = true;
+				working = working.slice(0, trailing.start).trim();
+				continue;
+			}
+
+			if (token.startsWith("--dir=")) {
+				const rawDir = stripSurroundingQuotes(token.slice("--dir=".length));
+				if (dir === undefined) dir = rawDir;
+				working = working.slice(0, trailing.start).trim();
+				continue;
+			}
+
+			const before = working.slice(0, trailing.start).trim();
+			const previous = takeTrailingArg(before);
+			if (previous && previous.arg === "--dir" && !token.startsWith("--") && dir === undefined) {
+				dir = stripSurroundingQuotes(token);
+				working = before.slice(0, previous.start).trim();
+				continue;
+			}
+
+			break;
+		}
+
+		return { args: working, bg, dir: dir ? path.resolve(commandCwd, dir) : undefined };
 	};
 
 	const setupDirectRun = (ctx: ExtensionContext) => {
@@ -1144,7 +1208,8 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		description: "Run a subagent directly: /run agent[output=file] task [--bg]",
 		getArgumentCompletions: makeAgentCompletions(false),
 		handler: async (args, ctx) => {
-			const { args: cleanedArgs, bg } = extractBgFlag(args);
+			const commandCwd = ctx.cwd ?? baseCwd;
+			const { args: cleanedArgs, bg, dir } = extractTrailingFlags(args, commandCwd);
 			const input = cleanedArgs.trim();
 			const firstSpace = input.indexOf(" ");
 			if (firstSpace === -1) { ctx.ui.notify("Usage: /run <agent> <task> [--bg]", "error"); return; }
@@ -1163,6 +1228,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			if (inline.output !== undefined) params.output = inline.output;
 			if (inline.skill !== undefined) params.skill = inline.skill;
 			if (inline.model) params.model = inline.model;
+			if (dir) params.dir = dir;
 			if (bg) params.async = true;
 			pi.sendUserMessage(`Call the subagent tool with these exact parameters: ${JSON.stringify({ ...params, agentScope: "both" })}`);
 		},
@@ -1244,7 +1310,8 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		description: "Run agents in sequence: /chain scout \"task\" -> planner [--bg]",
 		getArgumentCompletions: makeAgentCompletions(true),
 		handler: async (args, ctx) => {
-			const { args: cleanedArgs, bg } = extractBgFlag(args);
+			const commandCwd = ctx.cwd ?? baseCwd;
+			const { args: cleanedArgs, bg, dir } = extractTrailingFlags(args, commandCwd);
 			const parsed = parseAgentArgs(cleanedArgs, "chain", ctx);
 			if (!parsed) return;
 			const chain = parsed.steps.map(({ name, config, task: stepTask }, i) => ({
@@ -1257,6 +1324,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				...(config.progress !== undefined ? { progress: config.progress } : {}),
 			}));
 			const params: Record<string, unknown> = { chain, task: parsed.task, clarify: false, agentScope: "both" };
+			if (dir) params.dir = dir;
 			if (bg) params.async = true;
 			pi.sendUserMessage(`Call the subagent tool with these exact parameters: ${JSON.stringify(params)}`);
 		},
@@ -1266,7 +1334,8 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		description: "Run agents in parallel: /parallel scout \"task1\" -> reviewer \"task2\" [--bg]",
 		getArgumentCompletions: makeAgentCompletions(true),
 		handler: async (args, ctx) => {
-			const { args: cleanedArgs, bg } = extractBgFlag(args);
+			const commandCwd = ctx.cwd ?? baseCwd;
+			const { args: cleanedArgs, bg, dir } = extractTrailingFlags(args, commandCwd);
 			const parsed = parseAgentArgs(cleanedArgs, "parallel", ctx);
 			if (!parsed) return;
 			if (parsed.steps.length > MAX_PARALLEL) { ctx.ui.notify(`Max ${MAX_PARALLEL} parallel tasks`, "error"); return; }
@@ -1280,6 +1349,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				...(config.progress !== undefined ? { progress: config.progress } : {}),
 			}));
 			const params: Record<string, unknown> = { chain: [{ parallel: tasks }], task: parsed.task, clarify: false, agentScope: "both" };
+			if (dir) params.dir = dir;
 			if (bg) params.async = true;
 			pi.sendUserMessage(`Call the subagent tool with these exact parameters: ${JSON.stringify(params)}`);
 		},
