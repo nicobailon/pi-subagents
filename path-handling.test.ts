@@ -226,7 +226,20 @@ describe("slash command parsing for --dir and quoted task text", {
 		assert.equal(payload.agent, "scout");
 		assert.equal(payload.task, "mention --dir inside quote and keep --bg text");
 		assert.equal(payload.async, true);
+		assert.equal(payload.dir, undefined);
 		assert.equal(extractDirField(payload), undefined);
+	});
+
+	it("/run handles /run with both --bg and --dir while preserving quoted flag-like substrings", async () => {
+		await commandHandlers.run.handler('scout "mention --dir and --bg in quoted task" --bg --dir .agents/plans/run-dir-bg', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(payload.agent, "scout");
+		assert.equal(payload.task, "mention --dir and --bg in quoted task");
+		assert.equal(payload.async, true);
+		assert.equal(payload.agentScope, "both");
+		assert.equal(payload.chainDir, undefined);
+		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/run-dir-bg"));
 	});
 
 	it("/chain preserves quoted per-step task text when --bg is present", async () => {
@@ -242,7 +255,26 @@ describe("slash command parsing for --dir and quoted task text", {
 		assert.equal(chain[1]?.task, "summarize with --bg text");
 		assert.equal(payload.async, true);
 		assert.equal(payload.task, "inspect --dir token in quote");
+		assert.equal(payload.chainDir, undefined);
 		assert.equal(extractDirField(payload), undefined);
+	});
+
+	it("/chain parses combined --bg + --dir and preserves quoted flag-like task text", async () => {
+		await commandHandlers.chain.handler('scout "inspect --dir token in quote" -> planner "summarize with --bg text" --bg --dir .agents/plans/chain-dir-bg', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		const chain = payload.chain as Array<{ agent: string; task?: string }>;
+		assert.equal(Array.isArray(chain), true);
+		assert.equal(chain.length, 2);
+		assert.equal(chain[0]?.agent, "scout");
+		assert.equal(chain[0]?.task, "inspect --dir token in quote");
+		assert.equal(chain[1]?.agent, "planner");
+		assert.equal(chain[1]?.task, "summarize with --bg text");
+		assert.equal(payload.async, true);
+		assert.equal(payload.task, "inspect --dir token in quote");
+		assert.equal(payload.chainDir, path.resolve(process.cwd(), ".agents/plans/chain-dir-bg"));
+		assert.equal(payload.dir, undefined);
+		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/chain-dir-bg"));
 	});
 
 	it("/chain injects chainDir when --dir is provided", async () => {
@@ -251,7 +283,26 @@ describe("slash command parsing for --dir and quoted task text", {
 
 		assert.equal(payload.chainDir, path.resolve(process.cwd(), ".agents/plans/chain-dir"));
 		assert.equal(payload.dir, undefined);
+		assert.equal(payload.async, undefined);
 		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/chain-dir"));
+	});
+
+	it("/parallel preserves legacy parse when --dir is absent", async () => {
+		await commandHandlers.parallel.handler('scout "scan API surface" -> reviewer "spot --bg text"', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(Array.isArray(payload.chain), true);
+		const parallelStep = payload.chain as Array<{ parallel: Array<{ agent: string; task?: string }> }>;
+		assert.equal(Array.isArray(parallelStep[0]?.parallel), true);
+		assert.equal(parallelStep[0]?.parallel[0]?.agent, "scout");
+		assert.equal(parallelStep[0]?.parallel[0]?.task, "scan API surface");
+		assert.equal(parallelStep[0]?.parallel[1]?.agent, "reviewer");
+		assert.equal(parallelStep[0]?.parallel[1]?.task, "spot --bg text");
+		assert.equal(payload.async, undefined);
+		assert.equal(payload.task, "scan API surface");
+		assert.equal(payload.dir, undefined);
+		assert.equal(payload.chainDir, undefined);
+		assert.equal(extractDirField(payload), undefined);
 	});
 
 	it("/parallel parses --dir and keeps quoted task text intact", async () => {
@@ -270,5 +321,23 @@ describe("slash command parsing for --dir and quoted task text", {
 		assert.equal(payload.dir, undefined);
 		assert.equal(payload.chainDir, path.resolve(process.cwd(), ".agents/plans/parallel-dir"));
 		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/parallel-dir"));
+	});
+
+	it("/parallel parses combined --bg + --dir while preserving quoted flag-like subtasks", async () => {
+		await commandHandlers.parallel.handler('scout "scan --dir token in quote" -> reviewer "summarize --bg token" --bg --dir .agents/plans/parallel-dir-bg', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(Array.isArray(payload.chain), true);
+		const parallelStep = payload.chain as Array<{ parallel: Array<{ agent: string; task?: string }> }>;
+		assert.equal(Array.isArray(parallelStep[0]?.parallel), true);
+		assert.equal(parallelStep[0]?.parallel[0]?.agent, "scout");
+		assert.equal(parallelStep[0]?.parallel[0]?.task, "scan --dir token in quote");
+		assert.equal(parallelStep[0]?.parallel[1]?.agent, "reviewer");
+		assert.equal(parallelStep[0]?.parallel[1]?.task, "summarize --bg token");
+		assert.equal(payload.async, true);
+		assert.equal(payload.task, "scan --dir token in quote");
+		assert.equal(payload.chainDir, path.resolve(process.cwd(), ".agents/plans/parallel-dir-bg"));
+		assert.equal(payload.dir, undefined);
+		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/parallel-dir-bg"));
 	});
 });
