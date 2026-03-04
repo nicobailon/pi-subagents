@@ -1078,7 +1078,8 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			break;
 		}
 
-		return { args: working, bg, dir: dir ? path.resolve(commandCwd, dir) : undefined };
+		const resolvedDir = dir ? path.resolve(commandCwd, dir) : undefined;
+		return { args: working, bg, dir: resolvedDir };
 	};
 
 	const setupDirectRun = (ctx: ExtensionContext) => {
