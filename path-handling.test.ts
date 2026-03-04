@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 
 /**
  * Tests for cross-platform path handling patterns used throughout the codebase.
@@ -107,5 +107,157 @@ describe("path.join vs template string concatenation", () => {
 		const windowsJoin = path.join(windowsSubdir, output);
 		// Consistent: all native separators
 		assert.equal(windowsJoin, path.join("parallel-0", "0-_code-reviewer", output));
+	});
+});
+
+
+type CommandPayload = Record<string, unknown>;
+
+let registerSubagentExtension: ((pi: any) => void) | null = null;
+let extensionImportError: string | null = null;
+
+try {
+	const extensionModule = await import(new URL("./index.ts", import.meta.url));
+	registerSubagentExtension = extensionModule.default;
+} catch (error: unknown) {
+	const err = error as { code?: string; message?: string };
+	if (err?.code === "ERR_MODULE_NOT_FOUND" || err?.code === "MODULE_NOT_FOUND") {
+		extensionImportError = err.message ? `Dependency import unavailable: ${err.message}` : "Dependency import unavailable";
+	} else {
+		throw error;
+	}
+}
+
+const TOOL_CALL_PREFIX = "Call the subagent tool with these exact parameters: ";
+
+const parseToolCallPayload = (messages: string[]): CommandPayload => {
+	const lastMessage = messages.at(-1);
+	assert.ok(typeof lastMessage === "string", "slash command handlers should emit a tool-call message");
+	const markerIndex = lastMessage!.indexOf(TOOL_CALL_PREFIX);
+	assert.notEqual(markerIndex, -1, `message should contain expected tool-call prefix: ${lastMessage!.slice(0, 120)}...`);
+	const rawPayload = lastMessage!.slice(markerIndex + TOOL_CALL_PREFIX.length);
+	return JSON.parse(rawPayload) as CommandPayload;
+};
+
+const extractDirField = (payload: CommandPayload): string | undefined => {
+	for (const key of ["dir", "chainDir", "sessionDir", "cwd"] as const) {
+		const value = payload[key];
+		if (typeof value === "string") return value;
+	}
+	return undefined;
+};
+
+const expectedDirValue = (value: string | undefined, expected: string): boolean => {
+	if (!value) return false;
+	return value === expected || value === path.resolve(process.cwd(), expected);
+};
+
+
+describe("slash command parsing for --dir and quoted task text", {
+	skip: extensionImportError ? extensionImportError : undefined,
+}, () => {
+	let commandHandlers: Record<string, { handler: (args: string, ctx: { ui: { notify: (message: string) => void } }) => void | Promise<void> }>;
+	let messages: string[];
+
+	beforeEach(() => {
+		messages = [];
+		const handlers: Record<string, any> = {};
+		const pi: any = {
+			registerTool: () => {},
+			registerCommand: (name: string, def: any) => {
+				handlers[name] = def;
+			},
+			registerShortcut: () => {},
+			on: () => {},
+			events: {
+				on: () => {},
+			},
+			sendUserMessage: (text: string) => {
+				messages.push(text);
+			},
+		};
+		registerSubagentExtension!(pi);
+		commandHandlers = handlers;
+	});
+
+	const ctx = {
+		ui: {
+			notify: () => {},
+		},
+	};
+
+	it("/run parses --dir <path> without disturbing task text", async () => {
+		await commandHandlers.run.handler("scout \"collect architecture notes\" --dir .agents/plans/dir-space", ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(payload.agent, "scout");
+		assert.equal(payload.task, "collect architecture notes");
+		assert.equal(payload.clarify, false);
+		assert.equal(payload.async, undefined);
+		assert.equal(payload.agentScope, "both");
+		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/dir-space"));
+	});
+
+	it("/run parses --dir=<path> without disturbing task text", async () => {
+		await commandHandlers.run.handler("scout \"collect architecture notes\" --dir=.agents/plans/dir-eq", ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(payload.agent, "scout");
+		assert.equal(payload.task, "collect architecture notes");
+		assert.equal(payload.async, undefined);
+		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/dir-eq"));
+	});
+
+	it("/run preserves legacy /bg behavior when --dir is absent", async () => {
+		await commandHandlers.run.handler('scout "legacy mode run" --bg', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(payload.agent, "scout");
+		assert.equal(payload.task, "legacy mode run");
+		assert.equal(payload.async, true);
+		assert.equal(payload.agentScope, "both");
+		assert.equal(extractDirField(payload), undefined);
+	});
+
+	it("/run preserves quoted task text that includes --dir while supporting --bg", async () => {
+		await commandHandlers.run.handler('scout "mention --dir inside quote and keep --bg text" --bg', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(payload.agent, "scout");
+		assert.equal(payload.task, "mention --dir inside quote and keep --bg text");
+		assert.equal(payload.async, true);
+		assert.equal(extractDirField(payload), undefined);
+	});
+
+	it("/chain preserves quoted per-step task text when --bg is present", async () => {
+		await commandHandlers.chain.handler('scout "inspect --dir token in quote" -> planner "summarize with --bg text" --bg', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		const chain = payload.chain as Array<{ agent: string; task?: string }>; 
+		assert.equal(Array.isArray(chain), true);
+		assert.equal(chain.length, 2);
+		assert.equal(chain[0]?.agent, "scout");
+		assert.equal(chain[0]?.task, "inspect --dir token in quote");
+		assert.equal(chain[1]?.agent, "planner");
+		assert.equal(chain[1]?.task, "summarize with --bg text");
+		assert.equal(payload.async, true);
+		assert.equal(payload.task, "inspect --dir token in quote");
+		assert.equal(extractDirField(payload), undefined);
+	});
+
+	it("/parallel parses --dir and keeps quoted task text intact", async () => {
+		await commandHandlers.parallel.handler('scout "scan API surface" -> reviewer "spot --dir mentions" --dir .agents/plans/parallel-dir', ctx);
+		const payload = parseToolCallPayload(messages);
+
+		assert.equal(Array.isArray(payload.chain), true);
+		const parallelStep = payload.chain as Array<{ parallel: Array<{ agent: string; task?: string }> }>;
+		assert.equal(Array.isArray(parallelStep[0]?.parallel), true);
+		assert.equal(parallelStep[0]?.parallel[0]?.agent, "scout");
+		assert.equal(parallelStep[0]?.parallel[0]?.task, "scan API surface");
+		assert.equal(parallelStep[0]?.parallel[1]?.agent, "reviewer");
+		assert.equal(parallelStep[0]?.parallel[1]?.task, "spot --dir mentions");
+		assert.equal(payload.async, undefined);
+		assert.equal(payload.task, "scan API surface");
+		assert.ok(expectedDirValue(extractDirField(payload), ".agents/plans/parallel-dir"));
 	});
 });
