@@ -5,8 +5,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	createTempDir,
 	removeTempDir,
@@ -16,8 +16,12 @@ import {
 const skills = await tryImport<any>("./skills.ts");
 const available = !!skills;
 
-const discoverAvailableSkills = skills?.discoverAvailableSkills;
-const clearSkillCache = skills?.clearSkillCache;
+async function importSkillsFresh(): Promise<any> {
+	const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const modulePath = path.resolve(projectRoot, "skills.ts");
+	const bust = `${Date.now()}-${Math.random()}`;
+	return await import(`${pathToFileURL(modulePath).href}?bust=${bust}`);
+}
 
 function writeSkillPackage(packageRoot: string, skillName: string): void {
 	const skillDir = path.join(packageRoot, "skills", skillName);
@@ -44,23 +48,26 @@ describe(
 	"discoverAvailableSkills",
 	{ skip: !available ? "pi packages not available" : undefined },
 	() => {
-		it("loads local package skills from project and user settings", () => {
+		it("loads local package skills from project and user settings", async () => {
 			const tempDir = createTempDir("skill-discovery-project-");
 			const projectRoot = path.join(tempDir, "project");
 			const projectPackageRoot = path.join(projectRoot, ".pi", "project-pkg");
 			const projectSettingsPath = path.join(projectRoot, ".pi", "settings.json");
 
-			const userAgentDir = path.join(os.homedir(), ".pi", "agent");
+			const fakeHome = path.join(tempDir, "fake-home");
+			const userAgentDir = path.join(fakeHome, ".pi", "agent");
 			const userPackageRoot = path.join(userAgentDir, "user-pkg");
 			const userSettingsPath = path.join(userAgentDir, "settings.json");
 
 			const projectSkill = "proj-settings-skill";
 			const userSkill = "user-settings-skill";
-			const originalUserSettings = fs.existsSync(userSettingsPath)
-				? fs.readFileSync(userSettingsPath, "utf-8")
-				: undefined;
+			const previousHome = process.env.HOME;
+			const previousUserProfile = process.env.USERPROFILE;
 
 			try {
+				process.env.HOME = fakeHome;
+				process.env.USERPROFILE = fakeHome;
+
 				writeSkillPackage(projectPackageRoot, projectSkill);
 				fs.mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
 				fs.writeFileSync(
@@ -83,8 +90,9 @@ describe(
 					"utf-8",
 				);
 
-				clearSkillCache?.();
-				const discovered = discoverAvailableSkills(projectRoot).map((s: any) => s.name);
+				const fresh = await importSkillsFresh();
+				fresh.clearSkillCache?.();
+				const discovered = fresh.discoverAvailableSkills(projectRoot).map((s: any) => s.name);
 				assert.ok(
 					discovered.includes(projectSkill),
 					"should include project package skill",
@@ -94,14 +102,11 @@ describe(
 					"should include user package skill",
 				);
 			} finally {
-				if (originalUserSettings === undefined) {
-					fs.rmSync(userSettingsPath, { force: true });
-				} else {
-					fs.writeFileSync(userSettingsPath, originalUserSettings, "utf-8");
-				}
-				fs.rmSync(userPackageRoot, { recursive: true, force: true });
+				if (previousHome === undefined) delete process.env.HOME;
+				else process.env.HOME = previousHome;
+				if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+				else process.env.USERPROFILE = previousUserProfile;
 				removeTempDir(tempDir);
-				clearSkillCache?.();
 			}
 		});
 	},
