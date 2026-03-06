@@ -150,7 +150,8 @@ export function executeAsyncChain(
 		const stepOverrides: StepOverrides = { skills: stepSkillInput };
 		const behavior = resolveStepBehavior(a, stepOverrides, chainSkills);
 		const skillNames = behavior.skills === false ? [] : behavior.skills;
-		const { resolved: resolvedSkills } = resolveSkills(skillNames, ctx.cwd);
+		const skillCwd = s.cwd ?? cwd ?? ctx.cwd;
+		const { resolved: resolvedSkills } = resolveSkills(skillNames, skillCwd);
 
 		let systemPrompt = a.systemPrompt?.trim() || null;
 		if (resolvedSkills.length > 0) {
@@ -260,7 +261,8 @@ export function executeAsyncSingle(
 ): AsyncExecutionResult {
 	const { agent, task, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot } = params;
 	const skillNames = params.skills ?? agentConfig.skills ?? [];
-	const { resolved: resolvedSkills } = resolveSkills(skillNames, ctx.cwd);
+	const skillCwd = cwd ?? ctx.cwd;
+	const { resolved: resolvedSkills } = resolveSkills(skillNames, skillCwd);
 	let systemPrompt = agentConfig.systemPrompt?.trim() || null;
 	if (resolvedSkills.length > 0) {
 		const injection = buildSkillInjection(resolvedSkills);

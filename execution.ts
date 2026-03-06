@@ -111,7 +111,8 @@ export async function runSync(
 	}
 
 	const skillNames = options.skills ?? agent.skills ?? [];
-	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkills(skillNames, runtimeCwd);
+	const skillCwd = cwd ?? runtimeCwd;
+	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkills(skillNames, skillCwd);
 
 	let systemPrompt = agent.systemPrompt?.trim() || "";
 	if (resolvedSkills.length > 0) {
