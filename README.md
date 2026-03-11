@@ -110,9 +110,9 @@ The MCP adapter's metadata cache must be populated for direct tools to work. On 
 
 | Command | Description |
 |---------|-------------|
-| `/run <agent> <task>` | Run a single agent with a task |
-| `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence with per-step tasks |
-| `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel with per-step tasks |
+| `/run <agent> <task> [--bg] [--dir <path>]` | Run a single agent with a task |
+| `/chain agent1 "task1" -> agent2 "task2" [--bg] [--dir <path>]` | Run agents in sequence with per-step tasks |
+| `/parallel agent1 "task1" -> agent2 "task2" [--bg] [--dir <path>]` | Run agents in parallel with per-step tasks |
 | `/agents` | Open the Agents Manager overlay |
 
 All commands validate agent names locally and tab-complete them, then route through the tool framework for full live progress rendering. Results are sent to the conversation for the LLM to discuss.
@@ -173,6 +173,25 @@ Add `--bg` at the end of any slash command to run in the background:
 ```
 
 Background tasks run asynchronously and notify you when complete. Check status with `subagent_status`.
+
+### Workflow directories with `--dir`
+
+All slash commands also support a trailing `--dir <path>` to pin command outputs into your task workspace (and can be combined with `--bg`).
+
+- `/run ... --dir <TASK_DIR>/` keeps that run's workspace-specific directory context.
+- `/chain ... --dir <TASK_DIR>/` and `/parallel ... --dir <TASK_DIR>/` inject `chainDir`, so chain artifacts land in that directory.
+
+`--dir` is optional and **opt-in** for chain artifacts; when omitted, chain/parallel keep their default behavior.
+
+```text
+/run scout "collect architecture notes" --dir <TASK_DIR>/
+/chain scout "analyze auth system" -> planner "draft migration plan" --dir <TASK_DIR>/
+/parallel scout "scan frontend" -> reviewer "spot security issues" --dir <TASK_DIR>/
+```
+
+Backward compatibility:
+- `/chain` and `/parallel` still write artifacts under `<tmpdir>/pi-chain-runs/{runId}/` when `--dir` is not used.
+- `/run` default session behavior is unchanged when `--dir` is not used.
 
 ## Agents Manager
 
@@ -608,7 +627,7 @@ This aggregated output becomes `{previous}` for the next step.
 
 Each chain run creates `<tmpdir>/pi-chain-runs/{runId}/` containing:
 - `context.md` - Scout/context-builder output
-- `plan.md` - Planner output  
+- `plan.md` - Planner output
 - `progress.md` - Worker/reviewer shared progress
 - `parallel-{stepIndex}/` - Subdirectories for parallel step outputs
   - `0-{agent}/output.md` - First parallel task output
