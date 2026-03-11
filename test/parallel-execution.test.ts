@@ -144,4 +144,38 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		const ok = results.filter((r: any) => r.exitCode === 0).length;
 		assert.equal(ok, 2);
 	});
+
+	it("tracks per-task fallback independently", async () => {
+		mockPi.onCall({ exitCode: 1, stderr: "429 rate limit exceeded" });
+		mockPi.onCall({ output: "Recovered task A" });
+		mockPi.onCall({ output: "Task B direct success" });
+		const agents = [
+			{ ...makeAgentConfigs(["a"])[0], model: "openai/gpt-4.1" },
+			{ ...makeAgentConfigs(["b"])[0], model: "anthropic/claude-sonnet-4-5" },
+		];
+
+		const results = await mapConcurrent(
+			[
+				{ agent: "a", task: "Task A", runtimeModelContext: {
+					availableModels: [
+						{ provider: "openai", id: "gpt-4.1", fullId: "openai/gpt-4.1" },
+						{ provider: "google", id: "gemini-2.5-pro", fullId: "google/gemini-2.5-pro" },
+					],
+					config: { fallbackModels: ["google/gemini-2.5-pro"], cooldownMinutes: 5 },
+				} },
+				{ agent: "b", task: "Task B", runtimeModelContext: {
+					availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5" }],
+					config: { cooldownMinutes: 5 },
+				} },
+			],
+			1,
+			async ({ agent, task, runtimeModelContext }: any, i: number) => runSync(tempDir, agents as any, agent, task, { index: i, runtimeModelContext }),
+		);
+
+		assert.equal(results.length, 2);
+		assert.equal(results[0].modelAttempts?.length, 2);
+		assert.equal(results[1].modelAttempts?.length, 1);
+		assert.equal(results[0].exitCode, 0);
+		assert.equal(results[1].exitCode, 0);
+	});
 });

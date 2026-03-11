@@ -158,6 +158,12 @@ interface AgentConfig {
 	mcpDirectTools?: string[];
 }
 
+export interface MockAvailableModel {
+	provider: string;
+	id: string;
+	fullId?: string;
+}
+
 /**
  * Create minimal agent configs for testing.
  * Each name becomes an agent with no special config.
@@ -184,11 +190,26 @@ export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): A
 // Minimal mock context for chain execution
 // ---------------------------------------------------------------------------
 
+export function makeAvailableModels(models: Array<string | MockAvailableModel>): Array<{ provider: string; id: string; fullId: string }> {
+	return models.map((model) => {
+		if (typeof model === "string") {
+			const [provider, id] = model.split("/");
+			return { provider, id, fullId: model };
+		}
+		return {
+			provider: model.provider,
+			id: model.id,
+			fullId: model.fullId ?? `${model.provider}/${model.id}`,
+		};
+	});
+}
+
 /**
  * Create a minimal ExtensionContext mock for chain execution.
  * Only provides what executeChain needs when clarify=false.
  */
-export function makeMinimalCtx(cwd: string): any {
+export function makeMinimalCtx(cwd: string, models: Array<string | MockAvailableModel> = []): any {
+	const availableModels = makeAvailableModels(models);
 	return {
 		cwd,
 		hasUI: false,
@@ -197,7 +218,7 @@ export function makeMinimalCtx(cwd: string): any {
 			getSessionFile: () => null,
 		},
 		modelRegistry: {
-			getAvailable: () => [],
+			getAvailable: () => availableModels,
 		},
 	};
 }
