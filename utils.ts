@@ -175,6 +175,7 @@ export function getDisplayItems(messages: Message[]): DisplayItem[] {
 		if (msg.role === "assistant") {
 			for (const part of msg.content) {
 				if (part.type === "text") items.push({ type: "text", text: part.text });
+				else if (part.type === "thinking" && "thinking" in part) items.push({ type: "thinking", thinking: (part as { thinking: string }).thinking });
 				else if (part.type === "toolCall") items.push({ type: "tool", name: part.name, args: part.arguments });
 			}
 		}

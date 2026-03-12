@@ -118,6 +118,7 @@ export interface Details {
 	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
 	totalSteps?: number;         // Total steps in chain
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
+	stream?: boolean;            // Stream mode: show live step output instead of compact view
 }
 
 // ============================================================================
@@ -179,9 +180,10 @@ export interface AsyncJobState {
 // Display
 // ============================================================================
 
-export type DisplayItem = 
-	| { type: "text"; text: string } 
-	| { type: "tool"; name: string; args: Record<string, unknown> };
+export type DisplayItem =
+	| { type: "text"; text: string }
+	| { type: "tool"; name: string; args: Record<string, unknown> }
+	| { type: "thinking"; thinking: string };
 
 // ============================================================================
 // Error Handling
@@ -217,6 +219,7 @@ export interface RunSyncOptions {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	streamModeByDefault?: boolean;
 }
 
 // ============================================================================
@@ -242,6 +245,7 @@ export const MAX_CONCURRENCY = 4;
 export const RESULTS_DIR = path.join(os.tmpdir(), "pi-async-subagent-results");
 export const ASYNC_DIR = path.join(os.tmpdir(), "pi-async-subagent-runs");
 export const WIDGET_KEY = "subagent-async";
+export const CHAIN_STATUS_WIDGET_KEY = "subagent-chain-status";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;

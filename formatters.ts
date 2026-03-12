@@ -84,7 +84,7 @@ export function buildChainSummary(
 }
 
 /**
- * Format a tool call for display
+ * Format a tool call for display (plain text)
  */
 export function formatToolCall(name: string, args: Record<string, unknown>): string {
 	switch (name) {
@@ -99,6 +99,45 @@ export function formatToolCall(name: string, args: Record<string, unknown>): str
 		default: {
 			const s = JSON.stringify(args);
 			return `${name} ${s.slice(0, 40)}${s.length > 40 ? "..." : ""}`;
+		}
+	}
+}
+
+/**
+ * Format a tool call with theme colors (matching pi-mono's tool rendering)
+ */
+export function formatToolCallThemed(name: string, args: Record<string, unknown>, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }): string {
+	const title = (n: string) => theme.fg("toolTitle", theme.bold(n));
+	const accent = (p: string) => theme.fg("accent", p);
+	const path = shortenPath((args.path || args.file_path || "") as string);
+
+	switch (name) {
+		case "bash": {
+			const cmd = ((args.command as string) || "").slice(0, 80);
+			const ellipsis = (args.command as string)?.length > 80 ? "..." : "";
+			return `${title("$")} ${cmd}${ellipsis}`;
+		}
+		case "read":
+			return `${title("read")} ${accent(path)}`;
+		case "write":
+			return `${title("write")} ${accent(path)}`;
+		case "edit":
+			return `${title("edit")} ${accent(path)}`;
+		case "grep": {
+			const pattern = (args.pattern || "") as string;
+			const grepPath = shortenPath((args.path || ".") as string);
+			return `${title("grep")} ${accent(`/${pattern}/`)} in ${grepPath}`;
+		}
+		case "find": {
+			const findPattern = (args.pattern || args.glob || "") as string;
+			const findPath = shortenPath((args.path || ".") as string);
+			return `${title("find")} ${accent(findPattern)} in ${findPath}`;
+		}
+		case "ls":
+			return `${title("ls")} ${accent(path)}`;
+		default: {
+			const s = JSON.stringify(args);
+			return `${title(name)} ${s.slice(0, 50)}${s.length > 50 ? "..." : ""}`;
 		}
 	}
 }

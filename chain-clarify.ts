@@ -44,6 +44,8 @@ export interface ChainClarifyResult {
 	behaviorOverrides: (BehaviorOverride | undefined)[];
 	/** User requested background/async execution */
 	runInBackground?: boolean;
+	/** User enabled stream mode for chain output */
+	stream?: boolean;
 }
 
 type EditMode = "template" | "output" | "reads" | "model" | "thinking" | "skills";
@@ -92,6 +94,8 @@ export class ChainClarifyComponent implements Component {
 	private savingChain = false;
 	/** Run in background (async) mode */
 	private runInBackground = false;
+	/** Stream mode: show live step output instead of compact view */
+	private streamMode = false;
 
 	constructor(
 		private tui: TUI,
@@ -105,10 +109,15 @@ export class ChainClarifyComponent implements Component {
 		private availableSkills: Array<{ name: string; source: string; description?: string }>,
 		private done: (result: ChainClarifyResult) => void,
 		private mode: ClarifyMode = 'chain',   // Mode: 'single', 'parallel', or 'chain'
+		initialStream: boolean = false,
 	) {
 		// Initialize filtered models
 		this.filteredModels = [...availableModels];
 		this.filteredSkills = [...availableSkills];
+		// For chain mode, initialize stream toggle from caller-provided state
+		if (mode === 'chain') {
+			this.streamMode = initialStream;
+		}
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
@@ -467,7 +476,7 @@ export class ChainClarifyComponent implements Component {
 			for (let i = 0; i < this.agentConfigs.length; i++) {
 				overrides.push(this.behaviorOverrides.get(i));
 			}
-			this.done({ confirmed: true, templates: this.templates, behaviorOverrides: overrides, runInBackground: this.runInBackground });
+			this.done({ confirmed: true, templates: this.templates, behaviorOverrides: overrides, runInBackground: this.runInBackground, stream: this.streamMode });
 			return;
 		}
 
@@ -539,6 +548,13 @@ export class ChainClarifyComponent implements Component {
 			for (let i = 0; i < this.agentConfigs.length; i++) {
 				this.updateBehavior(i, "progress", newState);
 			}
+			this.tui.requestRender();
+			return;
+		}
+
+		// 'v' to toggle stream mode (chain only)
+		if (data === "v" && this.mode === 'chain') {
+			this.streamMode = !this.streamMode;
 			this.tui.requestRender();
 			return;
 		}
@@ -1191,13 +1207,14 @@ export class ChainClarifyComponent implements Component {
 	/** Get footer text based on mode */
 	private getFooterText(): string {
 		const bgLabel = this.runInBackground ? '[b]g:ON' : '[b]g';
+		const streamLabel = this.streamMode ? '[v]iew:stream' : '[v]iew';
 		switch (this.mode) {
 			case 'single':
 				return ` [Enter] Run • [Esc] Cancel • e m t w s ${bgLabel} S `;
 			case 'parallel':
 				return ` [Enter] Run • [Esc] Cancel • e m t s ${bgLabel} S • ↑↓ Nav `;
 			case 'chain':
-				return ` [Enter] Run • [Esc] Cancel • e m t w r p s ${bgLabel} S W • ↑↓ Nav `;
+				return ` [Enter] Run • [Esc] Cancel • e m t w r p s ${streamLabel} ${bgLabel} S W • ↑↓ Nav `;
 		}
 	}
 

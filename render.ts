@@ -2,17 +2,23 @@
  * Rendering functions for subagent results
  */
 
+import type { Message } from "@mariozechner/pi-ai";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import { getMarkdownTheme, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Markdown, Spacer, Text, truncateToWidth, visibleWidth, type Widget } from "@mariozechner/pi-tui";
+import { AssistantMessageComponent, getMarkdownTheme, ToolExecutionComponent, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Container, Markdown, Spacer, Text, truncateToWidth, visibleWidth, type TUI, type Widget } from "@mariozechner/pi-tui";
 import {
 	type AsyncJobState,
 	type Details,
+	type SingleResult,
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
+	CHAIN_STATUS_WIDGET_KEY,
 } from "./types.js";
 import { formatTokens, formatUsage, formatDuration, formatToolCall, shortenPath } from "./formatters.js";
 import { getFinalOutput, getDisplayItems, getOutputTail, getLastActivity } from "./utils.js";
+
+/** No-op TUI stub for ToolExecutionComponent (only uses requestRender) */
+const noopTui = { requestRender() {} } as unknown as TUI;
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -172,6 +178,238 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	ctx.ui.setWidget(WIDGET_KEY, lines);
 }
 
+// ============================================================================
+// Chain Stream Mode
+// ============================================================================
+
+/**
+ * Build the single-line sticky bar for chain stream mode.
+ * Format: `✓ scout 12s → ● planner 3s → ○ worker`
+ * Running step blinks between ● and ○ every 500ms.
+ */
+export function buildChainStatusLine(
+	theme: Theme,
+	chainAgents: string[],
+	results: SingleResult[],
+	currentStepIndex: number,
+	isRunning: boolean,
+): string {
+	const blink = Math.floor(Date.now() / 500) % 2 === 0;
+
+	// Map results to steps: sequential steps = 1 result, parallel steps = N results
+	let resultIdx = 0;
+	const parts: string[] = [];
+
+	for (let i = 0; i < chainAgents.length; i++) {
+		const agent = chainAgents[i]!;
+		const isParallel = agent.startsWith("[");
+
+		// Count how many results this step produced
+		let stepResultCount = 1;
+		if (isParallel) {
+			const names = agent.slice(1, -1).split("+");
+			stepResultCount = names.length;
+		}
+
+		const stepResults = results.slice(resultIdx, resultIdx + stepResultCount);
+		resultIdx += stepResultCount;
+
+		const isCurrent = i === currentStepIndex && isRunning;
+		const isComplete = stepResults.length === stepResultCount && stepResults.every(r => r.exitCode === 0 && r.progress?.status !== "running");
+		const isFailed = stepResults.some(r => r.exitCode !== 0 && r.progress?.status !== "running");
+		const isPending = stepResults.length === 0;
+
+		let icon: string;
+		if (isFailed) {
+			icon = theme.fg("error", "✗");
+		} else if (isComplete) {
+			icon = theme.fg("success", "✓");
+		} else if (isCurrent) {
+			icon = theme.fg("warning", blink ? "●" : "○");
+		} else if (isPending) {
+			icon = theme.fg("dim", "○");
+		} else {
+			icon = theme.fg("warning", "●");
+		}
+
+		// Duration for completed or running steps
+		let duration = "";
+		if (stepResults.length > 0) {
+			const totalMs = stepResults.reduce((sum, r) => {
+				const prog = r.progress || r.progressSummary;
+				return sum + (prog?.durationMs ?? 0);
+			}, 0);
+			if (totalMs > 0) duration = ` ${formatDuration(totalMs)}`;
+		}
+
+		parts.push(`${icon} ${agent}${duration}`);
+	}
+
+	return parts.join(theme.fg("dim", " → "));
+}
+
+/**
+ * Update the chain status widget (sticky bar at bottom)
+ */
+export function updateChainStatusWidget(
+	ctx: ExtensionContext,
+	chainAgents: string[],
+	results: SingleResult[],
+	currentStepIndex: number,
+	isRunning: boolean,
+): void {
+	if (!ctx.hasUI) return;
+	const theme = ctx.ui.theme;
+	const w = getTermWidth();
+	const line = truncLine(buildChainStatusLine(theme, chainAgents, results, currentStepIndex, isRunning), w);
+	ctx.ui.setWidget(CHAIN_STATUS_WIDGET_KEY, [line]);
+}
+
+/**
+ * Clear the chain status widget
+ */
+export function clearChainStatusWidget(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setWidget(CHAIN_STATUS_WIDGET_KEY, undefined);
+}
+
+/**
+ * Render a subagent's messages using pi-mono's AssistantMessageComponent and ToolExecutionComponent.
+ * Replicates main chat look: text+thinking via AssistantMessageComponent, tool calls via ToolExecutionComponent.
+ */
+function renderMessagesAsChat(container: Container, messages: Message[], mdTheme: ReturnType<typeof getMarkdownTheme>, expanded: boolean): void {
+	// Build tool result lookup: toolCallId -> result message
+	const toolResults = new Map<string, Message>();
+	for (const msg of messages) {
+		if (msg.role === "toolResult") {
+			toolResults.set(msg.toolCallId, msg);
+		}
+	}
+
+	for (const msg of messages) {
+		if (msg.role !== "assistant") continue;
+
+		// Check if this message has visible text or thinking content
+		const hasVisibleContent = msg.content.some(
+			(part) => (part.type === "text" && ("text" in part) && (part.text as string).trim()) ||
+				(part.type === "thinking" && ("thinking" in part) && (part.thinking as string).trim()),
+		);
+
+		if (hasVisibleContent) {
+			// Use AssistantMessageComponent for text + thinking (same as main chat)
+			const amc = new AssistantMessageComponent(msg as any, false, mdTheme);
+			container.addChild(amc);
+		}
+
+		// Render tool calls with ToolExecutionComponent (same as main chat)
+		for (const part of msg.content) {
+			if (part.type === "toolCall") {
+				const tc = part as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+				const comp = new ToolExecutionComponent(tc.name, tc.arguments, {}, undefined, noopTui);
+				comp.setExpanded(expanded);
+				comp.setArgsComplete();
+
+				// Feed in the tool result if available
+				const result = toolResults.get(tc.id);
+				if (result) {
+					comp.updateResult({
+						content: Array.isArray(result.content) ? result.content : [{ type: "text", text: String(result.content) }],
+						isError: (result as any).isError ?? false,
+					});
+				}
+				container.addChild(comp);
+			}
+		}
+	}
+}
+
+/**
+ * Render stream mode: accumulated output from all chain steps
+ */
+function renderStreamMode(d: Details, theme: Theme, mdTheme: ReturnType<typeof getMarkdownTheme>, expanded: boolean): Widget {
+	const w = getTermWidth() - 4;
+	const c = new Container();
+
+	// Map results back to steps: track which results belong to which step
+	let resultIdx = 0;
+	const chainAgents = d.chainAgents ?? [];
+	const multipleStepsHaveOutput = d.results.length > 1 || (d.currentStepIndex !== undefined && d.currentStepIndex > 0);
+
+	for (let stepIdx = 0; stepIdx < chainAgents.length; stepIdx++) {
+		const agent = chainAgents[stepIdx]!;
+		const isParallel = agent.startsWith("[");
+
+		if (isParallel) {
+			// Parallel step: count agents, collect their results, render compact sub-view
+			const names = agent.slice(1, -1).split("+");
+			const stepResultCount = names.length;
+			const stepResults = d.results.slice(resultIdx, resultIdx + stepResultCount);
+			resultIdx += stepResultCount;
+
+			if (stepResults.length === 0) continue;
+
+			// Separator
+			if (multipleStepsHaveOutput) {
+				c.addChild(new Text(theme.fg("dim", `── Step ${stepIdx + 1}: ${agent} ──`), 0, 0));
+				c.addChild(new Spacer(1));
+			}
+
+			// Compact view for parallel results
+			for (const r of stepResults) {
+				const icon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
+				const output = getFinalOutput(r.messages);
+				const preview = output.split("\n")[0] ?? "";
+				c.addChild(new Text(truncLine(`  ${icon} ${theme.bold(r.agent)}: ${preview}`, w), 0, 0));
+			}
+			c.addChild(new Spacer(1));
+		} else {
+			// Sequential step
+			const r = d.results[resultIdx];
+			if (!r) {
+				// Pending step - show placeholder if this is the current step
+				if (stepIdx === d.currentStepIndex) {
+					if (multipleStepsHaveOutput) {
+						c.addChild(new Text(theme.fg("dim", `── Step ${stepIdx + 1}: ${agent} ──`), 0, 0));
+					}
+					c.addChild(new Text(theme.fg("dim", `(starting step ${stepIdx + 1}...)`), 0, 0));
+					c.addChild(new Spacer(1));
+				}
+				break; // No more results after this
+			}
+			resultIdx++;
+
+			// Separator
+			if (multipleStepsHaveOutput) {
+				c.addChild(new Text(theme.fg("dim", `── Step ${stepIdx + 1}: ${agent} ──`), 0, 0));
+				c.addChild(new Spacer(1));
+			}
+
+			// Render messages using pi-mono components for main-chat look
+			const rProg = r.progress || r.progressSummary;
+			const rRunning = rProg?.status === "running";
+			renderMessagesAsChat(c, r.messages, mdTheme, expanded);
+
+			// Running step: show currently-executing tool (not yet in messages)
+			if (rRunning && rProg && rProg.currentTool) {
+				const maxToolArgsLen = Math.max(50, w - 20);
+				const toolArgsPreview = rProg.currentToolArgs
+					? (rProg.currentToolArgs.length > maxToolArgsLen
+						? `${rProg.currentToolArgs.slice(0, maxToolArgsLen)}...`
+						: rProg.currentToolArgs)
+					: "";
+				const toolLine = toolArgsPreview
+					? `${rProg.currentTool}: ${toolArgsPreview}`
+					: rProg.currentTool;
+				c.addChild(new Text(truncLine(theme.fg("warning", `  > ${toolLine}`), w), 0, 0));
+			}
+
+			c.addChild(new Spacer(1));
+		}
+	}
+
+	return c;
+}
+
 /**
  * Render a subagent result
  */
@@ -245,7 +483,10 @@ export function renderSubagentResult(
 		return c;
 	}
 
-	const hasRunning = d.progress?.some((p) => p.status === "running") 
+	// Stream mode: show accumulated step output instead of compact view
+	if (d.stream && d.mode === "chain") return renderStreamMode(d, theme, mdTheme, _options.expanded);
+
+	const hasRunning = d.progress?.some((p) => p.status === "running")
 		|| d.results.some((r) => r.progress?.status === "running");
 	const ok = d.results.filter((r) => r.progress?.status === "completed" || (r.exitCode === 0 && r.progress?.status !== "running")).length;
 	const hasEmptyWithoutTarget = d.results.some((r) =>
