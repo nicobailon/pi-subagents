@@ -123,6 +123,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.model, "openai/gpt-4o");
 	});
 
+	it("falls back to the next candidate after a retryable runtime failure", async () => {
+		mockPi.onCall({ exitCode: 1, stderr: "429 rate limit exceeded" });
+		mockPi.onCall({ output: "Recovered on second model" });
+		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4-5" })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			modelOverride: "openai/gpt-4.1",
+			runtimeModelContext: {
+				availableModels: [
+					{ provider: "openai", id: "gpt-4.1", fullId: "openai/gpt-4.1" },
+					{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5" },
+				],
+				config: { fallbackModels: ["google/gemini-2.5-pro"], cooldownMinutes: 5 },
+			},
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(result.requestedModel, "openai/gpt-4.1");
+		assert.equal(result.finalModel, "anthropic/claude-sonnet-4-5");
+		assert.equal(result.modelAttempts?.length, 2);
+		assert.equal(result.modelAttempts?.[0]?.classification, "retryable-runtime");
+		assert.equal(result.modelAttempts?.[1]?.outcome, "success");
+	});
+
+	it("stops on deterministic failures without trying fallback candidates", async () => {
+		mockPi.onCall({ exitCode: 1, stderr: "bash failed (exit 1): No such file or directory" });
+		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4-5" })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			modelOverride: "openai/gpt-4.1",
+			runtimeModelContext: {
+				availableModels: [
+					{ provider: "openai", id: "gpt-4.1", fullId: "openai/gpt-4.1" },
+					{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5" },
+				],
+				config: { fallbackModels: ["google/gemini-2.5-pro"], cooldownMinutes: 5 },
+			},
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(result.modelAttempts?.[0]?.classification, "deterministic");
+	});
+
 	it("tracks usage from message events", async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = makeAgentConfigs(["echo"]);

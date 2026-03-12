@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+- **Runtime model fallback policy**: delegated runs now share a centralized fallback policy across sync single, sync parallel, sync chain, async single, and async chain execution.
+- **Minimal fallback config** in `~/.pi/agent/extensions/subagent/config.json`: `preferCurrentSessionModel`, `fallbackModels`, and `cooldownMinutes`.
+- **Fallback observability**: sync results now surface `requestedModel`, `finalModel`, `modelAttempts`, and `fallbackSummary`. Async `status.json`, markdown run logs, and final result JSON now persist per-step attempt history.
+
+### Fixed
+- **Async single model override parity**: background single-agent launches now preserve runtime `modelOverride`, matching sync execution.
+- **Model normalization parity**: sync and async execution now share the same candidate builder and bare-model normalization rules.
+- **Retry boundaries**: fallback retries are limited to the failing step/task slot instead of replaying earlier successful chain steps.
+
+### Changed
+- **Retry policy is conservative by default**: only classified runtime/provider failures retry; deterministic task/path/input failures stop immediately.
+- **Cooldowns are session-scoped and file-backed** so concurrent sync and async runs share the same model/provider health view.
+- **Child pi invocation remains `--models`-only** in both sync and async paths.
+- v1 intentionally does **not** support `providerFallbacks`.
+
 ## [0.11.2] - 2026-03-11
 
 ### Fixed

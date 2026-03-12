@@ -34,31 +34,10 @@ import {
 	type ArtifactConfig,
 	type ArtifactPaths,
 	type Details,
+	type RuntimeModelExecutionContext,
 	type SingleResult,
 	MAX_CONCURRENCY,
 } from "./types.js";
-
-/** Resolve a model name to its full provider/model format */
-function resolveModelFullId(modelName: string | undefined, availableModels: ModelInfo[]): string | undefined {
-	if (!modelName) return undefined;
-	// If already in provider/model format, return as-is
-	if (modelName.includes("/")) return modelName;
-	
-	// Handle thinking level suffixes (e.g., "claude-sonnet-4-5:high")
-	// Strip the suffix for lookup, then add it back
-	const colonIdx = modelName.lastIndexOf(":");
-	const baseModel = colonIdx !== -1 ? modelName.substring(0, colonIdx) : modelName;
-	const thinkingSuffix = colonIdx !== -1 ? modelName.substring(colonIdx) : "";
-	
-	// Look up base model in available models to find provider
-	const match = availableModels.find(m => m.id === baseModel);
-	if (match) {
-		return thinkingSuffix ? `${match.fullId}${thinkingSuffix}` : match.fullId;
-	}
-	
-	// Fallback: return as-is
-	return modelName;
-}
 
 export interface ChainExecutionParams {
 	chain: ChainStep[];
@@ -77,6 +56,7 @@ export interface ChainExecutionParams {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	chainSkills?: string[];
 	chainDir?: string;
+	runtimeModelContext?: RuntimeModelExecutionContext;
 }
 
 export interface ChainExecutionResult {
@@ -110,6 +90,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		onUpdate,
 		chainSkills: chainSkillsParam,
 		chainDir: chainDirBase,
+		runtimeModelContext,
 	} = params;
 	const chainSkills = chainSkillsParam ?? [];
 
@@ -321,12 +302,6 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					// Assemble final task: prefix (READ/WRITE instructions) + task + suffix
 					taskStr = prefix + taskStr + suffix;
 
-					// Resolve model to full provider/model format for consistent display
-					const taskAgentConfig = agents.find((a) => a.name === task.agent);
-					const effectiveModel =
-						(task.model ? resolveModelFullId(task.model, availableModels) : null)
-						?? resolveModelFullId(taskAgentConfig?.model, availableModels);
-
 					const r = await runSync(ctx.cwd, agents, task.agent, taskStr, {
 						cwd: task.cwd ?? cwd,
 						signal,
@@ -336,7 +311,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						share: shareEnabled,
 						artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 						artifactConfig,
-						modelOverride: effectiveModel,
+						modelOverride: task.model,
+						runtimeModelContext,
 						skills: behavior.skills === false ? [] : behavior.skills,
 						onUpdate: onUpdate
 							? (p) => {
@@ -476,11 +452,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			// Assemble final task: prefix (READ/WRITE instructions) + task + suffix (progress, previous summary)
 			stepTask = prefix + stepTask + suffix;
 
-			// Resolve model: TUI override (already full format) or agent's model resolved to full format
-			const effectiveModel =
-				tuiOverride?.model
-				?? (seqStep.model ? resolveModelFullId(seqStep.model, availableModels) : null)
-				?? resolveModelFullId(agentConfig.model, availableModels);
+			const effectiveModel = tuiOverride?.model ?? seqStep.model;
 
 			// Run step
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
@@ -493,6 +465,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
 				modelOverride: effectiveModel,
+				runtimeModelContext,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				onUpdate: onUpdate
 					? (p) => {

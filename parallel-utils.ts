@@ -1,3 +1,5 @@
+import type { RuntimeModelExecutionContext } from "./types.js";
+
 /**
  * Parallel execution utilities for the async runner.
  * Kept minimal and self-contained so the standalone runner can use them
@@ -9,7 +11,10 @@ export interface RunnerSubagentStep {
 	agent: string;
 	task: string;
 	cwd?: string;
-	model?: string;
+	modelOverride?: string;
+	agentModel?: string;
+	thinking?: string;
+	runtimeModelContext?: RuntimeModelExecutionContext;
 	tools?: string[];
 	extensions?: string[];
 	mcpDirectTools?: string[];

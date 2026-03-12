@@ -60,6 +60,45 @@ Your system prompt goes here (the markdown body after frontmatter).
 
 The `thinking` field sets a default extended thinking level for the agent. At runtime it's appended as a `:level` suffix to the model string (e.g., `claude-sonnet-4-5:high`). If the model already has a thinking suffix (from a chain-clarify override), the agent's default is not double-applied.
 
+## Runtime model fallback
+
+Subagent execution now uses a shared runtime fallback policy across sync single, sync parallel, sync chain, async single, and async chain runs.
+
+**Candidate order**
+1. explicit invocation or step/task model override
+2. agent frontmatter model
+3. parent session's current active model snapshot
+4. configured `fallbackModels`
+
+Fallback only happens for classified runtime/provider failures such as expired credentials, quota/rate limiting, provider outages, model unavailability, tool-schema incompatibility, and transient network/API 5xx failures.
+
+Fallback does **not** retry deterministic task failures such as bad paths, missing files, invalid arguments, or other task/tool mistakes.
+
+**Config:** `~/.pi/agent/extensions/subagent/config.json`
+
+```json
+{
+  "asyncByDefault": false,
+  "preferCurrentSessionModel": true,
+  "fallbackModels": [
+    "anthropic/claude-sonnet-4-5",
+    "openai/gpt-4.1"
+  ],
+  "cooldownMinutes": 15
+}
+```
+
+Notes:
+- `preferCurrentSessionModel: false` removes the ambient session model candidate.
+- cooldowns are session-scoped and file-backed so sync and async runs share the same view.
+- explicit overrides are always attempted first for the current run, even if that model is on cooldown from an earlier failure.
+- v1 intentionally does **not** support `providerFallbacks`.
+
+**Observability**
+- sync results include `requestedModel`, `finalModel`, `modelAttempts`, and `fallbackSummary`
+- async `status.json`, markdown run logs, and final result JSON include per-step attempt history
+- progress output calls out retry reasons, skipped cooled-down candidates, and exhaustion summaries
+
 **Extension sandboxing**
 
 Use `extensions` in frontmatter to control which extensions a subagent can access:
@@ -716,7 +755,7 @@ Async runs write a dedicated observability folder:
   subagent-log-<id>.md
 ```
 
-`status.json` is the source of truth for async progress and powers the TUI widget. If you already use
+`status.json` is the source of truth for async progress and powers the TUI widget. It now includes per-step `requestedModel`, `finalModel`, `modelAttempts`, and `lastFallbackReason` fields so background fallback behavior is inspectable after the fact. If you already use
 `/status <id>` you can keep doing that; otherwise use:
 
 ```typescript
@@ -743,7 +782,8 @@ Async events:
 ├── chain-execution.ts            # Chain orchestration (sequential + parallel)
 ├── chain-serializer.ts           # Parse/serialize .chain.md files
 ├── async-execution.ts            # Async/background execution support
-├── execution.ts                  # Core runSync, applyThinkingSuffix
+├── execution.ts                  # Core sync execution and fallback integration
+├── runtime-model-fallback.ts     # Shared candidate ordering, classification, cooldowns
 ├── render.ts                     # TUI rendering (widget, tool result display)
 ├── artifacts.ts                  # Artifact management
 ├── formatters.ts                 # Output formatting utilities

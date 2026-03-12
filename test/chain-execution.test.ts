@@ -158,6 +158,41 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.details.results[0].exitCode, 1);
 	});
 
+	it("retries only the failing sequential step on retryable runtime failure", async () => {
+		mockPi.onCall({ output: "Step 1 output" });
+		mockPi.onCall({ exitCode: 1, stderr: "503 service unavailable" });
+		mockPi.onCall({ output: "Step 2 recovered" });
+		const agents = [
+			makeAgent("step1", { model: "anthropic/claude-sonnet-4-5" }),
+			makeAgent("step2", { model: "openai/gpt-4.1" }),
+		];
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "step1", task: "Do first thing" }, { agent: "step2" }],
+				agents,
+				{
+					ctx: makeMinimalCtx(tempDir, ["anthropic/claude-sonnet-4-5", "openai/gpt-4.1", "google/gemini-2.5-pro"]),
+					runtimeModelContext: {
+						availableModels: [
+							{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5" },
+							{ provider: "openai", id: "gpt-4.1", fullId: "openai/gpt-4.1" },
+							{ provider: "google", id: "gemini-2.5-pro", fullId: "google/gemini-2.5-pro" },
+						],
+						config: { fallbackModels: ["google/gemini-2.5-pro"], cooldownMinutes: 5 },
+					},
+				},
+			),
+		);
+
+		assert.ok(!result.isError, `chain should recover: ${JSON.stringify(result.content)}`);
+		assert.equal(mockPi.callCount(), 3, "step 1 should not be re-run after step 2 fallback");
+		assert.equal(result.details.results.length, 2);
+		assert.equal(result.details.results[1].modelAttempts?.length, 2);
+		assert.equal(result.details.results[1].modelAttempts?.[0]?.classification, "retryable-runtime");
+		assert.equal(result.details.results[1].modelAttempts?.[1]?.outcome, "success");
+	});
+
 	it("runs a 3-step chain end-to-end", async () => {
 		mockPi.onCall({ output: "Step output" });
 		const agents = [makeAgent("scout"), makeAgent("planner"), makeAgent("executor")];

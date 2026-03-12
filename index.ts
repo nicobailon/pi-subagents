@@ -30,6 +30,7 @@ import {
 	type AsyncJobState,
 	type Details,
 	type ExtensionConfig,
+	type RuntimeModelExecutionContext,
 	type SingleResult,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -54,6 +55,7 @@ import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutpu
 import { AgentManagerComponent, type ManagerResult } from "./agent-manager.js";
 import { recordRun } from "./run-history.js";
 import { handleManagementAction } from "./agent-management.js";
+import { normalizeModelId } from "./runtime-model-fallback.js";
 
 // ExtensionConfig is now imported from ./types.js
 
@@ -85,6 +87,51 @@ function loadConfig(): ExtensionConfig {
 
 function expandTilde(p: string): string {
 	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
+}
+
+function getAvailableModelsSnapshot(ctx: ExtensionContext): RuntimeModelExecutionContext["availableModels"] {
+	return ctx.modelRegistry.getAvailable().map((model) => ({
+		provider: model.provider,
+		id: model.id,
+		fullId: `${model.provider}/${model.id}`,
+	}));
+}
+
+function getCurrentSessionModelSnapshot(ctx: ExtensionContext, availableModels: RuntimeModelExecutionContext["availableModels"]): string | undefined {
+	const currentModel = (ctx as ExtensionContext & { model?: { provider?: string; id?: string; fullId?: string } }).model;
+	if (!currentModel) return undefined;
+	if (typeof currentModel.fullId === "string" && currentModel.fullId.length > 0) return currentModel.fullId;
+	if (currentModel.provider && currentModel.id) return `${currentModel.provider}/${currentModel.id}`;
+	if (currentModel.id) return normalizeModelId(currentModel.id, availableModels);
+	return undefined;
+}
+
+function getSessionBaseRoot(
+	parentSessionFile: string | null,
+	config: ExtensionConfig,
+	explicitSessionDir?: string,
+): string {
+	if (explicitSessionDir) return path.resolve(expandTilde(explicitSessionDir));
+	if (config.defaultSessionDir) return path.resolve(expandTilde(config.defaultSessionDir));
+	return getSubagentSessionRoot(parentSessionFile);
+}
+
+function buildRuntimeModelContext(
+	ctx: ExtensionContext,
+	config: ExtensionConfig,
+	cooldownRoot: string,
+): RuntimeModelExecutionContext {
+	const availableModels = getAvailableModelsSnapshot(ctx);
+	return {
+		availableModels,
+		currentSessionModel: getCurrentSessionModelSnapshot(ctx, availableModels),
+		config: {
+			preferCurrentSessionModel: config.preferCurrentSessionModel,
+			fallbackModels: config.fallbackModels,
+			cooldownMinutes: config.cooldownMinutes,
+		},
+		cooldownPath: path.join(cooldownRoot, "runtime-model-fallback-cooldowns.json"),
+	};
 }
 
 /**
@@ -302,17 +349,14 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			const agents = discoverAgents(ctx.cwd, scope).agents;
 			const runId = randomUUID().slice(0, 8);
 			const shareEnabled = params.share === true;
+			const sessionBaseRoot = getSessionBaseRoot(parentSessionFile, config, params.sessionDir);
+			const runtimeModelContext = buildRuntimeModelContext(ctx, config, sessionBaseRoot);
 			// Session root precedence: explicit param > config default > parent session derived
 			// Sessions are always enabled - stored alongside parent session for tracking
 			// Include runId to ensure uniqueness across multiple subagent calls
 			const sessionRoot = params.sessionDir
-				? path.resolve(expandTilde(params.sessionDir))
-				: path.join(
-					config.defaultSessionDir
-						? path.resolve(expandTilde(config.defaultSessionDir))
-						: getSubagentSessionRoot(parentSessionFile),
-					runId,
-				);
+				? sessionBaseRoot
+				: path.join(sessionBaseRoot, runId);
 			try {
 				fs.mkdirSync(sessionRoot, { recursive: true });
 			} catch {}
@@ -415,7 +459,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					};
 				}
 				const id = randomUUID();
-				const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId! };
+				const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId!, runtimeModelContext };
 
 				if (hasChain && params.chain) {
 					const normalized = normalizeSkillInput(params.skill);
@@ -456,6 +500,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 						artifactConfig,
 						shareEnabled,
 						sessionRoot,
+						modelOverride: params.model as string | undefined,
 						skills: (() => {
 							const normalized = normalizeSkillInput(params.skill);
 							if (normalized === false) return [];
@@ -491,6 +536,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					onUpdate,
 					chainSkills,
 					chainDir: params.chainDir,
+					runtimeModelContext,
 				});
 
 				// User requested async via TUI - dispatch to async executor
@@ -503,7 +549,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 						};
 					}
 					const id = randomUUID();
-					const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId! };
+					const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId!, runtimeModelContext };
 					return executeAsyncChain(id, {
 						chain: chainResult.requestedAsync.chain,
 						agents,
@@ -606,7 +652,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 							};
 						}
 						const id = randomUUID();
-						const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId! };
+						const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId!, runtimeModelContext };
 						// Convert parallel tasks to a chain with a single parallel step
 						const parallelTasks = params.tasks!.map((t, i) => ({
 							agent: t.agent,
@@ -648,6 +694,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 						artifactConfig,
 						maxOutput: params.maxOutput,
 						modelOverride: modelOverrides[i],
+						runtimeModelContext,
 						skills: effectiveSkills === false ? [] : effectiveSkills,
 						onUpdate: onUpdate
 							? (p) => {
@@ -785,7 +832,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 							};
 						}
 						const id = randomUUID();
-						const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId! };
+						const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: currentSessionId!, runtimeModelContext };
 						return executeAsyncSingle(id, {
 							agent: params.agent!,
 							task,
@@ -797,6 +844,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 							artifactConfig,
 							shareEnabled,
 							sessionRoot,
+							modelOverride,
 							skills: skillOverride === false ? [] : skillOverride,
 							output: effectiveOutput,
 						});
@@ -824,6 +872,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					maxOutput: params.maxOutput,
 					onUpdate,
 					modelOverride,
+					runtimeModelContext,
 					skills: effectiveSkills,
 				});
 				recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
@@ -1043,7 +1092,8 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 	const setupDirectRun = (ctx: ExtensionContext) => {
 		const runId = randomUUID().slice(0, 8);
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-		const sessionRoot = path.join(getSubagentSessionRoot(parentSessionFile), runId);
+		const sessionBaseRoot = getSessionBaseRoot(parentSessionFile, config);
+		const sessionRoot = path.join(sessionBaseRoot, runId);
 		try {
 			fs.mkdirSync(sessionRoot, { recursive: true });
 		} catch {}
@@ -1053,6 +1103,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			sessionDirForIndex: (idx?: number) => path.join(sessionRoot, `run-${idx ?? 0}`),
 			artifactsDir: getArtifactsDir(parentSessionFile),
 			artifactConfig: { ...DEFAULT_ARTIFACT_CONFIG } as ArtifactConfig,
+			runtimeModelContext: buildRuntimeModelContext(ctx, config, sessionBaseRoot),
 		};
 	};
 
@@ -1111,8 +1162,13 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 							return;
 						}
 						const id = randomUUID();
-						const asyncCtx = { pi, cwd: ctx.cwd, currentSessionId: ctx.sessionManager.getSessionId() ?? id };
-						const asyncSessionRoot = getSubagentSessionRoot(ctx.sessionManager.getSessionFile() ?? null);
+						const asyncCtx = {
+							pi,
+							cwd: ctx.cwd,
+							currentSessionId: ctx.sessionManager.getSessionId() ?? id,
+							runtimeModelContext: exec.runtimeModelContext,
+						};
+						const asyncSessionRoot = getSessionBaseRoot(ctx.sessionManager.getSessionFile() ?? null, config);
 						try { fs.mkdirSync(asyncSessionRoot, { recursive: true }); } catch {}
 						executeAsyncChain(id, {
 							chain: r.requestedAsync.chain,

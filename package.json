@@ -49,6 +49,7 @@
     "@marcfargas/pi-test-harness": "^0.5.0",
     "@mariozechner/pi-agent-core": "^0.54.0",
     "@mariozechner/pi-ai": "^0.54.0",
-    "@mariozechner/pi-coding-agent": "^0.54.0"
+    "@mariozechner/pi-coding-agent": "^0.54.0",
+    "@mariozechner/pi-tui": "0.54.2"
   }
 }
