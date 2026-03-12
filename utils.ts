@@ -332,20 +332,24 @@ export async function mapConcurrent<T, R>(
 	items: T[],
 	limit: number,
 	fn: (item: T, i: number) => Promise<R>,
+	staggerMs = 150,
 ): Promise<R[]> {
 	// Clamp to at least 1; NaN/undefined/0/negative all become 1
 	const safeLimit = Math.max(1, Math.floor(limit) || 1);
 	const results: R[] = new Array(items.length);
 	let next = 0;
 
-	async function worker(): Promise<void> {
+	async function worker(workerIndex: number): Promise<void> {
+		if (staggerMs > 0 && workerIndex > 0) {
+			await new Promise((r) => setTimeout(r, workerIndex * staggerMs));
+		}
 		while (next < items.length) {
 			const i = next++;
 			results[i] = await fn(items[i], i);
 		}
 	}
 
-	const workers = Array.from({ length: Math.min(safeLimit, items.length) }, () => worker());
+	const workers = Array.from({ length: Math.min(safeLimit, items.length) }, (_, wi) => worker(wi));
 	await Promise.all(workers);
 	return results;
 }

@@ -13,7 +13,7 @@ import { describe, it } from "node:test";
 
 describe("path.isAbsolute vs startsWith('/')", () => {
 	// chain-execution.ts:496 uses startsWith("/") to detect absolute paths.
-	// On Windows, absolute paths look like "C:\..." or "C:/..." — neither starts with "/".
+	// On Windows, absolute paths look like "C:\\..." or "C:/..." — neither starts with "/".
 
 	it("startsWith('/') misses Windows absolute paths", () => {
 		const windowsAbsolute = "C:\\dev\\pi-subagents\\output.md";
@@ -60,10 +60,11 @@ describe("path.join vs template string concatenation", () => {
 	// This works but produces inconsistent separators on Windows.
 
 	it("template concatenation produces forward slashes regardless of platform", () => {
+		// chain-execution.ts:496 uses startsWith("/") to detect absolute paths.
 		const chainDir = "C:\\Users\\marc\\temp\\chain-abc";
 		const file = "progress.md";
 
-		// Template string: always forward slash (settings.ts:246 pattern)
+		// Template string: always forward slash
 		const templateResult = `${chainDir}/${file}`;
 		assert.equal(templateResult, "C:\\Users\\marc\\temp\\chain-abc/progress.md",
 			"template string produces mixed separators");
@@ -109,3 +110,4 @@ describe("path.join vs template string concatenation", () => {
 		assert.equal(windowsJoin, path.join("parallel-0", "0-_code-reviewer", output));
 	});
 });
+

@@ -85,6 +85,10 @@ function loadConfig(): ExtensionConfig {
 	return {};
 }
 
+function expandTilde(p: string): string {
+	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
+}
+
 function getAvailableModelsSnapshot(ctx: ExtensionContext): RuntimeModelExecutionContext["availableModels"] {
 	return ctx.modelRegistry.getAvailable().map((model) => ({
 		provider: model.provider,
@@ -100,6 +104,16 @@ function getCurrentSessionModelSnapshot(ctx: ExtensionContext, availableModels: 
 	if (currentModel.provider && currentModel.id) return `${currentModel.provider}/${currentModel.id}`;
 	if (currentModel.id) return normalizeModelId(currentModel.id, availableModels);
 	return undefined;
+}
+
+function getSessionBaseRoot(
+	parentSessionFile: string | null,
+	config: ExtensionConfig,
+	explicitSessionDir?: string,
+): string {
+	if (explicitSessionDir) return path.resolve(expandTilde(explicitSessionDir));
+	if (config.defaultSessionDir) return path.resolve(expandTilde(config.defaultSessionDir));
+	return getSubagentSessionRoot(parentSessionFile);
 }
 
 function buildRuntimeModelContext(
@@ -335,16 +349,14 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			const agents = discoverAgents(ctx.cwd, scope).agents;
 			const runId = randomUUID().slice(0, 8);
 			const shareEnabled = params.share === true;
-			const cooldownRoot = params.sessionDir
-				? path.resolve(params.sessionDir)
-				: getSubagentSessionRoot(parentSessionFile);
-			const runtimeModelContext = buildRuntimeModelContext(ctx, config, cooldownRoot);
-			// Session root: explicit param > derived from parent session > temp fallback
-			// Sessions are always enabled now - stored alongside parent session for tracking
+			const sessionBaseRoot = getSessionBaseRoot(parentSessionFile, config, params.sessionDir);
+			const runtimeModelContext = buildRuntimeModelContext(ctx, config, sessionBaseRoot);
+			// Session root precedence: explicit param > config default > parent session derived
+			// Sessions are always enabled - stored alongside parent session for tracking
 			// Include runId to ensure uniqueness across multiple subagent calls
 			const sessionRoot = params.sessionDir
-				? path.resolve(params.sessionDir)
-				: path.join(cooldownRoot, runId);
+				? sessionBaseRoot
+				: path.join(sessionBaseRoot, runId);
 			try {
 				fs.mkdirSync(sessionRoot, { recursive: true });
 			} catch {}
@@ -361,7 +373,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			// - Chains default to TUI (clarify: true), so async requires explicit clarify: false
 			// - Single defaults to no TUI, so async is allowed unless clarify: true is passed
 			const effectiveAsync = requestedAsync && !hasTasks && (
-				hasChain 
+				hasChain
 					? params.clarify === false    // chains: only async if TUI explicitly disabled
 					: params.clarify !== true     // single: async unless TUI explicitly enabled
 			);
@@ -582,7 +594,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 				let tasks = params.tasks.map(t => t.task);
 				const modelOverrides: (string | undefined)[] = params.tasks.map(t => (t as { model?: string }).model);
 				// Initialize skill overrides from task-level skill params (may be overridden by TUI)
-				const skillOverrides: (string[] | false | undefined)[] = params.tasks.map(t => 
+				const skillOverrides: (string[] | false | undefined)[] = params.tasks.map(t =>
 					normalizeSkillInput((t as { skill?: string | string[] | boolean }).skill)
 				);
 
@@ -596,7 +608,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 					}));
 
 					// Resolve behaviors with task-level skill overrides for TUI display
-					const behaviors = agentConfigs.map((c, i) => 
+					const behaviors = agentConfigs.map((c, i) =>
 						resolveStepBehavior(c, { skills: skillOverrides[i] })
 					);
 					const availableSkills = discoverAvailableSkills(ctx.cwd);
@@ -1080,8 +1092,8 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 	const setupDirectRun = (ctx: ExtensionContext) => {
 		const runId = randomUUID().slice(0, 8);
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-		const cooldownRoot = getSubagentSessionRoot(parentSessionFile);
-		const sessionRoot = path.join(cooldownRoot, runId);
+		const sessionBaseRoot = getSessionBaseRoot(parentSessionFile, config);
+		const sessionRoot = path.join(sessionBaseRoot, runId);
 		try {
 			fs.mkdirSync(sessionRoot, { recursive: true });
 		} catch {}
@@ -1091,7 +1103,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 			sessionDirForIndex: (idx?: number) => path.join(sessionRoot, `run-${idx ?? 0}`),
 			artifactsDir: getArtifactsDir(parentSessionFile),
 			artifactConfig: { ...DEFAULT_ARTIFACT_CONFIG } as ArtifactConfig,
-			runtimeModelContext: buildRuntimeModelContext(ctx, config, cooldownRoot),
+			runtimeModelContext: buildRuntimeModelContext(ctx, config, sessionBaseRoot),
 		};
 	};
 
@@ -1156,7 +1168,7 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 							currentSessionId: ctx.sessionManager.getSessionId() ?? id,
 							runtimeModelContext: exec.runtimeModelContext,
 						};
-						const asyncSessionRoot = getSubagentSessionRoot(ctx.sessionManager.getSessionFile() ?? null);
+						const asyncSessionRoot = getSessionBaseRoot(ctx.sessionManager.getSessionFile() ?? null, config);
 						try { fs.mkdirSync(asyncSessionRoot, { recursive: true }); } catch {}
 						executeAsyncChain(id, {
 							chain: r.requestedAsync.chain,

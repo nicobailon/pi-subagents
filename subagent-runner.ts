@@ -349,6 +349,10 @@ async function runSingleStepAttempt(
 		for (const extPath of toolExtensionPaths) args.push("--extension", extPath);
 	}
 
+	if (step.skills?.length) {
+		args.push("--no-skills");
+	}
+
 	let tmpDir: string | null = null;
 	if (step.systemPrompt) {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
