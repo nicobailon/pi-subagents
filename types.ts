@@ -261,8 +261,8 @@ export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 
 export const MAX_PARALLEL = 8;
 export const MAX_CONCURRENCY = 4;
-export const RESULTS_DIR = path.join(os.tmpdir(), "pi-async-subagent-results");
-export const ASYNC_DIR = path.join(os.tmpdir(), "pi-async-subagent-runs");
+export const RESULTS_DIR = path.join(os.tmpdir(), `pi-async-subagent-results-${os.userInfo().username}`);
+export const ASYNC_DIR = path.join(os.tmpdir(), `pi-async-subagent-runs-${os.userInfo().username}`);
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_RESULT_TYPE = "subagent-slash-result";
 export const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
