@@ -15,7 +15,7 @@ import { injectSingleOutputInstruction, resolveSingleOutputPath } from "./single
 import { isParallelStep, resolveStepBehavior, type ChainStep, type ParallelStep, type SequentialStep, type StepOverrides } from "./settings.js";
 import type { RunnerStep } from "./parallel-utils.js";
 import { resolvePiPackageRoot } from "./pi-spawn.js";
-import { buildSkillInjection, normalizeSkillInput, resolveSkills } from "./skills.js";
+import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "./skills.js";
 import {
 	type ArtifactConfig,
 	type Details,
@@ -150,7 +150,12 @@ export function executeAsyncChain(
 		const stepOverrides: StepOverrides = { skills: stepSkillInput };
 		const behavior = resolveStepBehavior(a, stepOverrides, chainSkills);
 		const skillNames = behavior.skills === false ? [] : behavior.skills;
-		const { resolved: resolvedSkills } = resolveSkills(skillNames, ctx.cwd);
+		const skillCwd = s.cwd ?? cwd ?? ctx.cwd;
+		const { resolved: resolvedSkills } = resolveSkillsWithFallback(
+			skillNames,
+			skillCwd,
+			ctx.cwd,
+		);
 
 		let systemPrompt = a.systemPrompt?.trim() || null;
 		if (resolvedSkills.length > 0) {
@@ -260,7 +265,12 @@ export function executeAsyncSingle(
 ): AsyncExecutionResult {
 	const { agent, task, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot } = params;
 	const skillNames = params.skills ?? agentConfig.skills ?? [];
-	const { resolved: resolvedSkills } = resolveSkills(skillNames, ctx.cwd);
+	const skillCwd = cwd ?? ctx.cwd;
+	const { resolved: resolvedSkills } = resolveSkillsWithFallback(
+		skillNames,
+		skillCwd,
+		ctx.cwd,
+	);
 	let systemPrompt = agentConfig.systemPrompt?.trim() || null;
 	if (resolvedSkills.length > 0) {
 		const injection = buildSkillInjection(resolvedSkills);
