@@ -211,7 +211,7 @@ export function updateCooldownStore(
 	const expiresAt = now + cooldownMinutes * 60 * 1000;
 	if (classification.cooldownScope === "provider") {
 		const provider = getProviderFromModel(candidate.normalizedModel ?? candidate.model);
-		if (!provider) return;
+		if (!provider) return store;
 		store.providers = store.providers ?? {};
 		store.providers[provider] = {
 			expiresAt,

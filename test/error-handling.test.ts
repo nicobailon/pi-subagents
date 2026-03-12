@@ -123,6 +123,33 @@ describe("runtime model fallback policy", { skip: !runtimeFallbackAvailable ? "r
 			removeTempDir(dir);
 		}
 	});
+
+	it("keeps the current cooldown store when provider-scoped cooldown cannot parse a provider", () => {
+		const dir = createTempDir();
+		try {
+			const cooldownPath = path.join(dir, "cooldowns.json");
+			const existingStore = updateCooldownStore(
+				cooldownPath,
+				{ model: "openai/gpt-4.1", source: "agent", normalizedModel: "openai/gpt-4.1" },
+				{ classification: "retryable-runtime", reason: "429 rate limit", cooldownScope: "model" },
+				{ cooldownMinutes: 10 },
+			);
+
+			const nextStore = updateCooldownStore(
+				cooldownPath,
+				{ model: "gpt-4.1", source: "fallback" },
+				{ classification: "retryable-runtime", reason: "provider outage", cooldownScope: "provider" },
+				{ cooldownMinutes: 10 },
+				Date.now(),
+				existingStore,
+			);
+
+			assert.deepEqual(nextStore, existingStore);
+			assert.ok(nextStore.models?.["openai/gpt-4.1"]);
+		} finally {
+			removeTempDir(dir);
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
