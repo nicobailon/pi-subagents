@@ -272,6 +272,7 @@ export interface RunSyncOptions {
 export interface ExtensionConfig extends RuntimeModelFallbackConfig {
 	asyncByDefault?: boolean;
 	defaultSessionDir?: string;
+	managerCommand?: string | false;
 }
 
 // ============================================================================

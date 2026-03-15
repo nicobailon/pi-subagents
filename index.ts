@@ -9,7 +9,7 @@
  * Toggle: async parameter (default: false, configurable via config.json)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true }
+ *   { "asyncByDefault": true, "managerCommand": "subagents" }
  */
 
 import { randomUUID } from "node:crypto";
@@ -89,6 +89,15 @@ function expandTilde(p: string): string {
 	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
 }
 
+function getManagerCommand(config: ExtensionConfig): string | undefined {
+	if (config.managerCommand === false) return undefined;
+	if (typeof config.managerCommand === "string") {
+		const normalized = config.managerCommand.trim().replace(/^\/+/, "");
+		return normalized || undefined;
+	}
+	return "agents";
+}
+
 function getAvailableModelsSnapshot(ctx: ExtensionContext): RuntimeModelExecutionContext["availableModels"] {
 	return ctx.modelRegistry.getAvailable().map((model) => ({
 		provider: model.provider,
@@ -165,6 +174,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const config = loadConfig();
 	const asyncByDefault = config.asyncByDefault === true;
+	const managerCommand = getManagerCommand(config);
 
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
@@ -1217,12 +1227,14 @@ MANAGEMENT (use action field — omit agent/task/chain/tasks):
 		}
 	};
 
-	pi.registerCommand("agents", {
-		description: "Open the Agents Manager",
-		handler: async (_args, ctx) => {
-			await openAgentManager(ctx);
-		},
-	});
+	if (managerCommand) {
+		pi.registerCommand(managerCommand, {
+			description: "Open the Agents Manager",
+			handler: async (_args, ctx) => {
+				await openAgentManager(ctx);
+			},
+		});
+	}
 
 	pi.registerCommand("run", {
 		description: "Run a subagent directly: /run agent[output=file] task [--bg]",

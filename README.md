@@ -79,6 +79,7 @@ Fallback does **not** retry deterministic task failures such as bad paths, missi
 ```json
 {
   "asyncByDefault": false,
+  "managerCommand": "agents",
   "preferCurrentSessionModel": true,
   "fallbackModels": [
     "anthropic/claude-sonnet-4-5",
@@ -152,7 +153,7 @@ The MCP adapter's metadata cache must be populated for direct tools to work. On 
 | `/run <agent> <task>` | Run a single agent with a task |
 | `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence with per-step tasks |
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel with per-step tasks |
-| `/agents` | Open the Agents Manager overlay |
+| `/agents` | Open the Agents Manager overlay (default; configurable via `managerCommand`) |
 
 All commands validate agent names locally and tab-complete them, then route through the tool framework for full live progress rendering. Results are sent to the conversation for the LLM to discuss.
 
@@ -215,7 +216,7 @@ Background tasks run asynchronously and notify you when complete. Check status w
 
 ## Agents Manager
 
-Press **Ctrl+Shift+A** or type `/agents` to open the Agents Manager overlay — a TUI for browsing, viewing, editing, creating, and launching agents and chains.
+Press **Ctrl+Shift+A** or type the configured manager command (default: `/agents`) to open the Agents Manager overlay — a TUI for browsing, viewing, editing, creating, and launching agents and chains.
 
 **Screens:**
 
@@ -295,7 +296,7 @@ Chains can be created from the Agents Manager template picker ("Blank Chain"), o
 ## Features (beyond base)
 
 - **Slash Commands**: `/run`, `/chain`, `/parallel` with tab-completion and live progress
-- **Agents Manager Overlay**: Browse, view, edit, create, delete, and launch agents/chains from a TUI (`Ctrl+Shift+A`)
+- **Agents Manager Overlay**: Browse, view, edit, create, delete, and launch agents/chains from a TUI (`Ctrl+Shift+A`, plus configurable slash command)
 - **Management Actions**: LLM can list, inspect, create, update, and delete agent/chain definitions via `action` field
 - **Chain Files**: Reusable `.chain.md` files with per-step config, saveable from the clarify TUI
 - **Multi-select & Parallel**: Select agents in the overlay, launch as chain or parallel
@@ -646,6 +647,17 @@ This aggregated output becomes `{previous}` for the next step.
 ## Extension Configuration
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
+
+### `managerCommand`
+
+`managerCommand` controls which slash command opens the Agents Manager overlay. Default: `"agents"`.
+Set it to a different name to avoid command conflicts with other extensions, or `false` to disable the slash command entirely and use `Ctrl+Shift+A` instead.
+
+```json
+{
+  "managerCommand": "subagents"
+}
+```
 
 ### `defaultSessionDir`
 
