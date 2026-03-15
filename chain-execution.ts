@@ -338,6 +338,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						artifactConfig,
 						modelOverride: effectiveModel,
 						skills: behavior.skills === false ? [] : behavior.skills,
+						piArgs: task.piArgs,
 						onUpdate: onUpdate
 							? (p) => {
 									// Use concat instead of spread for better performance
@@ -494,6 +495,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				artifactConfig,
 				modelOverride: effectiveModel,
 				skills: behavior.skills === false ? [] : behavior.skills,
+				piArgs: seqStep.piArgs,
 				onUpdate: onUpdate
 					? (p) => {
 							// Use concat instead of spread for better performance

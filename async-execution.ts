@@ -16,6 +16,7 @@ import { isParallelStep, resolveStepBehavior, type ChainStep, type ParallelStep,
 import type { RunnerStep } from "./parallel-utils.js";
 import { resolvePiPackageRoot } from "./pi-spawn.js";
 import { buildSkillInjection, normalizeSkillInput, resolveSkills } from "./skills.js";
+import { validatePiArgs } from "./pi-args-validation.js";
 import {
 	type ArtifactConfig,
 	type Details,
@@ -77,6 +78,7 @@ export interface AsyncSingleParams {
 	sessionRoot?: string;
 	skills?: string[];
 	output?: string | false;
+	piArgs?: string[];
 }
 
 export interface AsyncExecutionResult {
@@ -173,6 +175,7 @@ export function executeAsyncChain(
 			mcpDirectTools: a.mcpDirectTools,
 			systemPrompt,
 			skills: resolvedSkills.map((r) => r.name),
+			piArgs: s.piArgs,
 			outputPath,
 		};
 	};
@@ -196,6 +199,13 @@ export function executeAsyncChain(
 		}
 		return buildSeqStep(s as SequentialStep);
 	});
+
+	// Validate piArgs before spawning
+	for (const s of steps) {
+		if (s.piArgs?.length) {
+			validatePiArgs(s.piArgs);
+		}
+	}
 
 	const runnerCwd = cwd ?? ctx.cwd;
 	const pid = spawnRunner(
@@ -275,6 +285,12 @@ export function executeAsyncSingle(
 	const runnerCwd = cwd ?? ctx.cwd;
 	const outputPath = resolveSingleOutputPath(params.output, ctx.cwd, cwd);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath);
+
+	// Validate piArgs before spawning
+	if (params.piArgs?.length) {
+		validatePiArgs(params.piArgs);
+	}
+
 	const pid = spawnRunner(
 		{
 			id,
@@ -289,6 +305,7 @@ export function executeAsyncSingle(
 					mcpDirectTools: agentConfig.mcpDirectTools,
 					systemPrompt,
 					skills: resolvedSkills.map((r) => r.name),
+					piArgs: params.piArgs,
 					outputPath,
 				},
 			],

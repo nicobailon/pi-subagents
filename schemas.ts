@@ -13,6 +13,7 @@ export const TaskItem = Type.Object({
 	cwd: Type.Optional(Type.String()),
 	model: Type.Optional(Type.String({ description: "Override model for this task (e.g. 'google/gemini-3-pro')" })),
 	skill: Type.Optional(SkillOverride),
+	piArgs: Type.Optional(Type.Array(Type.String(), { description: "Extra CLI args passed to the child pi process" })),
 });
 
 // Sequential chain step (single agent)
@@ -27,6 +28,7 @@ export const SequentialStepSchema = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
+	piArgs: Type.Optional(Type.Array(Type.String(), { description: "Extra CLI args passed to the child pi process" })),
 });
 
 // Parallel task item (within a parallel step)
@@ -39,6 +41,7 @@ export const ParallelTaskSchema = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	piArgs: Type.Optional(Type.Array(Type.String(), { description: "Extra CLI args passed to the child pi process" })),
 });
 
 // Parallel chain step (multiple agents running concurrently)
@@ -93,6 +96,7 @@ export const SubagentParams = Type.Object({
 	output: Type.Optional(Type.Any({ description: "Override output file for single agent (string), or false to disable (uses agent default if omitted). Absolute paths are used as-is; relative paths resolve against cwd." })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
+	piArgs: Type.Optional(Type.Array(Type.String(), { description: "Extra CLI args passed to the child pi process" })),
 });
 
 export const StatusParams = Type.Object({

@@ -213,6 +213,7 @@ export interface RunSyncOptions {
 	modelOverride?: string;
 	/** Skills to inject (overrides agent default if provided) */
 	skills?: string[];
+	piArgs?: string[];
 }
 
 export interface ExtensionConfig {
