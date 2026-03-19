@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- Project/user settings support for extension config under `.pi/settings.json` and `~/.pi/agent/settings.json` via the `"pi-subagents"` namespace, while preserving the legacy `~/.pi/agent/extensions/subagent/config.json` fallback.
+- Configurable Agents Manager "new agent" shortcut via `keybindings.agentManagerNew`.
+
+### Fixed
+- Agents Manager list view now responds to `Ctrl+N` by default, matching the README. `Alt+N` remains accepted as a backward-compatible fallback.
+
 ## [0.11.3] - 2026-03-17
 
 ### Changed
