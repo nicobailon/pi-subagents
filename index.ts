@@ -31,9 +31,9 @@ import { registerSlashCommands } from "./slash-commands.js";
 import { registerPromptTemplateDelegationBridge } from "./prompt-template-bridge.js";
 import { registerSlashSubagentBridge } from "./slash-bridge.js";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "./slash-live-state.js";
+import { loadExtensionConfig } from "./config.js";
 import {
 	type Details,
-	type ExtensionConfig,
 	type SubagentState,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -58,18 +58,7 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
 }
 
-function loadConfig(): ExtensionConfig {
-	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent", "config.json");
-	try {
-		if (fs.existsSync(configPath)) {
-			return JSON.parse(fs.readFileSync(configPath, "utf-8")) as ExtensionConfig;
-		}
-	} catch (error) {
-		console.error(`Failed to load subagent config from '${configPath}':`, error);
-	}
-	return {};
-}
-
+<<<<<<< HEAD
 function expandTilde(p: string): string {
 	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
 }
@@ -143,7 +132,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	ensureAccessibleDir(ASYNC_DIR);
 	cleanupOldChainDirs();
 
-	const config = loadConfig();
+	const config = loadExtensionConfig(process.cwd());
 	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
