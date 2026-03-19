@@ -3,6 +3,8 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import { Key, matchesKey } from "@mariozechner/pi-tui";
 import { discoverAgents, discoverAgentsAll } from "./agents.js";
 import { AgentManagerComponent, type ManagerResult } from "./agent-manager.js";
+import { normalizeListKeybindings } from "./agent-manager-keybindings.js";
+import { loadExtensionConfig } from "./config.js";
 import { discoverAvailableSkills } from "./skills.js";
 import type { SubagentParamsLike } from "./subagent-executor.js";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.js";
@@ -251,9 +253,19 @@ async function openAgentManager(
 		fullId: `${m.provider}/${m.id}`,
 	}));
 	const skills = discoverAvailableSkills(ctx.cwd);
+	const config = loadExtensionConfig(ctx.cwd);
+	const listKeybindings = normalizeListKeybindings(config.keybindings);
 
 	const result = await ctx.ui.custom<ManagerResult>(
-		(tui, theme, _kb, done) => new AgentManagerComponent(tui, theme, agentData, models, skills, done),
+		(tui, theme, _kb, done) => new AgentManagerComponent(
+			tui,
+			theme,
+			agentData,
+			models,
+			skills,
+			listKeybindings,
+			done,
+		),
 		{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 	);
 	if (!result) return;
