@@ -58,7 +58,6 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
 }
 
-<<<<<<< HEAD
 function expandTilde(p: string): string {
 	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
 }
