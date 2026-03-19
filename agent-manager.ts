@@ -7,7 +7,14 @@ import type { AgentConfig, ChainConfig } from "./agents.js";
 import { serializeAgent } from "./agent-serializer.js";
 import { TEMPLATE_ITEMS, type AgentTemplate, type TemplateItem } from "./agent-templates.js";
 import { parseChain, serializeChain } from "./chain-serializer.js";
-import { renderList, handleListInput, type ListAgent, type ListState, type ListAction } from "./agent-manager-list.js";
+import {
+	renderList,
+	handleListInput,
+	type ListAgent,
+	type ListState,
+	type ListAction,
+} from "./agent-manager-list.js";
+import type { ListKeybindings } from "./agent-manager-keybindings.js";
 import { createParallelState, handleParallelInput, renderParallel, formatParallelTitle, type ParallelState, type AgentOption } from "./agent-manager-parallel.js";
 import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction } from "./agent-manager-detail.js";
 import { renderChainDetail, handleChainDetailInput, type ChainDetailAction, type ChainDetailState } from "./agent-manager-chain-detail.js";
@@ -62,7 +69,15 @@ export class AgentManagerComponent implements Component {
 	private statusMessage?: StatusMessage;
 	private nextId = 1;
 
-	constructor(private tui: TUI, private theme: Theme, private agentData: AgentData, private models: ModelInfo[], private skills: SkillInfo[], private done: (result: ManagerResult) => void) { this.loadEntries(); }
+	constructor(
+		private tui: TUI,
+		private theme: Theme,
+		private agentData: AgentData,
+		private models: ModelInfo[],
+		private skills: SkillInfo[],
+		private listKeybindings: ListKeybindings,
+		private done: (result: ManagerResult) => void,
+	) { this.loadEntries(); }
 
 	private loadEntries(): void {
 		const overridden = new Set([...this.agentData.user, ...this.agentData.project].map((c) => c.name));
@@ -245,7 +260,12 @@ export class AgentManagerComponent implements Component {
 		if (this.screen === "list" && this.statusMessage) this.clearStatus();
 		if (this.screen.startsWith("edit") && this.editState?.error) this.editState.error = undefined;
 		switch (this.screen) {
-			case "list": { const action = handleListInput(this.listState, this.listAgents(), data); if (action) this.handleListAction(action); this.tui.requestRender(); return; }
+			case "list": {
+				const action = handleListInput(this.listState, this.listAgents(), data, this.listKeybindings);
+				if (action) this.handleListAction(action);
+				this.tui.requestRender();
+				return;
+			}
 			case "template-select": this.handleTemplateSelectInput(data); return;
 			case "detail": {
 				const entry = this.getAgentEntry(this.currentAgentId); if (!entry) { this.screen = "list"; this.tui.requestRender(); return; }
@@ -364,13 +384,13 @@ export class AgentManagerComponent implements Component {
 	render(width: number): string[] {
 		this.overlayWidth = Math.min(width, 84); const w = this.overlayWidth;
 		switch (this.screen) {
-			case "list": return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage);
+			case "list": return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.listKeybindings);
 			case "template-select": return this.renderTemplateSelect(w);
-			case "detail": { const entry = this.getAgentEntry(this.currentAgentId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage); return renderDetail(this.detailState, entry.config, this.agentData.cwd, w, this.theme); }
-			case "chain-detail": { const entry = this.getChainEntry(this.currentChainId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage); return renderChainDetail(this.chainDetailState, entry.config, w, this.theme); }
+			case "detail": { const entry = this.getAgentEntry(this.currentAgentId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.listKeybindings); return renderDetail(this.detailState, entry.config, this.agentData.cwd, w, this.theme); }
+			case "chain-detail": { const entry = this.getChainEntry(this.currentChainId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.listKeybindings); return renderChainDetail(this.chainDetailState, entry.config, w, this.theme); }
 			case "edit": case "edit-field": case "edit-prompt": return this.editState ? renderEdit(this.screen as EditScreen, this.editState, w, this.theme) : [];
 			case "parallel-builder": {
-				if (!this.parallelState) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage);
+				if (!this.parallelState) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.listKeybindings);
 				const agentOptions: AgentOption[] = this.agents.map((e) => ({ name: e.config.name, description: e.config.description, model: e.config.model }));
 				return renderParallel(this.parallelState, agentOptions, w, this.theme);
 			}

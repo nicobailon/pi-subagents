@@ -1,5 +1,7 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { AgentSource } from "./agents.js";
+import type { ListKeybindings } from "./agent-manager-keybindings.js";
+import { DEFAULT_LIST_KEYBINDINGS, getPrimaryAgentManagerNewKeyLabel } from "./agent-manager-keybindings.js";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { pad, row, renderHeader, renderFooter, fuzzyFilter, formatScrollInfo } from "./render-helpers.js";
 
@@ -55,7 +57,19 @@ function clampCursor(state: ListState, filtered: ListAgent[]): void {
 	}
 }
 
-export function handleListInput(state: ListState, agents: ListAgent[], data: string): ListAction | undefined {
+function matchesAnyKey(data: string, keys: string[]): boolean {
+	for (const key of keys) {
+		if (matchesKey(data, key)) return true;
+	}
+	return false;
+}
+
+export function handleListInput(
+	state: ListState,
+	agents: ListAgent[],
+	data: string,
+	keybindings: ListKeybindings = DEFAULT_LIST_KEYBINDINGS,
+): ListAction | undefined {
 	const filtered = fuzzyFilter(agents, state.filterQuery);
 
 	if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
@@ -96,7 +110,7 @@ export function handleListInput(state: ListState, agents: ListAgent[], data: str
 		return;
 	}
 
-	if (matchesKey(data, "alt+n")) {
+	if (matchesAnyKey(data, keybindings.agentManagerNew)) {
 		return { type: "new" };
 	}
 
@@ -158,6 +172,7 @@ export function renderList(
 	width: number,
 	theme: Theme,
 	statusMessage?: { text: string; type: "error" | "info" },
+	keybindings: ListKeybindings = DEFAULT_LIST_KEYBINDINGS,
 ): string[] {
 	const lines: string[] = [];
 	const filtered = fuzzyFilter(agents, state.filterQuery);
@@ -255,11 +270,12 @@ export function renderList(
 	lines.push(row("", width, theme));
 
 	const selCount = state.selected.length;
+	const newKeyLabel = getPrimaryAgentManagerNewKeyLabel(keybindings);
 	const footerText = selCount > 1
 		? ` [ctrl+r] chain  [ctrl+p] parallel  [tab] add  [shift+tab] remove  [esc] clear (${selCount}) `
 		: selCount === 1
 			? " [ctrl+r] run  [ctrl+p] parallel  [tab] add more  [shift+tab] remove  [esc] clear "
-			: " [enter] view  [ctrl+r] run  [tab] select  [alt+n] new  [esc] close ";
+			: ` [enter] view  [ctrl+r] run  [tab] select  [${newKeyLabel}] new  [esc] close `;
 	lines.push(renderFooter(footerText, width, theme));
 
 	return lines;

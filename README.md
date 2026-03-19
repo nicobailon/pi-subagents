@@ -195,7 +195,7 @@ Press **Ctrl+Shift+A** or type `/agents` to open the Agents Manager overlay — 
 - `Enter` — view detail
 - Type any character — search/filter
 - `Tab` — toggle selection (agents only)
-- `Ctrl+N` — new agent from template
+- `Ctrl+N` — new agent from template (configurable via `keybindings.agentManagerNew`)
 - `Ctrl+K` — clone current item
 - `Ctrl+D` or `Del` — delete current item
 - `Ctrl+R` — run selected (1 agent: launch, 2+: sequential chain)
@@ -606,11 +606,25 @@ This aggregated output becomes `{previous}` for the next step.
 
 ## Extension Configuration
 
-`pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
+`pi-subagents` reads optional JSON config from these locations, in precedence order:
+
+1. Project settings: `.pi/settings.json -> "pi-subagents"`
+2. User settings: `~/.pi/agent/settings.json -> "pi-subagents"`
+3. Legacy extension config: `~/.pi/agent/extensions/subagent/config.json`
 
 ### `defaultSessionDir`
 
-`defaultSessionDir` sets the fallback directory used for session logs. Eg:
+`defaultSessionDir` sets the fallback directory used for session logs. Example user settings:
+
+```json
+{
+  "pi-subagents": {
+    "defaultSessionDir": "~/.pi/agent/sessions/subagent/"
+  }
+}
+```
+
+The legacy extension config file still works too:
 
 ```json
 {
@@ -622,6 +636,22 @@ Session root resolution follows this precedence:
 1. `params.sessionDir` from the `subagent` tool call
 2. `config.defaultSessionDir`
 3. Derived from parent session (stored alongside parent session file)
+
+### `keybindings.agentManagerNew`
+
+Customize the Agents Manager "new agent" shortcut. Example user settings:
+
+```json
+{
+  "pi-subagents": {
+    "keybindings": {
+      "agentManagerNew": ["ctrl+shift+n"]
+    }
+  }
+}
+```
+
+Default bindings are `ctrl+n` with `alt+n` kept as a fallback for backward compatibility.
 
 Sessions are always enabled — every subagent run gets a session directory for tracking.
 

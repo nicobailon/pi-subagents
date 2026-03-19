@@ -27,9 +27,9 @@ import { createSubagentExecutor } from "./subagent-executor.js";
 import { createAsyncJobTracker } from "./async-job-tracker.js";
 import { createResultWatcher } from "./result-watcher.js";
 import { registerSlashCommands } from "./slash-commands.js";
+import { loadExtensionConfig } from "./config.js";
 import {
 	type Details,
-	type ExtensionConfig,
 	type SubagentState,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -51,16 +51,6 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 		return path.join(sessionsDir, baseName);
 	}
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
-}
-
-function loadConfig(): ExtensionConfig {
-	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent", "config.json");
-	try {
-		if (fs.existsSync(configPath)) {
-			return JSON.parse(fs.readFileSync(configPath, "utf-8")) as ExtensionConfig;
-		}
-	} catch {}
-	return {};
 }
 
 function expandTilde(p: string): string {
@@ -92,7 +82,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	ensureAccessibleDir(ASYNC_DIR);
 	cleanupOldChainDirs();
 
-	const config = loadConfig();
+	const config = loadExtensionConfig(process.cwd());
 	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
