@@ -6,6 +6,8 @@ import { discoverAgents, discoverAgentsAll } from "./agents.js";
 import { executeAsyncChain, isAsyncAvailable } from "./async-execution.js";
 import { executeChain } from "./chain-execution.js";
 import { AgentManagerComponent, type ManagerResult } from "./agent-manager.js";
+import { normalizeListKeybindings } from "./agent-manager-keybindings.js";
+import { loadExtensionConfig } from "./config.js";
 import { discoverAvailableSkills } from "./skills.js";
 import { getArtifactsDir } from "./artifacts.js";
 import { DEFAULT_ARTIFACT_CONFIG, MAX_PARALLEL, type SubagentState, type ArtifactConfig } from "./types.js";
@@ -106,9 +108,19 @@ async function openAgentManager(
 		fullId: `${m.provider}/${m.id}`,
 	}));
 	const skills = discoverAvailableSkills(ctx.cwd);
+	const config = loadExtensionConfig(ctx.cwd);
+	const listKeybindings = normalizeListKeybindings(config.keybindings);
 
 	const result = await ctx.ui.custom<ManagerResult>(
-		(tui, theme, _kb, done) => new AgentManagerComponent(tui, theme, agentData, models, skills, done),
+		(tui, theme, _kb, done) => new AgentManagerComponent(
+			tui,
+			theme,
+			agentData,
+			models,
+			skills,
+			listKeybindings,
+			done,
+		),
 		{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 	);
 	if (!result) return;
