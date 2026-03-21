@@ -24,6 +24,34 @@ import {
 	tryImport,
 } from "./helpers.ts";
 
+function writePackageSkill(
+	packageRoot: string,
+	skillName: string,
+	description = "cwd-scoped test skill",
+	body = "",
+): void {
+	const skillDir = path.join(packageRoot, "skills", skillName);
+	fs.mkdirSync(skillDir, { recursive: true });
+	fs.writeFileSync(
+		path.join(packageRoot, "package.json"),
+		JSON.stringify(
+			{
+				name: `pkg-${skillName}`,
+				version: "1.0.0",
+				pi: { skills: [`./skills/${skillName}`] },
+			},
+			null,
+			2,
+		),
+		"utf-8",
+	);
+	fs.writeFileSync(
+		path.join(skillDir, "SKILL.md"),
+		`---\nname: ${skillName}\ndescription: ${description}\n---\n${body}`,
+		"utf-8",
+	);
+}
+
 // Top-level await: try importing pi-dependent modules
 const execution = await tryImport<any>("./execution.ts");
 const utils = await tryImport<any>("./utils.ts");
@@ -175,6 +203,49 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.progress.toolCount, 1, "should count tool calls");
 	});
 
+	it("resolves skills from execution-cwd override", async () => {
+		const taskDir = createTempDir("pi-subagent-task-cwd-");
+		const runCwd = createTempDir("pi-subagent-run-cwd-");
+		mockPi.onCall({ output: "Done" });
+		writePackageSkill(
+			taskDir,
+			"cwd-override-skill",
+			"cwd override skill",
+			"Loaded for cwd override test\n",
+		);
+
+		const agents = [makeAgent("echo", { skills: ["cwd-override-skill"] })];
+		const result = await runSync(runCwd, agents, "echo", "Task", {
+			cwd: taskDir,
+		});
+
+		try {
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(result.skills, ["cwd-override-skill"]);
+			assert.equal(result.skillsWarning, undefined);
+		} finally {
+			removeTempDir(taskDir);
+			removeTempDir(runCwd);
+		}
+	});
+
+	it("falls back to runtime cwd skills when execution cwd lacks them", async () => {
+		const taskCwd = path.join(tempDir, "nested");
+		const fallbackSkill = `runtime-fallback-skill-${Date.now()}`;
+		fs.mkdirSync(taskCwd, { recursive: true });
+		writePackageSkill(tempDir, fallbackSkill);
+		mockPi.onCall({ output: "Done" });
+		const agents = [makeAgent("echo", { skills: [fallbackSkill] })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			cwd: taskCwd,
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.skills?.[0], fallbackSkill);
+		assert.equal(result.skillsWarning, undefined);
+	});
+
 	it("writes artifacts when configured", async () => {
 		mockPi.onCall({ output: "Result text" });
 		const agents = makeAgentConfigs(["echo"]);
@@ -208,6 +279,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		// proving the abort signal terminated the process early.
 		assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
 		// Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
+	});
+
+	it("resolves skills from effective task cwd package", async () => {
+		const taskCwd = createTempDir("pi-subagent-task-cwd-");
+		const taskSkill = `task-cwd-skill-${Date.now()}`;
+		writePackageSkill(taskCwd, taskSkill);
+		mockPi.onCall({ output: "Done" });
+		const agents = [makeAgent("echo", { skills: [taskSkill] })];
+
+		const result = await runSync(tempDir, agents, "echo", "Use task cwd skill", {
+			cwd: taskCwd,
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.skills?.[0], taskSkill);
+		assert.equal(result.skillsWarning, undefined);
+
+		removeTempDir(taskCwd);
 	});
 
 	it("handles stderr without exit code as info (not error)", async () => {
