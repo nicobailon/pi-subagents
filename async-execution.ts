@@ -106,7 +106,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): number | undefin
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	
-	const proc = spawn("node", [jitiCliPath, runner, cfgPath], {
+	const proc = spawn(process.execPath, [jitiCliPath, runner, cfgPath], {
 		cwd,
 		detached: true,
 		stdio: "ignore",
