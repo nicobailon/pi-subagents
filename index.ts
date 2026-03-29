@@ -18,7 +18,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@mariozechner/pi-tui";
-import { discoverAgents } from "./agents.ts";
+import { discoverAgents, registerExtraAgentDir, unregisterExtraAgentDir } from "./agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "./artifacts.ts";
 import { cleanupOldChainDirs } from "./settings.ts";
 import { renderWidget, renderSubagentResult } from "./render.ts";
@@ -422,6 +422,28 @@ CONTROL:
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
+
+	// Allow other packages to register extra agent directories at runtime.
+	// Emitting "subagents:register-agent-dir" with { dir, source? } adds the
+	// directory to agent discovery (treated as builtin; user/project agents override).
+	// Emitting "subagents:unregister-agent-dir" with { dir } removes it.
+	//
+	// Example (from a pi-workflow extension on session_start):
+	//   pi.events.emit("subagents:register-agent-dir", { dir: "/path/to/pkg/agents" })
+	pi.events.on("subagents:register-agent-dir", (data: unknown) => {
+		if (!data || typeof data !== "object") return;
+		const { dir, source } = data as { dir?: unknown; source?: unknown };
+		if (typeof dir !== "string" || !dir) return;
+		const validSource = source === "user" || source === "project" || source === "builtin" ? source : "package";
+		registerExtraAgentDir(dir, validSource);
+	});
+
+	pi.events.on("subagents:unregister-agent-dir", (data: unknown) => {
+		if (!data || typeof data !== "object") return;
+		const { dir } = data as { dir?: unknown };
+		if (typeof dir !== "string" || !dir) return;
+		unregisterExtraAgentDir(dir);
+	});
 
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName !== "subagent") return;
