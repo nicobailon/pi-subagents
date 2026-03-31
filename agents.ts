@@ -205,6 +205,9 @@ function isDirectory(p: string): boolean {
 function findNearestProjectAgentsDir(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
+		const candidateAlt = path.join(currentDir, ".agents");
+		if (isDirectory(candidateAlt)) return candidateAlt;
+
 		const candidate = path.join(currentDir, ".pi", "agents");
 		if (isDirectory(candidate)) return candidate;
 
@@ -217,11 +220,16 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 const BUILTIN_AGENTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "agents");
 
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDirNew = path.join(os.homedir(), ".agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 
 	const builtinAgents = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
-	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
+	
+	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user");
+	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user");
+	const userAgents = [...userAgentsOld, ...userAgentsNew];
+
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
 	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
 
@@ -236,16 +244,23 @@ export function discoverAgentsAll(cwd: string): {
 	userDir: string;
 	projectDir: string | null;
 } {
-	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDirNew = path.join(os.homedir(), ".agents");
 	const projectDir = findNearestProjectAgentsDir(cwd);
 
 	const builtin = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
-	const user = loadAgentsFromDir(userDir, "user");
+	const user = [
+		...loadAgentsFromDir(userDirOld, "user"),
+		...loadAgentsFromDir(userDirNew, "user"),
+	];
 	const project = projectDir ? loadAgentsFromDir(projectDir, "project") : [];
 	const chains = [
-		...loadChainsFromDir(userDir, "user"),
+		...loadChainsFromDir(userDirOld, "user"),
+		...loadChainsFromDir(userDirNew, "user"),
 		...(projectDir ? loadChainsFromDir(projectDir, "project") : []),
 	];
+
+	const userDir = fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
 	return { builtin, user, project, chains, userDir, projectDir };
 }

@@ -187,7 +187,9 @@ function collectSettingsSkillPaths(cwd: string): string[] {
 function buildSkillPaths(cwd: string): string[] {
 	const defaultSkillPaths = [
 		path.join(cwd, CONFIG_DIR, "skills"),
+		path.join(cwd, ".agents", "skills"),
 		path.join(AGENT_DIR, "skills"),
+		path.join(os.homedir(), ".agents", "skills"),
 	];
 	const packagePaths = collectPackageSkillPaths(cwd);
 	const settingsPaths = collectSettingsSkillPaths(cwd);
@@ -203,10 +205,11 @@ function inferSkillSource(sourceInfo: { source: string; scope: string }, filePat
 	// Fallback: infer from file path when sourceInfo isn't specific enough
 	// (e.g. scope === "temporary" for skills loaded via explicit skillPaths)
 	const projectRoot = path.resolve(cwd, CONFIG_DIR);
-	const isProjectScoped = isWithinPath(filePath, projectRoot);
+	const altProjectRoot = path.resolve(cwd, ".agents");
+	const isProjectScoped = isWithinPath(filePath, projectRoot) || isWithinPath(filePath, altProjectRoot);
 	if (isProjectScoped) return "project";
 
-	const isUserScoped = isWithinPath(filePath, AGENT_DIR);
+	const isUserScoped = isWithinPath(filePath, AGENT_DIR) || isWithinPath(filePath, path.join(os.homedir(), ".agents"));
 	if (isUserScoped) return "user";
 
 	const globalRoot = getGlobalNpmRoot();
