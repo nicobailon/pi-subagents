@@ -8,6 +8,7 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride, type ModelInfo } from "./chain-clarify.js";
+import { resolveModelFullId } from "./model-resolution.js";
 import {
 	resolveChainTemplates,
 	createChainDir,
@@ -47,23 +48,6 @@ import {
 	type SingleResult,
 	MAX_CONCURRENCY,
 } from "./types.js";
-
-/** Resolve a model name to its full provider/model format */
-function resolveModelFullId(modelName: string | undefined, availableModels: ModelInfo[]): string | undefined {
-	if (!modelName) return undefined;
-	if (modelName.includes("/")) return modelName;
-
-	const colonIdx = modelName.lastIndexOf(":");
-	const baseModel = colonIdx !== -1 ? modelName.substring(0, colonIdx) : modelName;
-	const thinkingSuffix = colonIdx !== -1 ? modelName.substring(colonIdx) : "";
-
-	const match = availableModels.find((m) => m.id === baseModel);
-	if (match) {
-		return thinkingSuffix ? `${match.fullId}${thinkingSuffix}` : match.fullId;
-	}
-
-	return modelName;
-}
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -189,8 +173,8 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 
 			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
 			const effectiveModel =
-				(task.model ? resolveModelFullId(task.model, input.availableModels) : null)
-				?? resolveModelFullId(taskAgentConfig?.model, input.availableModels);
+				(task.model ? resolveModelFullId(task.model, input.availableModels, input.ctx.model?.provider) : null)
+				?? resolveModelFullId(taskAgentConfig?.model, input.availableModels, input.ctx.model?.provider);
 
 			const taskCwd = input.worktreeSetup
 				? input.worktreeSetup.worktrees[taskIndex]!.agentCwd
@@ -379,6 +363,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					chainDir,
 					resolvedBehaviors,
 					availableModels,
+					ctx.model?.provider,
 					availableSkills,
 					done,
 				),
@@ -625,8 +610,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			// Resolve model: TUI override (already full format) or agent's model resolved to full format
 			const effectiveModel =
 				tuiOverride?.model
-				?? (seqStep.model ? resolveModelFullId(seqStep.model, availableModels) : null)
-				?? resolveModelFullId(agentConfig.model, availableModels);
+				?? (seqStep.model ? resolveModelFullId(seqStep.model, availableModels, ctx.model?.provider) : null)
+				?? resolveModelFullId(agentConfig.model, availableModels, ctx.model?.provider);
 
 			// Run step
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {

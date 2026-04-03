@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "./agents.js";
 import { applyThinkingSuffix } from "./pi-args.js";
+import { resolveModelFullId } from "./model-resolution.js";
 import { injectSingleOutputInstruction, resolveSingleOutputPath } from "./single-output.js";
 import { isParallelStep, resolveStepBehavior, type ChainStep, type SequentialStep, type StepOverrides } from "./settings.js";
 import type { RunnerStep } from "./parallel-utils.js";
@@ -51,6 +52,7 @@ export interface AsyncExecutionContext {
 	pi: ExtensionAPI;
 	cwd: string;
 	currentSessionId: string;
+	currentModelProvider?: string;
 }
 
 export interface AsyncChainParams {
@@ -72,6 +74,7 @@ export interface AsyncSingleParams {
 	task: string;
 	agentConfig: AgentConfig;
 	ctx: AsyncExecutionContext;
+	modelOverride?: string;
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
 	artifactsDir?: string;
@@ -185,11 +188,13 @@ export function executeAsyncChain(
 		const outputPath = resolveSingleOutputPath(s.output, ctx.cwd, s.cwd ?? cwd);
 		const task = injectSingleOutputInstruction(s.task ?? "{previous}", outputPath);
 
+		const resolvedModel = resolveModelFullId(s.model ?? a.model, [], ctx.currentModelProvider);
+
 		return {
 			agent: s.agent,
 			task,
 			cwd: s.cwd,
-			model: applyThinkingSuffix(s.model ?? a.model, a.thinking),
+			model: applyThinkingSuffix(resolvedModel, a.thinking),
 			tools: a.tools,
 			extensions: a.extensions,
 			mcpDirectTools: a.mcpDirectTools,
@@ -322,6 +327,7 @@ export function executeAsyncSingle(
 		};
 	}
 
+	const resolvedModel = params.modelOverride ?? resolveModelFullId(agentConfig.model, [], ctx.currentModelProvider);
 	const runnerCwd = cwd ?? ctx.cwd;
 	const outputPath = resolveSingleOutputPath(params.output, ctx.cwd, cwd);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath);
@@ -333,7 +339,7 @@ export function executeAsyncSingle(
 					agent,
 					task: taskWithOutputInstruction,
 					cwd,
-					model: applyThinkingSuffix(agentConfig.model, agentConfig.thinking),
+					model: applyThinkingSuffix(resolvedModel, agentConfig.thinking),
 					tools: agentConfig.tools,
 					extensions: agentConfig.extensions,
 					mcpDirectTools: agentConfig.mcpDirectTools,

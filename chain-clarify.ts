@@ -17,6 +17,7 @@ import type { TextEditorState } from "./text-editor.js";
 import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.js";
 import { updateFrontmatterField } from "./agent-serializer.js";
 import { serializeChain } from "./chain-serializer.js";
+import { resolveModelFullId } from "./model-resolution.js";
 
 /** Clarify TUI mode */
 export type ClarifyMode = 'single' | 'parallel' | 'chain';
@@ -102,6 +103,7 @@ export class ChainClarifyComponent implements Component {
 		private chainDir: string | undefined,  // undefined for single/parallel modes
 		private resolvedBehaviors: ResolvedStepBehavior[],
 		private availableModels: ModelInfo[],
+		private preferredProvider: string | undefined,
 		private availableSkills: Array<{ name: string; source: string; description?: string }>,
 		private done: (result: ChainClarifyResult) => void,
 		private mode: ClarifyMode = 'chain',   // Mode: 'single', 'parallel', or 'chain'
@@ -253,23 +255,7 @@ export class ChainClarifyComponent implements Component {
 
 	/** Resolve a model name to its full provider/model format */
 	private resolveModelFullId(modelName: string): string {
-		// If already in provider/model format, return as-is
-		if (modelName.includes("/")) return modelName;
-		
-		// Handle thinking level suffixes (e.g., "claude-sonnet-4-5:high")
-		// Strip the suffix for lookup, then add it back
-		const colonIdx = modelName.lastIndexOf(":");
-		const baseModel = colonIdx !== -1 ? modelName.substring(0, colonIdx) : modelName;
-		const thinkingSuffix = colonIdx !== -1 ? modelName.substring(colonIdx) : "";
-		
-		// Look up base model in available models to find provider
-		const match = this.availableModels.find(m => m.id === baseModel);
-		if (match) {
-			return thinkingSuffix ? `${match.fullId}${thinkingSuffix}` : match.fullId;
-		}
-		
-		// Fallback to just the model name if not found
-		return modelName;
+		return resolveModelFullId(modelName, this.availableModels, this.preferredProvider) ?? modelName;
 	}
 
 	/** Update a behavior override for a step */

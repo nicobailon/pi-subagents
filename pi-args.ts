@@ -4,6 +4,13 @@ import * as path from "node:path";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const TASK_ARG_LIMIT = 8000;
+const MULTI_PASS_BASE_PROVIDERS = new Set([
+	"anthropic",
+	"openai-codex",
+	"github-copilot",
+	"google-gemini-cli",
+	"google-antigravity",
+]);
 
 export interface BuildPiArgsInput {
 	baseArgs: string[];
@@ -34,6 +41,18 @@ export function applyThinkingSuffix(model: string | undefined, thinking: string 
 	return `${model}:${thinking}`;
 }
 
+function getRequiredProviderExtensions(modelArg: string | undefined): string[] {
+	if (!modelArg) return [];
+	const slashIdx = modelArg.indexOf("/");
+	if (slashIdx === -1) return [];
+	const provider = modelArg.substring(0, slashIdx);
+	const match = provider.match(/^(.*)-(\d+)$/);
+	if (!match) return [];
+	const baseProvider = match[1];
+	if (!baseProvider || !MULTI_PASS_BASE_PROVIDERS.has(baseProvider)) return [];
+	return ["npm:pi-multi-pass"];
+}
+
 export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const args = [...input.baseArgs];
 
@@ -51,12 +70,17 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	const modelArg = applyThinkingSuffix(input.model, input.thinking);
 	if (modelArg) {
-		// Use --models (not --model) because pi CLI silently ignores --model
-		// without a companion --provider flag. --models resolves the provider
-		// automatically via resolveModelScope. See: #8
-		args.push("--models", modelArg);
+		if (modelArg.includes("/")) {
+			// Full provider/model IDs are accepted directly by pi's --model flag.
+			args.push("--model", modelArg);
+		} else {
+			// Last-resort fallback when no provider is available.
+			// In normal subagent execution we prefer resolving to provider/model first.
+			args.push("--models", modelArg);
+		}
 	}
 
+	const requiredProviderExtensions = getRequiredProviderExtensions(modelArg);
 	const toolExtensionPaths: string[] = [];
 	if (input.tools?.length) {
 		const builtinTools: string[] = [];
@@ -74,7 +98,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	if (input.extensions !== undefined) {
 		args.push("--no-extensions");
-		for (const extPath of input.extensions) {
+		const extensionSpecs = [...input.extensions];
+		for (const extPath of requiredProviderExtensions) {
+			if (!extensionSpecs.includes(extPath)) extensionSpecs.push(extPath);
+		}
+		for (const extPath of extensionSpecs) {
 			args.push("--extension", extPath);
 		}
 	} else {
