@@ -114,6 +114,7 @@ export const SubagentParams = Type.Object({
 	sessionDir: Type.Optional(
 		Type.String({ description: "Directory to store session logs (default: temp; enables sessions even if share=false)" }),
 	),
+	resume: Type.Optional(Type.Boolean({ description: "Resume the latest session from sessionDir (SINGLE mode only). The subprocess loads the prior conversation history so the agent picks up exactly where it left off. Requires sessionDir. Silently starts fresh on the first call when no prior session exists yet. Cannot be combined with context: 'fork'." })),
 	// Clarification TUI
 	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution (default: true for chains, false for single/parallel). Implies sync mode." })),
 	control: Type.Optional(ControlOverrides),
