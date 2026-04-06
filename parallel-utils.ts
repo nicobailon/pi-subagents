@@ -1,4 +1,4 @@
-import type { RuntimeModelExecutionContext } from "./types.js";
+import type { RuntimeModelExecutionContext } from "./types.ts";
 
 /**
  * Parallel execution utilities for the async runner.

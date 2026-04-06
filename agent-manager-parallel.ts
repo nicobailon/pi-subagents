@@ -1,8 +1,8 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import type { TextEditorState } from "./text-editor.js";
-import { createEditorState, handleEditorInput, renderEditor, wrapText, getCursorDisplayPos, ensureCursorVisible } from "./text-editor.js";
-import { pad, row, renderHeader, renderFooter, fuzzyFilter } from "./render-helpers.js";
+import type { TextEditorState } from "./text-editor.ts";
+import { createEditorState, handleEditorInput, renderEditor, wrapText, getCursorDisplayPos, ensureCursorVisible } from "./text-editor.ts";
+import { pad, row, renderHeader, renderFooter, fuzzyFilter } from "./render-helpers.ts";
 
 export interface ParallelSlot {
 	agentName: string;

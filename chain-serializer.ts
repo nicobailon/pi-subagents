@@ -1,4 +1,4 @@
-import type { ChainConfig, ChainStepConfig } from "./agents.js";
+import type { ChainConfig, ChainStepConfig } from "./agents.ts";
 
 function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
 	const frontmatter: Record<string, string> = {};

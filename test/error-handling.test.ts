@@ -45,7 +45,7 @@ const updateCooldownStore = runtimeFallback?.updateCooldownStore;
 // ---------------------------------------------------------------------------
 
 describe("runtime model fallback policy", { skip: !runtimeFallbackAvailable ? "runtime-model-fallback not importable" : undefined }, () => {
-	it("builds candidates in override -> agent -> session -> fallback order with dedupe", () => {
+	it("builds candidates in override -> session -> agent -> fallback order with dedupe", () => {
 		const candidates = buildModelCandidates({
 			context: {
 				availableModels: [
@@ -67,7 +67,7 @@ describe("runtime model fallback policy", { skip: !runtimeFallbackAvailable ? "r
 			candidates.map((candidate: any) => [candidate.source, candidate.model]),
 			[
 				["override", "claude-sonnet-4-5:high"],
-				["agent", "gpt-4.1:high"],
+				["session", "gpt-4.1:high"],
 			],
 		);
 	});
@@ -85,6 +85,29 @@ describe("runtime model fallback policy", { skip: !runtimeFallbackAvailable ? "r
 		assert.deepEqual(
 			candidates.map((candidate: any) => candidate.source),
 			["agent", "fallback"],
+		);
+	});
+
+	it("prefers the current session model over the agent default when both are available", () => {
+		const candidates = buildModelCandidates({
+			context: {
+				availableModels: [
+					{ provider: "openai-codex", id: "gpt-5.4", fullId: "openai-codex/gpt-5.4" },
+					{ provider: "anthropic", id: "claude-sonnet-4-6", fullId: "anthropic/claude-sonnet-4-6" },
+				],
+				currentSessionModel: "openai-codex/gpt-5.4",
+				config: { preferCurrentSessionModel: true },
+			},
+			agentModel: "anthropic/claude-sonnet-4-6",
+		});
+
+		assert.deepEqual(
+			candidates.map((candidate: any) => candidate.source),
+			["session", "agent"],
+		);
+		assert.deepEqual(
+			candidates.map((candidate: any) => candidate.model),
+			["openai-codex/gpt-5.4", "anthropic/claude-sonnet-4-6"],
 		);
 	});
 

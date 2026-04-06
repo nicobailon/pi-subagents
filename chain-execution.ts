@@ -6,8 +6,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AgentConfig } from "./agents.js";
-import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride, type ModelInfo } from "./chain-clarify.js";
+import type { AgentConfig } from "./agents.ts";
+import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride, type ModelInfo } from "./chain-clarify.ts";
 import {
 	resolveChainTemplates,
 	createChainDir,
@@ -23,12 +23,12 @@ import {
 	type SequentialStep,
 	type ParallelTaskResult,
 	type ResolvedTemplates,
-} from "./settings.js";
-import { discoverAvailableSkills, normalizeSkillInput } from "./skills.js";
-import { runSync } from "./execution.js";
-import { buildChainSummary } from "./formatters.js";
-import { getFinalOutput, mapConcurrent } from "./utils.js";
-import { recordRun } from "./run-history.js";
+} from "./settings.ts";
+import { discoverAvailableSkills, normalizeSkillInput } from "./skills.ts";
+import { runSync } from "./execution.ts";
+import { buildChainSummary } from "./formatters.ts";
+import { getFinalOutput, mapConcurrent } from "./utils.ts";
+import { recordRun } from "./run-history.ts";
 import {
 	type AgentProgress,
 	type ArtifactConfig,
@@ -37,7 +37,7 @@ import {
 	type RuntimeModelExecutionContext,
 	type SingleResult,
 	MAX_CONCURRENCY,
-} from "./types.js";
+} from "./types.ts";
 
 export interface ChainExecutionParams {
 	chain: ChainStep[];

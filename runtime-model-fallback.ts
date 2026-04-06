@@ -10,7 +10,7 @@ import type {
 	ModelCandidateSource,
 	RuntimeModelExecutionContext,
 	RuntimeModelFallbackConfig,
-} from "./types.js";
+} from "./types.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -119,8 +119,8 @@ export function buildModelCandidates(input: {
 	const preferCurrentSessionModel = config.preferCurrentSessionModel !== false;
 	const rawCandidates: Array<{ model?: string; source: ModelCandidateSource }> = [
 		{ model: input.modelOverride, source: "override" },
-		{ model: input.agentModel, source: "agent" },
 		{ model: preferCurrentSessionModel ? context?.currentSessionModel : undefined, source: "session" },
+		{ model: input.agentModel, source: "agent" },
 		...(config.fallbackModels ?? []).map((model) => ({ model, source: "fallback" as const })),
 	];
 

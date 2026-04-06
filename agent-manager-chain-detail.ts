@@ -1,7 +1,7 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
-import type { ChainConfig, ChainStepConfig } from "./agents.js";
-import { row, renderFooter, renderHeader, formatPath, formatScrollInfo } from "./render-helpers.js";
+import type { ChainConfig, ChainStepConfig } from "./agents.ts";
+import { row, renderFooter, renderHeader, formatPath, formatScrollInfo } from "./render-helpers.ts";
 
 export interface ChainDetailState {
 	scrollOffset: number;

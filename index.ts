@@ -18,11 +18,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
-import { type AgentConfig, type AgentScope, discoverAgents, discoverAgentsAll } from "./agents.js";
-import { resolveExecutionAgentScope } from "./agent-scope.js";
-import { cleanupOldChainDirs, getStepAgents, isParallelStep, resolveStepBehavior, type ChainStep, type SequentialStep } from "./settings.js";
-import { ChainClarifyComponent, type ChainClarifyResult, type ModelInfo } from "./chain-clarify.js";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "./artifacts.js";
+import { type AgentConfig, type AgentScope, discoverAgents, discoverAgentsAll } from "./agents.ts";
+import { resolveExecutionAgentScope } from "./agent-scope.ts";
+import { cleanupOldChainDirs, getStepAgents, isParallelStep, resolveStepBehavior, type ChainStep, type SequentialStep } from "./settings.ts";
+import { ChainClarifyComponent, type ChainClarifyResult, type ModelInfo } from "./chain-clarify.ts";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "./artifacts.ts";
 import {
 	type AgentProgress,
 	type ArtifactConfig,
@@ -41,21 +41,21 @@ import {
 	RESULTS_DIR,
 	WIDGET_KEY,
 	checkSubagentDepth,
-} from "./types.js";
-import { readStatus, findByPrefix, getFinalOutput, mapConcurrent } from "./utils.js";
-import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.js";
-import { createFileCoalescer } from "./file-coalescer.js";
-import { runSync } from "./execution.js";
-import { renderWidget, renderSubagentResult } from "./render.js";
-import { SubagentParams, StatusParams } from "./schemas.js";
-import { executeChain } from "./chain-execution.js";
-import { isAsyncAvailable, executeAsyncChain, executeAsyncSingle } from "./async-execution.js";
-import { discoverAvailableSkills, normalizeSkillInput } from "./skills.js";
-import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath } from "./single-output.js";
-import { AgentManagerComponent, type ManagerResult } from "./agent-manager.js";
-import { recordRun } from "./run-history.js";
-import { handleManagementAction } from "./agent-management.js";
-import { normalizeModelId } from "./runtime-model-fallback.js";
+} from "./types.ts";
+import { readStatus, findByPrefix, getFinalOutput, mapConcurrent } from "./utils.ts";
+import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
+import { createFileCoalescer } from "./file-coalescer.ts";
+import { runSync } from "./execution.ts";
+import { renderWidget, renderSubagentResult } from "./render.ts";
+import { SubagentParams, StatusParams } from "./schemas.ts";
+import { executeChain } from "./chain-execution.ts";
+import { isAsyncAvailable, executeAsyncChain, executeAsyncSingle } from "./async-execution.ts";
+import { discoverAvailableSkills, normalizeSkillInput } from "./skills.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath } from "./single-output.ts";
+import { AgentManagerComponent, type ManagerResult } from "./agent-manager.ts";
+import { recordRun } from "./run-history.ts";
+import { handleManagementAction } from "./agent-management.ts";
+import { normalizeModelId } from "./runtime-model-fallback.ts";
 
 // ExtensionConfig is now imported from ./types.js
 

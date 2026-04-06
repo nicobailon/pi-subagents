@@ -66,8 +66,8 @@ Subagent execution now uses a shared runtime fallback policy across sync single,
 
 **Candidate order**
 1. explicit invocation or step/task model override
-2. agent frontmatter model
-3. parent session's current active model snapshot
+2. parent session's current active model snapshot
+3. agent frontmatter model
 4. configured `fallbackModels`
 
 Fallback only happens for classified runtime/provider failures such as expired credentials, quota/rate limiting, provider outages, model unavailability, tool-schema incompatibility, and transient network/API 5xx failures.
@@ -90,6 +90,7 @@ Fallback does **not** retry deterministic task failures such as bad paths, missi
 ```
 
 Notes:
+- `preferCurrentSessionModel: true` (the default) means the currently selected session model wins over builtin agent defaults unless a run explicitly overrides the model.
 - `preferCurrentSessionModel: false` removes the ambient session model candidate.
 - cooldowns are session-scoped and file-backed so sync and async runs share the same view.
 - explicit overrides are always attempted first for the current run, even if that model is on cooldown from an earlier failure.

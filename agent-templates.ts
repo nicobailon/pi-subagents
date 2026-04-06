@@ -1,4 +1,4 @@
-import type { AgentConfig } from "./agents.js";
+import type { AgentConfig } from "./agents.ts";
 
 export interface AgentTemplate {
 	name: string;

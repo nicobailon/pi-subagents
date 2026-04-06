@@ -9,11 +9,11 @@ import {
 	type ChainConfig,
 	type ChainStepConfig,
 	discoverAgentsAll,
-} from "./agents.js";
-import { serializeAgent } from "./agent-serializer.js";
-import { serializeChain } from "./chain-serializer.js";
-import { discoverAvailableSkills } from "./skills.js";
-import type { Details } from "./types.js";
+} from "./agents.ts";
+import { serializeAgent } from "./agent-serializer.ts";
+import { serializeChain } from "./chain-serializer.ts";
+import { discoverAvailableSkills } from "./skills.ts";
+import type { Details } from "./types.ts";
 
 type ManagementAction = "list" | "get" | "create" | "update" | "delete";
 type ManagementScope = "user" | "project";

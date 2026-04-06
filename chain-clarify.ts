@@ -11,12 +11,12 @@ import { matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui"
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentConfig, ChainConfig, ChainStepConfig } from "./agents.js";
-import type { ResolvedStepBehavior } from "./settings.js";
-import type { TextEditorState } from "./text-editor.js";
-import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.js";
-import { updateFrontmatterField } from "./agent-serializer.js";
-import { serializeChain } from "./chain-serializer.js";
+import type { AgentConfig, ChainConfig, ChainStepConfig } from "./agents.ts";
+import type { ResolvedStepBehavior } from "./settings.ts";
+import type { TextEditorState } from "./text-editor.ts";
+import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.ts";
+import { updateFrontmatterField } from "./agent-serializer.ts";
+import { serializeChain } from "./chain-serializer.ts";
 
 /** Clarify TUI mode */
 export type ClarifyMode = 'single' | 'parallel' | 'chain';
@@ -92,20 +92,42 @@ export class ChainClarifyComponent implements Component {
 	private savingChain = false;
 	/** Run in background (async) mode */
 	private runInBackground = false;
+	private tui: TUI;
+	private theme: Theme;
+	private agentConfigs: AgentConfig[];
+	private templates: string[];
+	private originalTask: string;
+	private chainDir: string | undefined;
+	private resolvedBehaviors: ResolvedStepBehavior[];
+	private availableModels: ModelInfo[];
+	private availableSkills: Array<{ name: string; source: string; description?: string }>;
+	private done: (result: ChainClarifyResult) => void;
+	private mode: ClarifyMode;
 
 	constructor(
-		private tui: TUI,
-		private theme: Theme,
-		private agentConfigs: AgentConfig[],
-		private templates: string[],
-		private originalTask: string,
-		private chainDir: string | undefined,  // undefined for single/parallel modes
-		private resolvedBehaviors: ResolvedStepBehavior[],
-		private availableModels: ModelInfo[],
-		private availableSkills: Array<{ name: string; source: string; description?: string }>,
-		private done: (result: ChainClarifyResult) => void,
-		private mode: ClarifyMode = 'chain',   // Mode: 'single', 'parallel', or 'chain'
+		tui: TUI,
+		theme: Theme,
+		agentConfigs: AgentConfig[],
+		templates: string[],
+		originalTask: string,
+		chainDir: string | undefined,  // undefined for single/parallel modes
+		resolvedBehaviors: ResolvedStepBehavior[],
+		availableModels: ModelInfo[],
+		availableSkills: Array<{ name: string; source: string; description?: string }>,
+		done: (result: ChainClarifyResult) => void,
+		mode: ClarifyMode = 'chain',   // Mode: 'single', 'parallel', or 'chain'
 	) {
+		this.tui = tui;
+		this.theme = theme;
+		this.agentConfigs = agentConfigs;
+		this.templates = templates;
+		this.originalTask = originalTask;
+		this.chainDir = chainDir;
+		this.resolvedBehaviors = resolvedBehaviors;
+		this.availableModels = availableModels;
+		this.availableSkills = availableSkills;
+		this.done = done;
+		this.mode = mode;
 		// Initialize filtered models
 		this.filteredModels = [...availableModels];
 		this.filteredSkills = [...availableSkills];

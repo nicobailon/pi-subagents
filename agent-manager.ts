@@ -3,19 +3,19 @@ import * as path from "node:path";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import type { AgentConfig, ChainConfig } from "./agents.js";
-import { serializeAgent } from "./agent-serializer.js";
-import { TEMPLATE_ITEMS, type AgentTemplate, type TemplateItem } from "./agent-templates.js";
-import { parseChain, serializeChain } from "./chain-serializer.js";
-import { renderList, handleListInput, type ListAgent, type ListState, type ListAction } from "./agent-manager-list.js";
-import { createParallelState, handleParallelInput, renderParallel, formatParallelTitle, type ParallelState, type AgentOption } from "./agent-manager-parallel.js";
-import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction } from "./agent-manager-detail.js";
-import { renderChainDetail, handleChainDetailInput, type ChainDetailAction, type ChainDetailState } from "./agent-manager-chain-detail.js";
-import { createEditState, handleEditInput, renderEdit, type EditScreen, type EditState, type ModelInfo, type SkillInfo } from "./agent-manager-edit.js";
-import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.js";
-import type { TextEditorState } from "./text-editor.js";
-import { loadRunsForAgent } from "./run-history.js";
-import { pad, row, renderHeader, renderFooter } from "./render-helpers.js";
+import type { AgentConfig, ChainConfig } from "./agents.ts";
+import { serializeAgent } from "./agent-serializer.ts";
+import { TEMPLATE_ITEMS, type AgentTemplate, type TemplateItem } from "./agent-templates.ts";
+import { parseChain, serializeChain } from "./chain-serializer.ts";
+import { renderList, handleListInput, type ListAgent, type ListState, type ListAction } from "./agent-manager-list.ts";
+import { createParallelState, handleParallelInput, renderParallel, formatParallelTitle, type ParallelState, type AgentOption } from "./agent-manager-parallel.ts";
+import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction } from "./agent-manager-detail.ts";
+import { renderChainDetail, handleChainDetailInput, type ChainDetailAction, type ChainDetailState } from "./agent-manager-chain-detail.ts";
+import { createEditState, handleEditInput, renderEdit, type EditScreen, type EditState, type ModelInfo, type SkillInfo } from "./agent-manager-edit.ts";
+import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.ts";
+import type { TextEditorState } from "./text-editor.ts";
+import { loadRunsForAgent } from "./run-history.ts";
+import { pad, row, renderHeader, renderFooter } from "./render-helpers.ts";
 
 export type ManagerResult =
 	| { action: "launch"; agent: string; task: string; skipClarify?: boolean }
@@ -61,8 +61,22 @@ export class AgentManagerComponent implements Component {
 	private templateCursor = 0;
 	private statusMessage?: StatusMessage;
 	private nextId = 1;
+	private tui: TUI;
+	private theme: Theme;
+	private agentData: AgentData;
+	private models: ModelInfo[];
+	private skills: SkillInfo[];
+	private done: (result: ManagerResult) => void;
 
-	constructor(private tui: TUI, private theme: Theme, private agentData: AgentData, private models: ModelInfo[], private skills: SkillInfo[], private done: (result: ManagerResult) => void) { this.loadEntries(); }
+	constructor(tui: TUI, theme: Theme, agentData: AgentData, models: ModelInfo[], skills: SkillInfo[], done: (result: ManagerResult) => void) {
+		this.tui = tui;
+		this.theme = theme;
+		this.agentData = agentData;
+		this.models = models;
+		this.skills = skills;
+		this.done = done;
+		this.loadEntries();
+	}
 
 	private loadEntries(): void {
 		const overridden = new Set([...this.agentData.user, ...this.agentData.project].map((c) => c.name));
