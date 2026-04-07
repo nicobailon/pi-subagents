@@ -1,0 +1,53 @@
+// Example subagents.json overlay file.
+//
+// Copy this file to one of:
+//   - <project>/.pi/subagents.json   (project-level, highest precedence)
+//   - ~/.pi/agent/subagents.json     (user-level, global default)
+//
+// Project values override user values field-by-field.
+// The `disabled` lists from both files are unioned.
+//
+// Only the fields listed below can be overridden. The agent's `name`,
+// `systemPrompt` body, and internal metadata cannot be overridden here —
+// to replace the system prompt, write a real agent file under
+// `~/.agents/` or `<project>/.agents/`.
+{
+  "agents": {
+    // Override fields on the built-in `scout` agent.
+    "scout": {
+      // Model identifier to run this agent with.
+      "model": "anthropic/claude-opus-4-6",
+      // Thinking budget: "off" | "low" | "medium" | "high".
+      "thinking": "high",
+      // Human-readable description shown in /agents list.
+      "description": "Read-only investigator tuned for this repo",
+      // Tool allowlist (array of tool names).
+      "tools": ["Read", "Grep", "Glob"],
+      // Default skills loaded into the agent's system prompt.
+      "skills": ["safe-bash", "code-review"],
+      // Extensions to load (array of extension names).
+      "extensions": [],
+      // Whether the agent writes its transcript to a file by default.
+      "output": true,
+      // Default reads budget for the agent (number or false to disable).
+      "defaultReads": 200,
+      // Default progress cadence (number of steps) or false to disable.
+      "defaultProgress": 10,
+      // Whether the agent runs interactively (TUI clarifications).
+      "interactive": false,
+      // Cap on how deep this agent can spawn nested subagents.
+      "maxSubagentDepth": 2
+    },
+
+    // Partial overrides are fine — unspecified fields keep their defaults.
+    "reviewer": {
+      "description": "Custom reviewer for the auth subsystem",
+      "skills": ["code-review", "security-audit"]
+    }
+  },
+
+  // Names in this list are skipped entirely: not shown in /agents list,
+  // not invokable directly or via chains. References produce the standard
+  // "unknown agent" error.
+  "disabled": ["delegate", "worker"]
+}

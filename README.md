@@ -428,6 +428,56 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
 
 **Missing skills:** If a skill cannot be found, execution continues with a warning shown in the result summary.
 
+## Configuring agents with `subagents.json`
+
+You can override built-in agent fields and disable agents from loading
+without editing the bundled `.md` files. pi-subagents reads two files:
+
+- **Project**: `.pi/subagents.json` (relative to your working directory)
+- **User**: `~/.pi/agent/subagents.json`
+
+Project values take precedence over user values, field-by-field.
+The `disabled` lists from both files are unioned.
+
+### Example
+
+```jsonc
+{
+  "agents": {
+    "scout": {
+      "model": "anthropic/claude-opus-4-6",
+      "thinking": "high"
+    },
+    "reviewer": {
+      "description": "Custom reviewer for the auth subsystem",
+      "skills": ["code-review", "security-audit"]
+    }
+  },
+  "disabled": ["delegate", "worker"]
+}
+```
+
+### Overridable fields
+
+`description`, `model`, `thinking`, `tools`, `skills`, `extensions`,
+`output`, `defaultReads`, `defaultProgress`, `interactive`,
+`maxSubagentDepth`.
+
+The agent's `name`, `systemPrompt` (body), and internal metadata
+cannot be overridden. To replace the system prompt, write a real
+agent file under `~/.agents/` or `<project>/.agents/` (existing
+override path).
+
+### Disabling agents
+
+Names in `disabled` are skipped entirely — they will not appear in
+`/agents list`, are not invokable from chains or directly, and produce
+the standard "unknown agent" error if referenced.
+
+Validation problems (unknown fields, invalid JSON, references to
+non-existent agents) are surfaced as warnings via `discoverAgentsAll`,
+visible in agent-management output.
+
 ## Usage
 
 These are the parameters the **LLM agent** passes when it calls the `subagent` tool — not something you type directly. The agent decides to use these based on your conversation. For user-facing commands, see [Quick Commands](#quick-commands) above.
