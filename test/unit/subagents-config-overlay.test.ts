@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { discoverAgents } from "../../agents.ts";
+import { discoverAgents, discoverAgentsAll } from "../../agents.ts";
 
 describe("subagents-config-overlay", () => {
 	let tempHome: string;
@@ -157,6 +157,76 @@ describe("subagents-config-overlay", () => {
 		const { agents } = discoverAgents(projectDir, "project");
 		assert.ok(agents.find((a) => a.name === "scout"));
 		assert.ok(agents.find((a) => a.name === "ranger"));
+	});
+
+	it("overlayWarnings includes unknown agent name from agents override", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		writeProjectOverlay(projectDir, { agents: { foo: { model: "bar" } } });
+
+		const { overlayWarnings } = discoverAgentsAll(projectDir);
+		assert.ok(
+			overlayWarnings.some((w) => w.includes("foo") && w.includes("unknown agent")),
+			`expected warning about 'foo', got: ${JSON.stringify(overlayWarnings)}`,
+		);
+	});
+
+	it("overlayWarnings includes unknown name from disabled[]", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		writeProjectOverlay(projectDir, { disabled: ["nonexistent"] });
+
+		const { overlayWarnings } = discoverAgentsAll(projectDir);
+		assert.ok(
+			overlayWarnings.some(
+				(w) => w.includes("nonexistent") && w.includes("disabled"),
+			),
+			`expected warning about 'nonexistent', got: ${JSON.stringify(overlayWarnings)}`,
+		);
+	});
+
+	it("overlayWarnings does NOT include warning for disabling a real agent", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		writeProjectOverlay(projectDir, { disabled: ["scout"] });
+
+		const { overlayWarnings } = discoverAgentsAll(projectDir);
+		assert.equal(
+			overlayWarnings.filter((w) => w.includes("scout") && w.includes("unknown"))
+				.length,
+			0,
+		);
+	});
+
+	it("override + disabled for same real agent filters without unknown warning", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "model: foo\n");
+		writeProjectOverlay(projectDir, {
+			agents: { scout: { model: "bar" } },
+			disabled: ["scout"],
+		});
+
+		const { project, overlayWarnings } = discoverAgentsAll(projectDir);
+		assert.equal(project.find((a) => a.name === "scout"), undefined);
+		assert.equal(
+			overlayWarnings.filter((w) => w.includes("scout") && w.includes("unknown"))
+				.length,
+			0,
+		);
+	});
+
+	it("overlayWarnings includes invalid JSON file path", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		const projectFile = path.join(projectDir, ".pi", "subagents.json");
+		fs.mkdirSync(path.dirname(projectFile), { recursive: true });
+		fs.writeFileSync(projectFile, "{ not json", "utf-8");
+
+		const { overlayWarnings } = discoverAgentsAll(projectDir);
+		assert.ok(
+			overlayWarnings.some((w) => w.includes(projectFile) && w.includes("invalid JSON")),
+			`expected invalid JSON warning, got: ${JSON.stringify(overlayWarnings)}`,
+		);
 	});
 
 	it("project overlay wins per-field; user-only fields preserved", () => {

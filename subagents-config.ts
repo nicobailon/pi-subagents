@@ -228,3 +228,31 @@ export function loadSubagentsOverlay(
 		warnings: [...userOverlay.warnings, ...projectOverlay.warnings],
 	};
 }
+
+/**
+ * Given a list of known agent names (after loading and merging from disk),
+ * return warnings for any names referenced in the overlay (in `agents` or
+ * `disabled`) that do not exist. Mutates nothing.
+ */
+export function detectUnknownAgentNames(
+	overlay: SubagentsOverlay,
+	knownNames: Iterable<string>,
+): string[] {
+	const known = new Set(knownNames);
+	const warnings: string[] = [];
+	for (const name of overlay.agents.keys()) {
+		if (!known.has(name)) {
+			warnings.push(
+				`subagents.json: agents.${name} references unknown agent '${name}'`,
+			);
+		}
+	}
+	for (const name of overlay.disabled) {
+		if (!known.has(name)) {
+			warnings.push(
+				`subagents.json: disabled[] references unknown agent '${name}'`,
+			);
+		}
+	}
+	return warnings;
+}

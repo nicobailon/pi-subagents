@@ -3,7 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { loadSubagentsOverlay } from "../../subagents-config.ts";
+import {
+	detectUnknownAgentNames,
+	loadSubagentsOverlay,
+	type SubagentsOverlay,
+} from "../../subagents-config.ts";
 
 const tempDirs: string[] = [];
 
@@ -178,6 +182,15 @@ describe("subagents-config", () => {
 		assert.match(overlay.warnings[0] ?? "", /disabled/);
 	});
 
+	it("exposes warnings field on overlay", () => {
+		const overlay: SubagentsOverlay = {
+			agents: new Map(),
+			disabled: new Set(),
+			warnings: [],
+		};
+		assert.deepEqual(overlay.warnings, []);
+	});
+
 	it("preserves defaultProgress: false override", () => {
 		const cwd = mkTempDir();
 		const userDir = mkTempDir();
@@ -195,5 +208,64 @@ describe("subagents-config", () => {
 		assert.ok(scout);
 		assert.equal(scout?.defaultProgress, false);
 		assert.ok(Object.hasOwn(scout as object, "defaultProgress"));
+	});
+});
+
+describe("detectUnknownAgentNames", () => {
+	function mkOverlay(
+		agents: Record<string, object> = {},
+		disabled: string[] = [],
+	): SubagentsOverlay {
+		return {
+			agents: new Map(Object.entries(agents)),
+			disabled: new Set(disabled),
+			warnings: [],
+		};
+	}
+
+	it("returns empty array when all names are known", () => {
+		const overlay = mkOverlay({ scout: {} }, ["ranger"]);
+		const warnings = detectUnknownAgentNames(overlay, ["scout", "ranger", "extra"]);
+		assert.deepEqual(warnings, []);
+	});
+
+	it("warns on unknown name in agents map", () => {
+		const overlay = mkOverlay({ foo: {} });
+		const warnings = detectUnknownAgentNames(overlay, ["scout"]);
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0] ?? "", /agents\.foo/);
+		assert.match(warnings[0] ?? "", /foo/);
+	});
+
+	it("warns on unknown name in disabled", () => {
+		const overlay = mkOverlay({}, ["nonexistent"]);
+		const warnings = detectUnknownAgentNames(overlay, ["scout"]);
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0] ?? "", /disabled/);
+		assert.match(warnings[0] ?? "", /nonexistent/);
+	});
+
+	it("warns on both unknown agents and unknown disabled", () => {
+		const overlay = mkOverlay({ foo: {} }, ["bar"]);
+		const warnings = detectUnknownAgentNames(overlay, ["scout"]);
+		assert.equal(warnings.length, 2);
+	});
+
+	it("accepts Iterable for knownNames", () => {
+		const overlay = mkOverlay({ scout: {} });
+		const known = new Set(["scout", "ranger"]);
+		const warnings = detectUnknownAgentNames(overlay, known);
+		assert.deepEqual(warnings, []);
+	});
+
+	it("does not mutate the overlay", () => {
+		const overlay = mkOverlay({ foo: {} }, ["bar"]);
+		const snapAgents = [...overlay.agents.keys()];
+		const snapDisabled = [...overlay.disabled];
+		const snapWarnings = [...overlay.warnings];
+		detectUnknownAgentNames(overlay, []);
+		assert.deepEqual([...overlay.agents.keys()], snapAgents);
+		assert.deepEqual([...overlay.disabled], snapDisabled);
+		assert.deepEqual(overlay.warnings, snapWarnings);
 	});
 });

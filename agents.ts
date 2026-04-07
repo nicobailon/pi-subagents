@@ -11,6 +11,7 @@ import { parseChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import {
+	detectUnknownAgentNames,
 	loadSubagentsOverlay,
 	type AgentOverride,
 	type SubagentsOverlay,
@@ -285,23 +286,38 @@ export function discoverAgentsAll(cwd: string): {
 	chains: ChainConfig[];
 	userDir: string;
 	projectDir: string | null;
+	overlayWarnings: string[];
 } {
 	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const projectDir = findNearestProjectAgentsDir(cwd);
 	const overlay = loadSubagentsOverlay(cwd);
 
+	// Load unfiltered lists first so we can compute the known-names set
+	// (including disabled agents) before filtering them out.
+	const builtinAll = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
+	const userAll = [
+		...loadAgentsFromDir(userDirOld, "user", overlay),
+		...loadAgentsFromDir(userDirNew, "user", overlay),
+	];
+	const projectAll = projectDir ? loadAgentsFromDir(projectDir, "project", overlay) : [];
+
+	const knownNames = new Set<string>();
+	for (const a of builtinAll) knownNames.add(a.name);
+	for (const a of userAll) knownNames.add(a.name);
+	for (const a of projectAll) knownNames.add(a.name);
+
+	const overlayWarnings = [
+		...overlay.warnings,
+		...detectUnknownAgentNames(overlay, knownNames),
+	];
+
 	const filterDisabled = (list: AgentConfig[]): AgentConfig[] =>
 		overlay.disabled.size > 0 ? list.filter((a) => !overlay.disabled.has(a.name)) : list;
 
-	const builtin = filterDisabled(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay));
-	const user = filterDisabled([
-		...loadAgentsFromDir(userDirOld, "user", overlay),
-		...loadAgentsFromDir(userDirNew, "user", overlay),
-	]);
-	const project = filterDisabled(
-		projectDir ? loadAgentsFromDir(projectDir, "project", overlay) : [],
-	);
+	const builtin = filterDisabled(builtinAll);
+	const user = filterDisabled(userAll);
+	const project = filterDisabled(projectAll);
 	const chains = [
 		...loadChainsFromDir(userDirOld, "user"),
 		...loadChainsFromDir(userDirNew, "user"),
@@ -310,5 +326,5 @@ export function discoverAgentsAll(cwd: string): {
 
 	const userDir = fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
-	return { builtin, user, project, chains, userDir, projectDir };
+	return { builtin, user, project, chains, userDir, projectDir, overlayWarnings };
 }

@@ -245,7 +245,14 @@ async function openAgentManager(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 ): Promise<void> {
-	const agentData = { ...discoverAgentsAll(ctx.cwd), cwd: ctx.cwd };
+	const { overlayWarnings, ...rest } = discoverAgentsAll(ctx.cwd);
+	const agentData = { ...rest, cwd: ctx.cwd };
+	if (overlayWarnings.length > 0 && ctx.hasUI) {
+		ctx.ui.notify(
+			`subagents.json: ${overlayWarnings.length} warning${overlayWarnings.length === 1 ? "" : "s"}`,
+			"warning",
+		);
+	}
 	const models = ctx.modelRegistry.getAvailable().map((m) => ({
 		provider: m.provider,
 		id: m.id,
