@@ -114,6 +114,51 @@ describe("subagents-config-overlay", () => {
 		assert.equal(scout?.model, "user-model");
 	});
 
+	it("disabled project agent is filtered out; others remain", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		writeAgent(projectDir, "ranger", "");
+		writeProjectOverlay(projectDir, { disabled: ["scout"] });
+
+		const { agents } = discoverAgents(projectDir, "project");
+		assert.equal(agents.find((a) => a.name === "scout"), undefined);
+		assert.ok(agents.find((a) => a.name === "ranger"));
+	});
+
+	it("disabled user-scope agent via user overlay is filtered", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		writeAgent(projectDir, "ranger", "");
+		writeUserOverlay({ disabled: ["scout"] });
+
+		const { agents } = discoverAgents(projectDir, "project");
+		assert.equal(agents.find((a) => a.name === "scout"), undefined);
+		assert.ok(agents.find((a) => a.name === "ranger"));
+	});
+
+	it("agent in both disabled and agents.<name> is filtered (disabled wins)", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "model: foo\n");
+		writeProjectOverlay(projectDir, {
+			agents: { scout: { model: "bar" } },
+			disabled: ["scout"],
+		});
+
+		const { agents } = discoverAgents(projectDir, "project");
+		assert.equal(agents.find((a) => a.name === "scout"), undefined);
+	});
+
+	it("empty disabled array leaves all agents present (regression)", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "scout", "");
+		writeAgent(projectDir, "ranger", "");
+		writeProjectOverlay(projectDir, { disabled: [] });
+
+		const { agents } = discoverAgents(projectDir, "project");
+		assert.ok(agents.find((a) => a.name === "scout"));
+		assert.ok(agents.find((a) => a.name === "ranger"));
+	});
+
 	it("project overlay wins per-field; user-only fields preserved", () => {
 		const projectDir = mkProject();
 		writeAgent(projectDir, "scout", "model: foo\n");

@@ -272,7 +272,10 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 			: loadAgentsFromDir(projectAgentsDir, "project", overlay);
 	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
 
-	return { agents, projectAgentsDir };
+	const visibleAgents =
+		overlay.disabled.size > 0 ? agents.filter((a) => !overlay.disabled.has(a.name)) : agents;
+
+	return { agents: visibleAgents, projectAgentsDir };
 }
 
 export function discoverAgentsAll(cwd: string): {
@@ -288,12 +291,17 @@ export function discoverAgentsAll(cwd: string): {
 	const projectDir = findNearestProjectAgentsDir(cwd);
 	const overlay = loadSubagentsOverlay(cwd);
 
-	const builtin = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
-	const user = [
+	const filterDisabled = (list: AgentConfig[]): AgentConfig[] =>
+		overlay.disabled.size > 0 ? list.filter((a) => !overlay.disabled.has(a.name)) : list;
+
+	const builtin = filterDisabled(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay));
+	const user = filterDisabled([
 		...loadAgentsFromDir(userDirOld, "user", overlay),
 		...loadAgentsFromDir(userDirNew, "user", overlay),
-	];
-	const project = projectDir ? loadAgentsFromDir(projectDir, "project", overlay) : [];
+	]);
+	const project = filterDisabled(
+		projectDir ? loadAgentsFromDir(projectDir, "project", overlay) : [],
+	);
 	const chains = [
 		...loadChainsFromDir(userDirOld, "user"),
 		...loadChainsFromDir(userDirNew, "user"),
