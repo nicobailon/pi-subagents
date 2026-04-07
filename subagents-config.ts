@@ -43,6 +43,7 @@ export interface AgentOverride {
 export interface SubagentsOverlay {
 	agents: Map<string, AgentOverride>;
 	disabled: Set<string>;
+	disableBuiltins: boolean;
 	warnings: string[];
 }
 
@@ -100,6 +101,7 @@ function userSettingsPath(): string {
 interface PartialOverlay {
 	agents: Map<string, AgentOverride>;
 	disabled: Set<string>;
+	disableBuiltins?: boolean;
 	warnings: string[];
 }
 
@@ -176,6 +178,16 @@ function parseOverlayShape(value: unknown, label: string): PartialOverlay {
 		}
 	}
 
+	// disableBuiltins
+	let disableBuiltins: boolean | undefined;
+	if (value.disableBuiltins !== undefined) {
+		if (typeof value.disableBuiltins !== "boolean") {
+			warnings.push(`${label}: 'disableBuiltins' must be a boolean, ignoring`);
+		} else {
+			disableBuiltins = value.disableBuiltins;
+		}
+	}
+
 	// disabled
 	if (value.disabled !== undefined) {
 		if (!Array.isArray(value.disabled)) {
@@ -191,7 +203,7 @@ function parseOverlayShape(value: unknown, label: string): PartialOverlay {
 		}
 	}
 
-	return { agents, disabled, warnings };
+	return { agents, disabled, disableBuiltins, warnings };
 }
 
 function emptyOverlay(): PartialOverlay {
@@ -222,6 +234,7 @@ function parseOverlayFile(filePath: string): PartialOverlay {
 	return {
 		agents: result.agents,
 		disabled: result.disabled,
+		disableBuiltins: result.disableBuiltins,
 		warnings: [...readWarnings, ...result.warnings],
 	};
 }
@@ -248,6 +261,7 @@ function parseSettingsFile(filePath: string): PartialOverlay {
 	return {
 		agents: result.agents,
 		disabled: result.disabled,
+		disableBuiltins: result.disableBuiltins,
 		warnings: [...readWarnings, ...result.warnings],
 	};
 }
@@ -292,10 +306,16 @@ export function loadSubagentsOverlay(
 		for (const name of layer.disabled) disabled.add(name);
 	}
 
+	// disableBuiltins: any layer setting it true wins (union).
+	let disableBuiltins = false;
+	for (const layer of layers) {
+		if (layer.disableBuiltins === true) disableBuiltins = true;
+	}
+
 	const warnings: string[] = [];
 	for (const layer of layers) warnings.push(...layer.warnings);
 
-	return { agents: merged, disabled, warnings };
+	return { agents: merged, disabled, disableBuiltins, warnings };
 }
 
 /**

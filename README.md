@@ -495,6 +495,20 @@ Names in `disabled` are skipped entirely — they will not appear in
 `/agents list`, are not invokable from chains or directly, and produce
 the standard "unknown agent" error if referenced.
 
+To hide every built-in agent in one shot (e.g. you only want your own
+agents loaded), set `disableBuiltins: true`. It only removes agents whose
+source is `builtin` — your user/project agents are unaffected, even if
+they share a name with a built-in.
+
+```jsonc
+{
+  "disableBuiltins": true,
+  "agents": {
+    "scout": { "model": "anthropic/claude-opus-4-6" }
+  }
+}
+```
+
 Validation problems (unknown fields, invalid JSON, references to
 non-existent agents) are surfaced as warnings via `discoverAgentsAll`,
 visible in agent-management output.

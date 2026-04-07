@@ -261,7 +261,9 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 	const overlay = loadSubagentsOverlay(cwd);
 
-	const builtinAgents = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
+	const builtinAgents = overlay.disableBuiltins
+		? []
+		: loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
 
 	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user", overlay);
 	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user", overlay);
@@ -295,7 +297,9 @@ export function discoverAgentsAll(cwd: string): {
 
 	// Load unfiltered lists first so we can compute the known-names set
 	// (including disabled agents) before filtering them out.
-	const builtinAll = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
+	const builtinAll = overlay.disableBuiltins
+		? []
+		: loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
 	const userAll = [
 		...loadAgentsFromDir(userDirOld, "user", overlay),
 		...loadAgentsFromDir(userDirNew, "user", overlay),

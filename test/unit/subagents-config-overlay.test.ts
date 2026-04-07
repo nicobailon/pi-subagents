@@ -242,4 +242,30 @@ describe("subagents-config-overlay", () => {
 		assert.equal(scout?.model, "project-model");
 		assert.equal(scout?.thinking, "user-thinking");
 	});
+
+	it("disableBuiltins: true removes all built-in agents but keeps user/project ones", () => {
+		const projectDir = mkProject();
+		writeAgent(projectDir, "myagent", "");
+		writeProjectOverlay(projectDir, { disableBuiltins: true });
+
+		const { agents } = discoverAgents(projectDir, "both");
+		// User-defined agent still present
+		assert.ok(agents.find((a) => a.name === "myagent"));
+		// No agent with source === "builtin"
+		assert.equal(agents.filter((a) => a.source === "builtin").length, 0);
+	});
+
+	it("disableBuiltins: false (or omitted) keeps built-ins", () => {
+		const projectDir = mkProject();
+		const { agents } = discoverAgents(projectDir, "both");
+		// At least one builtin should be present (the repo ships several)
+		assert.ok(agents.some((a) => a.source === "builtin"));
+	});
+
+	it("disableBuiltins: true also strips builtins from discoverAgentsAll", () => {
+		const projectDir = mkProject();
+		writeProjectOverlay(projectDir, { disableBuiltins: true });
+		const result = discoverAgentsAll(projectDir);
+		assert.equal(result.builtin.length, 0);
+	});
 });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	detectUnknownAgentNames,
 	loadSubagentsOverlay,
@@ -31,6 +31,21 @@ function writeJson(filePath: string, data: unknown): void {
 }
 
 describe("subagents-config", () => {
+	let isolatedHome: string;
+	let prevHomeEnv: string | undefined;
+
+	beforeEach(() => {
+		isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-config-home-"));
+		tempDirs.push(isolatedHome);
+		prevHomeEnv = process.env.PI_SUBAGENTS_HOME;
+		process.env.PI_SUBAGENTS_HOME = isolatedHome;
+	});
+
+	afterEach(() => {
+		if (prevHomeEnv === undefined) delete process.env.PI_SUBAGENTS_HOME;
+		else process.env.PI_SUBAGENTS_HOME = prevHomeEnv;
+	});
+
 	it("returns empty overlay when no files exist", () => {
 		const cwd = mkTempDir();
 		const userDir = mkTempDir();
@@ -186,6 +201,7 @@ describe("subagents-config", () => {
 		const overlay: SubagentsOverlay = {
 			agents: new Map(),
 			disabled: new Set(),
+			disableBuiltins: false,
 			warnings: [],
 		};
 		assert.deepEqual(overlay.warnings, []);
@@ -340,6 +356,59 @@ describe("subagents-config", () => {
 		assert.equal(overlay.disabled.size, 0);
 	});
 
+	it("disableBuiltins: true is parsed and exposed on the overlay", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(cwd, ".pi", "subagents.json"), { disableBuiltins: true });
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.equal(overlay.disableBuiltins, true);
+		assert.deepEqual(overlay.warnings, []);
+	});
+
+	it("disableBuiltins defaults to false when not set anywhere", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.equal(overlay.disableBuiltins, false);
+	});
+
+	it("disableBuiltins is unioned across layers (any true wins)", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		// Set true only in user settings.json subagents key
+		writeJson(path.join(userDir, "settings.json"), {
+			subagents: { disableBuiltins: true },
+		});
+		// Project subagents.json doesn't mention it
+		writeJson(path.join(cwd, ".pi", "subagents.json"), { agents: {} });
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.equal(overlay.disableBuiltins, true);
+	});
+
+	it("disableBuiltins with non-boolean value warns and is ignored", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(cwd, ".pi", "subagents.json"), { disableBuiltins: "yes" });
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.equal(overlay.disableBuiltins, false);
+		assert.ok(
+			overlay.warnings.some((w) => w.includes("disableBuiltins")),
+			`expected disableBuiltins warning, got: ${JSON.stringify(overlay.warnings)}`,
+		);
+	});
+
 	it("invalid types under settings.json subagents are reported with prefixed warnings", () => {
 		const cwd = mkTempDir();
 		const userDir = mkTempDir();
@@ -367,6 +436,7 @@ describe("detectUnknownAgentNames", () => {
 		return {
 			agents: new Map(Object.entries(agents)),
 			disabled: new Set(disabled),
+			disableBuiltins: false,
 			warnings: [],
 		};
 	}
