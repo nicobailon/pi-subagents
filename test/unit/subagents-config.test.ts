@@ -209,6 +209,154 @@ describe("subagents-config", () => {
 		assert.equal(scout?.defaultProgress, false);
 		assert.ok(Object.hasOwn(scout as object, "defaultProgress"));
 	});
+
+	it("loads overrides from project settings.json subagents key", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			skills: ["./somewhere"],
+			subagents: {
+				agents: { scout: { model: "from-settings" } },
+				disabled: ["delegate"],
+			},
+		});
+
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.deepEqual(overlay.warnings, []);
+		assert.equal(overlay.agents.get("scout")?.model, "from-settings");
+		assert.ok(overlay.disabled.has("delegate"));
+	});
+
+	it("subagents.json overrides settings.json subagents key per field", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			subagents: {
+				agents: { scout: { model: "from-settings", thinking: "low" } },
+			},
+		});
+		writeJson(path.join(cwd, ".pi", "subagents.json"), {
+			agents: { scout: { model: "from-subagents-json" } },
+		});
+
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.deepEqual(overlay.warnings, []);
+		const scout = overlay.agents.get("scout");
+		assert.equal(scout?.model, "from-subagents-json");
+		// settings.json field not touched by subagents.json is preserved
+		assert.equal(scout?.thinking, "low");
+	});
+
+	it("layered precedence: project subagents.json > user subagents.json > project settings.json > user settings.json", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(userDir, "settings.json"), {
+			subagents: {
+				agents: {
+					scout: {
+						description: "user-settings",
+						model: "user-settings-model",
+						thinking: "user-settings-thinking",
+						output: "user-settings-output",
+					},
+				},
+			},
+		});
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			subagents: {
+				agents: {
+					scout: {
+						model: "project-settings-model",
+						thinking: "project-settings-thinking",
+						output: "project-settings-output",
+					},
+				},
+			},
+		});
+		writeJson(path.join(userDir, "subagents.json"), {
+			agents: {
+				scout: {
+					thinking: "user-overlay-thinking",
+					output: "user-overlay-output",
+				},
+			},
+		});
+		writeJson(path.join(cwd, ".pi", "subagents.json"), {
+			agents: { scout: { output: "project-overlay-output" } },
+		});
+
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.deepEqual(overlay.warnings, []);
+		const scout = overlay.agents.get("scout");
+		assert.equal(scout?.description, "user-settings");
+		assert.equal(scout?.model, "project-settings-model");
+		assert.equal(scout?.thinking, "user-overlay-thinking");
+		assert.equal(scout?.output, "project-overlay-output");
+	});
+
+	it("unions disabled across settings.json and subagents.json", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(userDir, "settings.json"), {
+			subagents: { disabled: ["from-user-settings"] },
+		});
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			subagents: { disabled: ["from-project-settings"] },
+		});
+		writeJson(path.join(cwd, ".pi", "subagents.json"), {
+			disabled: ["from-project-overlay"],
+		});
+
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.ok(overlay.disabled.has("from-user-settings"));
+		assert.ok(overlay.disabled.has("from-project-settings"));
+		assert.ok(overlay.disabled.has("from-project-overlay"));
+	});
+
+	it("settings.json without a subagents key is silently ignored", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			skills: ["./skills"],
+		});
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.deepEqual(overlay.warnings, []);
+		assert.equal(overlay.agents.size, 0);
+		assert.equal(overlay.disabled.size, 0);
+	});
+
+	it("invalid types under settings.json subagents are reported with prefixed warnings", () => {
+		const cwd = mkTempDir();
+		const userDir = mkTempDir();
+		writeJson(path.join(cwd, ".pi", "settings.json"), {
+			subagents: {
+				agents: { scout: { skills: "not-an-array" } },
+			},
+		});
+		const overlay = loadSubagentsOverlay(cwd, {
+			userFilePath: path.join(userDir, "subagents.json"),
+			userSettingsPath: path.join(userDir, "settings.json"),
+		});
+		assert.ok(
+			overlay.warnings.some((w) => w.includes("settings.json: subagents") && w.includes("scout") && w.includes("skills")),
+			`expected a settings.json prefixed warning, got: ${JSON.stringify(overlay.warnings)}`,
+		);
+	});
 });
 
 describe("detectUnknownAgentNames", () => {

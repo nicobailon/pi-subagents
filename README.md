@@ -431,13 +431,20 @@ Skills are specialized instructions loaded from SKILL.md files and injected into
 ## Configuring agents with `subagents.json`
 
 You can override built-in agent fields and disable agents from loading
-without editing the bundled `.md` files. pi-subagents reads two files:
+without editing the bundled `.md` files. pi-subagents reads overrides from
+four sources, in order of increasing precedence (later sources win, per
+field):
 
-- **Project**: `.pi/subagents.json` (relative to your working directory)
-- **User**: `~/.pi/agent/subagents.json`
+1. User `~/.pi/agent/settings.json` — `subagents` key
+2. Project `.pi/settings.json` — `subagents` key
+3. User `~/.pi/agent/subagents.json`
+4. Project `.pi/subagents.json`
 
-Project values take precedence over user values, field-by-field.
-The `disabled` lists from both files are unioned.
+Use the `subagents` key inside `settings.json` if you already have one for
+skills/etc. and want to keep everything in one file. Use a dedicated
+`subagents.json` if you want a separate file or want to override what
+`settings.json` says (the dedicated file wins). The `disabled` lists from
+all four sources are unioned.
 
 ### Example
 
@@ -454,6 +461,20 @@ The `disabled` lists from both files are unioned.
     }
   },
   "disabled": ["delegate", "worker"]
+}
+```
+
+The same shape can live inside `settings.json` under a `subagents` key:
+
+```jsonc
+{
+  "skills": ["./my-skills"],
+  "subagents": {
+    "agents": {
+      "scout": { "model": "anthropic/claude-opus-4-6" }
+    },
+    "disabled": ["delegate"]
+  }
 }
 ```
 
