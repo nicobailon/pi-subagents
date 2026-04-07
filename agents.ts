@@ -10,6 +10,11 @@ import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
+import {
+	loadSubagentsOverlay,
+	type AgentOverride,
+	type SubagentsOverlay,
+} from "./subagents-config.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -60,7 +65,27 @@ export interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+function applyOverride(agent: AgentConfig, o: AgentOverride): AgentConfig {
+	const next = { ...agent };
+	if (o.description !== undefined) next.description = o.description;
+	if (o.model !== undefined) next.model = o.model;
+	if (o.thinking !== undefined) next.thinking = o.thinking;
+	if (o.tools !== undefined) next.tools = [...o.tools];
+	if (o.skills !== undefined) next.skills = [...o.skills];
+	if (o.extensions !== undefined) next.extensions = [...o.extensions];
+	if (o.output !== undefined) next.output = o.output;
+	if (o.defaultReads !== undefined) next.defaultReads = [...o.defaultReads];
+	if (o.defaultProgress !== undefined) next.defaultProgress = o.defaultProgress;
+	if (o.interactive !== undefined) next.interactive = o.interactive;
+	if (o.maxSubagentDepth !== undefined) next.maxSubagentDepth = o.maxSubagentDepth;
+	return next;
+}
+
+function loadAgentsFromDir(
+	dir: string,
+	source: AgentSource,
+	overlay?: SubagentsOverlay,
+): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
 	if (!fs.existsSync(dir)) {
@@ -137,7 +162,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 
 		const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
 
-		agents.push({
+		const base: AgentConfig = {
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools.length > 0 ? tools : undefined,
@@ -159,7 +184,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 					? parsedMaxSubagentDepth
 					: undefined,
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
-		});
+		};
+
+		const override = overlay?.agents.get(base.name);
+		agents.push(override ? applyOverride(base, override) : base);
 	}
 
 	return agents;
@@ -230,14 +258,18 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
+	const overlay = loadSubagentsOverlay(cwd);
 
-	const builtinAgents = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
-	
-	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user");
-	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user");
+	const builtinAgents = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
+
+	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user", overlay);
+	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user", overlay);
 	const userAgents = [...userAgentsOld, ...userAgentsNew];
 
-	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
+	const projectAgents =
+		scope === "user" || !projectAgentsDir
+			? []
+			: loadAgentsFromDir(projectAgentsDir, "project", overlay);
 	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
 
 	return { agents, projectAgentsDir };
@@ -254,13 +286,14 @@ export function discoverAgentsAll(cwd: string): {
 	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const projectDir = findNearestProjectAgentsDir(cwd);
+	const overlay = loadSubagentsOverlay(cwd);
 
-	const builtin = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
+	const builtin = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin", overlay);
 	const user = [
-		...loadAgentsFromDir(userDirOld, "user"),
-		...loadAgentsFromDir(userDirNew, "user"),
+		...loadAgentsFromDir(userDirOld, "user", overlay),
+		...loadAgentsFromDir(userDirNew, "user", overlay),
 	];
-	const project = projectDir ? loadAgentsFromDir(projectDir, "project") : [];
+	const project = projectDir ? loadAgentsFromDir(projectDir, "project", overlay) : [];
 	const chains = [
 		...loadChainsFromDir(userDirOld, "user"),
 		...loadChainsFromDir(userDirNew, "user"),

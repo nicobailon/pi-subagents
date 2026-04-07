@@ -2,13 +2,24 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { serializeAgent } from "../../agent-serializer.ts";
 import { discoverAgents, type AgentConfig } from "../../agents.ts";
 
 const tempDirs: string[] = [];
+let tempHome: string;
+let prevHomeEnv: string | undefined;
+
+beforeEach(() => {
+	tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-overlay-home-"));
+	prevHomeEnv = process.env.PI_SUBAGENTS_HOME;
+	process.env.PI_SUBAGENTS_HOME = tempHome;
+});
 
 afterEach(() => {
+	if (prevHomeEnv === undefined) delete process.env.PI_SUBAGENTS_HOME;
+	else process.env.PI_SUBAGENTS_HOME = prevHomeEnv;
+	fs.rmSync(tempHome, { recursive: true, force: true });
 	while (tempDirs.length > 0) {
 		const dir = tempDirs.pop();
 		if (!dir) continue;
