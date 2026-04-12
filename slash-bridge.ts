@@ -9,6 +9,7 @@ import {
 	SLASH_SUBAGENT_UPDATE_EVENT,
 	type Details,
 } from "./types.js";
+import { resolveChainDirPath } from "./settings.js";
 
 export interface SlashSubagentRequest {
 	requestId: string;
@@ -17,6 +18,8 @@ export interface SlashSubagentRequest {
 
 export interface SlashSubagentResponse {
 	requestId: string;
+	chainId?: string;
+	chainDir?: string;
 	result: AgentToolResult<Details>;
 	isError: boolean;
 	errorText?: string;
@@ -27,6 +30,11 @@ export interface SlashSubagentUpdate {
 	progress?: Details["progress"];
 	currentTool?: string;
 	toolCount?: number;
+}
+
+interface SlashChainMetadata {
+	chainId?: string;
+	chainDir?: string;
 }
 
 interface EventBus {
@@ -53,6 +61,14 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 	const controllers = new Map<string, AbortController>();
 	const pendingCancels = new Set<string>();
 	const subscriptions: Array<() => void> = [];
+
+	const getChainMetadata = (requestId: string, params: SubagentParamsLike): SlashChainMetadata => {
+		if (!params.chain || params.chain.length === 0) return {};
+		return {
+			chainId: requestId,
+			chainDir: resolveChainDirPath(requestId, params.chainDir),
+		};
+	};
 
 	const subscribe = (event: string, handler: (data: unknown) => void): void => {
 		const unsubscribe = options.events.on(event, handler);
@@ -81,6 +97,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 		if (!ctx) {
 			const response: SlashSubagentResponse = {
 				requestId,
+				...getChainMetadata(requestId, params),
 				result: {
 					content: [{ type: "text", text: "No active extension context for slash subagent execution." }],
 					details: { mode: "single" as const, results: [] },
@@ -99,6 +116,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 			controller.abort();
 			const response: SlashSubagentResponse = {
 				requestId,
+				...getChainMetadata(requestId, params),
 				result: {
 					content: [{ type: "text", text: "Cancelled." }],
 					details: { mode: "single" as const, results: [] },
@@ -111,7 +129,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 			return;
 		}
 
-		options.events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId });
+		options.events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId, ...getChainMetadata(requestId, params) });
 
 		try {
 			const result = await options.execute(
@@ -134,6 +152,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 
 			const response: SlashSubagentResponse = {
 				requestId,
+				...getChainMetadata(requestId, params),
 				result,
 				isError: (result as { isError?: boolean }).isError === true,
 				errorText: (result as { isError?: boolean }).isError
@@ -144,6 +163,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 		} catch (error) {
 			const response: SlashSubagentResponse = {
 				requestId,
+				...getChainMetadata(requestId, params),
 				result: {
 					content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
 					details: { mode: "single" as const, results: [] },

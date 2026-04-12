@@ -826,6 +826,8 @@ Each chain run creates `<tmpdir>/pi-chain-runs/{runId}/` containing:
 
 Directories older than 24 hours are cleaned up on extension startup.
 
+For slash-command driven chain runs, `subagent:slash:started` and `subagent:slash:response` now include optional `chainId` and `chainDir` fields. `chainId` reuses the stable request/run identifier, and `chainDir` points at the shared chain artifacts directory so downstream tooling can bind to the active chain deterministically.
+
 ## Artifacts
 
 Location: `{sessionDir}/subagent-artifacts/` or `<tmpdir>/pi-subagent-artifacts/`

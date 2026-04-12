@@ -9,6 +9,10 @@ import type { AgentConfig } from "./agents.ts";
 import { normalizeSkillInput } from "./skills.ts";
 
 const CHAIN_RUNS_DIR = path.join(os.tmpdir(), "pi-chain-runs");
+
+export function resolveChainDirPath(runId: string, baseDir?: string): string {
+	return path.join(baseDir ? path.resolve(baseDir) : CHAIN_RUNS_DIR, runId);
+}
 const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // =============================================================================
@@ -92,7 +96,7 @@ export function getStepAgents(step: ChainStep): string[] {
 // =============================================================================
 
 export function createChainDir(runId: string, baseDir?: string): string {
-	const chainDir = path.join(baseDir ? path.resolve(baseDir) : CHAIN_RUNS_DIR, runId);
+	const chainDir = resolveChainDirPath(runId, baseDir);
 	fs.mkdirSync(chainDir, { recursive: true });
 	return chainDir;
 }
