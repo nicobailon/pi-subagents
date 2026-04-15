@@ -115,7 +115,7 @@ export class AgentManagerComponent implements Component {
 
 	private loadEntries(): void {
 		const overridden = new Set([...this.agentData.user, ...this.agentData.project].map((c) => c.name));
-		const agents: AgentEntry[] = []; for (const config of this.agentData.builtin) { if (!overridden.has(config.name)) agents.push({ id: `a${this.nextId++}`, kind: "agent", config: cloneConfig(config), isNew: false }); } for (const config of this.agentData.user) agents.push({ id: `a${this.nextId++}`, kind: "agent", config: cloneConfig(config), isNew: false }); for (const config of this.agentData.project) agents.push({ id: `a${this.nextId++}`, kind: "agent", config: cloneConfig(config), isNew: false }); this.agents = agents;
+		const agents: AgentEntry[] = []; for (const config of this.agentData.builtin) { if (!overridden.has(config.name) && config.disabled !== true) agents.push({ id: `a${this.nextId++}`, kind: "agent", config: cloneConfig(config), isNew: false }); } for (const config of this.agentData.user) agents.push({ id: `a${this.nextId++}`, kind: "agent", config: cloneConfig(config), isNew: false }); for (const config of this.agentData.project) agents.push({ id: `a${this.nextId++}`, kind: "agent", config: cloneConfig(config), isNew: false }); this.agents = agents;
 		const chains: ChainEntry[] = []; for (const config of this.agentData.chains) chains.push({ id: `c${this.nextId++}`, kind: "chain", config: cloneChainConfig(config) }); this.chains = chains;
 	}
 
