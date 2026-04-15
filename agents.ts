@@ -23,6 +23,7 @@ export interface BuiltinAgentOverrideBase {
 	skills?: string[];
 	tools?: string[];
 	mcpDirectTools?: string[];
+	disabled?: boolean;
 }
 
 export interface BuiltinAgentOverrideConfig {
@@ -32,6 +33,7 @@ export interface BuiltinAgentOverrideConfig {
 	systemPrompt?: string;
 	skills?: string[] | false;
 	tools?: string[] | false;
+	disabled?: boolean;
 }
 
 export interface BuiltinAgentOverrideInfo {
@@ -58,6 +60,7 @@ export interface AgentConfig {
 	defaultProgress?: boolean;
 	interactive?: boolean;
 	maxSubagentDepth?: number;
+	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
 }
@@ -129,6 +132,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		skills: agent.skills ? [...agent.skills] : undefined,
 		tools: agent.tools ? [...agent.tools] : undefined,
 		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
+		disabled: agent.disabled,
 	};
 }
 
@@ -142,6 +146,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
 		...(override.tools !== undefined ? { tools: override.tools === false ? false : [...override.tools] } : {}),
+		...(override.disabled !== undefined ? { disabled: override.disabled } : {}),
 	};
 }
 
@@ -212,23 +217,69 @@ function parseBuiltinOverrideEntry(value: unknown): BuiltinAgentOverrideConfig |
 	const tools = parseStringArrayOrFalse(input.tools);
 	if (tools !== undefined) override.tools = tools;
 
+	if (typeof input.disabled === "boolean") override.disabled = input.disabled;
+
 	return Object.keys(override).length > 0 ? override : undefined;
 }
 
-function readBuiltinOverrides(filePath: string | null): Record<string, BuiltinAgentOverrideConfig> {
-	if (!filePath || !fs.existsSync(filePath)) return {};
+interface SubagentsSettings {
+	overrides: Record<string, BuiltinAgentOverrideConfig>;
+	disableBuiltins: boolean | undefined;
+}
+
+const EMPTY_SUBAGENTS_SETTINGS: SubagentsSettings = { overrides: {}, disableBuiltins: undefined };
+
+function readSubagentsSettings(filePath: string | null): SubagentsSettings {
+	if (!filePath || !fs.existsSync(filePath)) return EMPTY_SUBAGENTS_SETTINGS;
 	const settings = readSettingsFileStrict(filePath);
 	const subagents = settings.subagents;
-	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return {};
-	const agentOverrides = (subagents as Record<string, unknown>).agentOverrides;
-	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return {};
-
-	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
-	for (const [name, value] of Object.entries(agentOverrides)) {
-		const override = parseBuiltinOverrideEntry(value);
-		if (override) parsed[name] = override;
+	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) {
+		return EMPTY_SUBAGENTS_SETTINGS;
 	}
-	return parsed;
+	const subagentsObj = subagents as Record<string, unknown>;
+
+	const overrides: Record<string, BuiltinAgentOverrideConfig> = {};
+	const agentOverrides = subagentsObj.agentOverrides;
+	if (agentOverrides && typeof agentOverrides === "object" && !Array.isArray(agentOverrides)) {
+		for (const [name, value] of Object.entries(agentOverrides)) {
+			const override = parseBuiltinOverrideEntry(value);
+			if (override) overrides[name] = override;
+		}
+	}
+
+	const disableBuiltins = typeof subagentsObj.disableBuiltins === "boolean"
+		? subagentsObj.disableBuiltins
+		: undefined;
+
+	return { overrides, disableBuiltins };
+}
+
+// Kept as a thin alias for call sites that only care about overrides.
+function readBuiltinOverrides(filePath: string | null): Record<string, BuiltinAgentOverrideConfig> {
+	return readSubagentsSettings(filePath).overrides;
+}
+
+/**
+ * Resolve the effective `disableBuiltins` source for the current scope.
+ *
+ * Project scope wins if it explicitly sets the flag (`true` or `false`).
+ * Otherwise user scope applies. Returns the scope + settings path used to
+ * attribute the synthetic `disabled` override on each builtin, or `null` when
+ * no bulk disable is active.
+ */
+function computeBulkDisableSource(
+	userFlag: boolean | undefined,
+	projectFlag: boolean | undefined,
+	userSettingsPath: string,
+	projectSettingsPath: string | null,
+): { scope: "user" | "project"; path: string } | null {
+	if (projectFlag !== undefined && projectSettingsPath) {
+		return projectFlag ? { scope: "project", path: projectSettingsPath } : null;
+	}
+	if (userFlag === true) {
+		return { scope: "user", path: userSettingsPath };
+	}
+	return null;
 }
 
 function applyBuiltinOverride(
@@ -253,6 +304,7 @@ function applyBuiltinOverride(
 		next.tools = tools;
 		next.mcpDirectTools = mcpDirectTools;
 	}
+	if (override.disabled !== undefined) next.disabled = override.disabled;
 
 	return next;
 }
@@ -263,6 +315,7 @@ function applyBuiltinOverrides(
 	projectOverrides: Record<string, BuiltinAgentOverrideConfig>,
 	userSettingsPath: string,
 	projectSettingsPath: string | null,
+	bulkDisableSource: { scope: "user" | "project"; path: string } | null = null,
 ): AgentConfig[] {
 	return builtinAgents.map((agent) => {
 		const projectOverride = projectOverrides[agent.name];
@@ -275,13 +328,17 @@ function applyBuiltinOverrides(
 			return applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath });
 		}
 
+		if (bulkDisableSource) {
+			return applyBuiltinOverride(agent, { disabled: true }, bulkDisableSource);
+		}
+
 		return agent;
 	});
 }
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "disabled">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -294,6 +351,10 @@ export function buildBuiltinOverrideConfig(
 	const baseTools = joinToolList(base);
 	const draftTools = joinToolList(draft);
 	if (!arraysEqual(draftTools, baseTools)) override.tools = draftTools ? [...draftTools] : false;
+
+	if (draft.disabled !== base.disabled && draft.disabled !== undefined) {
+		override.disabled = draft.disabled;
+	}
 
 	return Object.keys(override).length > 0 ? override : undefined;
 }
@@ -516,12 +577,22 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
 
-	const builtinAgents = applyBuiltinOverrides(
-		loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"),
-		scope === "project" ? {} : readBuiltinOverrides(userSettingsPath),
-		scope === "user" ? {} : readBuiltinOverrides(projectSettingsPath),
+	const userSettings = scope === "project" ? EMPTY_SUBAGENTS_SETTINGS : readSubagentsSettings(userSettingsPath);
+	const projectSettings = scope === "user" ? EMPTY_SUBAGENTS_SETTINGS : readSubagentsSettings(projectSettingsPath);
+	const bulkDisableSource = computeBulkDisableSource(
+		userSettings.disableBuiltins,
+		projectSettings.disableBuiltins,
 		userSettingsPath,
 		projectSettingsPath,
+	);
+
+	const builtinAgents = applyBuiltinOverrides(
+		loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"),
+		userSettings.overrides,
+		projectSettings.overrides,
+		userSettingsPath,
+		projectSettingsPath,
+		bulkDisableSource,
 	);
 	
 	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user");
@@ -529,7 +600,8 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userAgents = [...userAgentsOld, ...userAgentsNew];
 
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
-	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
+	const merged = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
+	const agents = merged.filter((agent) => agent.disabled !== true);
 
 	return { agents, projectAgentsDir };
 }
@@ -550,12 +622,22 @@ export function discoverAgentsAll(cwd: string): {
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
 
-	const builtin = applyBuiltinOverrides(
-		loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"),
-		readBuiltinOverrides(userSettingsPath),
-		readBuiltinOverrides(projectSettingsPath),
+	const userSettings = readSubagentsSettings(userSettingsPath);
+	const projectSettings = readSubagentsSettings(projectSettingsPath);
+	const bulkDisableSource = computeBulkDisableSource(
+		userSettings.disableBuiltins,
+		projectSettings.disableBuiltins,
 		userSettingsPath,
 		projectSettingsPath,
+	);
+
+	const builtin = applyBuiltinOverrides(
+		loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"),
+		userSettings.overrides,
+		projectSettings.overrides,
+		userSettingsPath,
+		projectSettingsPath,
+		bulkDisableSource,
 	);
 	const user = [
 		...loadAgentsFromDir(userDirOld, "user"),
