@@ -42,6 +42,8 @@ describe("builtin agent overrides", () => {
 						model: "openai/gpt-5.4",
 						thinking: "xhigh",
 						systemPromptMode: "replace",
+						inheritProjectContext: true,
+						inheritSkills: true,
 					},
 				},
 			},
@@ -53,6 +55,8 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.model, "openai/gpt-5.4");
 		assert.equal(reviewer.thinking, "xhigh");
 		assert.equal(reviewer.systemPromptMode, "replace");
+		assert.equal(reviewer.inheritProjectContext, true);
+		assert.equal(reviewer.inheritSkills, true);
 		assert.equal(reviewer.override?.scope, "user");
 		assert.equal(reviewer.override?.path, path.join(tempHome, ".pi", "agent", "settings.json"));
 	});
@@ -149,6 +153,27 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
+	it("surfaces malformed builtin override entries instead of silently ignoring them", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, {
+			subagents: {
+				agentOverrides: {
+					reviewer: {
+						inheritProjectContext: "true",
+					},
+				},
+			},
+		});
+
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("reviewer")
+				&& error.message.includes("inheritProjectContext"),
+		);
+	});
+
 	it("builds false sentinels when an override clears builtin fields", () => {
 		const override = buildBuiltinOverrideConfig(
 			{
@@ -156,6 +181,8 @@ describe("builtin agent overrides", () => {
 				fallbackModels: ["openai/gpt-5-mini"],
 				thinking: "high",
 				systemPromptMode: "append",
+				inheritProjectContext: true,
+				inheritSkills: false,
 				systemPrompt: "Base prompt",
 				skills: ["safe-bash"],
 				tools: ["bash"],
@@ -165,7 +192,9 @@ describe("builtin agent overrides", () => {
 				model: undefined,
 				fallbackModels: undefined,
 				thinking: undefined,
-				systemPromptMode: undefined,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
 				systemPrompt: "Base prompt",
 				skills: undefined,
 				tools: undefined,
@@ -177,7 +206,8 @@ describe("builtin agent overrides", () => {
 			model: false,
 			fallbackModels: false,
 			thinking: false,
-			systemPromptMode: false,
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
 			skills: false,
 			tools: false,
 		});

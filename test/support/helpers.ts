@@ -1,13 +1,3 @@
-/**
- * Test helpers for integration tests.
- *
- * Provides:
- * - Local mock pi CLI via createMockPi()
- * - Dynamic module loading with graceful skip
- * - Temp directory management
- * - Minimal mock contexts for chain execution
- */
-
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -19,44 +9,19 @@ export type { MockPi };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ---------------------------------------------------------------------------
-// Mock Pi setup
-// ---------------------------------------------------------------------------
-
-/**
- * Create a mock pi CLI instance for integration tests.
- *
- * Uses the local file-based mock harness in `test/support/mock-pi.ts` and keeps the
- * current Windows-specific `process.argv[1]` / `MOCK_PI_QUEUE_DIR` behavior so
- * `pi-spawn.ts` can keep resolving a runnable script path on Windows.
- */
 export function createMockPi(): MockPi {
 	return _createMockPi();
 }
 
-// ---------------------------------------------------------------------------
-// Temp directory management
-// ---------------------------------------------------------------------------
-
-/**
- * Create a temporary directory for test use.
- */
 export function createTempDir(prefix = "pi-subagent-test-"): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-/**
- * Remove a directory tree, ignoring errors.
- */
 export function removeTempDir(dir: string): void {
 	try {
 		fs.rmSync(dir, { recursive: true, force: true });
 	} catch {}
 }
-
-// ---------------------------------------------------------------------------
-// Agent config factory
-// ---------------------------------------------------------------------------
 
 interface AgentConfig {
 	name: string;
@@ -68,6 +33,9 @@ interface AgentConfig {
 	extensions?: string[];
 	skills?: string[];
 	thinking?: string;
+	systemPromptMode?: string;
+	inheritProjectContext?: boolean;
+	inheritSkills?: boolean;
 	scope?: string;
 	output?: string | false;
 	reads?: string[] | false;
@@ -76,24 +44,25 @@ interface AgentConfig {
 	maxSubagentDepth?: number;
 }
 
-/**
- * Create minimal agent configs for testing.
- * Each name becomes an agent with no special config.
- */
 export function makeAgentConfigs(names: string[]): AgentConfig[] {
 	return names.map((name) => ({
 		name,
 		description: `Test agent: ${name}`,
+		systemPrompt: "",
+		systemPromptMode: "replace",
+		inheritProjectContext: false,
+		inheritSkills: false,
 	}));
 }
 
-/**
- * Create an agent config with specific settings.
- */
 export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		name,
 		description: `Test agent: ${name}`,
+		systemPrompt: "",
+		systemPromptMode: "replace",
+		inheritProjectContext: false,
+		inheritSkills: false,
 		...overrides,
 	};
 }
@@ -112,14 +81,6 @@ export interface MinimalCtx {
 	model?: { provider: string };
 }
 
-// ---------------------------------------------------------------------------
-// Minimal mock context for chain execution
-// ---------------------------------------------------------------------------
-
-/**
- * Create a minimal ExtensionContext mock for chain execution.
- * Only provides what executeChain needs when clarify=false.
- */
 export function makeMinimalCtx(cwd: string): MinimalCtx {
 	return {
 		cwd,
@@ -134,10 +95,6 @@ export function makeMinimalCtx(cwd: string): MinimalCtx {
 		},
 	};
 }
-
-// ---------------------------------------------------------------------------
-// Dynamic module loading with graceful skip
-// ---------------------------------------------------------------------------
 
 /**
  * Try to dynamically import a module.
@@ -154,11 +111,9 @@ export async function tryImport<T>(specifier: string): Promise<T | null> {
 		if (!isBare) {
 			const projectRoot = path.resolve(__dirname, "..", "..");
 			const abs = path.resolve(projectRoot, specifier);
-			// Convert to file:// URL for cross-platform compatibility with dynamic import()
 			const url = pathToFileURL(abs).href;
 			return await import(url) as T;
 		}
-		// Bare specifier — import directly (node_modules resolution)
 		return await import(specifier) as T;
 	} catch (error: unknown) {
 		const code = typeof error === "object" && error !== null && "code" in error
@@ -178,11 +133,7 @@ export async function tryImport<T>(specifier: string): Promise<T | null> {
 	}
 }
 
-/**
- * JSONL event builders for mock pi configuration.
- */
 export const events = {
-	/** Build a message_end event with assistant text */
 	assistantMessage(text: string, model = "mock/test-model"): object {
 		return {
 			type: "message_end",
@@ -195,17 +146,14 @@ export const events = {
 		};
 	},
 
-	/** Build a tool_execution_start event */
 	toolStart(toolName: string, args: Record<string, unknown> = {}): object {
 		return { type: "tool_execution_start", toolName, args };
 	},
 
-	/** Build a tool_execution_end event */
 	toolEnd(toolName: string): object {
 		return { type: "tool_execution_end", toolName };
 	},
 
-	/** Build a tool_result_end event */
 	toolResult(toolName: string, text: string, isError = false): object {
 		return {
 			type: "tool_result_end",

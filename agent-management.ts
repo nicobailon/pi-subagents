@@ -8,6 +8,9 @@ import {
 	type AgentSource,
 	type ChainConfig,
 	type ChainStepConfig,
+	defaultInheritProjectContext,
+	defaultInheritSkills,
+	defaultSystemPromptMode,
 	discoverAgentsAll,
 } from "./agents.ts";
 import { serializeAgent } from "./agent-serializer.ts";
@@ -245,9 +248,16 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else return "config.thinking must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "systemPromptMode")) {
-		if (cfg.systemPromptMode === false || cfg.systemPromptMode === "") target.systemPromptMode = undefined;
-		else if (cfg.systemPromptMode === "append" || cfg.systemPromptMode === "replace") target.systemPromptMode = cfg.systemPromptMode;
-		else return "config.systemPromptMode must be 'append', 'replace', or false when provided.";
+		if (cfg.systemPromptMode === "append" || cfg.systemPromptMode === "replace") target.systemPromptMode = cfg.systemPromptMode;
+		else return "config.systemPromptMode must be 'append' or 'replace' when provided.";
+	}
+	if (hasKey(cfg, "inheritProjectContext")) {
+		if (typeof cfg.inheritProjectContext !== "boolean") return "config.inheritProjectContext must be a boolean when provided.";
+		target.inheritProjectContext = cfg.inheritProjectContext;
+	}
+	if (hasKey(cfg, "inheritSkills")) {
+		if (typeof cfg.inheritSkills !== "boolean") return "config.inheritSkills must be a boolean when provided.";
+		target.inheritSkills = cfg.inheritSkills;
 	}
 	if (hasKey(cfg, "output")) {
 		if (cfg.output === false || cfg.output === "") target.output = undefined;
@@ -325,9 +335,11 @@ export function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.fallbackModels?.length) lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
+	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
+	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
+	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.thinking) lines.push(`Thinking: ${agent.thinking}`);
-	if (agent.systemPromptMode) lines.push(`System prompt mode: ${agent.systemPromptMode}`);
 	if (agent.output) lines.push(`Output: ${agent.output}`);
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
 	if (agent.defaultProgress) lines.push("Progress: true");
@@ -424,7 +436,16 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 		warnings.push(...chainStepWarnings(ctx, chain.steps));
 		return result([`Created chain '${name}' at ${targetPath}.`, ...warnings].join("\n"));
 	}
-	const agent: AgentConfig = { name, description: cfg.description.trim(), source: scope, filePath: targetPath, systemPrompt: "" };
+	const agent: AgentConfig = {
+		name,
+		description: cfg.description.trim(),
+		source: scope,
+		filePath: targetPath,
+		systemPrompt: "",
+		systemPromptMode: defaultSystemPromptMode(name),
+		inheritProjectContext: defaultInheritProjectContext(name),
+		inheritSkills: defaultInheritSkills(),
+	};
 	const applyError = applyAgentConfig(agent, cfg);
 	if (applyError) return result(applyError, true);
 	const mw = modelWarning(ctx, agent.model);

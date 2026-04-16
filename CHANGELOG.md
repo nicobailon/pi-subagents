@@ -5,6 +5,11 @@
 ### Added
 - Agents can now opt into `systemPromptMode: replace`, which sends the agent prompt through Pi's `--system-prompt` path instead of always appending with `--append-system-prompt`. The new mode flows through sync, chain, parallel, async/background, builtin overrides, management config, and the Agents Manager UI.
 
+### Changed
+- Subagents now default to `systemPromptMode: replace`, with builtin `delegate` staying on `append` by default.
+- Added `inheritProjectContext` and `inheritSkills` controls so child runs can strip inherited `AGENTS.md` / `CLAUDE.md` context and Pi's discovered skills block without requiring Pi core changes.
+- Builtin agent prompts were rewritten for replacement-mode execution, and builtin `reviewer` / `context-builder` tool lists now match their documented behaviors.
+
 ## [0.14.1] - 2026-04-14
 
 ### Fixed

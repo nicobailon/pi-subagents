@@ -44,6 +44,20 @@ describe("agent management config parsing", () => {
 		assert.equal(result.isError, true);
 		assert.match(readText(result), /config must be valid JSON:/);
 	});
+
+	it("creates delegate with its builtin prompt defaults", () => {
+		const result = handleCreate(
+			{ config: { name: "delegate", description: "Delegate helper", scope: "project" } },
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+
+		assert.equal(result.isError, false);
+		const filePath = path.join(tempDir, ".pi", "agents", "delegate.md");
+		const content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /systemPromptMode: append/);
+		assert.match(content, /inheritProjectContext: true/);
+		assert.match(content, /inheritSkills: false/);
+	});
 });
 
 describe("agent manager edit prompt mode", () => {
@@ -56,6 +70,8 @@ describe("agent manager edit prompt mode", () => {
 				filePath: "/tmp/worker.md",
 				systemPrompt: "Do work",
 				systemPromptMode: "append",
+				inheritProjectContext: false,
+				inheritSkills: false,
 			},
 			false,
 			[],

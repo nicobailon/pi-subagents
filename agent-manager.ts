@@ -5,6 +5,9 @@ import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import {
 	buildBuiltinOverrideConfig,
+	defaultInheritProjectContext,
+	defaultInheritSkills,
+	defaultSystemPromptMode,
 	discoverAgentsAll,
 	removeBuiltinAgentOverride,
 	saveBuiltinAgentOverride,
@@ -40,7 +43,7 @@ interface NameInputState { mode: "new-agent" | "clone-agent" | "clone-chain" | "
 interface StatusMessage { text: string; type: "error" | "info"; }
 interface OverrideScopeState { selectedScope: "user" | "project"; allowProject: boolean; }
 
-const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "tools", "skills", "prompt"];
+const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "tools", "skills", "prompt"];
 
 function cloneConfig(config: AgentConfig): AgentConfig {
 	return {
@@ -131,6 +134,8 @@ export class AgentManagerComponent implements Component {
 			fallbackModels: entry.config.fallbackModels ? [...entry.config.fallbackModels] : undefined,
 			thinking: entry.config.thinking,
 			systemPromptMode: entry.config.systemPromptMode,
+			inheritProjectContext: entry.config.inheritProjectContext,
+			inheritSkills: entry.config.inheritSkills,
 			systemPrompt: entry.config.systemPrompt,
 			skills: entry.config.skills ? [...entry.config.skills] : undefined,
 			tools: entry.config.tools ? [...entry.config.tools] : undefined,
@@ -234,6 +239,16 @@ export class AgentManagerComponent implements Component {
 			filePath = path.join(dir, `${edit.draft.name}.md`);
 			if (fs.existsSync(filePath)) { edit.error = "An agent with that name already exists."; return false; }
 			fs.mkdirSync(dir, { recursive: true });
+		} else if (edit.draft.name !== entry.config.name) {
+			const nextPath = path.join(path.dirname(filePath), `${edit.draft.name}.md`);
+			if (nextPath !== filePath && fs.existsSync(nextPath)) {
+				edit.error = "An agent with that name already exists.";
+				return false;
+			}
+			if (nextPath !== filePath) {
+				fs.renameSync(filePath, nextPath);
+				filePath = nextPath;
+			}
 		}
 		try { const toSave: AgentConfig = { ...edit.draft, filePath }; fs.writeFileSync(filePath, serializeAgent(toSave), "utf-8"); entry.config = cloneConfig(toSave); entry.isNew = false; edit.error = undefined; return true; }
 		catch (err) { edit.error = err instanceof Error ? err.message : "Failed to save agent."; return false; }
@@ -350,7 +365,17 @@ export class AgentManagerComponent implements Component {
 			baseConfig = cloneConfig(sourceEntry.config);
 		} else {
 			const templateConfig = state.template?.config ?? {};
-			baseConfig = { name, description: "Describe this agent", systemPrompt: "", source: state.scope, filePath: "", ...templateConfig };
+			baseConfig = {
+				name,
+				description: "Describe this agent",
+				systemPrompt: "",
+				systemPromptMode: defaultSystemPromptMode(name),
+				inheritProjectContext: defaultInheritProjectContext(name),
+				inheritSkills: defaultInheritSkills(),
+				source: state.scope,
+				filePath: "",
+				...templateConfig,
+			};
 		}
 		const dir = state.scope === "project" ? this.agentData.projectDir : this.agentData.userDir;
 		if (!dir) { state.error = "Project agents directory not found."; this.tui.requestRender(); return; }

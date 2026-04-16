@@ -9,6 +9,8 @@ export interface RunnerSubagentStep {
 	mcpDirectTools?: string[];
 	systemPrompt?: string | null;
 	systemPromptMode?: "append" | "replace";
+	inheritProjectContext: boolean;
+	inheritSkills: boolean;
 	skills?: string[];
 	outputPath?: string;
 	sessionFile?: string;

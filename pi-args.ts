@@ -1,9 +1,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const TASK_ARG_LIMIT = 8000;
+const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-prompt-runtime.ts");
 
 export interface BuildPiArgsInput {
 	baseArgs: string[];
@@ -14,9 +16,10 @@ export interface BuildPiArgsInput {
 	model?: string;
 	thinking?: string;
 	systemPromptMode?: "append" | "replace";
+	inheritProjectContext: boolean;
+	inheritSkills: boolean;
 	tools?: string[];
 	extensions?: string[];
-	skills?: string[];
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
 	promptFileStem?: string;
@@ -70,23 +73,24 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		}
 	}
 
+	const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
 	if (input.extensions !== undefined) {
 		args.push("--no-extensions");
-		for (const extPath of input.extensions) {
+		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...input.extensions])]) {
 			args.push("--extension", extPath);
 		}
 	} else {
-		for (const extPath of toolExtensionPaths) {
+		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths])]) {
 			args.push("--extension", extPath);
 		}
 	}
 
-	if ((input.skills?.length ?? 0) > 0) {
+	if (!input.inheritSkills) {
 		args.push("--no-skills");
 	}
 
 	let tempDir: string | undefined;
-	if (input.systemPrompt) {
+	if (input.systemPrompt !== undefined && input.systemPrompt !== null) {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 		const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
 		const promptPath = path.join(tempDir, `${stem}.md`);
@@ -106,6 +110,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 
 	const env: Record<string, string | undefined> = {};
+	env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
+	env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
 	if (input.mcpDirectTools?.length) {
 		env.MCP_DIRECT_TOOLS = input.mcpDirectTools.join(",");
 	} else {

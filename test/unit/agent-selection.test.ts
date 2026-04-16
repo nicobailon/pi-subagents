@@ -7,6 +7,9 @@ function makeAgent(name: string, source: "builtin" | "user" | "project", systemP
 	return {
 		name,
 		description: `${name} agent`,
+		systemPromptMode: "replace",
+		inheritProjectContext: false,
+		inheritSkills: false,
 		systemPrompt,
 		source,
 		filePath: `/${source}/${name}.md`,

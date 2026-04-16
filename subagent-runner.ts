@@ -503,9 +503,10 @@ async function runSingleStep(
 			sessionDir,
 			sessionFile: step.sessionFile,
 			model: candidate,
+			inheritProjectContext: step.inheritProjectContext,
+			inheritSkills: step.inheritSkills,
 			tools: step.tools,
 			extensions: step.extensions,
-			skills: step.skills,
 			systemPrompt: step.systemPrompt,
 			systemPromptMode: step.systemPromptMode,
 			mcpDirectTools: step.mcpDirectTools,
@@ -741,7 +742,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 	let latestSessionFile: string | undefined;
 
-	// Flatten steps for status tracking (parallel groups expand to individual entries)
 	const flatSteps = flattenSteps(steps);
 	const sessionEnabled = Boolean(config.sessionDir)
 		|| shareEnabled
@@ -781,14 +781,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		}),
 	);
 
-	// Track the flat index into statusPayload.steps across sequential + parallel steps
 	let flatIndex = 0;
 
 	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
 		const step = steps[stepIndex];
 
 		if (isParallelGroup(step)) {
-			// === PARALLEL STEP GROUP ===
 			const group = step;
 			const concurrency = group.concurrency ?? MAX_PARALLEL_CONCURRENCY;
 			const failFast = group.failFast ?? false;
@@ -916,7 +914,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 				flatIndex += group.parallel.length;
 
-				// Aggregate token usage from parallel task session dirs
 				if (config.sessionDir) {
 					for (let t = 0; t < group.parallel.length; t++) {
 						const taskSessionDir = path.join(config.sessionDir, `parallel-${t}`);
@@ -936,7 +933,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					writeJson(statusPath, statusPayload);
 				}
 
-				// Collect results
 				for (const pr of parallelResults) {
 					results.push({
 						agent: pr.agent,
@@ -970,7 +966,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					success: parallelResults.every((r) => r.exitCode === 0 || r.exitCode === -1),
 				}));
 
-				// If any parallel task failed (not skipped), stop the chain
 				if (parallelResults.some((r) => r.exitCode !== 0 && r.exitCode !== -1)) {
 					break;
 				}
@@ -978,7 +973,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				if (worktreeSetup) cleanupWorktrees(worktreeSetup);
 			}
 		} else {
-			// === SEQUENTIAL STEP ===
 			const seqStep = step as SubagentStep;
 			const stepStartTime = Date.now();
 			statusPayload.currentStep = flatIndex;

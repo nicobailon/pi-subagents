@@ -61,7 +61,9 @@ function buildDetailLines(
 	const maxSubagentDepth = agent.maxSubagentDepth !== undefined ? String(agent.maxSubagentDepth) : "(default)";
 
 	lines.push(renderFieldLine("Model:", agent.model ?? "default", contentWidth, theme));
-	lines.push(renderFieldLine("Prompt mode:", agent.systemPromptMode ?? "append", contentWidth, theme));
+	lines.push(renderFieldLine("Prompt mode:", agent.systemPromptMode, contentWidth, theme));
+	lines.push(renderFieldLine("Project ctx:", agent.inheritProjectContext ? "on" : "off", contentWidth, theme));
+	lines.push(renderFieldLine("Skills ctx:", agent.inheritSkills ? "on" : "off", contentWidth, theme));
 	if (agent.override) {
 		const overrideLabel = `${agent.override.scope} · ${formatPath(agent.override.path)}`;
 		lines.push(renderFieldLine("Override:", overrideLabel, contentWidth, theme));

@@ -146,6 +146,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		removeTempDir(tempDir);
 	});
 
+	function readCallArgs(): string[] {
+		const callFile = fs.readdirSync(mockPi.dir)
+			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.sort()
+			.at(-1);
+		assert.ok(callFile, "expected a recorded mock pi call");
+		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
+		assert.ok(Array.isArray(payload.args), "expected recorded args");
+		return payload.args;
+	}
+
 	it("spawns agent and captures output", async () => {
 		mockPi.onCall({ output: "Hello from mock agent" });
 		const agents = makeAgentConfigs(["echo"]);
@@ -439,6 +450,44 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			PI_SUBAGENT_DEPTH: "1",
 			PI_SUBAGENT_MAX_DEPTH: "1",
 		});
+	});
+
+	it("passes prompt inheritance env flags through to child execution", async () => {
+		mockPi.onCall({ echoEnv: ["PI_SUBAGENT_INHERIT_PROJECT_CONTEXT", "PI_SUBAGENT_INHERIT_SKILLS"] });
+		const agents = [makeAgent("echo", {
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "prompt-inheritance-env",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
+			PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "0",
+			PI_SUBAGENT_INHERIT_SKILLS: "0",
+		});
+	});
+
+	it("passes custom tool extensions through even when explicit extensions are allowlisted", async () => {
+		mockPi.onCall({ output: "Done" });
+		const agents = [makeAgent("echo", {
+			tools: ["read", "./custom-tool.ts"],
+			extensions: ["./allowed-ext.ts"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "tool-extension-allowlist",
+		});
+
+		assert.equal(result.exitCode, 0);
+		const args = readCallArgs();
+		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		assert.ok(extensionArgs.some((arg) => arg.endsWith("subagent-prompt-runtime.ts")));
+		assert.ok(extensionArgs.includes("./custom-tool.ts"));
+		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
 	});
 
 	it("handles abort signal (completes faster than delay)", async () => {
