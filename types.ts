@@ -61,6 +61,11 @@ export interface AgentProgress {
 	failedTool?: string;
 }
 
+export interface ToolCallRecord {
+	name: string;
+	args: Record<string, unknown>;
+}
+
 export interface ProgressSummary {
 	toolCount: number;
 	tokens: number;
@@ -96,6 +101,7 @@ export interface SingleResult {
 	skillsWarning?: string;
 	progress?: AgentProgress;
 	progressSummary?: ProgressSummary;
+	toolCalls?: ToolCallRecord[];
 	artifactPaths?: ArtifactPaths;
 	truncation?: TruncationResult;
 	finalOutput?: string;

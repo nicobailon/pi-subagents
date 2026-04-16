@@ -86,10 +86,13 @@ export function buildChainSummary(
 /**
  * Format a tool call for display
  */
-export function formatToolCall(name: string, args: Record<string, unknown>): string {
+export function formatToolCall(name: string, args: Record<string, unknown>, expanded = false): string {
 	switch (name) {
-		case "bash":
-			return `$ ${((args.command as string) || "").slice(0, 60)}${(args.command as string)?.length > 60 ? "..." : ""}`;
+		case "bash": {
+			const cmd = (args.command as string) || "";
+			if (expanded) return `$ ${cmd}`;
+			return `$ ${cmd.slice(0, 60)}${cmd.length > 60 ? "..." : ""}`;
+		}
 		case "read":
 			return `read ${shortenPath((args.path || args.file_path || "") as string)}`;
 		case "write":
@@ -98,6 +101,7 @@ export function formatToolCall(name: string, args: Record<string, unknown>): str
 			return `edit ${shortenPath((args.path || args.file_path || "") as string)}`;
 		default: {
 			const s = JSON.stringify(args);
+			if (expanded) return `${name} ${s}`;
 			return `${name} ${s.slice(0, 40)}${s.length > 40 ? "..." : ""}`;
 		}
 	}

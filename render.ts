@@ -165,7 +165,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
  */
 export function renderSubagentResult(
 	result: AgentToolResult<Details>,
-	_options: { expanded: boolean },
+	options: { expanded: boolean },
 	theme: Theme,
 ): Component {
 	const d = result.details;
@@ -176,6 +176,10 @@ export function renderSubagentResult(
 		return new Text(truncLine(`${contextPrefix}${text}`, getTermWidth() - 4), 0, 0);
 	}
 
+	const expanded = options.expanded;
+	const w = getTermWidth() - 4;
+	// When expanded, skip truncation — let text wrap naturally
+	const trunc = (text: string) => expanded ? text : truncLine(text, w);
 	const mdTheme = getMarkdownTheme();
 
 	if (d.mode === "single" && d.results.length === 1) {
@@ -197,75 +201,65 @@ export function renderSubagentResult(
 				? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
 				: "";
 
-		const w = getTermWidth() - 4;
 		const c = new Container();
-		c.addChild(new Text(truncLine(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`, w), 0, 0));
+		c.addChild(new Text(trunc(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`), 0, 0));
 		c.addChild(new Spacer(1));
-		const taskMaxLen = Math.max(20, w - 8);
-		const taskPreview = r.task.length > taskMaxLen
-			? `${r.task.slice(0, taskMaxLen)}...`
-			: r.task;
 		c.addChild(
-			new Text(truncLine(theme.fg("dim", `Task: ${taskPreview}`), w), 0, 0),
+			new Text(trunc(theme.fg("dim", `Task: ${r.task}`)), 0, 0),
 		);
 		c.addChild(new Spacer(1));
 
 		if (isRunning && r.progress) {
 			if (r.progress.currentTool) {
-				const maxToolArgsLen = Math.max(50, w - 20);
-				const toolArgsPreview = r.progress.currentToolArgs
-					? (r.progress.currentToolArgs.length > maxToolArgsLen
-						? `${r.progress.currentToolArgs.slice(0, maxToolArgsLen)}...`
-						: r.progress.currentToolArgs)
-					: "";
+				const toolArgsPreview = r.progress.currentToolArgs ?? "";
 				const toolLine = toolArgsPreview
 					? `${r.progress.currentTool}: ${toolArgsPreview}`
 					: r.progress.currentTool;
-				c.addChild(new Text(truncLine(theme.fg("warning", `> ${toolLine}`), w), 0, 0));
+				c.addChild(new Text(trunc(theme.fg("warning", `> ${toolLine}`)), 0, 0));
 			}
 			if (r.progress.recentTools?.length) {
 				for (const t of r.progress.recentTools.slice(-3)) {
-					const maxArgsLen = Math.max(40, w - 24);
-					const argsPreview = t.args.length > maxArgsLen
-						? `${t.args.slice(0, maxArgsLen)}...`
-						: t.args;
-					c.addChild(new Text(truncLine(theme.fg("dim", `${t.tool}: ${argsPreview}`), w), 0, 0));
+					c.addChild(new Text(trunc(theme.fg("dim", `${t.tool}: ${t.args}`)), 0, 0));
 				}
 			}
 			for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-				c.addChild(new Text(truncLine(theme.fg("dim", `  ${line}`), w), 0, 0));
+				c.addChild(new Text(trunc(theme.fg("dim", `  ${line}`)), 0, 0));
 			}
 			if (r.progress.currentTool || r.progress.recentTools?.length || r.progress.recentOutput?.length) {
 				c.addChild(new Spacer(1));
 			}
 		}
 
-		const items = getDisplayItems(r.messages);
-		for (const item of items) {
-			if (item.type === "tool")
-				c.addChild(new Text(truncLine(theme.fg("muted", formatToolCall(item.name, item.args)), w), 0, 0));
+		// Only show tool calls when expanded (collapsed = compact summary)
+		if (expanded) {
+			const toolItems = r.messages
+				? getDisplayItems(r.messages).filter((it): it is { type: "tool"; name: string; args: Record<string, any> } => it.type === "tool")
+				: (r.toolCalls?.map(tc => ({ type: "tool" as const, name: tc.name, args: tc.args })) ?? []);
+			for (const item of toolItems) {
+				c.addChild(new Text(theme.fg("muted", formatToolCall(item.name, item.args, true)), 0, 0));
+			}
+			if (toolItems.length) c.addChild(new Spacer(1));
 		}
-		if (items.length) c.addChild(new Spacer(1));
 
 		if (output) c.addChild(new Markdown(output, 0, 0, mdTheme));
 		c.addChild(new Spacer(1));
 		if (r.skills?.length) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `Skills: ${r.skills.join(", ")}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `Skills: ${r.skills.join(", ")}`)), 0, 0));
 		}
 		if (r.skillsWarning) {
-			c.addChild(new Text(truncLine(theme.fg("warning", `Warning: ${r.skillsWarning}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("warning", `Warning: ${r.skillsWarning}`)), 0, 0));
 		}
 		if (r.attemptedModels && r.attemptedModels.length > 1) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `Fallbacks: ${r.attemptedModels.join(" → ")}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `Fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
 		}
-		c.addChild(new Text(truncLine(theme.fg("dim", formatUsage(r.usage, r.model)), w), 0, 0));
+		c.addChild(new Text(trunc(theme.fg("dim", formatUsage(r.usage, r.model))), 0, 0));
 		if (r.sessionFile) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`)), 0, 0));
 		}
 
 		if (r.artifactPaths) {
 			c.addChild(new Spacer(1));
-			c.addChild(new Text(truncLine(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 		}
 		return c;
 	}
@@ -340,17 +334,16 @@ export function renderSubagentResult(
 				.join(theme.fg("dim", " → "))
 		: null;
 
-	const w = getTermWidth() - 4;
 	const c = new Container();
 	c.addChild(
 		new Text(
-			truncLine(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge}${stepInfo}${summaryStr}`, w),
+			trunc(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge}${stepInfo}${summaryStr}`),
 			0,
 			0,
 		),
 	);
 	if (chainVis) {
-		c.addChild(new Text(truncLine(`  ${chainVis}`, w), 0, 0));
+		c.addChild(new Text(trunc(`  ${chainVis}`), 0, 0));
 	}
 
 	const useResultsDirectly = hasParallelInChain || !d.chainAgents?.length;
@@ -365,7 +358,7 @@ export function renderSubagentResult(
 			: (d.chainAgents![i] || r?.agent || `step-${i + 1}`);
 
 		if (!r) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `  Step ${i + 1}: ${agentName}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `  Step ${i + 1}: ${agentName}`)), 0, 0));
 			c.addChild(new Text(theme.fg("dim", `    status: pending`), 0, 0));
 			c.addChild(new Spacer(1));
 			continue;
@@ -389,58 +382,56 @@ export function renderSubagentResult(
 		const stepHeader = rRunning
 			? `${statusIcon} Step ${i + 1}: ${theme.bold(theme.fg("warning", r.agent))}${modelDisplay}${stats}`
 			: `${statusIcon} Step ${i + 1}: ${theme.bold(r.agent)}${modelDisplay}${stats}`;
-		c.addChild(new Text(truncLine(stepHeader, w), 0, 0));
+		c.addChild(new Text(trunc(stepHeader), 0, 0));
 
-		const taskMaxLen = Math.max(20, w - 12);
-		const taskPreview = r.task.length > taskMaxLen
-			? `${r.task.slice(0, taskMaxLen)}...`
-			: r.task;
-		c.addChild(new Text(truncLine(theme.fg("dim", `    task: ${taskPreview}`), w), 0, 0));
+		c.addChild(new Text(trunc(theme.fg("dim", `    task: ${r.task}`)), 0, 0));
 
 		const outputTarget = extractOutputTarget(r.task);
 		if (outputTarget) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `    output: ${outputTarget}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `    output: ${outputTarget}`)), 0, 0));
 		}
 
 		if (r.skills?.length) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `    skills: ${r.skills.join(", ")}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `    skills: ${r.skills.join(", ")}`)), 0, 0));
 		}
 		if (r.skillsWarning) {
-			c.addChild(new Text(truncLine(theme.fg("warning", `    Warning: ${r.skillsWarning}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("warning", `    Warning: ${r.skillsWarning}`)), 0, 0));
 		}
 		if (r.attemptedModels && r.attemptedModels.length > 1) {
-			c.addChild(new Text(truncLine(theme.fg("dim", `    fallbacks: ${r.attemptedModels.join(" → ")}`), w), 0, 0));
+			c.addChild(new Text(trunc(theme.fg("dim", `    fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
 		}
 
 		if (rRunning && rProg) {
 			if (rProg.skills?.length) {
-				c.addChild(new Text(truncLine(theme.fg("accent", `    skills: ${rProg.skills.join(", ")}`), w), 0, 0));
+				c.addChild(new Text(trunc(theme.fg("accent", `    skills: ${rProg.skills.join(", ")}`)), 0, 0));
 			}
 			if (rProg.currentTool) {
-				const maxToolArgsLen = Math.max(50, w - 20);
-				const toolArgsPreview = rProg.currentToolArgs
-					? (rProg.currentToolArgs.length > maxToolArgsLen
-						? `${rProg.currentToolArgs.slice(0, maxToolArgsLen)}...`
-						: rProg.currentToolArgs)
-					: "";
+				const toolArgsPreview = rProg.currentToolArgs ?? "";
 				const toolLine = toolArgsPreview
 					? `${rProg.currentTool}: ${toolArgsPreview}`
 					: rProg.currentTool;
-				c.addChild(new Text(truncLine(theme.fg("warning", `    > ${toolLine}`), w), 0, 0));
+				c.addChild(new Text(trunc(theme.fg("warning", `    > ${toolLine}`)), 0, 0));
 			}
 			if (rProg.recentTools?.length) {
 				for (const t of rProg.recentTools.slice(-3)) {
-					const maxArgsLen = Math.max(40, w - 30);
-					const argsPreview = t.args.length > maxArgsLen
-						? `${t.args.slice(0, maxArgsLen)}...`
-						: t.args;
-					c.addChild(new Text(truncLine(theme.fg("dim", `      ${t.tool}: ${argsPreview}`), w), 0, 0));
+					c.addChild(new Text(trunc(theme.fg("dim", `      ${t.tool}: ${t.args}`)), 0, 0));
 				}
 			}
 			const recentLines = (rProg.recentOutput ?? []).slice(-5);
 			for (const line of recentLines) {
-				c.addChild(new Text(truncLine(theme.fg("dim", `      ${line}`), w), 0, 0));
+				c.addChild(new Text(trunc(theme.fg("dim", `      ${line}`)), 0, 0));
 			}
+		}
+
+		// Show tool calls for completed steps when expanded
+		if (expanded && !rRunning) {
+			const toolItems = r.messages
+				? getDisplayItems(r.messages).filter((it): it is { type: "tool"; name: string; args: Record<string, any> } => it.type === "tool")
+				: (r.toolCalls?.map(tc => ({ type: "tool" as const, name: tc.name, args: tc.args })) ?? []);
+			for (const item of toolItems) {
+				c.addChild(new Text(theme.fg("muted", `    ${formatToolCall(item.name, item.args, true)}`), 0, 0));
+			}
+			if (toolItems.length) c.addChild(new Spacer(1));
 		}
 
 		c.addChild(new Spacer(1));
@@ -448,7 +439,7 @@ export function renderSubagentResult(
 
 	if (d.artifacts) {
 		c.addChild(new Spacer(1));
-		c.addChild(new Text(truncLine(theme.fg("dim", `Artifacts dir: ${shortenPath(d.artifacts.dir)}`), w), 0, 0));
+		c.addChild(new Text(trunc(theme.fg("dim", `Artifacts dir: ${shortenPath(d.artifacts.dir)}`)), 0, 0));
 	}
 	return c;
 }

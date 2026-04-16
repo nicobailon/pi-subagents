@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
-import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult } from "./types.ts";
+import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallRecord } from "./types.ts";
 
 // ============================================================================
 // File System Utilities
@@ -237,12 +237,31 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 	};
 }
 
+export function extractToolCalls(messages: Message[] | undefined): ToolCallRecord[] {
+	if (!messages) return [];
+	const calls: ToolCallRecord[] = [];
+	for (const msg of messages) {
+		if (msg.role === "assistant") {
+			for (const part of msg.content) {
+				if (part.type === "toolCall") {
+					calls.push({ name: part.name, args: part.arguments });
+				}
+			}
+		}
+	}
+	return calls;
+}
+
 export function compactForegroundResult(result: SingleResult): SingleResult {
 	if (result.progress?.status === "running") return result;
+	const toolCalls = result.toolCalls?.length
+		? result.toolCalls
+		: extractToolCalls(result.messages);
 	return {
 		...result,
 		messages: undefined,
 		progress: undefined,
+		toolCalls,
 	};
 }
 
