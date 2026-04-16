@@ -53,7 +53,7 @@ You can also override selected builtin fields without copying the whole agent. B
 - User scope: `~/.pi/agent/settings.json`
 - Project scope: `.pi/settings.json`
 
-Supported builtin override fields are `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `skills`, `tools`, and `systemPrompt`. Project overrides beat user overrides.
+Supported builtin override fields are `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `disabled`, `skills`, `tools`, and `systemPrompt`. Project overrides beat user overrides.
 
 **Overriding builtin defaults:**
 
@@ -74,7 +74,9 @@ All builtin agents inherit project instruction files (`AGENTS.md`, `CLAUDE.md`, 
 
 **Via `/agents` UI** — press `e` on any builtin agent (like `reviewer`), then toggle `inheritProjectContext` to `false` and save. This creates an override that you can edit or remove later without modifying the builtin definition itself.
 
-Overridden builtins show badges like `[builtin+user]` or `[builtin+project]` to indicate they have customizations applied.
+Set `disabled: true` inside an agent override to hide one builtin from runtime discovery while still keeping it visible in `/agents` so you can re-enable it later. For bulk control, set `subagents.disableBuiltins: true` in `settings.json`; project scope beats user scope, and an explicit same-scope override can opt one builtin back in with `disabled: false` or any other override fields.
+
+Overridden builtins show badges like `[builtin+user]` or `[builtin+project]`. Disabled builtins show `off` badges in the manager so they are easy to spot and re-enable.
 
 > **Note:** The `researcher` agent uses `web_search`, `fetch_content`, and `get_search_content` tools which require the [pi-web-access](https://github.com/nicobailon/pi-web-access) extension. Install it with `pi install npm:pi-web-access`.
 

@@ -338,6 +338,7 @@ export function formatAgentDetail(agent: AgentConfig): string {
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
+	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.thinking) lines.push(`Thinking: ${agent.thinking}`);
 	if (agent.output) lines.push(`Output: ${agent.output}`);
@@ -371,7 +372,7 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const d = discoverAgentsAll(ctx.cwd);
 	const agents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const chains = d.chains.filter((c) => scope === "both" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
-	const lines = ["Agents:", ...(agents.length ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`) : ["- (none)"]), "", "Chains:", ...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"])];
+	const lines = ["Agents:", ...(agents.length ? agents.map((a) => `- ${a.name} (${a.source}${a.disabled ? ", disabled" : ""}): ${a.description}`) : ["- (none)"]), "", "Chains:", ...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"])];
 	return result(lines.join("\n"));
 }
 

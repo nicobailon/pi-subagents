@@ -64,6 +64,9 @@ function buildDetailLines(
 	lines.push(renderFieldLine("Prompt mode:", agent.systemPromptMode, contentWidth, theme));
 	lines.push(renderFieldLine("Project ctx:", agent.inheritProjectContext ? "on" : "off", contentWidth, theme));
 	lines.push(renderFieldLine("Skills ctx:", agent.inheritSkills ? "on" : "off", contentWidth, theme));
+	if (agent.source === "builtin") {
+		lines.push(renderFieldLine("Disabled:", agent.disabled ? "on" : "off", contentWidth, theme));
+	}
 	if (agent.override) {
 		const overrideLabel = `${agent.override.scope} · ${formatPath(agent.override.path)}`;
 		lines.push(renderFieldLine("Override:", overrideLabel, contentWidth, theme));
@@ -139,7 +142,9 @@ export function renderDetail(
 ): string[] {
 	const lines: string[] = [];
 	const scopeBadge = agent.source === "builtin"
-		? (agent.override ? `[builtin+${agent.override.scope}]` : "[builtin]")
+		? (agent.disabled
+			? (agent.override ? `[builtin off+${agent.override.scope}]` : "[builtin off]")
+			: (agent.override ? `[builtin+${agent.override.scope}]` : "[builtin]"))
 		: agent.source === "project"
 			? "[proj]"
 			: "[user]";
@@ -164,8 +169,12 @@ export function renderDetail(
 
 	const footer = agent.source === "builtin"
 		? agent.override
-			? " [l]aunch  [e]dit override  [v] raw/resolved  [↑↓] scroll  [esc] back "
-			: " [l]aunch  [e]create override  [v] raw/resolved  [↑↓] scroll  [esc] back "
+			? (agent.disabled
+				? " [e]dit override  [v] raw/resolved  [↑↓] scroll  [esc] back "
+				: " [l]aunch  [e]dit override  [v] raw/resolved  [↑↓] scroll  [esc] back ")
+			: (agent.disabled
+				? " [e]create override  [v] raw/resolved  [↑↓] scroll  [esc] back "
+				: " [l]aunch  [e]create override  [v] raw/resolved  [↑↓] scroll  [esc] back ")
 		: " [l]aunch  [e]dit  [v] raw/resolved  [↑↓] scroll  [esc] back ";
 	lines.push(renderFooter(footer, width, theme));
 	return lines;

@@ -43,7 +43,7 @@ interface NameInputState { mode: "new-agent" | "clone-agent" | "clone-chain" | "
 interface StatusMessage { text: string; type: "error" | "info"; }
 interface OverrideScopeState { selectedScope: "user" | "project"; allowProject: boolean; }
 
-const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "tools", "skills", "prompt"];
+const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "disabled", "tools", "skills", "prompt"];
 
 function cloneConfig(config: AgentConfig): AgentConfig {
 	return {
@@ -59,6 +59,7 @@ function cloneConfig(config: AgentConfig): AgentConfig {
 				...config.override,
 				base: {
 					...config.override.base,
+					disabled: config.override.base.disabled,
 					fallbackModels: config.override.base.fallbackModels ? [...config.override.base.fallbackModels] : undefined,
 					skills: config.override.base.skills ? [...config.override.base.skills] : undefined,
 					tools: config.override.base.tools ? [...config.override.base.tools] : undefined,
@@ -124,8 +125,9 @@ export class AgentManagerComponent implements Component {
 
 	private getAgentEntry(id: string | null): AgentEntry | undefined { if (!id) return undefined; return this.agents.find((entry) => entry.id === id); }
 	private getChainEntry(id: string | null): ChainEntry | undefined { if (!id) return undefined; return this.chains.find((entry) => entry.id === id); }
-	private listAgents(): ListAgent[] { const a = this.agents.map((entry) => ({ id: entry.id, name: entry.config.name, description: entry.config.description, model: entry.config.model, source: entry.config.source, overrideScope: entry.config.override?.scope, kind: "agent" as const })); const c = this.chains.map((entry) => ({ id: entry.id, name: entry.config.name, description: entry.config.description, source: entry.config.source, kind: "chain" as const, stepCount: entry.config.steps.length })); return [...a, ...c]; }
+	private listAgents(): ListAgent[] { const a = this.agents.map((entry) => ({ id: entry.id, name: entry.config.name, description: entry.config.description, model: entry.config.model, source: entry.config.source, overrideScope: entry.config.override?.scope, disabled: entry.config.disabled, kind: "agent" as const })); const c = this.chains.map((entry) => ({ id: entry.id, name: entry.config.name, description: entry.config.description, source: entry.config.source, kind: "chain" as const, stepCount: entry.config.steps.length })); return [...a, ...c]; }
 	private clearStatus(): void { this.statusMessage = undefined; }
+	private disabledAgentEntries(ids: string[]): AgentEntry[] { return ids.map((id) => this.getAgentEntry(id)).filter((entry): entry is AgentEntry => Boolean(entry?.config.disabled)); }
 
 	private resolveBuiltinOverrideBase(entry: AgentEntry): BuiltinAgentOverrideBase {
 		if (entry.config.override) return entry.config.override.base;
@@ -136,6 +138,7 @@ export class AgentManagerComponent implements Component {
 			systemPromptMode: entry.config.systemPromptMode,
 			inheritProjectContext: entry.config.inheritProjectContext,
 			inheritSkills: entry.config.inheritSkills,
+			disabled: entry.config.disabled,
 			systemPrompt: entry.config.systemPrompt,
 			skills: entry.config.skills ? [...entry.config.skills] : undefined,
 			tools: entry.config.tools ? [...entry.config.tools] : undefined,
@@ -185,11 +188,6 @@ export class AgentManagerComponent implements Component {
 		this.screen = "parallel-builder";
 	}
 	private enterTaskInput(ids: string[], backScreen: ManagerScreen = "list"): void {
-		if (ids.length > 1) {
-			const names = ids.map((id) => { const e = this.getAgentEntry(id); return e ? e.config.name : id; });
-			this.done({ action: "chain", agents: names, task: "", skipClarify: false });
-			return;
-		}
 		this.chainAgentIds = ids; this.chainLaunchId = null; this.parallelMode = false; this.taskBackScreen = backScreen; this.taskEditor = createEditorState(); this.skipClarify = true; this.screen = "task-input";
 	}
 	private enterSavedChainLaunch(entry: ChainEntry): void { this.chainLaunchId = entry.id; this.chainAgentIds = []; this.parallelMode = false; this.taskBackScreen = "chain-detail"; this.taskEditor = createEditorState(); this.skipClarify = true; this.screen = "task-input"; }
@@ -507,6 +505,13 @@ export class AgentManagerComponent implements Component {
 						const tasks = this.parallelState.slots.map((slot) => ({ agent: slot.agentName, task: slot.customTask || sharedTask }));
 						this.done({ action: "parallel", tasks, skipClarify: this.skipClarify }); return;
 					}
+					if (this.chainAgentIds.length > 1) {
+						const agents = this.chainAgentIds
+							.map((id) => this.getAgentEntry(id)?.config.name)
+							.filter((name): name is string => Boolean(name));
+						if (agents.length !== this.chainAgentIds.length) { this.screen = "list"; this.tui.requestRender(); return; }
+						this.done({ action: "chain", agents, task: this.taskEditor.buffer, skipClarify: this.skipClarify }); return;
+					}
 					const name = this.getAgentEntry(this.chainAgentIds[0] ?? null)?.config.name;
 					if (!name) { this.screen = "list"; this.tui.requestRender(); return; }
 					this.done({ action: "launch", agent: name, task: this.taskEditor.buffer, skipClarify: this.skipClarify }); return;
@@ -562,8 +567,24 @@ export class AgentManagerComponent implements Component {
 			case "clone": if (this.getAgentEntry(action.id)) this.enterNameInput("clone-agent", action.id); else if (this.getChainEntry(action.id)) this.enterNameInput("clone-chain", action.id); return;
 			case "new": this.enterTemplateSelect(); return;
 			case "delete": { if (this.isBuiltin(action.id)) { this.statusMessage = { text: "Builtin agents cannot be deleted. Clone to user scope to override.", type: "error" }; return; } this.confirmDeleteId = action.id; this.screen = "confirm-delete"; return; }
-			case "run-chain": this.enterTaskInput(action.ids); return;
-			case "run-parallel": this.enterParallelBuilder(action.ids); return;
+			case "run-chain": {
+				const disabled = this.disabledAgentEntries(action.ids);
+				if (disabled.length > 0) {
+					this.statusMessage = { text: `Disabled builtin agents cannot run: ${disabled.map((entry) => entry.config.name).join(", ")}. Edit the override to re-enable them.`, type: "error" };
+					return;
+				}
+				this.enterTaskInput(action.ids);
+				return;
+			}
+			case "run-parallel": {
+				const disabled = this.disabledAgentEntries(action.ids);
+				if (disabled.length > 0) {
+					this.statusMessage = { text: `Disabled builtin agents cannot run: ${disabled.map((entry) => entry.config.name).join(", ")}. Edit the override to re-enable them.`, type: "error" };
+					return;
+				}
+				this.enterParallelBuilder(action.ids);
+				return;
+			}
 			case "close": this.done(undefined); return;
 		}
 	}
@@ -579,7 +600,11 @@ export class AgentManagerComponent implements Component {
 			this.enterEdit(entry);
 			return;
 		}
-		if (action.type === "launch") { this.enterTaskInput([entry.id], "detail"); return; }
+		if (action.type === "launch") {
+			if (entry.config.disabled) return;
+			this.enterTaskInput([entry.id], "detail");
+			return;
+		}
 	}
 
 	private handleChainDetailAction(action: ChainDetailAction, entry: ChainEntry): void {
@@ -605,6 +630,12 @@ export class AgentManagerComponent implements Component {
 			case "task-input": {
 				if (this.chainLaunchId) { const entry = this.getChainEntry(this.chainLaunchId); const title = entry ? `Chain: ${entry.config.name}` : "Chain"; return renderTaskInput(title, this.taskEditor, this.skipClarify, w, this.theme); }
 				if (this.parallelMode && this.parallelState) return renderTaskInput(formatParallelTitle(this.parallelState.slots), this.taskEditor, this.skipClarify, w, this.theme);
+				if (this.chainAgentIds.length > 1) {
+					const names = this.chainAgentIds
+						.map((id) => this.getAgentEntry(id)?.config.name)
+						.filter((name): name is string => Boolean(name));
+					return renderTaskInput(`Chain: ${names.join(" → ")}`, this.taskEditor, this.skipClarify, w, this.theme);
+				}
 				const name = this.getAgentEntry(this.chainAgentIds[0] ?? null)?.config.name ?? "Agent";
 				return renderTaskInput(`Run: ${name}`, this.taskEditor, this.skipClarify, w, this.theme);
 			}

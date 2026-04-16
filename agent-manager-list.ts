@@ -10,6 +10,7 @@ export interface ListAgent {
 	model?: string;
 	source: AgentSource;
 	overrideScope?: "user" | "project";
+	disabled?: boolean;
 	kind: "agent" | "chain";
 	stepCount?: number;
 }
@@ -191,7 +192,7 @@ export function renderList(
 		const innerW = width - 2;
 		const nameWidth = 16;
 		const modelWidth = 12;
-		const scopeWidth = 17;
+		const scopeWidth = 21;
 
 		for (let i = 0; i < visible.length; i++) {
 			const agent = visible[i]!;
@@ -212,7 +213,9 @@ export function renderList(
 			const scopeLabel = agent.kind === "chain"
 				? "[chain]"
 				: agent.source === "builtin"
-					? (agent.overrideScope ? `[builtin+${agent.overrideScope}]` : "[builtin]")
+					? (agent.disabled
+						? (agent.overrideScope ? `[builtin off+${agent.overrideScope}]` : "[builtin off]")
+						: (agent.overrideScope ? `[builtin+${agent.overrideScope}]` : "[builtin]"))
 					: agent.source === "project"
 						? "[proj]"
 						: "[user]";

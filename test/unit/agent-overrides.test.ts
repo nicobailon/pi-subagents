@@ -157,6 +157,18 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
+	it("surfaces settings read failures without mislabeling them as parse errors", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		fs.mkdirSync(settingsPath, { recursive: true });
+
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("Failed to read settings file"),
+		);
+	});
+
 	it("surfaces malformed builtin override entries instead of silently ignoring them", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		writeJson(settingsPath, {
