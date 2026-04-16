@@ -1,10 +1,3 @@
-/**
- * Parallel execution utilities for the async runner.
- * Kept minimal and self-contained so the standalone runner can use them
- * without pulling in the full extension dependency tree.
- */
-
-/** A single agent step in the runner config */
 export interface RunnerSubagentStep {
 	agent: string;
 	task: string;
@@ -15,13 +8,13 @@ export interface RunnerSubagentStep {
 	extensions?: string[];
 	mcpDirectTools?: string[];
 	systemPrompt?: string | null;
+	systemPromptMode?: "append" | "replace";
 	skills?: string[];
 	outputPath?: string;
 	sessionFile?: string;
 	maxSubagentDepth?: number;
 }
 
-/** Parallel step group — multiple agents running concurrently */
 export interface ParallelStepGroup {
 	parallel: RunnerSubagentStep[];
 	concurrency?: number;
@@ -32,10 +25,9 @@ export interface ParallelStepGroup {
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup;
 
 export function isParallelGroup(step: RunnerStep): step is ParallelStepGroup {
-	return "parallel" in step && Array.isArray((step as ParallelStepGroup).parallel);
+	return "parallel" in step && Array.isArray(step.parallel);
 }
 
-/** Flatten runner steps into individual SubagentSteps for status tracking */
 export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
 	const flat: RunnerSubagentStep[] = [];
 	for (const step of steps) {
@@ -48,16 +40,12 @@ export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
 	return flat;
 }
 
-/** Run async tasks with bounded concurrency, preserving result order.
- *  `staggerMs` adds a small delay between each worker's start to avoid
- *  file-lock contention when multiple subagents read shared config. */
 export async function mapConcurrent<T, R>(
 	items: T[],
 	limit: number,
 	fn: (item: T, i: number) => Promise<R>,
 	staggerMs = 150,
 ): Promise<R[]> {
-	// Clamp to at least 1; NaN/undefined/0/negative all become 1
 	const safeLimit = Math.max(1, Math.floor(limit) || 1);
 	const results: R[] = new Array(items.length);
 	let next = 0;
@@ -90,7 +78,6 @@ export interface ParallelTaskResult {
 	outputTargetExists?: boolean;
 }
 
-/** Aggregate outputs from parallel tasks into a single string for {previous} */
 export function aggregateParallelOutputs(
 	results: ParallelTaskResult[],
 	headerFormat: (index: number, agent: string) => string = (i, agent) =>

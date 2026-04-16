@@ -89,6 +89,7 @@ async function runSingleAttempt(
 		sessionFile: options.sessionFile,
 		model,
 		thinking: agent.thinking,
+		systemPromptMode: agent.systemPromptMode,
 		tools: agent.tools,
 		extensions: agent.extensions,
 		skills: shared.skillNames,

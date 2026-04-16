@@ -74,3 +74,30 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(args.includes("openai-codex/gpt-5.4-mini:high"));
 	});
 });
+
+describe("buildPiArgs system prompt mode wiring", () => {
+	it("uses --append-system-prompt by default", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			systemPrompt: "You are a worker",
+		});
+
+		assert.ok(args.includes("--append-system-prompt"));
+		assert.ok(!args.includes("--system-prompt"));
+	});
+
+	it("uses --system-prompt when systemPromptMode=replace", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			systemPrompt: "You are a worker",
+			systemPromptMode: "replace",
+		});
+
+		assert.ok(args.includes("--system-prompt"));
+		assert.ok(!args.includes("--append-system-prompt"));
+	});
+});

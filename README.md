@@ -51,7 +51,7 @@ You can also override selected builtin fields without copying the whole agent. B
 - User scope: `~/.pi/agent/settings.json`
 - Project scope: `.pi/settings.json`
 
-Supported builtin override fields are `model`, `fallbackModels`, `thinking`, `skills`, `tools`, and `systemPrompt`. Project overrides beat user overrides. In `/agents`, press `e` on a builtin to create or edit its override. Overridden builtins show badges like `[builtin+user]` or `[builtin+project]`.
+Supported builtin override fields are `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `skills`, `tools`, and `systemPrompt`. Project overrides beat user overrides. In `/agents`, press `e` on a builtin to create or edit its override. Overridden builtins show badges like `[builtin+user]` or `[builtin+project]`.
 
 > **Note:** The `researcher` agent uses `web_search`, `fetch_content`, and `get_search_content` tools which require the [pi-web-access](https://github.com/nicobailon/pi-web-access) extension. Install it with `pi install npm:pi-web-access`.
 
@@ -66,6 +66,7 @@ extensions:                 # absent=all, empty=none, csv=allowlist
 model: claude-haiku-4-5
 fallbackModels: openai/gpt-5-mini, anthropic/claude-sonnet-4  # optional ordered fallbacks
 thinking: high               # off, minimal, low, medium, high, xhigh
+systemPromptMode: replace    # append (default) or replace Pi's default prompt
 skill: safe-bash, chrome-devtools  # comma-separated skills to inject
 output: context.md           # writes to {chain_dir}/context.md
 defaultReads: context.md     # comma-separated files to read
@@ -80,6 +81,8 @@ Your system prompt goes here (the markdown body after frontmatter).
 The `thinking` field sets a default extended thinking level for the agent. At runtime it's appended as a `:level` suffix to the model string (e.g., `claude-sonnet-4-5:high`). If the model already has a thinking suffix (from a chain-clarify override), the agent's default is not double-applied.
 
 `fallbackModels` is an optional ordered list of backup models to try when the primary model fails with a provider/model-style error such as quota, auth, timeout, or provider/model unavailable. In markdown frontmatter, declare it as a comma-separated string. In management `config` objects, you can pass either a comma-separated string or a string array.
+
+`systemPromptMode` controls how the agent markdown body is passed to Pi. The default is `append`, which keeps Pi's normal default system prompt and appends the agent prompt after it. Set `systemPromptMode: replace` to send the agent prompt via Pi's `--system-prompt` path instead. Pi still appends project context files and skills in replace mode; this only replaces Pi's default base prompt.
 
 Fallback resolution follows the same conservative model lookup as normal execution. Explicit `provider/model` values are used as-is. Bare model IDs first prefer the current session provider when that provider actually exposes the model, then fall back to a unique registry match. If a bare ID is still ambiguous, it stays bare.
 
@@ -229,7 +232,7 @@ Press **Ctrl+Shift+A** or type `/agents` to open the Agents Manager overlay — 
 |--------|-------------|
 | List | Browse all agents and chains with search/filter, scope badges, chain badges |
 | Detail | View resolved prompt, frontmatter fields, recent run history, and active builtin override path |
-| Edit | Edit fields with specialized pickers (model, thinking, skills, prompt editor) |
+| Edit | Edit fields with specialized pickers (model, thinking, skills, prompt editor, prompt mode) |
 | Chain Detail | View chain steps with flow visualization and dependency map |
 | Parallel Builder | Build parallel execution slots, add same agent multiple times, per-slot task overrides |
 | Task Input | Enter task and launch with optional skip-clarify toggle |
@@ -573,6 +576,7 @@ Agent definitions are not loaded into LLM context by default. Management actions
   description: "Scans codebases for patterns and issues",
   scope: "user",
   systemPrompt: "You are a code scout...",
+  systemPromptMode: "replace",
   model: "anthropic/claude-sonnet-4",
   fallbackModels: ["openai/gpt-5-mini", "anthropic/claude-haiku-4-5"],
   tools: "read, bash, mcp:github/search_repositories",
@@ -613,7 +617,7 @@ Agent definitions are not loaded into LLM context by default. Management actions
 Notes:
 - `create` uses `config.scope` (`"user"` or `"project"`), not `agentScope`.
 - `update`/`delete` use `agentScope` only for scope disambiguation when the same name exists in both scopes.
-- Agent config mapping: `reads -> defaultReads`, `progress -> defaultProgress`, `extensions` controls extension sandboxing, `maxSubagentDepth` maps directly to agent frontmatter, `fallbackModels` maps directly to agent frontmatter, and `tools` supports `mcp:` entries that map to direct MCP tools.
+- Agent config mapping: `reads -> defaultReads`, `progress -> defaultProgress`, `extensions` controls extension sandboxing, `maxSubagentDepth`, `fallbackModels`, and `systemPromptMode` map directly to agent frontmatter, and `tools` supports `mcp:` entries that map to direct MCP tools.
 - To clear any optional field, set it to `false` or `""` (e.g., `{ model: false }` or `{ skills: "" }`). Both work for all string-typed fields.
 
 ## Parameters
@@ -624,7 +628,7 @@ Notes:
 | `task` | string | - | Task string (single mode) |
 | `action` | string | - | Management action: `list`, `get`, `create`, `update`, `delete` |
 | `chainName` | string | - | Chain name for management get/update/delete |
-| `config` | object | - | Agent or chain config for management create/update. Agent configs also accept `fallbackModels` (comma-separated string or string array). |
+| `config` | object | - | Agent or chain config for management create/update. Agent configs also accept `fallbackModels` (comma-separated string or string array) and `systemPromptMode` (`append` or `replace`). |
 | `output` | `string \| false` | agent default | Override output file for single agent (absolute path as-is, relative path resolved against cwd) |
 | `skill` | `string \| string[] \| false` | agent default | Override skills (comma-separated string, array, or false to disable) |
 | `model` | string | agent default | Override model for single agent |

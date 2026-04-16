@@ -41,6 +41,7 @@ describe("builtin agent overrides", () => {
 					reviewer: {
 						model: "openai/gpt-5.4",
 						thinking: "xhigh",
+						systemPromptMode: "replace",
 					},
 				},
 			},
@@ -51,6 +52,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.source, "builtin");
 		assert.equal(reviewer.model, "openai/gpt-5.4");
 		assert.equal(reviewer.thinking, "xhigh");
+		assert.equal(reviewer.systemPromptMode, "replace");
 		assert.equal(reviewer.override?.scope, "user");
 		assert.equal(reviewer.override?.path, path.join(tempHome, ".pi", "agent", "settings.json"));
 	});
@@ -153,6 +155,7 @@ describe("builtin agent overrides", () => {
 				model: "openai-codex/gpt-5.4-mini",
 				fallbackModels: ["openai/gpt-5-mini"],
 				thinking: "high",
+				systemPromptMode: "append",
 				systemPrompt: "Base prompt",
 				skills: ["safe-bash"],
 				tools: ["bash"],
@@ -162,6 +165,7 @@ describe("builtin agent overrides", () => {
 				model: undefined,
 				fallbackModels: undefined,
 				thinking: undefined,
+				systemPromptMode: undefined,
 				systemPrompt: "Base prompt",
 				skills: undefined,
 				tools: undefined,
@@ -173,6 +177,7 @@ describe("builtin agent overrides", () => {
 			model: false,
 			fallbackModels: false,
 			thinking: false,
+			systemPromptMode: false,
 			skills: false,
 			tools: false,
 		});

@@ -507,6 +507,7 @@ async function runSingleStep(
 			extensions: step.extensions,
 			skills: step.skills,
 			systemPrompt: step.systemPrompt,
+			systemPromptMode: step.systemPromptMode,
 			mcpDirectTools: step.mcpDirectTools,
 			promptFileStem: step.agent,
 		});

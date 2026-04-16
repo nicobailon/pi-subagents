@@ -14,11 +14,13 @@ import { parseFrontmatter } from "./frontmatter.ts";
 export type AgentScope = "user" | "project" | "both";
 
 export type AgentSource = "builtin" | "user" | "project";
+export type SystemPromptMode = "append" | "replace";
 
 export interface BuiltinAgentOverrideBase {
 	model?: string;
 	fallbackModels?: string[];
 	thinking?: string;
+	systemPromptMode?: SystemPromptMode;
 	systemPrompt: string;
 	skills?: string[];
 	tools?: string[];
@@ -29,6 +31,7 @@ export interface BuiltinAgentOverrideConfig {
 	model?: string | false;
 	fallbackModels?: string[] | false;
 	thinking?: string | false;
+	systemPromptMode?: SystemPromptMode | false;
 	systemPrompt?: string;
 	skills?: string[] | false;
 	tools?: string[] | false;
@@ -48,6 +51,7 @@ export interface AgentConfig {
 	model?: string;
 	fallbackModels?: string[];
 	thinking?: string;
+	systemPromptMode?: SystemPromptMode;
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
@@ -125,6 +129,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		model: agent.model,
 		fallbackModels: agent.fallbackModels ? [...agent.fallbackModels] : undefined,
 		thinking: agent.thinking,
+		systemPromptMode: agent.systemPromptMode,
 		systemPrompt: agent.systemPrompt,
 		skills: agent.skills ? [...agent.skills] : undefined,
 		tools: agent.tools ? [...agent.tools] : undefined,
@@ -139,6 +144,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 			? { fallbackModels: override.fallbackModels === false ? false : [...override.fallbackModels] }
 			: {}),
 		...(override.thinking !== undefined ? { thinking: override.thinking } : {}),
+		...(override.systemPromptMode !== undefined ? { systemPromptMode: override.systemPromptMode } : {}),
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
 		...(override.tools !== undefined ? { tools: override.tools === false ? false : [...override.tools] } : {}),
@@ -201,6 +207,9 @@ function parseBuiltinOverrideEntry(value: unknown): BuiltinAgentOverrideConfig |
 
 	if (typeof input.model === "string" || input.model === false) override.model = input.model;
 	if (typeof input.thinking === "string" || input.thinking === false) override.thinking = input.thinking;
+	if (input.systemPromptMode === "append" || input.systemPromptMode === "replace" || input.systemPromptMode === false) {
+		override.systemPromptMode = input.systemPromptMode;
+	}
 	if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
 
 	const fallbackModels = parseStringArrayOrFalse(input.fallbackModels);
@@ -246,6 +255,9 @@ function applyBuiltinOverride(
 		next.fallbackModels = override.fallbackModels === false ? undefined : [...override.fallbackModels];
 	}
 	if (override.thinking !== undefined) next.thinking = override.thinking === false ? undefined : override.thinking;
+	if (override.systemPromptMode !== undefined) {
+		next.systemPromptMode = override.systemPromptMode === false ? undefined : override.systemPromptMode;
+	}
 	if (override.systemPrompt !== undefined) next.systemPrompt = override.systemPrompt;
 	if (override.skills !== undefined) next.skills = override.skills === false ? undefined : [...override.skills];
 	if (override.tools !== undefined) {
@@ -281,13 +293,14 @@ function applyBuiltinOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
 	if (draft.model !== base.model) override.model = draft.model ?? false;
 	if (!arraysEqual(draft.fallbackModels, base.fallbackModels)) override.fallbackModels = draft.fallbackModels ? [...draft.fallbackModels] : false;
 	if (draft.thinking !== base.thinking) override.thinking = draft.thinking ?? false;
+	if (draft.systemPromptMode !== base.systemPromptMode) override.systemPromptMode = draft.systemPromptMode ?? false;
 	if (draft.systemPrompt !== base.systemPrompt) override.systemPrompt = draft.systemPrompt;
 	if (!arraysEqual(draft.skills, base.skills)) override.skills = draft.skills ? [...draft.skills] : false;
 
@@ -410,6 +423,11 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			?.split(",")
 			.map((model) => model.trim())
 			.filter(Boolean);
+		const systemPromptMode = frontmatter.systemPromptMode === "replace"
+			? "replace"
+			: frontmatter.systemPromptMode === "append"
+				? "append"
+				: undefined;
 
 		let extensions: string[] | undefined;
 		if (frontmatter.extensions !== undefined) {
@@ -434,6 +452,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			model: frontmatter.model,
 			fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
 			thinking: frontmatter.thinking,
+			systemPromptMode,
 			systemPrompt: body,
 			source,
 			filePath,

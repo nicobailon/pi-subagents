@@ -27,7 +27,7 @@ function renderFieldLine(
 	width: number,
 	theme: Theme,
 ): string {
-	const labelWidth = 10;
+	const labelWidth = 12;
 	const labelText = theme.fg("dim", pad(label, labelWidth));
 	const available = Math.max(0, width - labelWidth);
 	return `${labelText}${truncateToWidth(value, available)}`;
@@ -61,6 +61,7 @@ function buildDetailLines(
 	const maxSubagentDepth = agent.maxSubagentDepth !== undefined ? String(agent.maxSubagentDepth) : "(default)";
 
 	lines.push(renderFieldLine("Model:", agent.model ?? "default", contentWidth, theme));
+	lines.push(renderFieldLine("Prompt mode:", agent.systemPromptMode ?? "append", contentWidth, theme));
 	if (agent.override) {
 		const overrideLabel = `${agent.override.scope} · ${formatPath(agent.override.path)}`;
 		lines.push(renderFieldLine("Override:", overrideLabel, contentWidth, theme));

@@ -40,7 +40,7 @@ interface NameInputState { mode: "new-agent" | "clone-agent" | "clone-chain" | "
 interface StatusMessage { text: string; type: "error" | "info"; }
 interface OverrideScopeState { selectedScope: "user" | "project"; allowProject: boolean; }
 
-const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "tools", "skills", "prompt"];
+const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "tools", "skills", "prompt"];
 
 function cloneConfig(config: AgentConfig): AgentConfig {
 	return {
@@ -130,6 +130,7 @@ export class AgentManagerComponent implements Component {
 			model: entry.config.model,
 			fallbackModels: entry.config.fallbackModels ? [...entry.config.fallbackModels] : undefined,
 			thinking: entry.config.thinking,
+			systemPromptMode: entry.config.systemPromptMode,
 			systemPrompt: entry.config.systemPrompt,
 			skills: entry.config.skills ? [...entry.config.skills] : undefined,
 			tools: entry.config.tools ? [...entry.config.tools] : undefined,

@@ -13,6 +13,7 @@ export interface BuildPiArgsInput {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
+	systemPromptMode?: "append" | "replace";
 	tools?: string[];
 	extensions?: string[];
 	skills?: string[];
@@ -90,7 +91,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
 		const promptPath = path.join(tempDir, `${stem}.md`);
 		fs.writeFileSync(promptPath, input.systemPrompt, { mode: 0o600 });
-		args.push("--append-system-prompt", promptPath);
+		args.push(input.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt", promptPath);
 	}
 
 	if (input.task.length > TASK_ARG_LIMIT) {

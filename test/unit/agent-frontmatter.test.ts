@@ -85,3 +85,38 @@ Do work
 		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
 	});
 });
+
+describe("agent frontmatter systemPromptMode", () => {
+	it("serializes systemPromptMode into agent frontmatter", () => {
+		const agent: AgentConfig = {
+			name: "worker",
+			description: "Worker",
+			systemPrompt: "Do work",
+			systemPromptMode: "replace",
+			source: "project",
+			filePath: "/tmp/worker.md",
+		};
+
+		const serialized = serializeAgent(agent);
+		assert.match(serialized, /systemPromptMode: replace/);
+	});
+
+	it("parses systemPromptMode from discovered agent frontmatter", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-prompt-mode-frontmatter-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
+name: worker
+description: Worker
+systemPromptMode: replace
+---
+
+Do work
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const worker = result.agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.systemPromptMode, "replace");
+	});
+});

@@ -266,7 +266,7 @@ Example: { chain: [{agent:"scout", task:"Analyze {task}"}, {agent:"planner", tas
 MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "list" } - discover agents/chains
 • { action: "get", agent: "name" } - full agent detail
-• { action: "create", config: { name, systemPrompt, ... } }
+• { action: "create", config: { name, systemPrompt, systemPromptMode, ... } }
 • { action: "update", agent: "name", config: { ... } } - merge
 • { action: "delete", agent: "name" }
 • Use chainName for chain operations`,

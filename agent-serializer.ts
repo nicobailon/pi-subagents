@@ -8,6 +8,7 @@ export const KNOWN_FIELDS = new Set([
 	"model",
 	"fallbackModels",
 	"thinking",
+	"systemPromptMode",
 	"skill",
 	"skills",
 	"extensions",
@@ -40,6 +41,7 @@ export function serializeAgent(config: AgentConfig): string {
 	const fallbackModelsValue = joinComma(config.fallbackModels);
 	if (fallbackModelsValue) lines.push(`fallbackModels: ${fallbackModelsValue}`);
 	if (config.thinking && config.thinking !== "off") lines.push(`thinking: ${config.thinking}`);
+	if (config.systemPromptMode) lines.push(`systemPromptMode: ${config.systemPromptMode}`);
 
 	const skillsValue = joinComma(config.skills);
 	if (skillsValue) lines.push(`skills: ${skillsValue}`);
