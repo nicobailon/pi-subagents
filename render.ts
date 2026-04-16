@@ -165,7 +165,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
  */
 export function renderSubagentResult(
 	result: AgentToolResult<Details>,
-	_options: { expanded: boolean },
+	options: { expanded: boolean },
 	theme: Theme,
 ): Component {
 	const d = result.details;
@@ -176,6 +176,7 @@ export function renderSubagentResult(
 		return new Text(truncLine(`${contextPrefix}${text}`, getTermWidth() - 4), 0, 0);
 	}
 
+	const expanded = options.expanded;
 	const mdTheme = getMarkdownTheme();
 
 	if (d.mode === "single" && d.results.length === 1) {
@@ -201,18 +202,18 @@ export function renderSubagentResult(
 		const c = new Container();
 		c.addChild(new Text(truncLine(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`, w), 0, 0));
 		c.addChild(new Spacer(1));
-		const taskMaxLen = Math.max(20, w - 8);
-		const taskPreview = r.task.length > taskMaxLen
+		const taskMaxLen = expanded ? Infinity : Math.max(20, w - 8);
+		const taskText = r.task.length > taskMaxLen
 			? `${r.task.slice(0, taskMaxLen)}...`
 			: r.task;
 		c.addChild(
-			new Text(truncLine(theme.fg("dim", `Task: ${taskPreview}`), w), 0, 0),
+			new Text(truncLine(theme.fg("dim", `Task: ${taskText}`), w), 0, 0),
 		);
 		c.addChild(new Spacer(1));
 
 		if (isRunning && r.progress) {
 			if (r.progress.currentTool) {
-				const maxToolArgsLen = Math.max(50, w - 20);
+				const maxToolArgsLen = expanded ? Infinity : Math.max(50, w - 20);
 				const toolArgsPreview = r.progress.currentToolArgs
 					? (r.progress.currentToolArgs.length > maxToolArgsLen
 						? `${r.progress.currentToolArgs.slice(0, maxToolArgsLen)}...`
@@ -225,7 +226,7 @@ export function renderSubagentResult(
 			}
 			if (r.progress.recentTools?.length) {
 				for (const t of r.progress.recentTools.slice(-3)) {
-					const maxArgsLen = Math.max(40, w - 24);
+					const maxArgsLen = expanded ? Infinity : Math.max(40, w - 24);
 					const argsPreview = t.args.length > maxArgsLen
 						? `${t.args.slice(0, maxArgsLen)}...`
 						: t.args;
@@ -243,7 +244,7 @@ export function renderSubagentResult(
 		const items = getDisplayItems(r.messages);
 		for (const item of items) {
 			if (item.type === "tool")
-				c.addChild(new Text(truncLine(theme.fg("muted", formatToolCall(item.name, item.args)), w), 0, 0));
+				c.addChild(new Text(truncLine(theme.fg("muted", formatToolCall(item.name, item.args, expanded)), w), 0, 0));
 		}
 		if (items.length) c.addChild(new Spacer(1));
 
@@ -417,7 +418,7 @@ export function renderSubagentResult(
 				c.addChild(new Text(truncLine(theme.fg("accent", `    skills: ${rProg.skills.join(", ")}`), w), 0, 0));
 			}
 			if (rProg.currentTool) {
-				const maxToolArgsLen = Math.max(50, w - 20);
+				const maxToolArgsLen = expanded ? Infinity : Math.max(50, w - 20);
 				const toolArgsPreview = rProg.currentToolArgs
 					? (rProg.currentToolArgs.length > maxToolArgsLen
 						? `${rProg.currentToolArgs.slice(0, maxToolArgsLen)}...`
@@ -430,7 +431,7 @@ export function renderSubagentResult(
 			}
 			if (rProg.recentTools?.length) {
 				for (const t of rProg.recentTools.slice(-3)) {
-					const maxArgsLen = Math.max(40, w - 30);
+					const maxArgsLen = expanded ? Infinity : Math.max(40, w - 30);
 					const argsPreview = t.args.length > maxArgsLen
 						? `${t.args.slice(0, maxArgsLen)}...`
 						: t.args;
