@@ -3,12 +3,16 @@
 ## [Unreleased]
 
 ### Added
-- Agents can now opt into `systemPromptMode: replace`, which sends the agent prompt through Pi's `--system-prompt` path instead of always appending with `--append-system-prompt`. The new mode flows through sync, chain, parallel, async/background, builtin overrides, management config, and the Agents Manager UI.
+- Added `systemPromptMode` so subagents can replace Pi's base prompt with `--system-prompt` instead of always appending with `--append-system-prompt`.
+- Added `inheritProjectContext` and `inheritSkills` so child runs can keep or strip inherited project instruction files (`AGENTS.md`, `CLAUDE.md`, etc.) and Pi's discovered skills block.
 
 ### Changed
-- Subagents now default to `systemPromptMode: replace`, with builtin `delegate` staying on `append` by default.
-- Added `inheritProjectContext` and `inheritSkills` controls so child runs can strip inherited `AGENTS.md` / `CLAUDE.md` context and Pi's discovered skills block without requiring Pi core changes.
-- Builtin agent prompts were rewritten for replacement-mode execution, and builtin `reviewer` / `context-builder` tool lists now match their documented behaviors.
+- Builtin subagents now default to `systemPromptMode: replace`, with builtin `delegate` staying on `append`.
+- Builtin agents now inherit project-level instruction files by default unless the user overrides them.
+- Builtin agent prompts were rewritten for the new prompt-assembly model, and builtin `reviewer` / `context-builder` tool lists now match their documented behaviors.
+
+### Fixed
+- Cross-platform tests now avoid machine-specific Pi install paths, align homedir-sensitive settings discovery on Windows CI, and use deterministic async config-write failure fixtures.
 
 ## [0.14.1] - 2026-04-14
 

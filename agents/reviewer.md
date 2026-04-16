@@ -5,7 +5,7 @@ tools: read, grep, find, ls, bash, edit, write
 model: openai-codex/gpt-5.3-codex
 thinking: high
 systemPromptMode: replace
-inheritProjectContext: false
+inheritProjectContext: true
 inheritSkills: false
 defaultReads: plan.md, progress.md
 defaultProgress: true

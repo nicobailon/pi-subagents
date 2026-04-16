@@ -362,69 +362,57 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-write-fail-${Date.now().toString(36)}`;
 		assert.ok(TEMP_ROOT_DIR, "TEMP_ROOT_DIR should be available for async tests");
 		fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
-		fs.mkdirSync(ASYNC_DIR, { recursive: true });
-		const originalMode = fs.statSync(TEMP_ROOT_DIR).mode & 0o777;
-		fs.chmodSync(TEMP_ROOT_DIR, 0o555);
+		fs.mkdirSync(path.join(TEMP_ROOT_DIR, `async-cfg-${id}.json`), { recursive: true });
 
-		try {
-			const result = executeAsyncSingle(id, {
-				agent: "worker",
-				task: "Do work",
-				agentConfig: makeAgent("worker"),
-				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-				artifactConfig: {
-					enabled: false,
-					includeInput: false,
-					includeOutput: false,
-					includeJsonl: false,
-					includeMetadata: false,
-					cleanupDays: 7,
-				},
-				shareEnabled: false,
-				sessionRoot: path.join(tempDir, "sessions"),
-				maxSubagentDepth: 2,
-			});
+		const result = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
 
-			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /Failed to start async run/);
-			assert.match(result.content[0]?.text ?? "", /async-cfg-/);
-		} finally {
-			fs.chmodSync(TEMP_ROOT_DIR, originalMode);
-		}
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Failed to start async run/);
+		assert.match(result.content[0]?.text ?? "", /async-cfg-/);
 	});
 
 	it("returns a tool error when an async chain cannot write its detached runner config", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const id = `async-chain-write-fail-${Date.now().toString(36)}`;
 		assert.ok(TEMP_ROOT_DIR, "TEMP_ROOT_DIR should be available for async tests");
 		fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
-		fs.mkdirSync(ASYNC_DIR, { recursive: true });
-		const originalMode = fs.statSync(TEMP_ROOT_DIR).mode & 0o777;
-		fs.chmodSync(TEMP_ROOT_DIR, 0o555);
+		fs.mkdirSync(path.join(TEMP_ROOT_DIR, `async-cfg-${id}.json`), { recursive: true });
 
-		try {
-			const result = executeAsyncChain(id, {
-				chain: [{ agent: "worker", task: "Do work" }],
-				agents: [makeAgent("worker")],
-				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-				artifactConfig: {
-					enabled: false,
-					includeInput: false,
-					includeOutput: false,
-					includeJsonl: false,
-					includeMetadata: false,
-					cleanupDays: 7,
-				},
-				shareEnabled: false,
-				sessionRoot: path.join(tempDir, "sessions"),
-				maxSubagentDepth: 2,
-			});
+		const result = executeAsyncChain(id, {
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
 
-			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /Failed to start async chain/);
-			assert.match(result.content[0]?.text ?? "", /async-cfg-/);
-		} finally {
-			fs.chmodSync(TEMP_ROOT_DIR, originalMode);
-		}
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Failed to start async chain/);
+		assert.match(result.content[0]?.text ?? "", /async-cfg-/);
 	});
 
 	it("background runs stream child events and live output while active", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

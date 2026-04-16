@@ -4,7 +4,7 @@ description: Fast codebase recon that returns compressed context for handoff
 tools: read, grep, find, ls, bash, write
 model: anthropic/claude-haiku-4-5
 systemPromptMode: replace
-inheritProjectContext: false
+inheritProjectContext: true
 inheritSkills: false
 output: context.md
 defaultProgress: true

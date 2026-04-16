@@ -1,9 +1,9 @@
 ---
 name: worker
-description: General-purpose subagent with full capabilities, isolated context
+description: General-purpose subagent with full capabilities
 model: claude-sonnet-4-6
 systemPromptMode: replace
-inheritProjectContext: false
+inheritProjectContext: true
 inheritSkills: false
 defaultReads: context.md, plan.md
 defaultProgress: true

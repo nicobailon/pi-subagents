@@ -5,7 +5,7 @@ tools: read, grep, find, ls, write
 model: claude-opus-4-6
 thinking: high
 systemPromptMode: replace
-inheritProjectContext: false
+inheritProjectContext: true
 inheritSkills: false
 output: plan.md
 defaultReads: context.md

@@ -51,22 +51,43 @@ You can also override selected builtin fields without copying the whole agent. B
 - User scope: `~/.pi/agent/settings.json`
 - Project scope: `.pi/settings.json`
 
-Supported builtin override fields are `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `skills`, `tools`, and `systemPrompt`. Project overrides beat user overrides. In `/agents`, press `e` on a builtin to create or edit its override. Overridden builtins show badges like `[builtin+user]` or `[builtin+project]`.
+Supported builtin override fields are `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `skills`, `tools`, and `systemPrompt`. Project overrides beat user overrides.
+
+**Overriding builtin defaults:**
+
+All builtin agents inherit project instruction files (`AGENTS.md`, `CLAUDE.md`, etc.) by default. To make a builtin agent run without those project instructions:
+
+**Via settings file** — add to `~/.pi/agent/settings.json` (user scope) or `.pi/settings.json` (project scope):
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "reviewer": {
+        "inheritProjectContext": false
+      }
+    }
+  }
+}
+```
+
+**Via `/agents` UI** — press `e` on any builtin agent (like `reviewer`), then toggle `inheritProjectContext` to `false` and save. This creates an override that you can edit or remove later without modifying the builtin definition itself.
+
+Overridden builtins show badges like `[builtin+user]` or `[builtin+project]` to indicate they have customizations applied.
 
 > **Note:** The `researcher` agent uses `web_search`, `fetch_content`, and `get_search_content` tools which require the [pi-web-access](https://github.com/nicobailon/pi-web-access) extension. Install it with `pi install npm:pi-web-access`.
 
 ### Prompt Assembly Philosophy
 
-Subagents are designed to be **narrow and intentional**. By default, a subagent sees only what you explicitly give it — not Pi's entire base prompt, not your repo's `AGENTS.md`, and not the parent's discovered skills.
+Subagents are designed to be **narrow and intentional**. Custom subagents default to seeing only what you explicitly give them — not Pi's entire base prompt, not your repo's `AGENTS.md`, and not the parent's discovered skills.
 
 This prevents subtle bugs where a "simple" code review agent starts making decisions based on project architecture rules it shouldn't know about, or a focused research agent gets distracted by tool descriptions meant for the orchestrator.
 
 Use inheritance flags to selectively add back context when you actually want it:
-- **`inheritProjectContext: true`** — Give the child access to project rules (`AGENTS.md`, etc.)
+- **`inheritProjectContext: true`** — Keep Pi's inherited project-instructions block from project-level files like `AGENTS.md` and `CLAUDE.md`
 - **`inheritSkills: true`** — Let the child use Pi's discovered skills catalog
 - **`systemPromptMode: append`** — Add the agent's prompt to Pi's base instead of replacing it
 
-The builtin `delegate` agent is the exception: it defaults to `append` with project context inherited because its job is orchestration within the parent workflow, not isolated task execution.
+Builtin agents ship a little differently: they all inherit project instruction files by default so they follow repo-specific rules out of the box. `delegate` is still the exception for `systemPromptMode` — it stays on `append` because its job is orchestration within the parent workflow, not isolated task execution.
 
 **Agent frontmatter:**
 
@@ -80,7 +101,7 @@ model: claude-haiku-4-5
 fallbackModels: openai/gpt-5-mini, anthropic/claude-sonnet-4  # optional ordered fallbacks
 thinking: high               # off, minimal, low, medium, high, xhigh
 systemPromptMode: replace    # replace by default, except builtin delegate
-inheritProjectContext: false # inherit AGENTS.md / CLAUDE.md context files
+inheritProjectContext: false # custom agents default false; builtins opt into true
 inheritSkills: false         # strip Pi's discovered skills section
 skill: safe-bash, chrome-devtools  # comma-separated skills to inject
 output: context.md           # writes to {chain_dir}/context.md
@@ -101,9 +122,9 @@ The `thinking` field sets a default extended thinking level for the agent. At ru
 - **`replace`** (default) — The agent's markdown body becomes the system prompt. Clean slate, no Pi base prompt baggage.
 - **`append`** — The agent's prompt is appended to Pi's normal base prompt. Use this when you want Pi's full capabilities plus your extra instructions.
 
-`inheritProjectContext` — Whether the child keeps the parent's project context files (`AGENTS.md`, `CLAUDE.md`):
-- **`false`** (default) — Child runs without project rules. Good for isolated tasks that shouldn't know about project conventions.
-- **`true`** — Child sees project rules. Use for repo-aware specialists that need architecture context.
+`inheritProjectContext` — Whether the child keeps Pi's inherited project-instructions block, built from project-level instruction files like `AGENTS.md` and `CLAUDE.md`:
+- **`false`** (default) — Strip those inherited project-level instructions from the child's final system prompt. This does not remove repo access, cwd, tools, or the task itself; it only removes those inherited instructions.
+- **`true`** — Keep those inherited project-level instructions. Use for specialists that should follow project-specific constraints and conventions.
 
 `inheritSkills` — Whether the child keeps Pi's discovered skills section:
 - **`false`** (default) — Skills catalog is stripped. Good for focused agents that shouldn't browse unrelated skills.
@@ -115,8 +136,8 @@ The `skills` field still works independently — it injects specific skills dire
 
 | Goal | `systemPromptMode` | `inheritProjectContext` | `inheritSkills` |
 |------|-------------------|------------------------|-----------------|
-| Fully isolated specialist (default) | `replace` | `false` | `false` |
-| Repo-aware specialist | `replace` | `true` | `false` |
+| Fully isolated specialist (custom-agent default) | `replace` | `false` | `false` |
+| Specialist that should follow project instruction files | `replace` | `true` | `false` |
 | Pi-plus-extensions | `append` | `true` | `true` |
 
 - **Security auditor**: Fully isolated so it objectively checks for vulnerabilities without being biased by project conventions.
@@ -126,6 +147,21 @@ The `skills` field still works independently — it injects specific skills dire
 Fallback resolution follows the same conservative model lookup as normal execution. Explicit `provider/model` values are used as-is. Bare model IDs first prefer the current session provider when that provider actually exposes the model, then fall back to a unique registry match. If a bare ID is still ambiguous, it stays bare.
 
 Fallback is only used for provider/model availability failures. Ordinary task failures such as bad `bash` commands, missing files, or other tool/runtime errors do not trigger a model hop.
+
+**Tool selection semantics**
+
+The `tools` field controls builtin-tool allowlisting and a couple of related extension behaviors:
+
+- `tools` **omitted** → `pi-subagents` does not pass `--tools`, so the child gets Pi's normal default builtin tools.
+- `tools` **present** → listed builtin tool names become an explicit allowlist passed via `--tools`.
+- `mcp:...` entries are split out of `tools` and forwarded as direct MCP tool selections.
+- Path-like entries in `tools` (extension paths or file paths ending in `.ts` / `.js`) are treated as tool-extension paths, not builtin tool names.
+
+This means:
+
+- `tools` omitted + `extensions` omitted → child gets Pi's normal builtin tools and normal extension set.
+- `tools: mcp:chrome-devtools` → child still gets Pi's default builtin tools, plus direct MCP tools from `chrome-devtools`.
+- `tools: read, bash, mcp:chrome-devtools` → child is restricted to `read` and `bash` for builtin tools, plus direct MCP tools from `chrome-devtools`.
 
 **Extension sandboxing**
 

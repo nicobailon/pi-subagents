@@ -4,7 +4,7 @@ description: Analyzes requirements and codebase, generates context and meta-prom
 tools: read, grep, find, ls, bash, write, web_search
 model: claude-sonnet-4-6
 systemPromptMode: replace
-inheritProjectContext: false
+inheritProjectContext: true
 inheritSkills: false
 output: context.md
 ---

@@ -8,6 +8,7 @@ import { buildBuiltinOverrideConfig, discoverAgents, removeBuiltinAgentOverride 
 let tempHome = "";
 let tempProject = "";
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 
 function writeJson(filePath: string, value: unknown): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -25,11 +26,14 @@ describe("builtin agent overrides", () => {
 		tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-home-"));
 		tempProject = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-"));
 		process.env.HOME = tempHome;
+		process.env.USERPROFILE = tempHome;
 	});
 
 	afterEach(() => {
 		if (originalHome === undefined) delete process.env.HOME;
 		else process.env.HOME = originalHome;
+		if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+		else process.env.USERPROFILE = originalUserProfile;
 		fs.rmSync(tempHome, { recursive: true, force: true });
 		fs.rmSync(tempProject, { recursive: true, force: true });
 	});

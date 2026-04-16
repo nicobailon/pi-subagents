@@ -3,30 +3,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { TUI } from "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/node_modules/@mariozechner/pi-tui/dist/index.js";
-import type { Terminal } from "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/node_modules/@mariozechner/pi-tui/dist/terminal.js";
-import { theme as testTheme } from "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { AgentManagerComponent } from "../../agent-manager.ts";
 import { discoverAgentsAll } from "../../agents.ts";
 
 const tempDirs: string[] = [];
-
-class TestTerminal implements Terminal {
-	start(): void {}
-	stop(): void {}
-	async drainInput(): Promise<void> {}
-	write(): void {}
-	get columns(): number { return 120; }
-	get rows(): number { return 40; }
-	get kittyProtocolActive(): boolean { return false; }
-	moveBy(): void {}
-	hideCursor(): void {}
-	showCursor(): void {}
-	clearLine(): void {}
-	clearFromCursor(): void {}
-	clearScreen(): void {}
-	setTitle(): void {}
-}
 
 afterEach(() => {
 	while (tempDirs.length > 0) {
@@ -46,8 +26,11 @@ describe("agent manager", () => {
 		fs.writeFileSync(originalPath, `---\nname: alpha\ndescription: Alpha\nsystemPromptMode: replace\ninheritProjectContext: false\ninheritSkills: false\n---\n\nHello\n`, "utf-8");
 
 		const component = new AgentManagerComponent(
-			new TUI(new TestTerminal()),
-			testTheme,
+			{ requestRender() {} } as { requestRender(): void },
+			{
+				fg(_color: string, text: string) { return text; },
+				bg(_color: string, text: string) { return text; },
+			} as { fg(color: string, text: string): string; bg(color: string, text: string): string },
 			{ ...discoverAgentsAll(root), cwd: root },
 			[],
 			[],

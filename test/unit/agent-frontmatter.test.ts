@@ -190,6 +190,33 @@ Do work
 		assert.equal(worker?.inheritSkills, false);
 	});
 
+	it("builtin agents inherit project context by default", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-prompt-settings-"));
+		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-home-"));
+		tempDirs.push(dir);
+		tempDirs.push(homeDir);
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+
+		try {
+			process.env.HOME = homeDir;
+			process.env.USERPROFILE = homeDir;
+
+			const result = discoverAgents(dir, "both");
+			const scout = result.agents.find((agent) => agent.name === "scout");
+			const reviewer = result.agents.find((agent) => agent.name === "reviewer");
+			const delegate = result.agents.find((agent) => agent.name === "delegate");
+			assert.equal(scout?.inheritProjectContext, true);
+			assert.equal(reviewer?.inheritProjectContext, true);
+			assert.equal(delegate?.inheritProjectContext, true);
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
 	it("defaults delegate to append mode with inherited project context", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-delegate-default-prompt-settings-"));
 		tempDirs.push(dir);
