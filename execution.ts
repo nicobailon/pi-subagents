@@ -181,12 +181,14 @@ async function runSingleAttempt(
 				if (settled || processClosed || detached) return;
 				result.error = result.error
 					?? `Subagent process did not exit within ${FINAL_DRAIN_MS}ms after its final message. Forcing termination.`;
-				forcedTerminationSignal = true;
-				try { proc.kill("SIGTERM"); } catch {}
+				try {
+					forcedTerminationSignal = proc.kill("SIGTERM");
+				} catch {}
 				finalHardKillTimer = setTimeout(() => {
 					if (settled || processClosed || detached) return;
-					forcedTerminationSignal = true;
-					try { proc.kill("SIGKILL"); } catch {}
+					try {
+						forcedTerminationSignal = proc.kill("SIGKILL") || forcedTerminationSignal;
+					} catch {}
 				}, HARD_KILL_MS);
 				finalHardKillTimer.unref?.();
 			}, FINAL_DRAIN_MS);

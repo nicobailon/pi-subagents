@@ -315,12 +315,14 @@ function runPiStreaming(
 				if (!error) {
 					error = `Subagent process did not exit within ${FINAL_DRAIN_MS}ms after its final message. Forcing termination.`;
 				}
-				forcedTerminationSignal = true;
-				try { child.kill("SIGTERM"); } catch {}
+				try {
+					forcedTerminationSignal = child.kill("SIGTERM");
+				} catch {}
 				finalHardKillTimer = setTimeout(() => {
 					if (settled) return;
-					forcedTerminationSignal = true;
-					try { child.kill("SIGKILL"); } catch {}
+					try {
+						forcedTerminationSignal = child.kill("SIGKILL") || forcedTerminationSignal;
+					} catch {}
 				}, HARD_KILL_MS);
 				finalHardKillTimer.unref?.();
 			}, FINAL_DRAIN_MS);
