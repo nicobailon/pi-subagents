@@ -9,7 +9,7 @@
  * Toggle: async parameter (default: false, configurable via config.json)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
+ *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
  */
 
 import * as fs from "node:fs";

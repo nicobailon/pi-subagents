@@ -1250,20 +1250,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return toExecutionErrorResult(normalizedParams, error);
 		}
 
-		const requestedAsync = normalizedParams.async ?? deps.asyncByDefault;
-		const backgroundRequestedWhileClarifying = hasTasks && requestedAsync && normalizedParams.clarify === true;
+		const forceTopLevelAsync = depth === 0 && deps.config.forceTopLevelAsync === true;
+		const effectiveParams = forceTopLevelAsync
+			? { ...normalizedParams, async: true, clarify: false }
+			: normalizedParams;
+		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
+		const backgroundRequestedWhileClarifying = hasTasks && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync
-			&& (hasChain ? normalizedParams.clarify === false : normalizedParams.clarify !== true);
+			&& (hasChain ? effectiveParams.clarify === false : effectiveParams.clarify !== true);
 
 		const artifactConfig: ArtifactConfig = {
 			...DEFAULT_ARTIFACT_CONFIG,
-			enabled: normalizedParams.artifacts !== false,
+			enabled: effectiveParams.artifacts !== false,
 		};
 		const artifactsDir = effectiveAsync ? deps.tempArtifactsDir : getArtifactsDir(parentSessionFile);
 
 		let sessionRoot: string;
-		if (normalizedParams.sessionDir) {
-			sessionRoot = path.resolve(deps.expandTilde(normalizedParams.sessionDir));
+		if (effectiveParams.sessionDir) {
+			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
 		} else {
 			const baseSessionRoot = deps.config.defaultSessionDir
 				? path.resolve(deps.expandTilde(deps.config.defaultSessionDir))
@@ -1287,7 +1291,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			: undefined;
 
 		const execData: ExecutionContextData = {
-			params: normalizedParams,
+			params: effectiveParams,
 			effectiveCwd,
 			ctx,
 			signal,

@@ -288,6 +288,7 @@ export interface TopLevelParallelConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
 	maxSubagentDepth?: number;
 	parallel?: TopLevelParallelConfig;

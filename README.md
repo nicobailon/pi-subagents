@@ -855,6 +855,33 @@ This aggregated output becomes `{previous}` for the next step.
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
 
+### `asyncByDefault`
+
+`asyncByDefault` makes top-level subagent calls use background execution when the request does not explicitly set `async`.
+
+```json
+{
+  "asyncByDefault": true
+}
+```
+
+This only changes the default. Callers can still force foreground execution by setting `async: false` unless `forceTopLevelAsync` is also enabled.
+
+### `forceTopLevelAsync`
+
+`forceTopLevelAsync` forces depth-0 subagent execution into background mode. This is useful for automation setups that never want the top-level orchestrator to block on child runs.
+
+```json
+{
+  "forceTopLevelAsync": true
+}
+```
+
+When enabled:
+- top-level single, parallel, and chain runs are forced to `async: true`
+- top-level clarify UI is bypassed by forcing `clarify: false`
+- nested subagent calls still follow their own inherited depth and async settings
+
 ### `parallel`
 
 `parallel` controls top-level `tasks` mode defaults and limits.
