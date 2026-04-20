@@ -7,18 +7,42 @@ import {
 } from "./types.ts";
 import { readStatus } from "./utils.ts";
 
-export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string): {
+interface AsyncJobTrackerOptions {
+	completionRetentionMs?: number;
+	pollIntervalMs?: number;
+}
+
+export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string, options: AsyncJobTrackerOptions = {}): {
 	ensurePoller: () => void;
 	handleStarted: (data: unknown) => void;
 	handleComplete: (data: unknown) => void;
 	resetJobs: (ctx?: ExtensionContext) => void;
 } {
+	const completionRetentionMs = options.completionRetentionMs ?? 10000;
+	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
+		renderWidget(ctx, jobs);
+		ctx.ui.requestRender?.();
+	};
+	const scheduleCleanup = (asyncId: string) => {
+		const existingTimer = state.cleanupTimers.get(asyncId);
+		if (existingTimer) clearTimeout(existingTimer);
+		const timer = setTimeout(() => {
+			state.cleanupTimers.delete(asyncId);
+			state.asyncJobs.delete(asyncId);
+			if (state.lastUiContext) {
+				rerenderWidget(state.lastUiContext);
+			}
+		}, completionRetentionMs);
+		state.cleanupTimers.set(asyncId, timer);
+	};
+
 	const ensurePoller = () => {
 		if (state.poller) return;
 		state.poller = setInterval(() => {
 			if (!state.lastUiContext || !state.lastUiContext.hasUI) return;
 			if (state.asyncJobs.size === 0) {
-				renderWidget(state.lastUiContext, []);
+				rerenderWidget(state.lastUiContext, []);
 				if (state.poller) {
 					clearInterval(state.poller);
 					state.poller = null;
@@ -27,12 +51,10 @@ export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string
 			}
 
 			for (const job of state.asyncJobs.values()) {
-				if (job.status === "complete" || job.status === "failed") {
-					continue;
-				}
 				try {
 					const status = readStatus(job.asyncDir);
 					if (status) {
+						const previousStatus = job.status;
 						job.status = status.state;
 						job.mode = status.mode;
 						job.currentStep = status.currentStep ?? job.currentStep;
@@ -46,6 +68,9 @@ export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string
 						job.outputFile = status.outputFile ?? job.outputFile;
 						job.totalTokens = status.totalTokens ?? job.totalTokens;
 						job.sessionFile = status.sessionFile ?? job.sessionFile;
+						if ((job.status === "complete" || job.status === "failed") && previousStatus !== job.status) {
+							scheduleCleanup(job.asyncId);
+						}
 						continue;
 					}
 					job.status = job.status === "queued" ? "running" : job.status;
@@ -57,8 +82,8 @@ export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string
 				}
 			}
 
-			renderWidget(state.lastUiContext, Array.from(state.asyncJobs.values()));
-		}, POLL_INTERVAL_MS);
+			rerenderWidget(state.lastUiContext);
+		}, pollIntervalMs);
 		state.poller.unref?.();
 	};
 
@@ -84,7 +109,7 @@ export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string
 			updatedAt: now,
 		});
 		if (state.lastUiContext) {
-			renderWidget(state.lastUiContext, Array.from(state.asyncJobs.values()));
+			rerenderWidget(state.lastUiContext);
 			ensurePoller();
 		}
 	};
@@ -100,16 +125,9 @@ export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string
 			if (result.asyncDir) job.asyncDir = result.asyncDir;
 		}
 		if (state.lastUiContext) {
-			renderWidget(state.lastUiContext, Array.from(state.asyncJobs.values()));
+			rerenderWidget(state.lastUiContext);
 		}
-		const timer = setTimeout(() => {
-			state.cleanupTimers.delete(asyncId);
-			state.asyncJobs.delete(asyncId);
-			if (state.lastUiContext) {
-				renderWidget(state.lastUiContext, Array.from(state.asyncJobs.values()));
-			}
-		}, 10000);
-		state.cleanupTimers.set(asyncId, timer);
+		scheduleCleanup(asyncId);
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {
@@ -121,7 +139,7 @@ export function createAsyncJobTracker(state: SubagentState, asyncDirRoot: string
 		state.resultFileCoalescer.clear();
 		if (ctx?.hasUI) {
 			state.lastUiContext = ctx;
-			renderWidget(ctx, []);
+			rerenderWidget(ctx, []);
 		}
 	};
 

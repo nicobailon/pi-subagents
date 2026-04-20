@@ -29,6 +29,7 @@ import {
 import { buildPiArgs, cleanupTempDir } from "./pi-args.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "./model-fallback.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput } from "./utils.ts";
+import { parseSessionTokens, type TokenUsage } from "./session-tokens.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -85,38 +86,6 @@ function findLatestSessionFile(sessionDir: string): string | null {
 		return files[0] ?? null;
 	} catch {
 		// Session lookup is optional metadata.
-		return null;
-	}
-}
-
-interface TokenUsage {
-	input: number;
-	output: number;
-	total: number;
-}
-
-function parseSessionTokens(sessionDir: string): TokenUsage | null {
-	const sessionFile = findLatestSessionFile(sessionDir);
-	if (!sessionFile) return null;
-	try {
-		const content = fs.readFileSync(sessionFile, "utf-8");
-		let input = 0;
-		let output = 0;
-		for (const line of content.split("\n")) {
-			if (!line.trim()) continue;
-			try {
-				const entry = JSON.parse(line);
-				if (entry.usage) {
-					input += entry.usage.inputTokens ?? entry.usage.input ?? 0;
-					output += entry.usage.outputTokens ?? entry.usage.output ?? 0;
-				}
-			} catch {
-				// Ignore malformed lines while scanning usage entries.
-			}
-		}
-		return { input, output, total: input + output };
-	} catch {
-		// Usage extraction should not fail the run.
 		return null;
 	}
 }

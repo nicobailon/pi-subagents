@@ -219,6 +219,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4");
 		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
 		assert.equal(payload.results[0].modelAttempts.length, 2);
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.ok(statusPayload.totalTokens.total > 0);
+		assert.ok(statusPayload.steps[0].tokens.total > 0);
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);
 	});
