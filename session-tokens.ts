@@ -11,9 +11,10 @@ function findLatestSessionFile(sessionDir: string): string | null {
 	try {
 		const files = fs.readdirSync(sessionDir)
 			.filter((f) => f.endsWith(".jsonl"))
-			.sort();
+			.map((f) => path.join(sessionDir, f));
 		if (files.length === 0) return null;
-		return path.join(sessionDir, files[files.length - 1]!);
+		files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+		return files[0] ?? null;
 	} catch {
 		return null;
 	}

@@ -26,6 +26,7 @@ import { createForkContextResolver } from "./fork-context.ts";
 import { applyIntercomBridgeToAgent, resolveIntercomBridge, resolveIntercomSessionTarget } from "./intercom-bridge.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath } from "./single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd } from "./utils.ts";
+import { applyForceTopLevelAsyncOverride } from "./top-level-async.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -1209,32 +1210,38 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (normalized.error) return normalized.error;
 		const normalizedParams = normalized.params!;
 
-		const scope: AgentScope = resolveExecutionAgentScope(normalizedParams.agentScope);
-		const effectiveCwd = normalizedParams.cwd ?? ctx.cwd;
+		const effectiveParams = applyForceTopLevelAsyncOverride(
+			normalizedParams,
+			depth,
+			deps.config.forceTopLevelAsync === true,
+		);
+
+		const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
+		const effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 		deps.state.currentSessionId = parentSessionFile ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 		const discoveredAgents = deps.discoverAgents(effectiveCwd, scope).agents;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
-			context: normalizedParams.context,
+			context: effectiveParams.context,
 			orchestratorTarget: sessionName,
 		});
 		const agents = intercomBridge.active
 			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 			: discoveredAgents;
 		const runId = randomUUID().slice(0, 8);
-		const shareEnabled = normalizedParams.share === true;
-		const hasChain = (normalizedParams.chain?.length ?? 0) > 0;
-		const hasTasks = (normalizedParams.tasks?.length ?? 0) > 0;
-		const hasSingle = Boolean(normalizedParams.agent && normalizedParams.task);
+		const shareEnabled = effectiveParams.share === true;
+		const hasChain = (effectiveParams.chain?.length ?? 0) > 0;
+		const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
+		const hasSingle = Boolean(effectiveParams.agent && effectiveParams.task);
 		const allowClarifyTaskPrompt = hasChain
-			&& normalizedParams.clarify === true
+			&& effectiveParams.clarify === true
 			&& ctx.hasUI
-			&& !(normalizedParams.chain?.some(isParallelStep) ?? false);
+			&& !(effectiveParams.chain?.some(isParallelStep) ?? false);
 
 		const validationError = validateExecutionInput(
-			normalizedParams,
+			effectiveParams,
 			agents,
 			hasChain,
 			hasTasks,
@@ -1245,15 +1252,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let sessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		try {
-			sessionFileForIndex = createForkContextResolver(ctx.sessionManager, normalizedParams.context).sessionFileForIndex;
+			sessionFileForIndex = createForkContextResolver(ctx.sessionManager, effectiveParams.context).sessionFileForIndex;
 		} catch (error) {
-			return toExecutionErrorResult(normalizedParams, error);
+			return toExecutionErrorResult(effectiveParams, error);
 		}
-
-		const forceTopLevelAsync = depth === 0 && deps.config.forceTopLevelAsync === true;
-		const effectiveParams = forceTopLevelAsync
-			? { ...normalizedParams, async: true, clarify: false }
-			: normalizedParams;
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = hasTasks && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync
@@ -1279,7 +1281,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return toExecutionErrorResult(
-				normalizedParams,
+				effectiveParams,
 				new Error(`Failed to create session directory '${sessionRoot}': ${message}`),
 			);
 		}
@@ -1287,7 +1289,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			path.join(sessionRoot, `run-${idx ?? 0}`);
 
 		const onUpdateWithContext = onUpdate
-			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, normalizedParams.context))
+			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context))
 			: undefined;
 
 		const execData: ExecutionContextData = {
@@ -1310,18 +1312,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		try {
 			const asyncResult = runAsyncPath(execData, deps);
-			if (asyncResult) return withForkContext(asyncResult, normalizedParams.context);
+			if (asyncResult) return withForkContext(asyncResult, effectiveParams.context);
 
-			if (hasChain && normalizedParams.chain) {
-				return withForkContext(await runChainPath(execData, deps), normalizedParams.context);
+			if (hasChain && effectiveParams.chain) {
+				return withForkContext(await runChainPath(execData, deps), effectiveParams.context);
 			}
 
-			if (hasTasks && normalizedParams.tasks) {
-				return withForkContext(await runParallelPath(execData, deps), normalizedParams.context);
+			if (hasTasks && effectiveParams.tasks) {
+				return withForkContext(await runParallelPath(execData, deps), effectiveParams.context);
 			}
 
 			if (hasSingle) {
-				return withForkContext(await runSinglePath(execData, deps), normalizedParams.context);
+				return withForkContext(await runSinglePath(execData, deps), effectiveParams.context);
 			}
 		} catch (error) {
 			return toExecutionErrorResult(normalizedParams, error);
@@ -1331,7 +1333,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			content: [{ type: "text", text: "Invalid params" }],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
-		}, normalizedParams.context);
+		}, effectiveParams.context);
 	};
 
 	return { execute };
