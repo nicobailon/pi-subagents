@@ -432,6 +432,88 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(result.content[0]?.text ?? "", /async-cfg-/);
 	});
 
+	it("returns a tool error when an async run uses a missing cwd", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const id = `async-missing-cwd-${Date.now().toString(36)}`;
+		const missingCwd = path.join(tempDir, "missing-cwd");
+
+		const singleResult = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			cwd: missingCwd,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(singleResult.isError, true);
+		assert.match(singleResult.content[0]?.text ?? "", /Failed to start async run/);
+		assert.match(singleResult.content[0]?.text ?? "", /cwd does not exist/);
+
+		const chainId = `async-missing-cwd-chain-${Date.now().toString(36)}`;
+		const chainResult = executeAsyncChain(chainId, {
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			cwd: missingCwd,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(chainResult.isError, true);
+		assert.match(chainResult.content[0]?.text ?? "", /Failed to start async chain/);
+		assert.match(chainResult.content[0]?.text ?? "", /cwd does not exist/);
+	});
+
+	it("returns a tool error when the async runner process cannot spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
+		const originalExecPath = process.execPath;
+		process.execPath = path.join(tempDir, "missing-node");
+		try {
+			const id = `async-spawn-fail-${Date.now().toString(36)}`;
+			const result = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Do work",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Failed to start async run/);
+			assert.match(result.content[0]?.text ?? "", /async runner did not produce a pid/);
+		} finally {
+			process.execPath = originalExecPath;
+		}
+	});
+
 	it("returns a tool error when an async chain cannot write its detached runner config", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const id = `async-chain-write-fail-${Date.now().toString(36)}`;
 		assert.ok(TEMP_ROOT_DIR, "TEMP_ROOT_DIR should be available for async tests");

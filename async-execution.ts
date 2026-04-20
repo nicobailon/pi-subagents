@@ -114,22 +114,39 @@ export function isAsyncAvailable(): boolean {
 /**
  * Spawn the async runner process
  */
-function spawnRunner(cfg: object, suffix: string, cwd: string): number | undefined {
-	if (!jitiCliPath) return undefined;
-	
+function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; error?: string } {
+	if (!jitiCliPath) {
+		return { error: "jiti for TypeScript execution could not be found" };
+	}
+
+	try {
+		const cwdStats = fs.statSync(cwd);
+		if (!cwdStats.isDirectory()) {
+			return { error: `cwd is not a directory: ${cwd}` };
+		}
+	} catch {
+		return { error: `cwd does not exist: ${cwd}` };
+	}
+
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
 	const cfgPath = getAsyncConfigPath(suffix);
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-	
+
 	const proc = spawn(process.execPath, [jitiCliPath, runner, cfgPath], {
 		cwd,
 		detached: true,
 		stdio: "ignore",
 		windowsHide: true,
 	});
+	proc.on("error", (error) => {
+		console.error(`[pi-subagents] async spawn failed: ${error.message}`);
+	});
+	if (typeof proc.pid !== "number") {
+		return { error: `async runner did not produce a pid for cwd: ${cwd}` };
+	}
 	proc.unref();
-	return proc.pid;
+	return { pid: proc.pid };
 }
 
 function formatAsyncStartError(mode: "single" | "chain", message: string): AsyncExecutionResult {
@@ -260,9 +277,9 @@ export function executeAsyncChain(
 		return buildSeqStep(s as SequentialStep, nextSessionFile());
 	});
 
-	let pid: number | undefined;
+	let spawnResult: { pid?: number; error?: string } = {};
 	try {
-		pid = spawnRunner(
+		spawnResult = spawnRunner(
 			{
 				id,
 				steps,
@@ -289,14 +306,18 @@ export function executeAsyncChain(
 		return formatAsyncStartError("chain", `Failed to start async chain '${id}': ${message}`);
 	}
 
-	if (pid) {
+	if (spawnResult.error) {
+		return formatAsyncStartError("chain", `Failed to start async chain '${id}': ${spawnResult.error}`);
+	}
+
+	if (spawnResult.pid) {
 		const firstStep = chain[0];
 		const firstAgents = isParallelStep(firstStep)
 			? firstStep.parallel.map((t) => t.agent)
 			: [(firstStep as SequentialStep).agent];
 		ctx.pi.events.emit("subagent:started", {
 			id,
-			pid,
+			pid: spawnResult.pid,
 			agent: firstAgents[0],
 			task: isParallelStep(firstStep)
 				? firstStep.parallel[0]?.task?.slice(0, 50)
@@ -368,9 +389,9 @@ export function executeAsyncSingle(
 
 	const outputPath = resolveSingleOutputPath(params.output, ctx.cwd, runnerCwd);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath);
-	let pid: number | undefined;
+	let spawnResult: { pid?: number; error?: string } = {};
 	try {
-		pid = spawnRunner(
+		spawnResult = spawnRunner(
 			{
 				id,
 				steps: [
@@ -418,10 +439,14 @@ export function executeAsyncSingle(
 		return formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
 	}
 
-	if (pid) {
+	if (spawnResult.error) {
+		return formatAsyncStartError("single", `Failed to start async run '${id}': ${spawnResult.error}`);
+	}
+
+	if (spawnResult.pid) {
 		ctx.pi.events.emit("subagent:started", {
 			id,
-			pid,
+			pid: spawnResult.pid,
 			agent,
 			task: task?.slice(0, 50),
 			cwd: runnerCwd,
