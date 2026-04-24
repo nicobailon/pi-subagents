@@ -145,9 +145,11 @@ export function renderDetail(
 		? (agent.disabled
 			? (agent.override ? `[builtin off+${agent.override.scope}]` : "[builtin off]")
 			: (agent.override ? `[builtin+${agent.override.scope}]` : "[builtin]"))
-		: agent.source === "project"
-			? "[proj]"
-			: "[user]";
+		: agent.source === "package"
+			? "[pkg]"
+			: agent.source === "project"
+				? "[proj]"
+				: "[user]";
 	const headerText = ` ${agent.name} ${scopeBadge} ${formatPath(agent.filePath)} `;
 	lines.push(renderHeader(headerText, width, theme));
 	lines.push(row("", width, theme));
@@ -167,7 +169,9 @@ export function renderDetail(
 	const scrollInfo = formatScrollInfo(state.scrollOffset, Math.max(0, contentLines.length - (state.scrollOffset + DETAIL_VIEWPORT_HEIGHT)));
 	lines.push(row(scrollInfo ? ` ${theme.fg("dim", scrollInfo)}` : "", width, theme));
 
-	const footer = agent.source === "builtin"
+	const footer = agent.source === "package"
+		? " [l]aunch  [v] raw/resolved  [↑↓] scroll  [esc] back "
+		: agent.source === "builtin"
 		? agent.override
 			? (agent.disabled
 				? " [e]dit override  [v] raw/resolved  [↑↓] scroll  [esc] back "

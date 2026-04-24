@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { applyThinkingSuffix, buildPiArgs } from "../../pi-args.ts";
 
 describe("buildPiArgs session wiring", () => {
-	it("uses --session when sessionFile is provided", () => {
+	it("uses --session when sessionFile is provided (internal resume plumbing)", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",

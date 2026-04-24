@@ -593,8 +593,7 @@ export async function runSync(
 		};
 	}
 
-	const shareEnabled = options.share === true;
-	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
+	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || options.share === true;
 	const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
@@ -726,12 +725,11 @@ export async function runSync(
 		if (truncationResult.truncated) result.truncation = truncationResult;
 	}
 
-	if (shareEnabled) {
-		const sessionFile = options.sessionFile
-			?? (options.sessionDir ? findLatestSessionFile(options.sessionDir) : null);
-		if (sessionFile) {
-			result.sessionFile = sessionFile;
-		}
+	// Always surface sessionFile when a session was used, so callers can resume it.
+	const resolvedSessionFile = options.sessionFile
+		?? (options.sessionDir ? findLatestSessionFile(options.sessionDir) : null);
+	if (resolvedSessionFile) {
+		result.sessionFile = resolvedSessionFile;
 	}
 
 	return result;

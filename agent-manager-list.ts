@@ -216,9 +216,11 @@ export function renderList(
 					? (agent.disabled
 						? (agent.overrideScope ? `[builtin off+${agent.overrideScope}]` : "[builtin off]")
 						: (agent.overrideScope ? `[builtin+${agent.overrideScope}]` : "[builtin]"))
-					: agent.source === "project"
-						? "[proj]"
-						: "[user]";
+					: agent.source === "package"
+						? "[pkg]"
+						: agent.source === "project"
+							? "[proj]"
+							: "[user]";
 			const scopeBadge = theme.fg("dim", scopeLabel);
 			const descText = theme.fg("dim", agent.description);
 

@@ -71,8 +71,8 @@ export function sanitizeName(name: string): string {
 	return name.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function allAgents(d: { builtin: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
-	return [...d.builtin, ...d.user, ...d.project];
+function allAgents(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
+	return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
 function availableNames(cwd: string, kind: "agent" | "chain"): string[] {
@@ -291,7 +291,7 @@ function resolveTarget<T extends { source: AgentSource; filePath: string }>(
 	cwd: string,
 	scopeHint?: string,
 ): T | AgentToolResult<Details> {
-	const mutable = matches.filter((m) => m.source !== "builtin");
+	const mutable = matches.filter((m) => m.source !== "builtin" && m.source !== "package");
 	if (mutable.length === 0) {
 		if (matches.length > 0) {
 			return result(`${kind === "agent" ? "Agent" : "Chain"} '${name}' is builtin and cannot be modified. Create a same-named ${kind} in user or project scope to override it.`, true);
@@ -370,7 +370,7 @@ export function formatChainDetail(chain: ChainConfig): string {
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
-	const agents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
+	const agents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const chains = d.chains.filter((c) => scope === "both" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const lines = ["Agents:", ...(agents.length ? agents.map((a) => `- ${a.name} (${a.source}${a.disabled ? ", disabled" : ""}): ${a.description}`) : ["- (none)"]), "", "Chains:", ...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"])];
 	return result(lines.join("\n"));
