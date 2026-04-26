@@ -34,6 +34,9 @@ function isNotFoundError(error: unknown): boolean {
 
 function shouldFallBackToPolling(error: unknown): boolean {
 	const code = getErrorCode(error);
+	// fs.watch can throw EMFILE/ENOSPC when the host exhausts file
+	// descriptors or inotify resources. Async completions are already
+	// persisted as result files, so polling is a safe degradation path.
 	return code === "EMFILE" || code === "ENOSPC";
 }
 
