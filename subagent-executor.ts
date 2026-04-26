@@ -1602,6 +1602,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const sessionDirForIndex = (idx?: number) =>
 			path.join(sessionRoot, `run-${idx ?? 0}`);
+		const childSessionFileForIndex = (idx?: number) =>
+			sessionFileForIndex(idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 
 		const onUpdateWithContext = onUpdate
 			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context))
@@ -1618,7 +1620,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			shareEnabled,
 			sessionRoot,
 			sessionDirForIndex,
-			sessionFileForIndex,
+			sessionFileForIndex: childSessionFileForIndex,
 			artifactConfig,
 			artifactsDir,
 			backgroundRequestedWhileClarifying,

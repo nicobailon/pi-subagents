@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Key, matchesKey } from "@mariozechner/pi-tui";
 import { discoverAgents, discoverAgentsAll } from "./agents.ts";
@@ -20,6 +22,7 @@ import {
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
+	type SingleResult,
 	type SubagentState,
 } from "./types.ts";
 
@@ -194,6 +197,46 @@ function extractSlashMessageText(content: string | Array<{ type?: string; text?:
 		.join("\n");
 }
 
+function formatExportPathList(paths: string[]): string {
+	return paths.map((file) => `- \`${file}\``).join("\n");
+}
+
+function collectResultPaths(results: SingleResult[], getPath: (result: SingleResult) => string | undefined): string[] {
+	return results
+		.map(getPath)
+		.filter((file): file is string => typeof file === "string" && file.length > 0);
+}
+
+function buildSlashExportText(response: SlashSubagentResponse): string {
+	const output = extractSlashMessageText(response.result.content) || response.errorText || "(no output)";
+	const results = response.result.details?.results ?? [];
+	const sessionFiles = collectResultPaths(results, (result) => result.sessionFile);
+	const savedOutputs = collectResultPaths(results, (result) => result.savedOutputPath);
+	const artifactOutputs = collectResultPaths(results, (result) => result.artifactPaths?.outputPath);
+	const sections = ["## Subagent result", output];
+	if (sessionFiles.length > 0) sections.push("## Child session exports", formatExportPathList(sessionFiles));
+	if (savedOutputs.length > 0) sections.push("## Saved outputs", formatExportPathList(savedOutputs));
+	if (artifactOutputs.length > 0) sections.push("## Artifact outputs", formatExportPathList(artifactOutputs));
+	return sections.join("\n\n");
+}
+
+function persistSlashSessionSnapshot(ctx: ExtensionContext): void {
+	try {
+		if (!ctx.sessionManager) return;
+		const sessionManager = ctx.sessionManager as typeof ctx.sessionManager & {
+			_rewriteFile?: () => void;
+			flushed?: boolean;
+		};
+		const sessionFile = sessionManager.getSessionFile();
+		if (!sessionFile || typeof sessionManager._rewriteFile !== "function") return;
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		sessionManager._rewriteFile();
+		sessionManager.flushed = true;
+	} catch (error) {
+		console.error("Failed to persist slash session snapshot for export:", error);
+	}
+}
+
 async function runSlashSubagent(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -208,17 +251,18 @@ async function runSlashSubagent(
 		display: true,
 		details: initialDetails,
 	});
+	persistSlashSessionSnapshot(ctx);
 
 	try {
 		const response = await requestSlashRun(pi, ctx, requestId, params);
 		const finalDetails = finalizeSlashResult(response);
-		const text = extractSlashMessageText(response.result.content) || response.errorText || "(no output)";
 		pi.sendMessage({
 			customType: SLASH_RESULT_TYPE,
-			content: text,
-			display: false,
+			content: buildSlashExportText(response),
+			display: true,
 			details: finalDetails,
 		});
+		persistSlashSessionSnapshot(ctx);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}
@@ -227,13 +271,14 @@ async function runSlashSubagent(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		const failedDetails = failSlashResult(requestId, params, message === "Cancelled" ? "Cancelled" : message);
+		const failedDetails = failSlashResult(requestId, params, message);
 		pi.sendMessage({
 			customType: SLASH_RESULT_TYPE,
-			content: message,
-			display: false,
+			content: `## Subagent result\n\n${message}`,
+			display: true,
 			details: failedDetails,
 		});
+		persistSlashSessionSnapshot(ctx);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}

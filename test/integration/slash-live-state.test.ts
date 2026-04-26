@@ -63,7 +63,7 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 		assert.equal(snapshot.version > 0, true);
 	});
 
-	it("prefers finalized snapshots and restores them from hidden session messages", () => {
+	it("prefers finalized snapshots and restores them from persisted custom messages", () => {
 		clearSlashSnapshots!();
 		const details = buildSlashInitialResult!("req-2", {
 			agent: "scout",
@@ -94,13 +94,10 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 		clearSlashSnapshots!();
 		restoreSlashFinalSnapshots!([
 			{
-				type: "message",
-				message: {
-					role: "custom",
-					customType: "subagent-slash-result",
-					display: false,
-					details: finalDetails,
-				},
+				type: "custom_message",
+				customType: "subagent-slash-result",
+				display: true,
+				details: finalDetails,
 			},
 		]);
 

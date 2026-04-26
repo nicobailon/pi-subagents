@@ -1,23 +1,33 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { applyThinkingSuffix, buildPiArgs } from "../../pi-args.ts";
 
 describe("buildPiArgs session wiring", () => {
 	it("uses --session when sessionFile is provided", () => {
-		const { args } = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: true,
-			sessionFile: "/tmp/forked-session.jsonl",
-			sessionDir: "/tmp/should-not-be-used",
-			inheritProjectContext: false,
-			inheritSkills: false,
-		});
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-session-"));
+		try {
+			const sessionFile = path.join(tempDir, "nested", "session.jsonl");
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: true,
+				sessionFile,
+				sessionDir: "/tmp/should-not-be-used",
+				inheritProjectContext: false,
+				inheritSkills: false,
+			});
 
-		assert.ok(args.includes("--session"));
-		assert.ok(args.includes("/tmp/forked-session.jsonl"));
-		assert.ok(!args.includes("--session-dir"), "--session-dir should not be emitted with --session");
-		assert.ok(!args.includes("--no-session"), "--no-session should not be emitted with --session");
+			assert.ok(args.includes("--session"));
+			assert.ok(args.includes(sessionFile));
+			assert.ok(fs.existsSync(path.dirname(sessionFile)));
+			assert.ok(!args.includes("--session-dir"), "--session-dir should not be emitted with --session");
+			assert.ok(!args.includes("--no-session"), "--no-session should not be emitted with --session");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 
 	it("keeps fresh mode behavior (sessionDir + no session file)", () => {

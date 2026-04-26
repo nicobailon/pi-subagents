@@ -64,6 +64,7 @@ interface RunSyncResult {
 	detachedReason?: string;
 	savedOutputPath?: string;
 	outputSaveError?: string;
+	sessionFile?: string;
 }
 
 interface ExecutionModule {
@@ -167,10 +168,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		mockPi.onCall({ output: "Hello from mock agent" });
 		const agents = makeAgentConfigs(["echo"]);
 
-		const result = await runSync(tempDir, agents, "echo", "Say hello", {});
+		const sessionFile = path.join(tempDir, "child-session.jsonl");
+		const result = await runSync(tempDir, agents, "echo", "Say hello", { sessionFile });
 
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.agent, "echo");
+		assert.equal(result.sessionFile, sessionFile);
 		assert.ok(result.messages.length > 0, "should have messages");
 
 		const output = getFinalOutput(result.messages);

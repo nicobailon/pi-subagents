@@ -98,6 +98,7 @@ function createCommandContext(
 		hasUI: boolean;
 		custom: (...args: unknown[]) => Promise<unknown>;
 		setStatus: (key: string, text: string | undefined) => void;
+		sessionManager: unknown;
 	}> = {},
 ) {
 	return {
@@ -110,6 +111,7 @@ function createCommandContext(
 			custom: overrides.custom ?? (async () => undefined),
 		},
 		modelRegistry: { getAvailable: () => [] },
+		sessionManager: overrides.sessionManager,
 	};
 }
 
@@ -123,6 +125,14 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 		const events = createEventBus();
 		let requestedParams: unknown;
+		const sessionManager = {
+			flushed: false,
+			rewrites: 0,
+			getSessionFile: () => "session.jsonl",
+			_rewriteFile() {
+				this.rewrites++;
+			},
+		};
 		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
 			const payload = data as { requestId: string; params?: unknown };
 			requestedParams = payload.params;
@@ -149,12 +159,16 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		};
 
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("run")!.handler("scout", createCommandContext());
+		await commands.get("run")!.handler("scout", createCommandContext({ sessionManager }));
 
 		assert.deepEqual(requestedParams, { agent: "scout", task: "", clarify: false, agentScope: "both" });
 		assert.equal(sent.length, 2);
+		assert.equal((sent[0] as { display?: boolean }).display, true);
 		assert.equal((sent[0] as { content?: string }).content, "Running subagent...");
-		assert.equal((sent[1] as { content?: string }).content, "Commit finished");
+		assert.equal((sent[1] as { display?: boolean }).display, true);
+		assert.match((sent[1] as { content?: string }).content ?? "", /Commit finished/);
+		assert.equal(sessionManager.rewrites, 2);
+		assert.equal(sessionManager.flushed, true);
 	});
 
 	it("/run finalizes the slash snapshot before the last UI redraw on success", async () => {
@@ -169,7 +183,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 				requestId,
 				result: {
 					content: [{ type: "text", text: "Scout finished" }],
-					details: { mode: "single", results: [] },
+					details: { mode: "single", results: [{ sessionFile: "/tmp/child-session.jsonl" }] },
 				},
 				isError: false,
 			});
@@ -200,9 +214,10 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal((sent[0] as { display?: boolean }).display, true);
 		assert.equal((sent[0] as { content?: string }).content, "inspect this");
 		assert.equal((sent[1] as { customType?: string; display?: boolean }).customType, SLASH_RESULT_TYPE);
-		assert.equal((sent[1] as { display?: boolean }).display, false);
-		assert.equal((sent[1] as { content?: string }).content, "Scout finished");
-		assert.deepEqual(log, ["send:visible", "status:running...", "send:hidden", "status:clear"]);
+		assert.equal((sent[1] as { display?: boolean }).display, true);
+		assert.match((sent[1] as { content?: string }).content ?? "", /Scout finished/);
+		assert.match((sent[1] as { content?: string }).content ?? "", /Child session exports\n\n- `\/tmp\/child-session\.jsonl`/);
+		assert.deepEqual(log, ["send:visible", "status:running...", "send:visible", "status:clear"]);
 
 		const visibleDetails = resolveSlashMessageDetails!((sent[0] as { details?: unknown }).details);
 		assert.ok(visibleDetails);
@@ -254,9 +269,9 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal((sent[0] as { display?: boolean }).display, true);
 		assert.equal((sent[0] as { content?: string }).content, "inspect this");
 		assert.equal((sent[1] as { customType?: string; display?: boolean }).customType, SLASH_RESULT_TYPE);
-		assert.equal((sent[1] as { display?: boolean }).display, false);
-		assert.equal((sent[1] as { content?: string }).content, "Subagent failed");
-		assert.deepEqual(log, ["send:visible", "status:running...", "send:hidden", "status:clear"]);
+		assert.equal((sent[1] as { display?: boolean }).display, true);
+		assert.match((sent[1] as { content?: string }).content ?? "", /Subagent failed/);
+		assert.deepEqual(log, ["send:visible", "status:running...", "send:visible", "status:clear"]);
 
 		const visibleDetails = resolveSlashMessageDetails!((sent[0] as { details?: unknown }).details);
 		assert.ok(visibleDetails);
@@ -300,7 +315,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 
 		assert.equal(requestedTasks, 9);
 		assert.equal(sent.length, 2);
-		assert.equal((sent[1] as { content?: string }).content, "parallel finished");
+		assert.match((sent[1] as { content?: string }).content ?? "", /parallel finished/);
 	});
 });
 

@@ -278,11 +278,9 @@ export function restoreSlashFinalSnapshots(entries: unknown[]): void {
 	liveSnapshots.clear();
 	finalSnapshots.clear();
 	for (const entry of entries) {
-		const e = entry as { type?: string; message?: { role?: string; customType?: string; display?: boolean; details?: unknown } };
-		if (e?.type !== "message") continue;
-		const m = e.message;
-		if (!m || m.role !== "custom" || m.customType !== SLASH_RESULT_TYPE || m.display !== false) continue;
-		const details = resolveSlashMessageDetails(m.details);
+		const e = entry as { type?: string; customType?: string; details?: unknown };
+		if (e?.type !== "custom_message" || e.customType !== SLASH_RESULT_TYPE) continue;
+		const details = resolveSlashMessageDetails(e.details);
 		if (!details) continue;
 		finalSnapshots.set(details.requestId, { result: details.result, version: nextVersion() });
 	}

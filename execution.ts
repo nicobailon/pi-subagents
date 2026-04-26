@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { Message } from "@mariozechner/pi-ai";
 import type { AgentConfig } from "./agents.ts";
 import {
@@ -726,12 +727,11 @@ export async function runSync(
 		if (truncationResult.truncated) result.truncation = truncationResult;
 	}
 
-	if (shareEnabled) {
-		const sessionFile = options.sessionFile
-			?? (options.sessionDir ? findLatestSessionFile(options.sessionDir) : null);
-		if (sessionFile) {
-			result.sessionFile = sessionFile;
-		}
+	if (options.sessionFile && (existsSync(options.sessionFile) || result.messages?.length)) {
+		result.sessionFile = options.sessionFile;
+	} else if (shareEnabled && options.sessionDir) {
+		const sessionFile = findLatestSessionFile(options.sessionDir);
+		if (sessionFile) result.sessionFile = sessionFile;
 	}
 
 	return result;

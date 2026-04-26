@@ -43,6 +43,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const args = [...input.baseArgs];
 
 	if (input.sessionFile) {
+		fs.mkdirSync(path.dirname(input.sessionFile), { recursive: true });
 		args.push("--session", input.sessionFile);
 	} else {
 		if (!input.sessionEnabled) {

@@ -7,6 +7,7 @@
 - The `subagent` tool description no longer advertises hardcoded builtin agent names and management list output now separates disabled builtins from executable agents.
 - Flexible `subagent` tool schema fields now include explicit JSON Schema types so llama.cpp and local OpenAI-compatible providers accept them.
 - Settings package sources now resolve explicit `git:` and `npm:` entries from project and user package caches.
+- Slash-command subagent results are now export-friendly, including completed output and child session paths in visible export content.
 
 ## [0.18.0] - 2026-04-23
 
