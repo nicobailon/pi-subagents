@@ -4,8 +4,22 @@
 
 import { Type } from "typebox";
 
-// Note: Using Type.Any() for Google API compatibility (doesn't support anyOf)
-const SkillOverride = Type.Any({ description: "Skill name(s) to inject (comma-separated), array of strings, or boolean (false disables, true uses default)" });
+const SkillOverride = Type.Unsafe({
+	type: ["string", "array", "boolean"],
+	items: { type: "string" },
+	description: "Skill name(s) to inject (comma-separated), array of strings, or boolean (false disables, true uses default)",
+});
+
+const OutputOverride = Type.Unsafe({
+	type: ["string", "boolean"],
+	description: "Output filename/path (string), or false to disable file output",
+});
+
+const ReadsOverride = Type.Unsafe({
+	type: ["array", "boolean"],
+	items: { type: "string" },
+	description: "Files to read before running (array of filenames), or false to disable",
+});
 
 export const TaskItem = Type.Object({ 
 	agent: Type.String(), 
@@ -23,8 +37,8 @@ export const SequentialStepSchema = Type.Object({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder. Required for first step, defaults to '{previous}' for subsequent steps." 
 	})),
 	cwd: Type.Optional(Type.String()),
-	output: Type.Optional(Type.Any({ description: "Output filename to write in {chain_dir} (string), or false to disable file output" })),
-	reads: Type.Optional(Type.Any({ description: "Files to read from {chain_dir} before running (array of filenames), or false to disable" })),
+	output: Type.Optional(OutputOverride),
+	reads: Type.Optional(ReadsOverride),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
@@ -36,8 +50,8 @@ export const ParallelTaskSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task template with {task}, {previous}, {chain_dir} variables. Defaults to {previous}." })),
 	cwd: Type.Optional(Type.String()),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
-	output: Type.Optional(Type.Any({ description: "Output filename to write in {chain_dir} (string), or false to disable file output" })),
-	reads: Type.Optional(Type.Any({ description: "Files to read from {chain_dir} before running (array of filenames), or false to disable" })),
+	output: Type.Optional(OutputOverride),
+	reads: Type.Optional(ReadsOverride),
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
@@ -53,9 +67,25 @@ export const ParallelStepSchema = Type.Object({
 	})),
 });
 
-// Chain item can be either sequential or parallel
-// Note: Using Type.Any() for Google API compatibility (doesn't support anyOf)
-export const ChainItem = Type.Any({ description: "Chain step: either {agent, task?, ...} for sequential or {parallel: [...]} for concurrent execution" });
+// Flattened so providers that reject anyOf/oneOf can still accept either sequential or parallel steps.
+export const ChainItem = Type.Object({
+	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
+	task: Type.Optional(Type.String({
+		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder. Required for first step, defaults to '{previous}' for subsequent steps."
+	})),
+	cwd: Type.Optional(Type.String()),
+	output: Type.Optional(OutputOverride),
+	reads: Type.Optional(ReadsOverride),
+	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
+	skill: Type.Optional(SkillOverride),
+	model: Type.Optional(Type.String({ description: "Override model for this step" })),
+	parallel: Type.Optional(Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" })),
+	concurrency: Type.Optional(Type.Number({ description: "Max concurrent tasks (default: 4)" })),
+	failFast: Type.Optional(Type.Boolean({ description: "Stop on first failure (default: false)" })),
+	worktree: Type.Optional(Type.Boolean({
+		description: "Create isolated git worktrees for each parallel task."
+	})),
+}, { description: "Chain step: use {agent, task?, ...} for sequential or {parallel: [...]} for concurrent execution" });
 
 export const ControlOverrides = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ description: "Enable/disable subagent control attention tracking for this run" })),
@@ -89,8 +119,10 @@ export const SubagentParams = Type.Object({
 		description: "Chain name for get/update/delete management actions"
 	})),
 	// Agent/chain configuration for create/update (nested to avoid conflicts with execution fields)
-	config: Type.Optional(Type.Any({
-		description: "Agent or chain config for create/update. Agent: name, description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, model, tools (comma-separated), extensions (comma-separated), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth. Chain: name, description, scope, steps (array of {agent, task?, output?, reads?, model?, skills?, progress?}). Presence of 'steps' creates a chain instead of an agent."
+	config: Type.Optional(Type.Unsafe({
+		type: ["object", "string"],
+		additionalProperties: true,
+		description: "Agent or chain config for create/update. Agent: name, description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, model, tools (comma-separated), extensions (comma-separated), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth. Chain: name, description, scope, steps (array of {agent, task?, output?, reads?, model?, skills?, progress?}). Presence of 'steps' creates a chain instead of an agent. String values must be valid JSON."
 	})),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?}, ...]" })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
@@ -118,7 +150,10 @@ export const SubagentParams = Type.Object({
 	clarify: Type.Optional(Type.Boolean({ description: "Show TUI to preview/edit before execution (default: true for chains, false for single/parallel). Implies sync mode." })),
 	control: Type.Optional(ControlOverrides),
 	// Solo agent overrides
-	output: Type.Optional(Type.Any({ description: "Output file for single agent (string), or false to disable. Relative paths resolve against cwd." })),
+	output: Type.Optional(Type.Unsafe({
+		type: ["string", "boolean"],
+		description: "Output file for single agent (string), or false to disable. Relative paths resolve against cwd.",
+	})),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
 });
