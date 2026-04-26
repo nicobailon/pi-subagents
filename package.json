@@ -31,6 +31,7 @@
     "*.mjs",
     "agents/",
     "skills/**/*",
+    "prompts/**/*",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -46,6 +47,9 @@
     ],
     "skills": [
       "./skills"
+    ],
+    "prompts": [
+      "./prompts"
     ]
   },
   "peerDependencies": {
