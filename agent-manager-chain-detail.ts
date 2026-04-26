@@ -2,6 +2,7 @@ import type { Theme } from "@mariozechner/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
 import type { ChainConfig, ChainStepConfig } from "./agents.ts";
 import { row, renderFooter, renderHeader, formatPath, formatScrollInfo } from "./render-helpers.ts";
+import { isParallelStep, type ChainStep } from "./settings.ts";
 
 export interface ChainDetailState {
 	scrollOffset: number;
@@ -14,11 +15,24 @@ export type ChainDetailAction =
 
 const CHAIN_DETAIL_VIEWPORT_HEIGHT = 12;
 
-export function buildDependencyMap(steps: ChainStepConfig[]): Map<number, number[]> {
+type DetailChainStep = ChainStepConfig | ChainStep;
+
+export function buildDependencyMap(steps: DetailChainStep[]): Map<number, number[]> {
 	const outputMap = new Map<string, number>();
 	const deps = new Map<number, number[]>();
 	for (let i = 0; i < steps.length; i++) {
 		const step = steps[i]!;
+		if (isParallelStep(step as ChainStep)) {
+			const reads = step.parallel.flatMap((task) => Array.isArray(task.reads) ? task.reads : []);
+			const sources = reads
+				.map((file) => outputMap.get(file))
+				.filter((idx): idx is number => idx !== undefined);
+			if (sources.length > 0) deps.set(i, [...new Set(sources)]);
+			for (const task of step.parallel) {
+				if (typeof task.output === "string" && task.output.length > 0) outputMap.set(task.output, i);
+			}
+			continue;
+		}
 		if (typeof step.output === "string" && step.output.length > 0) outputMap.set(step.output, i);
 		if (Array.isArray(step.reads) && step.reads.length > 0) {
 			const sources = step.reads
@@ -33,21 +47,51 @@ export function buildDependencyMap(steps: ChainStepConfig[]): Map<number, number
 function buildChainDetailLines(chain: ChainConfig, width: number): string[] {
 	const contentWidth = width - 3;
 	const lines: string[] = [];
-	const dependencyMap = buildDependencyMap(chain.steps);
+	const steps = chain.steps as DetailChainStep[];
+	const dependencyMap = buildDependencyMap(steps);
 	lines.push(truncateToWidth(chain.description, contentWidth));
 	lines.push("");
 	lines.push(truncateToWidth(`File: ${formatPath(chain.filePath)}`, contentWidth));
 	lines.push("");
 	lines.push(truncateToWidth("── Flow ──", contentWidth));
 
-	for (let i = 0; i < chain.steps.length; i++) {
-		const step = chain.steps[i]!;
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i]!;
+		const sources = dependencyMap.get(i);
+		const fromText = sources && sources.length > 0 ? ` (from ${sources.map((s) => s + 1).join(", ")})` : "";
+		if (isParallelStep(step as ChainStep)) {
+			lines.push(truncateToWidth(`  ${i + 1}  Parallel: ${step.parallel.map((task) => task.agent).join(" + ")}`, contentWidth));
+			if (step.concurrency !== undefined) lines.push(truncateToWidth(`     concurrency: ${step.concurrency}`, contentWidth));
+			if (step.failFast !== undefined) lines.push(truncateToWidth(`     fail fast: ${step.failFast ? "on" : "off"}`, contentWidth));
+			if (step.worktree !== undefined) lines.push(truncateToWidth(`     worktree: ${step.worktree ? "on" : "off"}`, contentWidth));
+			for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
+				const task = step.parallel[taskIndex]!;
+				lines.push(truncateToWidth(`     ${taskIndex + 1}. ${task.agent}`, contentWidth));
+				const taskPreview = (task.task ?? "").split("\n")[0] ?? "";
+				if (taskPreview) lines.push(truncateToWidth(`        task: ${taskPreview}`, contentWidth));
+				if (Array.isArray(task.reads) && task.reads.length > 0) lines.push(truncateToWidth(`        ← reads: ${task.reads.join(", ")}${fromText}`, contentWidth));
+				else if (task.reads === false) lines.push(truncateToWidth("        ← reads: (disabled)", contentWidth));
+				if (typeof task.output === "string" && task.output.length > 0) lines.push(truncateToWidth(`        → output: ${task.output}`, contentWidth));
+				else if (task.output === false) lines.push(truncateToWidth("        → output: (disabled)", contentWidth));
+				if (task.model) lines.push(truncateToWidth(`        model: ${task.model}`, contentWidth));
+				if (task.skill !== undefined) {
+					const skillsText =
+						task.skill === false
+							? "(disabled)"
+							: Array.isArray(task.skill)
+								? (task.skill.length > 0 ? task.skill.join(", ") : "(none)")
+								: task.skill;
+					lines.push(truncateToWidth(`        skills: ${skillsText}`, contentWidth));
+				}
+				if (task.progress !== undefined) lines.push(truncateToWidth(`        progress: ${task.progress ? "on" : "off"}`, contentWidth));
+			}
+			lines.push("");
+			continue;
+		}
 		lines.push(truncateToWidth(`  ${i + 1}  ${step.agent}`, contentWidth));
 		const taskPreview = step.task.split("\n")[0] ?? "";
 		lines.push(truncateToWidth(`     task: ${taskPreview || "(none)"}`, contentWidth));
 		if (Array.isArray(step.reads) && step.reads.length > 0) {
-			const sources = dependencyMap.get(i);
-			const fromText = sources && sources.length > 0 ? ` (from ${sources.map((s) => s + 1).join(", ")})` : "";
 			lines.push(truncateToWidth(`     ← reads: ${step.reads.join(", ")}${fromText}`, contentWidth));
 		} else if (step.reads === false) {
 			lines.push(truncateToWidth("     ← reads: (disabled)", contentWidth));

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 
 const SLASH_RESULT_TYPE = "subagent-slash-result";
@@ -91,6 +94,57 @@ function createState(cwd: string) {
 			clear: () => {},
 		},
 	};
+}
+
+async function withIsolatedHome<T>(fn: () => Promise<T>): Promise<T> {
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-slash-home-"));
+	const previousHome = process.env.HOME;
+	const previousUserProfile = process.env.USERPROFILE;
+	process.env.HOME = home;
+	process.env.USERPROFILE = home;
+	try {
+		return await fn();
+	} finally {
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+		else process.env.USERPROFILE = previousUserProfile;
+		fs.rmSync(home, { recursive: true, force: true });
+	}
+}
+
+async function captureAgentManagerParams(result: unknown): Promise<unknown> {
+	return withIsolatedHome(async () => {
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		let requestedParams: unknown;
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requestedParams = payload.params;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId: payload.requestId,
+				result: {
+					content: [{ type: "text", text: "manager finished" }],
+					details: { mode: "single", results: [] },
+				},
+				isError: false,
+			});
+		});
+
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(_message: unknown) {},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()));
+		await commands.get("agents")!.handler("", createCommandContext({ custom: async () => result }));
+		return requestedParams;
+	});
 }
 
 function createCommandContext(
@@ -316,6 +370,109 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal(requestedTasks, 9);
 		assert.equal(sent.length, 2);
 		assert.match((sent[1] as { content?: string }).content ?? "", /parallel finished/);
+	});
+});
+
+describe("agent manager slash routing", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
+	beforeEach(() => {
+		clearSlashSnapshots?.();
+	});
+
+	it("maps fork and background manager toggles to context and async without clarify", async () => {
+		const params = await captureAgentManagerParams({
+			action: "launch",
+			agent: "scout",
+			task: "Investigate",
+			skipClarify: false,
+			fork: true,
+			background: true,
+		});
+
+		assert.deepEqual(params, {
+			agent: "scout",
+			task: "Investigate",
+			clarify: false,
+			agentScope: "both",
+			context: "fork",
+			async: true,
+		});
+	});
+
+	it("keeps clarify enabled for foreground non-quick manager launches", async () => {
+		const params = await captureAgentManagerParams({
+			action: "launch",
+			agent: "scout",
+			task: "Investigate",
+			skipClarify: false,
+		});
+
+		assert.deepEqual(params, {
+			agent: "scout",
+			task: "Investigate",
+			clarify: true,
+			agentScope: "both",
+		});
+	});
+
+	it("maps worktree to top-level parallel manager launches", async () => {
+		const params = await captureAgentManagerParams({
+			action: "parallel",
+			tasks: [
+				{ agent: "scout", task: "Review A" },
+				{ agent: "reviewer", task: "Review B" },
+			],
+			skipClarify: true,
+			fork: true,
+			background: true,
+			worktree: true,
+		});
+
+		assert.deepEqual(params, {
+			tasks: [
+				{ agent: "scout", task: "Review A" },
+				{ agent: "reviewer", task: "Review B" },
+			],
+			clarify: false,
+			agentScope: "both",
+			context: "fork",
+			async: true,
+			worktree: true,
+		});
+	});
+
+	it("sets worktree only on existing saved-chain parallel steps", async () => {
+		const params = await captureAgentManagerParams({
+			action: "launch-chain",
+			chain: {
+				name: "mixed",
+				description: "Mixed chain",
+				source: "user",
+				filePath: "/tmp/mixed.chain.md",
+				steps: [
+					{ agent: "scout", task: "Scout" },
+					{ parallel: [{ agent: "reviewer", task: "Review" }, { agent: "worker", task: "Build" }] },
+				],
+			},
+			task: "Shared",
+			skipClarify: true,
+			worktree: true,
+		});
+
+		assert.ok(params && typeof params === "object");
+		const routed = params as { chain?: unknown; task?: unknown; clarify?: unknown; agentScope?: unknown };
+		assert.equal(routed.task, "Shared");
+		assert.equal(routed.clarify, false);
+		assert.equal(routed.agentScope, "both");
+		assert.ok(Array.isArray(routed.chain));
+		const [sequentialStep, parallelStep] = routed.chain;
+		assert.ok(sequentialStep && typeof sequentialStep === "object");
+		assert.equal((sequentialStep as { agent?: unknown }).agent, "scout");
+		assert.equal((sequentialStep as { task?: unknown }).task, "Scout");
+		assert.equal("worktree" in sequentialStep, false);
+		assert.deepEqual(parallelStep, {
+			parallel: [{ agent: "reviewer", task: "Review" }, { agent: "worker", task: "Build" }],
+			worktree: true,
+		});
 	});
 });
 

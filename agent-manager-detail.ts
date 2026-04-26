@@ -180,12 +180,19 @@ export function renderDetail(
 	return lines;
 }
 
+export interface LaunchToggleState {
+	fork: boolean;
+	background: boolean;
+	worktree?: boolean;
+}
+
 export function renderTaskInput(
 	title: string,
 	editor: TextEditorState,
 	skipClarify: boolean,
 	width: number,
 	theme: Theme,
+	launchToggles?: LaunchToggleState,
 ): string[] {
 	const lines: string[] = [];
 	lines.push(renderHeader(` ${title} `, width, theme));
@@ -209,8 +216,14 @@ export function renderTaskInput(
 	lines.push(row(` ${bottom}`, width, theme));
 
 	lines.push(row("", width, theme));
-	const enterLabel = skipClarify ? "quick run" : "run";
 	const quickLabel = skipClarify ? "on" : "off";
-	lines.push(renderFooter(` [enter] ${enterLabel}  [tab] quick: ${quickLabel}  [esc] cancel `, width, theme));
+	const footerParts = ["[enter] run", `[tab] quick:${quickLabel}`];
+	if (launchToggles) {
+		footerParts.push(`[ctrl+f] fork:${launchToggles.fork ? "on" : "off"}`);
+		footerParts.push(`[ctrl+b] bg:${launchToggles.background ? "on" : "off"}`);
+		if (launchToggles.worktree !== undefined) footerParts.push(`[ctrl+w] worktree:${launchToggles.worktree ? "on" : "off"}`);
+	}
+	footerParts.push("[esc]");
+	lines.push(renderFooter(` ${footerParts.join("  ")} `, width, theme));
 	return lines;
 }

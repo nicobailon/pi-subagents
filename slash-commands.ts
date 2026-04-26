@@ -8,6 +8,7 @@ import { AgentManagerComponent, type ManagerResult } from "./agent-manager.ts";
 import { SubagentsStatusComponent } from "./subagents-status.ts";
 import { discoverAvailableSkills } from "./skills.ts";
 import type { SubagentParamsLike } from "./subagent-executor.ts";
+import { isParallelStep, type ChainStep } from "./settings.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import {
 	applySlashUpdate,
@@ -308,48 +309,43 @@ async function openAgentManager(
 	);
 	if (!result) return;
 
+	const launchOptions: SubagentParamsLike = {
+		clarify: !result.skipClarify && !result.background,
+		agentScope: "both",
+		...(result.fork ? { context: "fork" as const } : {}),
+		...(result.background ? { async: true } : {}),
+	};
+
 	if (result.action === "chain") {
 		const chain = result.agents.map((name, i) => ({
 			agent: name,
 			...(i === 0 ? { task: result.task } : {}),
 		}));
-		await runSlashSubagent(pi, ctx, {
-			chain,
-			task: result.task,
-			clarify: true,
-			agentScope: "both",
-		});
+		await runSlashSubagent(pi, ctx, { chain, task: result.task, ...launchOptions });
 		return;
 	}
 
 	if (result.action === "launch") {
-		await runSlashSubagent(pi, ctx, {
-			agent: result.agent,
-			task: result.task,
-			clarify: !result.skipClarify,
-			agentScope: "both",
-		});
+		await runSlashSubagent(pi, ctx, { agent: result.agent, task: result.task, ...launchOptions });
 	} else if (result.action === "launch-chain") {
-		const chainParam = result.chain.steps.map((step) => ({
-			agent: step.agent,
-			task: step.task || undefined,
-			output: step.output,
-			reads: step.reads,
-			progress: step.progress,
-			skill: step.skills,
-			model: step.model,
-		}));
-		await runSlashSubagent(pi, ctx, {
-			chain: chainParam,
-			task: result.task,
-			clarify: !result.skipClarify,
-			agentScope: "both",
+		const chainParam = (result.chain.steps as unknown as ChainStep[]).map((step) => {
+			if (isParallelStep(step)) return result.worktree ? { ...step, worktree: true } : { ...step };
+			return {
+				agent: step.agent,
+				task: step.task || undefined,
+				output: step.output,
+				reads: step.reads,
+				progress: step.progress,
+				skill: step.skill ?? (step as typeof step & { skills?: string[] | false }).skills,
+				model: step.model,
+			};
 		});
+		await runSlashSubagent(pi, ctx, { chain: chainParam, task: result.task, ...launchOptions });
 	} else if (result.action === "parallel") {
 		await runSlashSubagent(pi, ctx, {
 			tasks: result.tasks,
-			clarify: !result.skipClarify,
-			agentScope: "both",
+			...launchOptions,
+			...(result.worktree ? { worktree: true } : {}),
 		});
 	}
 }

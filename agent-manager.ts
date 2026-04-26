@@ -20,19 +20,20 @@ import { TEMPLATE_ITEMS, type AgentTemplate, type TemplateItem } from "./agent-t
 import { parseChain, serializeChain } from "./chain-serializer.ts";
 import { renderList, handleListInput, type ListAgent, type ListState, type ListAction } from "./agent-manager-list.ts";
 import { createParallelState, handleParallelInput, renderParallel, formatParallelTitle, type ParallelState, type AgentOption } from "./agent-manager-parallel.ts";
-import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction } from "./agent-manager-detail.ts";
+import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction, type LaunchToggleState } from "./agent-manager-detail.ts";
 import { renderChainDetail, handleChainDetailInput, type ChainDetailAction, type ChainDetailState } from "./agent-manager-chain-detail.ts";
 import { createEditState, handleEditInput, renderEdit, type EditField, type EditScreen, type EditState, type ModelInfo, type SkillInfo } from "./agent-manager-edit.ts";
 import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.ts";
 import type { TextEditorState } from "./text-editor.ts";
 import { loadRunsForAgent } from "./run-history.ts";
 import { pad, row, renderHeader, renderFooter } from "./render-helpers.ts";
+import { isParallelStep, type ChainStep } from "./settings.ts";
 
 export type ManagerResult =
-	| { action: "launch"; agent: string; task: string; skipClarify?: boolean }
-	| { action: "chain"; agents: string[]; task: string; skipClarify?: boolean }
-	| { action: "parallel"; tasks: Array<{ agent: string; task: string }>; skipClarify?: boolean }
-	| { action: "launch-chain"; chain: ChainConfig; task: string; skipClarify?: boolean }
+	| { action: "launch"; agent: string; task: string; skipClarify?: boolean; fork?: boolean; background?: boolean }
+	| { action: "chain"; agents: string[]; task: string; skipClarify?: boolean; fork?: boolean; background?: boolean }
+	| { action: "parallel"; tasks: Array<{ agent: string; task: string }>; skipClarify?: boolean; fork?: boolean; background?: boolean; worktree?: boolean }
+	| { action: "launch-chain"; chain: ChainConfig; task: string; skipClarify?: boolean; fork?: boolean; background?: boolean; worktree?: boolean }
 	| undefined;
 
 export interface AgentData { builtin: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[]; chains: ChainConfig[]; userDir: string; projectDir: string | null; userSettingsPath: string; projectSettingsPath: string | null; cwd: string; }
@@ -69,7 +70,27 @@ function cloneConfig(config: AgentConfig): AgentConfig {
 			: undefined,
 	};
 }
-function cloneChainConfig(config: ChainConfig): ChainConfig { return { ...config, steps: config.steps.map((step) => ({ ...step, reads: Array.isArray(step.reads) ? [...step.reads] : step.reads, skills: Array.isArray(step.skills) ? [...step.skills] : step.skills })), extraFields: config.extraFields ? { ...config.extraFields } : undefined }; }
+function cloneChainConfig(config: ChainConfig): ChainConfig {
+	const steps = (config.steps as unknown as ChainStep[]).map((step) => {
+		if (isParallelStep(step)) {
+			return {
+				...step,
+				parallel: step.parallel.map((task) => ({
+					...task,
+					reads: Array.isArray(task.reads) ? [...task.reads] : task.reads,
+					skill: Array.isArray(task.skill) ? [...task.skill] : task.skill,
+				})),
+			};
+		}
+		return {
+			...step,
+			reads: Array.isArray(step.reads) ? [...step.reads] : step.reads,
+			...(Array.isArray((step as typeof step & { skills?: string[] | false }).skills) ? { skills: [...(step as typeof step & { skills: string[] }).skills] } : { skills: (step as typeof step & { skills?: false }).skills }),
+			...(Array.isArray(step.skill) ? { skill: [...step.skill] } : { skill: step.skill }),
+		};
+	});
+	return { ...config, steps: steps as unknown as ChainConfig["steps"], extraFields: config.extraFields ? { ...config.extraFields } : undefined };
+}
 function slugTemplateName(name: string): string { return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
 function nextSelectableIndex(items: TemplateItem[], current: number, direction: 1 | -1): number { let next = current + direction; while (next >= 0 && next < items.length && items[next]!.type === "separator") next += direction; if (next < 0 || next >= items.length) return current; return next; }
 const CHAIN_EDIT_VIEWPORT = 10;
@@ -90,6 +111,9 @@ export class AgentManagerComponent implements Component {
 	private chainEditState: { editor: TextEditorState; error?: string } | null = null;
 	private taskEditor: TextEditorState = createEditorState();
 	private skipClarify = false;
+	private launchFork = false;
+	private launchBackground = false;
+	private launchWorktree = false;
 	private chainAgentIds: string[] = [];
 	private chainLaunchId: string | null = null;
 	private parallelMode = false;
@@ -187,10 +211,21 @@ export class AgentManagerComponent implements Component {
 		this.parallelState = createParallelState(names);
 		this.screen = "parallel-builder";
 	}
-	private enterTaskInput(ids: string[], backScreen: ManagerScreen = "list"): void {
-		this.chainAgentIds = ids; this.chainLaunchId = null; this.parallelMode = false; this.taskBackScreen = backScreen; this.taskEditor = createEditorState(); this.skipClarify = true; this.screen = "task-input";
+	private resetLaunchToggles(): void { this.launchFork = false; this.launchBackground = false; this.launchWorktree = false; }
+	private enterParallelTaskInput(): void {
+		this.chainAgentIds = [];
+		this.chainLaunchId = null;
+		this.parallelMode = true;
+		this.taskBackScreen = "parallel-builder";
+		this.taskEditor = createEditorState();
+		this.skipClarify = true;
+		this.resetLaunchToggles();
+		this.screen = "task-input";
 	}
-	private enterSavedChainLaunch(entry: ChainEntry): void { this.chainLaunchId = entry.id; this.chainAgentIds = []; this.parallelMode = false; this.taskBackScreen = "chain-detail"; this.taskEditor = createEditorState(); this.skipClarify = true; this.screen = "task-input"; }
+	private enterTaskInput(ids: string[], backScreen: ManagerScreen = "list"): void {
+		this.chainAgentIds = ids; this.chainLaunchId = null; this.parallelMode = false; this.taskBackScreen = backScreen; this.taskEditor = createEditorState(); this.skipClarify = true; this.resetLaunchToggles(); this.screen = "task-input";
+	}
+	private enterSavedChainLaunch(entry: ChainEntry): void { this.chainLaunchId = entry.id; this.chainAgentIds = []; this.parallelMode = false; this.taskBackScreen = "chain-detail"; this.taskEditor = createEditorState(); this.skipClarify = true; this.resetLaunchToggles(); this.screen = "task-input"; }
 	private enterTemplateSelect(): void { this.templateCursor = TEMPLATE_ITEMS.findIndex((item) => item.type !== "separator"); if (this.templateCursor < 0) this.templateCursor = 0; this.screen = "template-select"; }
 
 	private enterChainEdit(entry: ChainEntry): void {
@@ -274,6 +309,27 @@ export class AgentManagerComponent implements Component {
 		const state = this.chainEditState; const entry = this.getChainEntry(this.currentChainId); if (!state || !entry) return false;
 		try { const parsed = parseChain(state.editor.buffer, entry.config.source, entry.config.filePath); fs.writeFileSync(entry.config.filePath, serializeChain(parsed), "utf-8"); entry.config = parsed; state.error = undefined; return true; }
 		catch (err) { state.error = err instanceof Error ? err.message : "Failed to save chain."; return false; }
+	}
+
+	private canToggleLaunchWorktree(): boolean {
+		if (this.parallelMode && this.parallelState) return true;
+		if (!this.chainLaunchId) return false;
+		const chainEntry = this.getChainEntry(this.chainLaunchId);
+		return chainEntry ? (chainEntry.config.steps as unknown as ChainStep[]).some(isParallelStep) : false;
+	}
+	private launchFlags(): { fork?: boolean; background?: boolean; worktree?: boolean } {
+		return {
+			...(this.launchFork ? { fork: true } : {}),
+			...(this.launchBackground ? { background: true } : {}),
+			...(this.launchWorktree && this.canToggleLaunchWorktree() ? { worktree: true } : {}),
+		};
+	}
+	private launchToggleState(): LaunchToggleState {
+		return {
+			fork: this.launchFork,
+			background: this.launchBackground,
+			...(this.canToggleLaunchWorktree() ? { worktree: this.launchWorktree } : {}),
+		};
 	}
 
 	private handleTemplateSelectInput(data: string): void {
@@ -476,13 +532,7 @@ export class AgentManagerComponent implements Component {
 				const agentOptions: AgentOption[] = this.agents.map((e) => ({ name: e.config.name, description: e.config.description, model: e.config.model }));
 				const pAction = handleParallelInput(this.parallelState, agentOptions, data, this.overlayWidth);
 				if (pAction?.type === "proceed") {
-					this.chainAgentIds = [];
-					this.chainLaunchId = null;
-					this.parallelMode = true;
-					this.taskBackScreen = "parallel-builder";
-					this.taskEditor = createEditorState();
-					this.skipClarify = true;
-					this.screen = "task-input";
+					this.enterParallelTaskInput();
 				} else if (pAction?.type === "back") {
 					this.parallelState = null;
 					this.parallelMode = false;
@@ -493,28 +543,31 @@ export class AgentManagerComponent implements Component {
 			}
 			case "task-input": {
 				if (matchesKey(data, "tab")) { this.skipClarify = !this.skipClarify; this.tui.requestRender(); return; }
+				if (matchesKey(data, "ctrl+f")) { this.launchFork = !this.launchFork; this.tui.requestRender(); return; }
+				if (matchesKey(data, "ctrl+b")) { this.launchBackground = !this.launchBackground; this.tui.requestRender(); return; }
+				if (matchesKey(data, "ctrl+w") && this.canToggleLaunchWorktree()) { this.launchWorktree = !this.launchWorktree; this.tui.requestRender(); return; }
 				const innerW = this.overlayWidth - 2; const boxInnerWidth = Math.max(10, innerW - 4); const nextState = handleEditorInput(this.taskEditor, data, boxInnerWidth);
 				if (nextState) { this.taskEditor = nextState; this.tui.requestRender(); return; }
 				if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) { this.screen = this.taskBackScreen; this.tui.requestRender(); return; }
 				if (matchesKey(data, "return")) {
 					if (this.chainLaunchId) {
 						const chainEntry = this.getChainEntry(this.chainLaunchId); if (!chainEntry) { this.screen = "list"; this.tui.requestRender(); return; }
-						this.done({ action: "launch-chain", chain: cloneChainConfig(chainEntry.config), task: this.taskEditor.buffer, skipClarify: this.skipClarify }); return;
+						this.done({ action: "launch-chain", chain: cloneChainConfig(chainEntry.config), task: this.taskEditor.buffer, skipClarify: this.skipClarify, ...this.launchFlags() }); return;
 					} else if (this.parallelMode && this.parallelState) {
 						const sharedTask = this.taskEditor.buffer;
 						const tasks = this.parallelState.slots.map((slot) => ({ agent: slot.agentName, task: slot.customTask || sharedTask }));
-						this.done({ action: "parallel", tasks, skipClarify: this.skipClarify }); return;
+						this.done({ action: "parallel", tasks, skipClarify: this.skipClarify, ...this.launchFlags() }); return;
 					}
 					if (this.chainAgentIds.length > 1) {
 						const agents = this.chainAgentIds
 							.map((id) => this.getAgentEntry(id)?.config.name)
 							.filter((name): name is string => Boolean(name));
 						if (agents.length !== this.chainAgentIds.length) { this.screen = "list"; this.tui.requestRender(); return; }
-						this.done({ action: "chain", agents, task: this.taskEditor.buffer, skipClarify: this.skipClarify }); return;
+						this.done({ action: "chain", agents, task: this.taskEditor.buffer, skipClarify: this.skipClarify, ...this.launchFlags() }); return;
 					}
 					const name = this.getAgentEntry(this.chainAgentIds[0] ?? null)?.config.name;
 					if (!name) { this.screen = "list"; this.tui.requestRender(); return; }
-					this.done({ action: "launch", agent: name, task: this.taskEditor.buffer, skipClarify: this.skipClarify }); return;
+					this.done({ action: "launch", agent: name, task: this.taskEditor.buffer, skipClarify: this.skipClarify, ...this.launchFlags() }); return;
 				}
 				return;
 			}
@@ -628,16 +681,16 @@ export class AgentManagerComponent implements Component {
 				return renderParallel(this.parallelState, agentOptions, w, this.theme);
 			}
 			case "task-input": {
-				if (this.chainLaunchId) { const entry = this.getChainEntry(this.chainLaunchId); const title = entry ? `Chain: ${entry.config.name}` : "Chain"; return renderTaskInput(title, this.taskEditor, this.skipClarify, w, this.theme); }
-				if (this.parallelMode && this.parallelState) return renderTaskInput(formatParallelTitle(this.parallelState.slots), this.taskEditor, this.skipClarify, w, this.theme);
+				if (this.chainLaunchId) { const entry = this.getChainEntry(this.chainLaunchId); const title = entry ? `Chain: ${entry.config.name}` : "Chain"; return renderTaskInput(title, this.taskEditor, this.skipClarify, w, this.theme, this.launchToggleState()); }
+				if (this.parallelMode && this.parallelState) return renderTaskInput(formatParallelTitle(this.parallelState.slots), this.taskEditor, this.skipClarify, w, this.theme, this.launchToggleState());
 				if (this.chainAgentIds.length > 1) {
 					const names = this.chainAgentIds
 						.map((id) => this.getAgentEntry(id)?.config.name)
 						.filter((name): name is string => Boolean(name));
-					return renderTaskInput(`Chain: ${names.join(" → ")}`, this.taskEditor, this.skipClarify, w, this.theme);
+					return renderTaskInput(`Chain: ${names.join(" → ")}`, this.taskEditor, this.skipClarify, w, this.theme, this.launchToggleState());
 				}
 				const name = this.getAgentEntry(this.chainAgentIds[0] ?? null)?.config.name ?? "Agent";
-				return renderTaskInput(`Run: ${name}`, this.taskEditor, this.skipClarify, w, this.theme);
+				return renderTaskInput(`Run: ${name}`, this.taskEditor, this.skipClarify, w, this.theme, this.launchToggleState());
 			}
 			case "confirm-delete": return this.renderConfirmDelete(w);
 			case "name-input": return this.renderNameInput(w);
