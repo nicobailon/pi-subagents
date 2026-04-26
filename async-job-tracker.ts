@@ -121,6 +121,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
 						job.currentTool = status.currentTool ?? job.currentTool;
 						job.currentToolStartedAt = status.currentToolStartedAt ?? job.currentToolStartedAt;
+						job.recentOutput = status.recentOutput ?? status.steps?.[status.currentStep ?? 0]?.recentOutput ?? job.recentOutput;
 						job.mode = status.mode;
 						job.currentStep = status.currentStep ?? job.currentStep;
 						job.stepsTotal = status.steps?.length ?? job.stepsTotal;

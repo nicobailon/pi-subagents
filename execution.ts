@@ -73,6 +73,35 @@ function appendRecentOutput(progress: AgentProgress, lines: string[]): void {
 	}
 }
 
+function extractAssistantProgressPreview(message: Message): string {
+	const text = extractTextFromContent(message.content).trim();
+	if (text) {
+		const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+		const tail = lines.slice(-3).join(" / ");
+		return tail.length > 240 ? `${tail.slice(0, 237)}...` : tail;
+	}
+	if (Array.isArray(message.content) && message.content.some((part) => part && typeof part === "object" && (part as { type?: string }).type === "thinking")) {
+		return "thinking…";
+	}
+	return "";
+}
+
+function setRecentOutputPreview(progress: AgentProgress, previewIndex: number | undefined, text: string): number | undefined {
+	const trimmed = text.trim();
+	if (!trimmed) return previewIndex;
+	if (previewIndex !== undefined && previewIndex >= 0 && previewIndex < progress.recentOutput.length) {
+		progress.recentOutput[previewIndex] = trimmed;
+		return previewIndex;
+	}
+	progress.recentOutput.push(trimmed);
+	if (progress.recentOutput.length > 50) {
+		const removed = progress.recentOutput.length - 50;
+		progress.recentOutput.splice(0, removed);
+		return Math.max(0, progress.recentOutput.length - 1);
+	}
+	return progress.recentOutput.length - 1;
+}
+
 function snapshotProgress(progress: AgentProgress): AgentProgress {
 	return {
 		...progress,
@@ -156,6 +185,7 @@ async function runSingleAttempt(
 	let interruptedByControl = false;
 	const allControlEvents: ControlEvent[] = [];
 	let pendingControlEvents: ControlEvent[] = [];
+	let streamingPreviewIndex: number | undefined;
 
 	const progress: AgentProgress = {
 		index: options.index ?? 0,
@@ -345,7 +375,14 @@ async function runSingleAttempt(
 			progress.lastActivityAt = now;
 			updateActivityState(now);
 
+			if (evt.type === "message_update" && evt.message?.role === "assistant") {
+				const preview = extractAssistantProgressPreview(evt.message);
+				streamingPreviewIndex = setRecentOutputPreview(progress, streamingPreviewIndex, preview);
+				fireUpdate();
+			}
+
 			if (evt.type === "tool_execution_start") {
+				streamingPreviewIndex = undefined;
 				if (options.allowIntercomDetach && evt.toolName === "intercom") {
 					intercomStarted = true;
 				}
@@ -371,6 +408,7 @@ async function runSingleAttempt(
 			}
 
 			if (evt.type === "message_end" && evt.message) {
+				streamingPreviewIndex = undefined;
 				result.messages.push(evt.message);
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
@@ -398,6 +436,7 @@ async function runSingleAttempt(
 			}
 
 			if (evt.type === "tool_result_end" && evt.message) {
+				streamingPreviewIndex = undefined;
 				result.messages.push(evt.message);
 				appendRecentOutput(progress, extractTextFromContent(evt.message.content).split("\n").slice(-10));
 				fireUpdate();

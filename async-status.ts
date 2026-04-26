@@ -13,6 +13,7 @@ export interface AsyncRunStepSummary {
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
+	recentOutput?: string[];
 	durationMs?: number;
 	tokens?: TokenUsage;
 	skills?: string[];
@@ -29,6 +30,7 @@ export interface AsyncRunSummary {
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
+	recentOutput?: string[];
 	mode: "single" | "chain";
 	cwd?: string;
 	startedAt: number;
@@ -109,6 +111,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		lastActivityAt,
 		currentTool: status.currentTool,
 		currentToolStartedAt: status.currentToolStartedAt,
+		recentOutput: status.recentOutput,
 		mode: status.mode,
 		cwd: status.cwd,
 		startedAt: status.startedAt,
@@ -126,6 +129,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 				...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
 				...(step.currentTool ? { currentTool: step.currentTool } : {}),
 				...(step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
+				...(step.recentOutput ? { recentOutput: step.recentOutput } : {}),
 				...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
 				...(step.tokens ? { tokens: step.tokens } : {}),
 				...(step.skills ? { skills: step.skills } : {}),

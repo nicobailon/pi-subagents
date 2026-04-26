@@ -198,8 +198,8 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 
 		lines.push(truncLine(`- ${id} ${status} | ${agentLabel} | ${stepText}${elapsed ? ` | ${elapsed}` : ""}${tokenText}${activitySuffix}`, w));
 
-		if ((job.status === "running" || job.status === "paused") && job.outputFile) {
-			const tail = getOutputTail(job.outputFile, 3);
+		if (job.status === "running" || job.status === "paused") {
+			const tail = job.recentOutput?.length ? job.recentOutput.slice(-3) : job.outputFile ? getOutputTail(job.outputFile, 3) : [];
 			for (const line of tail) {
 				lines.push(truncLine(theme.fg("dim", `  > ${line}`), w));
 			}

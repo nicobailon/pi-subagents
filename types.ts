@@ -200,6 +200,7 @@ export interface AsyncStatus {
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
+	recentOutput?: string[];
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate?: number;
@@ -213,6 +214,7 @@ export interface AsyncStatus {
 		lastActivityAt?: number;
 		currentTool?: string;
 		currentToolStartedAt?: number;
+		recentOutput?: string[];
 		startedAt?: number;
 		endedAt?: number;
 		durationMs?: number;
@@ -237,6 +239,7 @@ export interface AsyncJobState {
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
+	recentOutput?: string[];
 	mode?: "single" | "chain";
 	agents?: string[];
 	currentStep?: number;

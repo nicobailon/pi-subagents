@@ -122,6 +122,28 @@ function tokenUsageFromAttempts(attempts: ModelAttempt[] | undefined): TokenUsag
 	return total > 0 ? { input, output, total } : null;
 }
 
+function extractAssistantProgressPreview(message: Message): string {
+	const text = extractTextFromContent(message.content).trim();
+	if (text) {
+		const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+		const tail = lines.slice(-3).join(" / ");
+		return tail.length > 240 ? `${tail.slice(0, 237)}...` : tail;
+	}
+	if (Array.isArray(message.content) && message.content.some((part) => part && typeof part === "object" && (part as { type?: string }).type === "thinking")) {
+		return "thinking…";
+	}
+	return "";
+}
+
+function setRecentOutputPreview(lines: string[] | undefined, text: string): string[] | undefined {
+	const trimmed = text.trim();
+	if (!trimmed) return lines;
+	const next = lines ? [...lines] : [];
+	if (next.length === 0) next.push(trimmed);
+	else next[next.length - 1] = trimmed;
+	return next.slice(-5);
+}
+
 interface ChildEventContext {
 	eventsPath: string;
 	runId: string;
@@ -173,6 +195,7 @@ function runPiStreaming(
 	maxSubagentDepth?: number,
 	childEventContext?: ChildEventContext,
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void,
+	onMessageUpdate?: (event: ChildEvent) => void,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
@@ -232,6 +255,11 @@ function runPiStreaming(
 			}
 
 			appendChildEvent(event);
+
+			if (event.type === "message_update" && event.message?.role === "assistant") {
+				onMessageUpdate?.(event);
+				return;
+			}
 
 			if (event.type === "tool_execution_start" && event.toolName) {
 				const toolArgs = extractToolArgsPreview(event.args ?? {});
@@ -525,6 +553,7 @@ interface SingleStepContext {
 	piArgv1?: string;
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	childIntercomTarget?: string;
+	onMessageUpdate?: (event: ChildEvent) => void;
 }
 
 /** Run a single pi agent step, returning output and metadata */
@@ -598,6 +627,7 @@ async function runSingleStep(
 			step.maxSubagentDepth,
 			{ eventsPath, runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
 			ctx.registerInterrupt,
+			ctx.onMessageUpdate,
 		);
 		cleanupTempDir(tempDir);
 
@@ -686,6 +716,7 @@ type RunnerStatusPayload = {
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
+	recentOutput?: string[];
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate: number;
@@ -699,6 +730,7 @@ type RunnerStatusPayload = {
 		lastActivityAt?: number;
 		currentTool?: string;
 		currentToolStartedAt?: number;
+		recentOutput?: string[];
 		startedAt?: number;
 		endedAt?: number;
 		durationMs?: number;
@@ -772,10 +804,12 @@ function markParallelGroupRunning(input: {
 		input.statusPayload.steps[flatTaskIndex].status = "running";
 		input.statusPayload.steps[flatTaskIndex].startedAt = input.groupStartTime;
 		input.statusPayload.steps[flatTaskIndex].lastActivityAt = input.groupStartTime;
+		input.statusPayload.steps[flatTaskIndex].recentOutput = undefined;
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.activityState = undefined;
 	input.statusPayload.lastActivityAt = input.groupStartTime;
+	input.statusPayload.recentOutput = undefined;
 	input.statusPayload.lastUpdate = input.groupStartTime;
 	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
 	writeJson(input.statusPath, input.statusPayload);
@@ -870,8 +904,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		const runningIndexes = statusPayload.steps
 			.map((step, index) => step.status === "running" ? index : -1)
 			.filter((index) => index >= 0);
-		let lastActivityAt = statusPayload.steps[statusPayload.currentStep]?.startedAt ?? overallStartTime;
+		let lastActivityAt = statusPayload.lastActivityAt ?? statusPayload.steps[statusPayload.currentStep]?.lastActivityAt ?? statusPayload.steps[statusPayload.currentStep]?.startedAt ?? overallStartTime;
 		for (const index of runningIndexes.length > 0 ? runningIndexes : [statusPayload.currentStep]) {
+			lastActivityAt = Math.max(lastActivityAt, statusPayload.steps[index]?.lastActivityAt ?? 0);
 			try {
 				lastActivityAt = Math.max(lastActivityAt, fs.statSync(path.join(asyncDir, `output-${index}.log`)).mtimeMs);
 			} catch {
@@ -941,6 +976,23 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		}, 1000);
 		activityTimer.unref?.();
 	}
+
+	const recordMessageUpdateActivity = (stepIndex: number, event: ChildEvent) => {
+		if (event.message?.role !== "assistant") return;
+		const now = Date.now();
+		const step = statusPayload.steps[stepIndex];
+		if (!step || step.status !== "running") return;
+		const preview = extractAssistantProgressPreview(event.message);
+		statusPayload.lastActivityAt = now;
+		statusPayload.lastUpdate = now;
+		statusPayload.activityState = undefined;
+		statusPayload.recentOutput = setRecentOutputPreview(statusPayload.recentOutput, preview);
+		step.lastActivityAt = now;
+		step.activityState = undefined;
+		step.recentOutput = setRecentOutputPreview(step.recentOutput, preview);
+		currentActivityState = undefined;
+		writeJson(statusPath, statusPayload);
+	};
 
 	const interruptRunner = () => {
 		if (interrupted || statusPayload.state !== "running") return;
@@ -1083,6 +1135,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							registerInterrupt: (interrupt) => {
 								activeChildInterrupt = interrupt;
 							},
+							onMessageUpdate: (event) => recordMessageUpdateActivity(fi, event),
 						});
 						if (task.sessionFile) {
 							latestSessionFile = task.sessionFile;
@@ -1182,7 +1235,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].skills = seqStep.skills;
 			statusPayload.steps[flatIndex].startedAt = stepStartTime;
 			statusPayload.steps[flatIndex].lastActivityAt = stepStartTime;
+			statusPayload.steps[flatIndex].recentOutput = undefined;
 			statusPayload.lastActivityAt = stepStartTime;
+			statusPayload.recentOutput = undefined;
 			statusPayload.lastUpdate = stepStartTime;
 			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
 			writeJson(statusPath, statusPayload);
@@ -1207,6 +1262,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				registerInterrupt: (interrupt) => {
 					activeChildInterrupt = interrupt;
 				},
+				onMessageUpdate: (event) => recordMessageUpdateActivity(flatIndex, event),
 			});
 			if (seqStep.sessionFile) {
 				latestSessionFile = seqStep.sessionFile;
