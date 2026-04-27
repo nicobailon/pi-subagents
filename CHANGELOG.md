@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-04-27
+
+### Fixed
+- Made the packaged `/parallel-cleanup` prompt self-contained instead of referencing local-only cleanup skills.
+
 ## [0.20.0] - 2026-04-27
 
 ### Added
