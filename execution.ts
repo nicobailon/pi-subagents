@@ -212,6 +212,8 @@ async function runSingleAttempt(
 		const HARD_KILL_MS = 3000;
 		let childExited = false;
 		let forcedTerminationSignal = false;
+		let finalAssistantDelivered = false;
+		let finalDrainCleanupWarning: string | undefined;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		const clearFinalDrainTimers = () => {
@@ -231,8 +233,8 @@ async function runSingleAttempt(
 				const termSent = trySignalChild(proc, "SIGTERM");
 				if (!termSent) return;
 				forcedTerminationSignal = true;
-				result.error = result.error
-					?? `Subagent process did not exit within ${FINAL_DRAIN_MS}ms after its final message. Forcing termination.`;
+				finalDrainCleanupWarning = `Subagent process did not exit within ${FINAL_DRAIN_MS}ms after its final message. Forcing termination.`;
+				if (!finalAssistantDelivered) result.error = result.error ?? finalDrainCleanupWarning;
 				finalHardKillTimer = setTimeout(() => {
 					if (settled || processClosed || detached) return;
 					forcedTerminationSignal = trySignalChild(proc, "SIGKILL") || forcedTerminationSignal;
@@ -389,7 +391,9 @@ async function runSingleAttempt(
 					const stopReason = (evt.message as { stopReason?: string }).stopReason;
 					const hasToolCall = Array.isArray(evt.message.content)
 						&& evt.message.content.some((part) => (part as { type?: string }).type === "toolCall");
+					const finalText = extractTextFromContent(evt.message.content).trim();
 					if (stopReason === "stop" && !hasToolCall) {
+						finalAssistantDelivered ||= !evt.message.errorMessage && finalText.length > 0;
 						startFinalDrain();
 					}
 				}
@@ -444,10 +448,14 @@ async function runSingleAttempt(
 			}
 			processClosed = true;
 			if (buf.trim()) processLine(buf);
-			if (code !== 0 && stderrBuf.trim() && !result.error) {
+			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && finalAssistantDelivered;
+			if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
 				result.error = stderrBuf.trim();
 			}
-			const finalCode = forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			if (forcedDrainAfterFinalSuccess && finalDrainCleanupWarning) {
+				appendRecentOutput(progress, [`Warning: ${finalDrainCleanupWarning}`]);
+			}
+			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			finish(finalCode);
 		});
 		proc.on("error", (error) => {

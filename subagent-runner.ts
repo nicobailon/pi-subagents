@@ -260,7 +260,11 @@ function runPiStreaming(
 				const stopReason = (event.message as { stopReason?: string }).stopReason;
 				const hasToolCall = Array.isArray(event.message.content)
 					&& event.message.content.some((part) => (part as { type?: string }).type === "toolCall");
-				if (stopReason === "stop" && !hasToolCall) startFinalDrain();
+				const finalText = extractTextFromContent(event.message.content).trim();
+				if (stopReason === "stop" && !hasToolCall) {
+					finalAssistantDelivered ||= !event.message.errorMessage && finalText.length > 0;
+					startFinalDrain();
+				}
 			}
 		};
 
@@ -283,6 +287,8 @@ function runPiStreaming(
 		const HARD_KILL_MS = 3000;
 		let childExited = false;
 		let forcedTerminationSignal = false;
+		let finalAssistantDelivered = false;
+		let finalDrainCleanupWarning: string | undefined;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let settled = false;
@@ -324,8 +330,9 @@ function runPiStreaming(
 				const termSent = trySignalChild(child, "SIGTERM");
 				if (!termSent) return;
 				forcedTerminationSignal = true;
-				if (!error) {
-					error = `Subagent process did not exit within ${FINAL_DRAIN_MS}ms after its final message. Forcing termination.`;
+				finalDrainCleanupWarning = `Subagent process did not exit within ${FINAL_DRAIN_MS}ms after its final message. Forcing termination.`;
+				if (!finalAssistantDelivered && !error) {
+					error = finalDrainCleanupWarning;
 				}
 				finalHardKillTimer = setTimeout(() => {
 					if (settled) return;
@@ -348,13 +355,14 @@ function runPiStreaming(
 			if (stderrBuf.trim()) appendChildLine("subagent.child.stderr", stderrBuf);
 			outputStream.end();
 			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
+			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && finalAssistantDelivered;
 			resolve({
 				stderr,
-				exitCode: interrupted ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
+				exitCode: interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
 				model,
-				error: interrupted ? undefined : error,
+				error: interrupted || forcedDrainAfterFinalSuccess ? undefined : error,
 				finalOutput,
 				interrupted,
 			});
