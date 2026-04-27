@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-04-27
+
+### Changed
+- Updated the packaged `/parallel-review` prompt so reviewer angles are generated dynamically from the user's intent, plan, implemented code, and current diff, with the listed angles framed as examples rather than fixed defaults.
+
 ## [0.19.2] - 2026-04-27
 
 ### Added
