@@ -1,5 +1,5 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
 function fuzzyScore(query: string, text: string): number {
 	const lq = query.toLowerCase();
@@ -37,7 +37,9 @@ export function pad(s: string, len: number): string {
 
 export function row(content: string, width: number, theme: Theme): string {
 	const innerW = width - 2;
-	return theme.fg("border", "│") + pad(content, innerW) + theme.fg("border", "│");
+	const singleLine = content.replace(/[\r\n]+/g, " ").replace(/\t/g, "  ");
+	const clipped = truncateToWidth(singleLine, innerW);
+	return theme.fg("border", "│") + pad(clipped, innerW) + theme.fg("border", "│");
 }
 
 export function renderHeader(text: string, width: number, theme: Theme): string {
