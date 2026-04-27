@@ -507,6 +507,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
 	});
 
+
+	it("treats forced drain after final assistant output as cleanup success", async () => {
+		mockPi.onCall({
+			jsonl: [events.assistantMessage("done-before-drain")],
+			stderr: "Done after 1 turn(s). Ready for input.\n",
+			keepAliveAfterFinalMessageMs: 10000,
+		});
+		const agents = makeAgentConfigs(["echo"]);
+
+		const start = Date.now();
+		const result = await runSync(tempDir, agents, "echo", "Task", {});
+		const elapsed = Date.now() - start;
+
+		assert.ok(elapsed < 9000, `should force-drain instead of hanging, took ${elapsed}ms`);
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(result.finalOutput, "done-before-drain");
+	});
+
+	it("keeps forced drain after empty assistant output as failure", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "" }],
+					model: "mock/test-model",
+					stopReason: "stop",
+					usage: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+				},
+			}],
+			keepAliveAfterFinalMessageMs: 10000,
+		});
+		const agents = makeAgentConfigs(["echo"]);
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /did not exit within 5000ms after its final message/);
+	});
+
 	it("handles abort signal (completes faster than delay)", async () => {
 		mockPi.onCall({ delay: 10000 }); // Long delay — process should be killed before this
 		const agents = makeAgentConfigs(["slow"]);

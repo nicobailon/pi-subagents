@@ -8,6 +8,7 @@ export interface MockPiResponse {
 	stderr?: string;
 	exitCode?: number;
 	delay?: number;
+	keepAliveAfterFinalMessageMs?: number;
 	jsonl?: unknown[];
 	steps?: Array<{
 		delay?: number;

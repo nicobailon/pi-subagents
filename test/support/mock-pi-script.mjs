@@ -139,6 +139,10 @@ async function main() {
 		process.stderr.write(response.stderr);
 	}
 
+	if (typeof response.keepAliveAfterFinalMessageMs === "number" && response.keepAliveAfterFinalMessageMs > 0) {
+		await new Promise((resolve) => setTimeout(resolve, response.keepAliveAfterFinalMessageMs));
+	}
+
 	process.exit(typeof response.exitCode === "number" ? response.exitCode : 0);
 }
 
