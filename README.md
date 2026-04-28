@@ -183,6 +183,7 @@ The package includes reusable prompt templates for common workflows. You do not 
 | `/parallel-review` | Launch fresh-context reviewers with distinct angles, then synthesize what to fix. |
 | `/parallel-research` | Combine `researcher` and `scout` for external evidence, local code context, and practical tradeoffs. |
 | `/gather-context-and-clarify` | Scout/research first, then ask the user the clarification questions that matter. |
+| `/parallel-cleanup` | Launch two fresh-context reviewers (deslop + verbosity passes) for an adversarial cleanup review of the current diff. |
 
 ## Optional pi-intercom companion
 

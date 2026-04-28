@@ -43,6 +43,7 @@ Packaged prompt shortcuts are also available for repeatable workflows:
 - `/parallel-review` — fresh-context reviewers with distinct review angles, then synthesis
 - `/parallel-research` — combine `researcher` and `scout` for external evidence plus local code context
 - `/gather-context-and-clarify` — scout/research first, then ask the user clarifying questions with `interview`
+- `/parallel-cleanup` — two fresh-context reviewers (deslop + verbosity passes) for an adversarial cleanup review of the current diff
 
 ## Builtin Agents
 
@@ -424,8 +425,9 @@ copying a full builtin file.
 ## Prompt Template Integration
 
 The package includes prompt shortcuts for common workflows: `/parallel-review`,
-`/parallel-research`, and `/gather-context-and-clarify`. Use them when the user
-wants repeatable review, research, or clarification patterns.
+`/parallel-research`, `/gather-context-and-clarify`, and `/parallel-cleanup`.
+Use them when the user wants repeatable review, research, clarification, or
+cleanup-review patterns.
 
 If `pi-prompt-template-model` is installed, additional user prompt templates can delegate into
 `pi-subagents`. This is useful when a slash command should always run through a
