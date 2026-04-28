@@ -417,7 +417,7 @@ Supported override fields are `model`, `fallbackModels`, `thinking`, `systemProm
 
 You can also manage builtin overrides from `/agents`. On a builtin detail screen, press `e`, choose user or project scope if needed, and save the fields you want to override.
 
-Set `disabled: true` to hide a builtin from runtime discovery while keeping it visible in `/agents`. For bulk control, set `subagents.disableBuiltins: true` in settings. Overridden builtins show badges like `[builtin+user]` or `[builtin+project]`; disabled builtins show `off` badges in the manager.
+Set `disabled: true` to hide a builtin from runtime discovery and from the agent-facing `subagent({ action: "list" })` output while keeping it visible in `/agents`. For bulk control, set `subagents.disableBuiltins: true` in settings. Overridden builtins show badges like `[builtin+user]` or `[builtin+project]`; disabled builtins show `off` badges in the manager.
 
 ### Prompt assembly
 

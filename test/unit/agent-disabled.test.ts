@@ -158,7 +158,7 @@ describe("builtin agent disabling", () => {
 		);
 	});
 
-	it("separates disabled builtins from executable agents in management list output", () => {
+	it("hides disabled builtins from the agent-facing management list output", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: { disableBuiltins: true },
 		});
@@ -170,18 +170,19 @@ describe("builtin agent disabling", () => {
 			"utf-8",
 		);
 
+		const disabledBuiltinNames = discoverAgentsAll(tempProject).builtin.map((agent) => agent.name);
+		assert.ok(disabledBuiltinNames.length > 0);
+
 		const text = readText(handleList(
 			{},
 			{ cwd: tempProject, modelRegistry: { getAvailable: () => [] } },
 		));
 
 		assert.match(text, /Executable agents:\n- helper \(project\): Helper/);
-		assert.match(text, /Disabled builtins:\n- .* \(builtin, disabled\): /);
-		const executableSection = text.slice(
-			text.indexOf("Executable agents:"),
-			text.indexOf("\n\nDisabled builtins:"),
-		);
-		assert.doesNotMatch(executableSection, /\(builtin, disabled\)/);
+		assert.doesNotMatch(text, /Disabled builtins:/);
+		for (const name of disabledBuiltinNames) {
+			assert.doesNotMatch(text, new RegExp(`^- ${name} \\(builtin`, "m"));
+		}
 	});
 
 	it("buildBuiltinOverrideConfig emits disabled false when re-enabling a builtin", () => {

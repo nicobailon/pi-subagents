@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `subagent({ action: "list" })` no longer prints disabled builtin agents, so agents are not nudged to call names that runtime discovery will reject.
+
 ## [0.20.1] - 2026-04-27
 
 ### Fixed

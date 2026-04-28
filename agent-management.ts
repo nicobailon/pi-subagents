@@ -372,12 +372,10 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const d = discoverAgentsAll(ctx.cwd);
 	const scopedAgents = allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const agents = scopedAgents.filter((a) => !a.disabled);
-	const disabledBuiltins = scopedAgents.filter((a) => a.source === "builtin" && a.disabled);
 	const chains = d.chains.filter((c) => scope === "both" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const lines = [
 		"Executable agents:",
 		...(agents.length ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`) : ["- (none)"]),
-		...(disabledBuiltins.length ? ["", "Disabled builtins:", ...disabledBuiltins.map((a) => `- ${a.name} (${a.source}, disabled): ${a.description}`)] : []),
 		"",
 		"Chains:",
 		...(chains.length ? chains.map((c) => `- ${c.name} (${c.source}): ${c.description}`) : ["- (none)"]),

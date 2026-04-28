@@ -412,7 +412,7 @@ CHAIN TEMPLATE VARIABLES (use in task strings):
 Example: { chain: [{agent:"agent-a", task:"Analyze {task}"}, {agent:"agent-b", task:"Plan based on {previous}"}] }
 
 MANAGEMENT (use action field, omit agent/task/chain/tasks):
-• { action: "list" } - discover executable agents/chains and any disabled builtins
+• { action: "list" } - discover executable agents/chains
 • { action: "get", agent: "name" } - full detail
 • { action: "create", config: { name, systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, ... } }
 • { action: "update", agent: "name", config: { ... } } - merge
