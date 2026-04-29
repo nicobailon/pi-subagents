@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Creates implementation plans from context and requirements
-tools: read, grep, find, ls, write
+tools: read, grep, find, ls, write, intercom
 model: openai-codex/gpt-5.5
 thinking: high
 systemPromptMode: replace
@@ -50,3 +50,6 @@ Which tasks depend on others.
 Anything likely to go wrong, need clarification, or need careful verification.
 
 Keep the plan concrete. Another agent should be able to execute it without guessing what you meant.
+
+## Pi-intercom handoff
+If `intercom` is available and runtime bridge instructions or the task name a safe orchestrator target, send the completed plan back with a blocking `intercom({ action: "ask", ... })` before finishing. Include the plan path or concise plan summary and ask whether the orchestrator wants clarification, revisions, or approval to proceed. If no safe target is available, do not guess; return normally.

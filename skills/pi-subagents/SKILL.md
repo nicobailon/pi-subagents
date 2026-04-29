@@ -492,6 +492,46 @@ subagent({
 })
 ```
 
+### Clarify → Plan → Implement → Review (self-orchestrated workflow)
+
+When you are the orchestrating agent for a new feature or non-trivial change, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents:
+
+- `/gather-context-and-clarify` maps to: launch `scout` and, when needed, `researcher`; synthesize findings; then use `interview` to ask every clarification question needed for shared understanding.
+- `/parallel-review` maps to: launch fresh-context `reviewer` agents with distinct review angles; synthesize the feedback before applying anything.
+- `/parallel-research` maps to: combine local `scout` context with external `researcher` evidence when current docs, ecosystem behavior, or API details matter.
+- `/parallel-cleanup` maps to: use review-only cleanup passes after implementation, especially for simplicity, verbosity, and redundant tests.
+
+For feature work, use this sequence:
+
+1. Clarify first. This is mandatory. Gather code context with `scout` or `context-builder`, add `researcher` only when external evidence matters, then ask the user clarifying questions with `interview` until scope, acceptance criteria, constraints, and non-goals are clear.
+2. Plan when useful. For complex work, call `planner` or write a plan doc yourself. For simple work, confirm the shared understanding and skip the plan.
+3. Implement with one writer. After approval, launch a forked `worker` with a proper meta prompt that includes the clarified requirements, relevant context, plan path or summary, acceptance criteria, and validation expectations.
+4. Review automatically. After the worker completes, launch parallel fresh-context `reviewer` agents for correctness/regressions, tests/validation, and simplicity/maintainability. Use `output: false` unless review artifacts are explicitly needed.
+5. Synthesize before acting. Separate blockers, fixes worth doing now, optional improvements, and feedback to ignore/defer. Ask before applying review fixes unless the user already authorized a writer pass.
+
+Example implementation handoff after clarification and optional planning:
+
+```typescript
+subagent({
+  agent: "worker",
+  context: "fork",
+  task: "Implement the approved feature.\n\nClarified requirements:\n- ...\n\nPlan: see ~/Documents/docs/...-plan.md\n\nValidation expected:\n- ..."
+})
+```
+
+Example review pass after implementation:
+
+```typescript
+subagent({
+  tasks: [
+    { agent: "reviewer", task: "Review the current diff for correctness and regressions. Inspect changed files directly.", output: false },
+    { agent: "reviewer", task: "Review the current diff for tests and validation quality. Inspect changed files directly.", output: false },
+    { agent: "reviewer", task: "Review the current diff for simplicity and maintainability. Inspect changed files directly.", output: false }
+  ],
+  concurrency: 3
+})
+```
+
 ### Review loop
 
 ```typescript

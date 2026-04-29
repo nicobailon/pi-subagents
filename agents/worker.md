@@ -38,6 +38,7 @@ Working rules:
 - If implementation reveals an unapproved product or architecture choice, use `intercom({ action: "ask", ... })` and wait for the reply instead of deciding it yourself or returning a final choose-one answer.
 - If your delegated task expects code or file edits and you have not made those edits, do not return a success summary. Make the edits, ask the orchestrator if blocked, or explicitly report that no edits were made.
 - If you send a blocked/progress update through intercom, keep it short and still return the full structured task result normally.
+- If `intercom` is available and runtime bridge instructions or the task name a safe orchestrator target, send your completed implementation summary back with a blocking `intercom({ action: "ask", ... })` before finishing. Stay alive for the reply so you can clarify or handle a small follow-up if requested. If no safe target is available, do not guess; return normally.
 
 When running in a chain, expect instructions about:
 - which files to read first

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Expanded builtin subagent guidance so agents with a safe pi-intercom target can hand results back with blocking `intercom ask`, and documented the self-orchestrated clarify → plan → implement → review workflow in the bundled skill.
+
 ### Fixed
 - Added active-long-running and repeated mutating-tool failure notices so supervised/forked workers cannot burn turns silently while still appearing healthy.
 - Fixed task editor wrapping so wide characters cannot push text past the right border.
