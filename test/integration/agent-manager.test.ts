@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { visibleWidth } from "@mariozechner/pi-tui";
-import { AgentManagerComponent, type AgentData, type ManagerResult } from "../../agent-manager.ts";
+import { AgentManagerComponent, type AgentData, type AgentManagerOptions, type ManagerResult } from "../../agent-manager.ts";
 import { discoverAgentsAll, type AgentConfig, type ChainConfig } from "../../agents.ts";
 
 const tempDirs: string[] = [];
@@ -49,7 +49,7 @@ function createAgentData(root: string, agents: AgentConfig[], chains: ChainConfi
 	};
 }
 
-function createManager(root: string, done: (result: ManagerResult) => void = () => {}) {
+function createManager(root: string, done: (result: ManagerResult) => void = () => {}, options: AgentManagerOptions = {}) {
 	return new AgentManagerComponent(
 		{ requestRender() {} } as { requestRender(): void },
 		theme(),
@@ -57,6 +57,7 @@ function createManager(root: string, done: (result: ManagerResult) => void = () 
 		[],
 		[],
 		done,
+		options,
 	);
 }
 
@@ -77,6 +78,26 @@ describe("agent manager", () => {
 
 		assert.ok(lines.length > 0);
 		for (const line of lines) assert.equal(visibleWidth(line), 120);
+	});
+
+	it("uses shift+ctrl+n as the default new-agent shortcut label", () => {
+		const root = createTempRoot("pi-agent-manager-shortcut-default-");
+		const component = createManager(root);
+
+		const rendered = component.render(84).join("\n");
+
+		assert.match(rendered, /\[shift\+ctrl\+n\] new/);
+		assert.doesNotMatch(rendered, /\[alt\+n\] new/);
+	});
+
+	it("uses the configured new-agent shortcut", () => {
+		const root = createTempRoot("pi-agent-manager-shortcut-config-");
+		const component = createManager(root, () => {}, { newShortcut: "x" });
+
+		component.handleInput("x");
+
+		assert.equal(component["screen"], "template-select");
+		assert.match(component.render(84).join("\n"), /Select Template/);
 	});
 
 	it("renames the backing file when saving an existing renamed agent", () => {

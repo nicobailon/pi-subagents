@@ -374,7 +374,7 @@ Useful keys:
 
 - type to search the list
 - `Enter` opens detail screens
-- `Alt+N` creates an agent or chain from a template
+- `Shift+Ctrl+N` creates an agent or chain from a template
 - `Ctrl+R` launches selected agents as a run or chain
 - `Ctrl+P` opens the parallel builder
 - `Tab` selects agents in the list or toggles skip-clarify in task input
@@ -832,6 +832,18 @@ Session directory precedence is: `params.sessionDir`, then `config.defaultSessio
 ```
 
 Controls nested delegation when no inherited `PI_SUBAGENT_MAX_DEPTH` is already in effect. Per-agent `maxSubagentDepth` can tighten the limit for that agent’s child runs, but cannot relax an inherited stricter limit.
+
+### `agentManager.newShortcut`
+
+```json
+{
+  "agentManager": {
+    "newShortcut": "shift+ctrl+n"
+  }
+}
+```
+
+Sets the `/agents` list shortcut for opening the new agent/chain template picker. The default is `shift+ctrl+n`; use Pi key names such as `ctrl+n` if your terminal cannot distinguish Shift for control chords.
 
 ### `intercomBridge`
 

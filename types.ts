@@ -445,6 +445,10 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
+interface AgentManagerConfig {
+	newShortcut?: string;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
@@ -452,6 +456,7 @@ export interface ExtensionConfig {
 	maxSubagentDepth?: number;
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;
+	agentManager?: AgentManagerConfig;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	intercomBridge?: IntercomBridgeConfig;

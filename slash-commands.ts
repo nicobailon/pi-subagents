@@ -23,6 +23,7 @@ import {
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
+	type ExtensionConfig,
 	type SingleResult,
 	type SubagentState,
 } from "./types.ts";
@@ -324,6 +325,7 @@ async function runSlashSubagent(
 async function openAgentManager(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
+	config: ExtensionConfig = {},
 ): Promise<void> {
 	const agentData = { ...discoverAgentsAll(ctx.cwd), cwd: ctx.cwd };
 	const models = ctx.modelRegistry.getAvailable().map((m) => ({
@@ -334,7 +336,7 @@ async function openAgentManager(
 	const skills = discoverAvailableSkills(ctx.cwd);
 
 	const result = await ctx.ui.custom<ManagerResult>(
-		(tui, theme, _kb, done) => new AgentManagerComponent(tui, theme, agentData, models, skills, done),
+		(tui, theme, _kb, done) => new AgentManagerComponent(tui, theme, agentData, models, skills, done, { newShortcut: config.agentManager?.newShortcut }),
 		{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 	);
 	if (!result) return;
@@ -448,11 +450,12 @@ const parseAgentArgs = (
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
+	config: ExtensionConfig = {},
 ): void {
 	pi.registerCommand("agents", {
 		description: "Open the Agents Manager",
 		handler: async (_args, ctx) => {
-			await openAgentManager(pi, ctx);
+			await openAgentManager(pi, ctx, config);
 		},
 	});
 
@@ -578,7 +581,7 @@ export function registerSlashCommands(
 
 	pi.registerShortcut("ctrl+shift+a", {
 		handler: async (ctx) => {
-			await openAgentManager(pi, ctx);
+			await openAgentManager(pi, ctx, config);
 		},
 	});
 }

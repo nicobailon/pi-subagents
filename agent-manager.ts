@@ -18,7 +18,7 @@ import {
 import { serializeAgent } from "./agent-serializer.ts";
 import { TEMPLATE_ITEMS, type AgentTemplate, type TemplateItem } from "./agent-templates.ts";
 import { parseChain, serializeChain } from "./chain-serializer.ts";
-import { renderList, handleListInput, type ListAgent, type ListState, type ListAction } from "./agent-manager-list.ts";
+import { DEFAULT_AGENT_MANAGER_NEW_SHORTCUT, renderList, handleListInput, type ListAgent, type ListShortcuts, type ListState, type ListAction } from "./agent-manager-list.ts";
 import { createParallelState, handleParallelInput, renderParallel, formatParallelTitle, type ParallelState, type AgentOption } from "./agent-manager-parallel.ts";
 import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction, type LaunchToggleState } from "./agent-manager-detail.ts";
 import { renderChainDetail, handleChainDetailInput, type ChainDetailAction, type ChainDetailState } from "./agent-manager-chain-detail.ts";
@@ -43,6 +43,7 @@ interface ChainEntry { id: string; kind: "chain"; config: ChainConfig; }
 interface NameInputState { mode: "new-agent" | "clone-agent" | "clone-chain" | "new-chain"; editor: TextEditorState; scope: "user" | "project"; allowProject: boolean; sourceId?: string; template?: AgentTemplate; error?: string; }
 interface StatusMessage { text: string; type: "error" | "info"; }
 interface OverrideScopeState { selectedScope: "user" | "project"; allowProject: boolean; }
+export interface AgentManagerOptions { newShortcut?: string; }
 
 const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "disabled", "tools", "skills", "prompt"];
 
@@ -131,14 +132,16 @@ export class AgentManagerComponent implements Component {
 	private models: ModelInfo[];
 	private skills: SkillInfo[];
 	private done: (result: ManagerResult) => void;
+	private shortcuts: ListShortcuts;
 
-	constructor(tui: TUI, theme: Theme, agentData: AgentData, models: ModelInfo[], skills: SkillInfo[], done: (result: ManagerResult) => void) {
+	constructor(tui: TUI, theme: Theme, agentData: AgentData, models: ModelInfo[], skills: SkillInfo[], done: (result: ManagerResult) => void, options: AgentManagerOptions = {}) {
 		this.tui = tui;
 		this.theme = theme;
 		this.agentData = agentData;
 		this.models = models;
 		this.skills = skills;
 		this.done = done;
+		this.shortcuts = { newShortcut: options.newShortcut?.trim() || DEFAULT_AGENT_MANAGER_NEW_SHORTCUT };
 		this.loadEntries();
 	}
 
@@ -518,7 +521,7 @@ export class AgentManagerComponent implements Component {
 		if (this.screen === "list" && this.statusMessage) this.clearStatus();
 		if (this.screen.startsWith("edit") && this.editState?.error) this.editState.error = undefined;
 		switch (this.screen) {
-			case "list": { const action = handleListInput(this.listState, this.listAgents(), data); if (action) this.handleListAction(action); this.tui.requestRender(); return; }
+			case "list": { const action = handleListInput(this.listState, this.listAgents(), data, this.shortcuts); if (action) this.handleListAction(action); this.tui.requestRender(); return; }
 			case "template-select": this.handleTemplateSelectInput(data); return;
 			case "override-scope": this.handleOverrideScopeInput(data); return;
 			case "detail": {
@@ -671,14 +674,14 @@ export class AgentManagerComponent implements Component {
 	render(width: number): string[] {
 		this.overlayWidth = width; const w = this.overlayWidth;
 		switch (this.screen) {
-			case "list": return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage);
+			case "list": return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.shortcuts);
 			case "template-select": return this.renderTemplateSelect(w);
 			case "override-scope": return this.renderOverrideScope(w);
-			case "detail": { const entry = this.getAgentEntry(this.currentAgentId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage); return renderDetail(this.detailState, entry.config, this.agentData.cwd, w, this.theme); }
-			case "chain-detail": { const entry = this.getChainEntry(this.currentChainId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage); return renderChainDetail(this.chainDetailState, entry.config, w, this.theme); }
+			case "detail": { const entry = this.getAgentEntry(this.currentAgentId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.shortcuts); return renderDetail(this.detailState, entry.config, this.agentData.cwd, w, this.theme); }
+			case "chain-detail": { const entry = this.getChainEntry(this.currentChainId); if (!entry) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.shortcuts); return renderChainDetail(this.chainDetailState, entry.config, w, this.theme); }
 			case "edit": case "edit-field": case "edit-prompt": return this.editState ? renderEdit(this.screen as EditScreen, this.editState, w, this.theme) : [];
 			case "parallel-builder": {
-				if (!this.parallelState) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage);
+				if (!this.parallelState) return renderList(this.listState, this.listAgents(), w, this.theme, this.statusMessage, this.shortcuts);
 				const agentOptions: AgentOption[] = this.agents.map((e) => ({ name: e.config.name, description: e.config.description, model: e.config.model }));
 				return renderParallel(this.parallelState, agentOptions, w, this.theme);
 			}

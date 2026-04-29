@@ -22,6 +22,12 @@ export interface ListState {
 	selected: string[];
 }
 
+export interface ListShortcuts {
+	newShortcut: string;
+}
+
+export const DEFAULT_AGENT_MANAGER_NEW_SHORTCUT = "shift+ctrl+n";
+
 export type ListAction =
 	| { type: "open-detail"; id: string }
 	| { type: "clone"; id: string }
@@ -57,7 +63,7 @@ function clampCursor(state: ListState, filtered: ListAgent[]): void {
 	}
 }
 
-export function handleListInput(state: ListState, agents: ListAgent[], data: string): ListAction | undefined {
+export function handleListInput(state: ListState, agents: ListAgent[], data: string, shortcuts: ListShortcuts = { newShortcut: DEFAULT_AGENT_MANAGER_NEW_SHORTCUT }): ListAction | undefined {
 	const filtered = fuzzyFilter(agents, state.filterQuery);
 
 	if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
@@ -98,7 +104,7 @@ export function handleListInput(state: ListState, agents: ListAgent[], data: str
 		return;
 	}
 
-	if (matchesKey(data, "alt+n")) {
+	if (matchesKey(data, shortcuts.newShortcut)) {
 		return { type: "new" };
 	}
 
@@ -160,6 +166,7 @@ export function renderList(
 	width: number,
 	theme: Theme,
 	statusMessage?: { text: string; type: "error" | "info" },
+	shortcuts: ListShortcuts = { newShortcut: DEFAULT_AGENT_MANAGER_NEW_SHORTCUT },
 ): string[] {
 	const lines: string[] = [];
 	const filtered = fuzzyFilter(agents, state.filterQuery);
@@ -269,7 +276,7 @@ export function renderList(
 		? ` [ctrl+r] chain  [ctrl+p] parallel  [tab] add  [shift+tab] remove  [esc] clear (${selCount}) `
 		: selCount === 1
 			? " [ctrl+r] run  [ctrl+p] parallel  [tab] add more  [shift+tab] remove  [esc] clear "
-			: " [enter] view  [ctrl+r] run  [tab] select  [alt+n] new  [esc] close ";
+			: ` [enter] view  [ctrl+r] run  [tab] select  [${shortcuts.newShortcut}] new  [esc] close `;
 	lines.push(renderFooter(footerText, width, theme));
 
 	return lines;

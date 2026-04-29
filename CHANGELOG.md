@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Changed the `/agents` new-agent shortcut from `Alt+N` to `Shift+Ctrl+N`, and added `agentManager.newShortcut` config for overriding it.
+
 ## [0.21.0] - 2026-04-29
 
 ### Changed
