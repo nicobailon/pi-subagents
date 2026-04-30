@@ -10,6 +10,7 @@ import { executeChain } from "./chain-execution.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
+import { clearPendingForegroundControlNotices } from "../../extension/control-notices.ts";
 import { runSync } from "./execution.ts";
 import { resolveModelCandidate } from "../shared/model-fallback.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
@@ -2067,6 +2068,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return toExecutionErrorResult(effectiveParams, error);
 		} finally {
 			if (foregroundControl) {
+				clearPendingForegroundControlNotices(deps.state, runId);
 				deps.state.foregroundControls.delete(runId);
 				if (deps.state.lastForegroundControlId === runId) {
 					deps.state.lastForegroundControlId = null;

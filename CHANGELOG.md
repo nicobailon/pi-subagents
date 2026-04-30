@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-04-30
+
+### Fixed
+- Debounce foreground `needs_attention` notices, make them non-triggering, and cancel them when the run finishes so stale chain-step alerts do not launch parent turns after completion.
+
 ## [0.21.2] - 2026-04-30
 
 ### Added

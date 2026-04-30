@@ -25,7 +25,6 @@ import { renderWidget, renderSubagentResult, stopResultAnimations, stopWidgetAni
 import { SubagentParams } from "./schemas.ts";
 import { createSubagentExecutor } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
-import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
@@ -36,7 +35,6 @@ import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/back
 import { SUBAGENT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import {
-	type ControlEvent,
 	type Details,
 	type ExtensionConfig,
 	type SubagentState,
@@ -49,6 +47,13 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	WIDGET_KEY,
 } from "../shared/types.ts";
+import {
+	clearPendingForegroundControlNotices,
+	formatSubagentControlNotice,
+	handleSubagentControlNotice,
+	SUBAGENT_CONTROL_MESSAGE_TYPE,
+	type SubagentControlMessageDetails,
+} from "./control-notices.ts";
 
 /**
  * Derive subagent session base directory from parent session file.
@@ -153,24 +158,6 @@ function createSlashResultComponent(
 	return container;
 }
 
-const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
-
-interface SubagentControlMessageDetails {
-	event: ControlEvent;
-	source?: "foreground" | "async";
-	asyncDir?: string;
-	childIntercomTarget?: string;
-	noticeText?: string;
-}
-
-function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
-	return details.childIntercomTarget;
-}
-
-function formatSubagentControlNotice(details: SubagentControlMessageDetails, content?: string): string {
-	return details.noticeText ?? content ?? formatControlNoticeMessage(details.event, controlNoticeTarget(details));
-}
-
 function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | undefined {
 	const lines = content.split("\n");
 	const header = lines[0] ?? "";
@@ -259,6 +246,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
+		pendingForegroundControlNotices: new Map(),
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -283,6 +271,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const runtimeCleanup = () => {
 		stopWidgetAnimation();
 		stopResultAnimations();
+		clearPendingForegroundControlNotices(state);
 		if (state.poller) {
 			clearInterval(state.poller);
 			state.poller = null;
@@ -497,22 +486,12 @@ DIAGNOSTICS:
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
 	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
 	const controlEventHandler = (payload: unknown) => {
-		const details = payload as SubagentControlMessageDetails;
-		if (!details?.event || details.event.type === "active_long_running") return;
-		const childIntercomTarget = controlNoticeTarget(details);
-		const key = controlNotificationKey(details.event, childIntercomTarget);
-		if (visibleControlNotices.has(key)) return;
-		visibleControlNotices.add(key);
-		const noticeText = details.noticeText ?? formatControlNoticeMessage(details.event, childIntercomTarget);
-		pi.sendMessage(
-			{
-				customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
-				content: noticeText,
-				display: true,
-				details: { ...details, childIntercomTarget, noticeText },
-			},
-			{ triggerTurn: true },
-		);
+		handleSubagentControlNotice({
+			pi,
+			state,
+			visibleControlNotices,
+			details: payload as SubagentControlMessageDetails,
+		});
 	};
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
@@ -547,6 +526,7 @@ DIAGNOSTICS:
 		state.currentSessionId = ctx.sessionManager.getSessionFile() ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 		state.lastUiContext = ctx;
 		cleanupSessionArtifacts(ctx);
+		clearPendingForegroundControlNotices(state);
 		resetJobs(ctx);
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 	};
@@ -569,6 +549,7 @@ DIAGNOSTICS:
 		stopResultWatcher();
 		if (state.poller) clearInterval(state.poller);
 		state.poller = null;
+		clearPendingForegroundControlNotices(state);
 		for (const timer of state.cleanupTimers.values()) {
 			clearTimeout(timer);
 		}

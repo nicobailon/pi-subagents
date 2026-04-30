@@ -356,6 +356,7 @@ export interface SubagentState {
 		interrupt?: () => boolean;
 	}>;
 	lastForegroundControlId: string | null;
+	pendingForegroundControlNotices?: Map<string, ReturnType<typeof setTimeout>>;
 	cleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
 	lastUiContext: ExtensionContext | null;
 	poller: NodeJS.Timeout | null;

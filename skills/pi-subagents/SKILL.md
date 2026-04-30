@@ -261,12 +261,26 @@ without forcing each step to rediscover everything.
 
 ### Async/background
 
+Use async mode whenever the parent agent should keep working while a child runs. A normal foreground `subagent(...)` call blocks the parent until the child completes; it is appropriate when the next parent step depends on the child result. If you say you will "ask a reviewer while I continue auditing" or otherwise run local work in parallel with a child, launch with `async: true`. Do not end your turn immediately after launching that async child if you promised to keep working; continue the local inspection or other independent work, then check the async run when its result is needed.
+
 ```typescript
 subagent({
   agent: "worker",
   task: "Run the full test suite",
   async: true
 })
+```
+
+For review fanout where the parent continues a local audit:
+
+```typescript
+const run = subagent({
+  agent: "reviewer",
+  task: "Review the current diff for correctness issues. Do not edit files.",
+  async: true,
+  context: "fresh"
+})
+// Continue local inspection, then later call status with the returned id.
 ```
 
 Inspect async runs with `subagent({ action: "status", id: "..." })`, `subagent({ action: "status" })` for active runs, or the `/subagents-status` slash command.
