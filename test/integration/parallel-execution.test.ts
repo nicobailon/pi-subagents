@@ -210,6 +210,28 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("treats string false as disabled output in top-level parallel runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Review done" });
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"parallel-string-false-output",
+			{
+				tasks: [
+					{ agent: "echo", task: "Review A", output: "false" },
+					{ agent: "echo", task: "Review B", output: "false" },
+				],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+	});
+
 	it("top-level parallel reads are injected once with chain-style prefix", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Read done" });
 		const executor = makeExecutor();

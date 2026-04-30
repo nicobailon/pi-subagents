@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
-import { matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
+import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { type AsyncRunOverlayData, type AsyncRunSummary, formatAsyncRunProgressLabel, listAsyncRunsForOverlay } from "../runs/background/async-status.ts";
 import { ASYNC_DIR } from "../shared/types.ts";
 import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
@@ -143,6 +143,18 @@ function formatEventLine(value: Record<string, unknown>): string {
 	return [ts, type, agent ? `${agent}${stepIndex}` : stepIndex.trim(), status, exitCode, message].filter(Boolean).join(" | ");
 }
 
+function detailRows(content: string, width: number, innerW: number, theme: Theme): string[] {
+	const normalized = content.replace(/\t/g, "  ");
+	const wrapped = wrapTextWithAnsi(normalized, innerW);
+	return (wrapped.length > 0 ? wrapped : [""]).map((line) => row(line, width, theme));
+}
+
+function warningDetailRows(content: string, width: number, innerW: number, theme: Theme): string[] {
+	const normalized = content.replace(/\t/g, "  ");
+	const wrapped = wrapTextWithAnsi(normalized, innerW);
+	return (wrapped.length > 0 ? wrapped : [""]).map((line) => row(theme.fg("warning", line), width, theme));
+}
+
 function readRecentEvents(eventsPath: string, limit: number): { events: string[]; warning?: string } {
 	const tail = readTailText(eventsPath);
 	if (tail.warning) {
@@ -270,7 +282,7 @@ export class SubagentsStatusComponent implements Component {
 		return lines;
 	}
 
-	private renderStepRows(run: AsyncRunSummary, width: number, innerW: number): string[] {
+	private renderStepRows(run: AsyncRunSummary, width: number, innerW: number, options: { wrap?: boolean } = {}): string[] {
 		const lines: string[] = [];
 		for (const step of run.steps) {
 			const model = step.model ? ` | ${step.model}` : "";
@@ -287,9 +299,17 @@ export class SubagentsStatusComponent implements Component {
 						: ` | active ${formatDuration(Math.max(0, Date.now() - step.lastActivityAt))} ago`
 				: "";
 			const line = `  ${step.index + 1}. ${step.agent} | ${stepStatusColor(this.theme, step.status)}${activity}${model}${attempts}${duration}${tokens}`;
-			lines.push(row(truncateToWidth(line, innerW), width, this.theme));
+			if (options.wrap) {
+				lines.push(...detailRows(line, width, innerW, this.theme));
+			} else {
+				lines.push(row(truncateToWidth(line, innerW), width, this.theme));
+			}
 			if (step.error) {
-				lines.push(row(truncateToWidth(`     ${step.error}`, innerW), width, this.theme));
+				if (options.wrap) {
+					lines.push(...detailRows(`     ${step.error}`, width, innerW, this.theme));
+				} else {
+					lines.push(row(truncateToWidth(`     ${step.error}`, innerW), width, this.theme));
+				}
 			}
 		}
 		if (run.steps.length === 0) {
@@ -312,20 +332,20 @@ export class SubagentsStatusComponent implements Component {
 			: undefined;
 
 		const body: string[] = [];
-		body.push(row(`${run.id} | ${statusColor(this.theme, run.state)} | ${run.mode} | ${stepLabel} | ${duration}`, width, this.theme));
-		if (activity) body.push(row(truncateToWidth(activity, innerW), width, this.theme));
+		body.push(...detailRows(`${run.id} | ${statusColor(this.theme, run.state)} | ${run.mode} | ${stepLabel} | ${duration}`, width, innerW, this.theme));
+		if (activity) body.push(...detailRows(activity, width, innerW, this.theme));
 		body.push(row("", width, this.theme));
 		body.push(row(this.theme.fg("accent", "Steps"), width, this.theme));
-		body.push(...this.renderStepRows(run, width, innerW));
+		body.push(...this.renderStepRows(run, width, innerW, { wrap: true }));
 
 		const eventsPath = path.join(run.asyncDir, "events.jsonl");
 		const eventResult = readRecentEvents(eventsPath, DETAIL_EVENT_LIMIT);
 		body.push(row("", width, this.theme));
 		body.push(row(this.theme.fg("accent", "Recent events"), width, this.theme));
-		if (eventResult.warning) body.push(row(this.theme.fg("warning", truncateToWidth(eventResult.warning, innerW)), width, this.theme));
+		if (eventResult.warning) body.push(...warningDetailRows(eventResult.warning, width, innerW, this.theme));
 		if (eventResult.events.length === 0 && !eventResult.warning) body.push(row(this.theme.fg("dim", "  No events recorded."), width, this.theme));
 		for (const event of eventResult.events) {
-			body.push(row(truncateToWidth(`  ${event}`, innerW), width, this.theme));
+			body.push(...detailRows(`  ${event}`, width, innerW, this.theme));
 		}
 
 		body.push(row("", width, this.theme));
@@ -333,9 +353,9 @@ export class SubagentsStatusComponent implements Component {
 		if (run.outputFile) {
 			const outputPath = resolveRunPath(run.asyncDir, run.outputFile);
 			const tail = readTailLines(outputPath, OUTPUT_TAIL_LINES);
-			if (tail.warning) body.push(row(this.theme.fg("warning", truncateToWidth(tail.warning, innerW)), width, this.theme));
+			if (tail.warning) body.push(...warningDetailRows(tail.warning, width, innerW, this.theme));
 			else if (tail.lines.length === 0) body.push(row(this.theme.fg("dim", "  No output yet."), width, this.theme));
-			for (const line of tail.lines) body.push(row(truncateToWidth(`  ${line}`, innerW), width, this.theme));
+			for (const line of tail.lines) body.push(...detailRows(`  ${line}`, width, innerW, this.theme));
 		} else {
 			body.push(row(this.theme.fg("dim", "  No output file recorded."), width, this.theme));
 		}

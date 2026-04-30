@@ -263,11 +263,32 @@ describe("SubagentsStatusComponent", () => {
 		}
 	});
 
-	it("truncates long output lines in detail view", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-status-truncate-"));
+	it("keeps summary step rows compact", () => {
+		const run = createRun("run-summary-long", "running");
+		run.steps[0]!.error = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda omega-tail";
+		const component = new SubagentsStatusComponent(
+			createTestTui(() => {}),
+			createTestTheme(),
+			() => {},
+			{
+				listRunsForOverlay: () => ({ active: [run], recent: [] }),
+				refreshMs: 1000,
+			},
+		);
+		try {
+			const output = component.render(60).join("\n");
+			assert.match(output, /alpha beta gamma/);
+			assert.doesNotMatch(output, /omega-tail/);
+		} finally {
+			component.dispose();
+		}
+	});
+
+	it("wraps long output lines in detail view", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-status-wrap-"));
 		try {
 			const run = createRun("run-long", "running", root);
-			fs.writeFileSync(run.outputFile, `${"x".repeat(200)}\n`, "utf-8");
+			fs.writeFileSync(run.outputFile, "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n", "utf-8");
 			const component = new SubagentsStatusComponent(
 				createTestTui(() => {}),
 				createTestTheme(),
@@ -280,7 +301,10 @@ describe("SubagentsStatusComponent", () => {
 			try {
 				component.handleInput("\r");
 				const output = component.render(60).join("\n");
-				assert.doesNotMatch(output, new RegExp("x".repeat(120)));
+				const outputTail = output.slice(output.indexOf("Output tail"), output.indexOf("Paths"));
+				assert.match(outputTail, /alpha beta gamma/);
+				assert.match(outputTail, /lambda/);
+				assert.doesNotMatch(outputTail, /\.\.\./);
 			} finally {
 				component.dispose();
 			}

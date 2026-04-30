@@ -20,6 +20,7 @@ const available = !!(settings && skills);
 const resolveChainTemplates = settings?.resolveChainTemplates;
 const buildChainInstructions = settings?.buildChainInstructions;
 const resolveStepBehavior = settings?.resolveStepBehavior;
+const resolveParallelBehaviors = settings?.resolveParallelBehaviors;
 const isParallelStep = settings?.isParallelStep;
 const createChainDir = settings?.createChainDir;
 const normalizeSkillInput = skills?.normalizeSkillInput;
@@ -154,12 +155,30 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 		assert.equal(behavior.output, false);
 	});
 
+	it("string false disables output defensively", () => {
+		const config = { name: "test", output: "report.md" };
+		const behavior = resolveStepBehavior(config, { output: "false" });
+		assert.equal(behavior.output, false);
+	});
+
 	it("defaults to false when agent has no config", () => {
 		const config = { name: "test" };
 		const behavior = resolveStepBehavior(config, {});
 		assert.equal(behavior.output, false);
 		assert.equal(behavior.reads, false);
 		assert.equal(behavior.progress, false);
+	});
+});
+
+describe("resolveParallelBehaviors", { skip: !available ? "pi packages not available" : undefined }, () => {
+	it("string false agent default disables output in chain parallel tasks", () => {
+		const behaviors = resolveParallelBehaviors(
+			[{ agent: "reviewer", task: "Review" }],
+			[{ name: "reviewer", output: "false" }],
+			0,
+		);
+
+		assert.equal(behaviors[0]?.output, false);
 	});
 });
 

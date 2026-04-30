@@ -30,6 +30,10 @@ export interface StepOverrides {
 	model?: string;
 }
 
+function normalizeOutputOverride(output: string | false | undefined): string | false | undefined {
+	return output === "false" ? false : output;
+}
+
 // =============================================================================
 // Chain Step Types
 // =============================================================================
@@ -174,10 +178,11 @@ export function resolveStepBehavior(
 	chainSkills?: string[],
 ): ResolvedStepBehavior {
 	// Output: step override > frontmatter > false (no output)
+	const stepOutput = normalizeOutputOverride(stepOverrides.output);
 	const output =
-		stepOverrides.output !== undefined
-			? stepOverrides.output
-			: agentConfig.output ?? false;
+		stepOutput !== undefined
+			? stepOutput
+			: normalizeOutputOverride(agentConfig.output) ?? false;
 
 	// Reads: step override > frontmatter defaultReads > false (no reads)
 	const reads =
@@ -302,17 +307,19 @@ export function resolveParallelBehaviors(
 		// Output: task override > agent default (namespaced) > false
 		// Absolute paths pass through unchanged; relative paths get namespaced under subdir
 		let output: string | false = false;
-		if (task.output !== undefined) {
-			if (task.output === false) {
+		const taskOutput = normalizeOutputOverride(task.output);
+		const configOutput = normalizeOutputOverride(config.output);
+		if (taskOutput !== undefined) {
+			if (taskOutput === false) {
 				output = false;
-			} else if (path.isAbsolute(task.output)) {
-				output = task.output; // Absolute path: use as-is
+			} else if (path.isAbsolute(taskOutput)) {
+				output = taskOutput; // Absolute path: use as-is
 			} else {
-				output = path.join(subdir, task.output); // Relative: namespace under subdir
+				output = path.join(subdir, taskOutput); // Relative: namespace under subdir
 			}
-		} else if (config.output) {
+		} else if (configOutput) {
 			// Agent defaults are always relative, so namespace them
-			output = path.join(subdir, config.output);
+			output = path.join(subdir, configOutput);
 		}
 
 		// Reads: task override > agent default > false

@@ -12,6 +12,8 @@
 - Updated `README.md` to explain the bundled `pi-subagents` skill, what it covers, and how it helps the orchestrating agent.
 
 ### Fixed
+- Treat string `"false"` output settings as disabled output so parallel reviewers do not collide on a `/false` output path, including chain-parallel agent defaults.
+- Wrap long `/subagents-status` detail output/event lines instead of truncating them with ellipses.
 - Treat cleanup after a clean terminal assistant stop as success even when the final assistant text is empty, using a short grace period before terminating lingering child processes without surfacing scary final-drain warnings.
 - Express flexible tool schema fields as `anyOf` unions without parent-level `type` arrays, avoiding schema shapes rejected by strict providers such as Moonshot/opencode-go.
 
