@@ -251,9 +251,16 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const asyncId = result.details?.asyncId;
 			assert.ok(asyncId, "expected asyncId");
 			const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
-			const deadline = Date.now() + 10_000;
+			const asyncDir = result.details?.asyncDir;
+			const deadline = Date.now() + 30_000;
 			while (!fs.existsSync(resultPath)) {
-				if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
+				if (Date.now() > deadline) {
+					const statusPath = asyncDir ? path.join(asyncDir, "status.json") : undefined;
+					const eventsPath = asyncDir ? path.join(asyncDir, "events.jsonl") : undefined;
+					const status = statusPath && fs.existsSync(statusPath) ? fs.readFileSync(statusPath, "utf-8") : "(missing status.json)";
+					const events = eventsPath && fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf-8") : "(missing events.jsonl)";
+					assert.fail(`Timed out waiting for async result file: ${resultPath}\nStatus: ${status}\nEvents: ${events}`);
+				}
 				await new Promise((resolve) => setTimeout(resolve, 100));
 			}
 

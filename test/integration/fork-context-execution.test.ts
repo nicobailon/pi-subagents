@@ -728,7 +728,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
 				{ name: "echo", description: "Echo", systemPrompt: "Intercom orchestration channel:" },
-				{ name: "second", description: "Second" },
+				{ name: "second", description: "Second", systemPrompt: "Intercom orchestration channel:" },
 			],
 			projectAgentsDir: null,
 		}));
