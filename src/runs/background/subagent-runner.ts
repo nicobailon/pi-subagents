@@ -101,6 +101,7 @@ interface StepResult {
 	skipped?: boolean;
 	intercomTarget?: string;
 	model?: string;
+	preferredModel?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	artifactPaths?: ArtifactPaths;
@@ -550,6 +551,7 @@ async function runSingleStep(
 	exitCode: number | null;
 	error?: string;
 	model?: string;
+	preferredModel?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	artifactPaths?: ArtifactPaths;
@@ -583,10 +585,12 @@ async function runSingleStep(
 	const attemptNotes: string[] = [];
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
 	let finalResult: RunPiStreamingResult | undefined;
+	let finalPreferredModel: string | undefined;
 	let completionGuardTriggeredFinal = false;
 
 	for (let index = 0; index < candidates.length; index++) {
 		const candidate = candidates[index];
+		const preferredModel = candidate ?? step.model;
 		const { args, env, tempDir } = buildPiArgs({
 			baseArgs: ["--mode", "json", "-p"],
 			task,
@@ -642,7 +646,7 @@ async function runSingleStep(
 					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
 				: run.error || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
 		const attempt: ModelAttempt = {
-			model: candidate ?? run.model ?? step.model ?? "default",
+			model: preferredModel ?? run.model ?? "default",
 			success: effectiveExitCode === 0 && !error,
 			exitCode: effectiveExitCode,
 			error,
@@ -651,7 +655,8 @@ async function runSingleStep(
 		modelAttempts.push(attempt);
 		if (candidate) attemptedModels.push(candidate);
 		completionGuardTriggeredFinal = completionGuardTriggered;
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error };
+		finalPreferredModel = preferredModel;
+		finalResult = { ...run, exitCode: effectiveExitCode, model: run.model ?? preferredModel, error };
 		if (attempt.success || completionGuardTriggered) break;
 		if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
@@ -689,6 +694,7 @@ async function runSingleStep(
 					task,
 					exitCode: finalResult?.exitCode,
 					model: finalResult?.model,
+					preferredModel: finalPreferredModel,
 					attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 					modelAttempts,
 					skills: step.skills,
@@ -706,6 +712,7 @@ async function runSingleStep(
 		error: finalResult?.error,
 		intercomTarget: ctx.childIntercomTarget,
 		model: finalResult?.model,
+		preferredModel: finalPreferredModel,
 		attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 		modelAttempts,
 		artifactPaths,
@@ -1371,6 +1378,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						skipped: pr.skipped,
 						intercomTarget: pr.intercomTarget,
 						model: pr.model,
+						preferredModel: pr.preferredModel,
 						attemptedModels: pr.attemptedModels,
 						modelAttempts: pr.modelAttempts,
 						artifactPaths: pr.artifactPaths,
@@ -1452,6 +1460,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				success: singleResult.exitCode === 0,
 				intercomTarget: singleResult.intercomTarget,
 				model: singleResult.model,
+				preferredModel: singleResult.preferredModel,
 				attemptedModels: singleResult.attemptedModels,
 				modelAttempts: singleResult.modelAttempts,
 				artifactPaths: singleResult.artifactPaths,
@@ -1637,6 +1646,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				skipped: r.skipped || undefined,
 				intercomTarget: r.intercomTarget,
 				model: r.model,
+				preferredModel: r.preferredModel,
 				attemptedModels: r.attemptedModels,
 				modelAttempts: r.modelAttempts,
 				artifactPaths: r.artifactPaths,

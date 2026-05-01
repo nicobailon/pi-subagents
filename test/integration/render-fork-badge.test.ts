@@ -99,6 +99,27 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /npm test -- --watch --runInBand --reporter=dot/);
 	});
 
+	it("shows actual and requested models when they differ", () => {
+		const widget = renderSubagentResult!({
+			content: [{ type: "text", text: "done" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "reviewer",
+					task: "review",
+					exitCode: 0,
+					messages: [],
+					usage: { ...emptyUsage, turns: 1, input: 10, output: 5 },
+					model: "anthropic/claude-sonnet-4-actual",
+					preferredModel: "openai/gpt-4o",
+				}],
+			},
+		}, { expanded: true }, theme);
+
+		const text = widget.render(120).join("\n");
+		assert.match(text, /anthropic\/claude-sonnet-4-actual \(requested openai\/gpt-4o\)/);
+	});
+
 	it("shows the full task in expanded mode", () => {
 		const longTask = "Review the auth flow, trace the race condition, and document the precise failing tool sequence at the end.";
 		const collapsed = withTerminalWidth(40, () => renderSubagentResult!({

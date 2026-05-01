@@ -811,7 +811,7 @@ export function renderSubagentResult(
 		if (r.attemptedModels && r.attemptedModels.length > 1) {
 			c.addChild(new Text(fit(theme.fg("dim", `Fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
 		}
-		c.addChild(new Text(fit(theme.fg("dim", formatUsage(r.usage, r.model))), 0, 0));
+		c.addChild(new Text(fit(theme.fg("dim", formatUsage(r.usage, r.model, r.preferredModel))), 0, 0));
 		if (r.sessionFile) {
 			c.addChild(new Text(fit(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`)), 0, 0));
 		}

@@ -321,7 +321,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			}],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "Recovered asynchronously" });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Recovered asynchronously", "anthropic/claude-sonnet-4")] });
 		const id = `async-fallback-${Date.now().toString(36)}`;
 		const sessionRoot = path.join(tempDir, "sessions");
 		const asyncDir = path.join(ASYNC_DIR, id);
@@ -364,6 +364,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4");
+		assert.equal(payload.results[0].preferredModel, "anthropic/claude-sonnet-4");
 		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
 		assert.equal(payload.results[0].modelAttempts.length, 2);
 		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
@@ -463,7 +464,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("background runs prefer the parent session provider for ambiguous bare model ids", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({ output: "Done asynchronously" });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Done asynchronously", "github-copilot/gpt-5-mini")] });
 
 		const id = `async-provider-${Date.now().toString(36)}`;
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
@@ -507,6 +508,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "github-copilot/gpt-5-mini");
+		assert.equal(payload.results[0].preferredModel, "github-copilot/gpt-5-mini");
 		assert.deepEqual(payload.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
 	});
 

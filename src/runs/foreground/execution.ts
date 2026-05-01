@@ -158,7 +158,7 @@ async function runSingleAttempt(
 		exitCode: 0,
 		messages: [],
 		usage: emptyUsage(),
-		model: modelArg,
+		preferredModel: modelArg,
 		artifactPaths: shared.artifactPaths,
 		skills: shared.resolvedSkillNames,
 		skillsWarning: shared.skillsWarning,
@@ -457,7 +457,7 @@ async function runSingleAttempt(
 						result.usage.cost += u.cost?.total || 0;
 						progress.tokens = result.usage.input + result.usage.output;
 					}
-					if (!result.model && evt.message.model) result.model = evt.message.model;
+					if (evt.message.model) result.model = evt.message.model;
 					if (evt.message.errorMessage) result.error = evt.message.errorMessage;
 					appendRecentOutput(progress, extractTextFromContent(evt.message.content).split("\n").slice(-10));
 					// Final assistant message: start the exit drain window.
@@ -605,6 +605,7 @@ async function runSingleAttempt(
 		}
 	});
 	result.exitCode = exitCode;
+	result.model ??= modelArg;
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -839,6 +840,7 @@ export async function runSync(
 				exitCode: result.exitCode,
 				usage: result.usage,
 				model: result.model,
+				preferredModel: result.preferredModel,
 				attemptedModels: result.attemptedModels,
 				modelAttempts: result.modelAttempts,
 				durationMs: result.progressSummary?.durationMs,

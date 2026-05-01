@@ -58,6 +58,7 @@ interface RunSyncResult {
 	model?: string;
 	skills?: string[];
 	skillsWarning?: string;
+	preferredModel?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	usage: { turns: number; input: number; output: number };
@@ -329,21 +330,30 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Got it");
 	});
 
-	it("uses agent model config", async () => {
-		mockPi.onCall({ output: "Done" });
+	it("records the actual CLI-emitted model separately from the preferred model", async () => {
+		mockPi.onCall({ jsonl: [events.assistantMessage("Done", "anthropic/claude-sonnet-4-actual")] });
+		const agents = [makeAgent("echo", { model: "openai/gpt-4o" })];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-sonnet-4-actual");
+		assert.equal(result.preferredModel, "openai/gpt-4o");
+	});
+
+	it("uses agent model config as preferred model", async () => {
+		mockPi.onCall({ jsonl: [events.assistantMessage("Done", "anthropic/claude-sonnet-4")] });
 		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4" })];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {});
 
 		assert.equal(result.exitCode, 0);
-		// result.model is set from agent config via applyThinkingSuffix, then
-		// overwritten by the first message_end event only if result.model is unset.
-		// Since agent has model config, it stays as the configured value.
 		assert.equal(result.model, "anthropic/claude-sonnet-4");
+		assert.equal(result.preferredModel, "anthropic/claude-sonnet-4");
 	});
 
-	it("model override from options takes precedence", async () => {
-		mockPi.onCall({ output: "Done" });
+	it("model override from options is the preferred model", async () => {
+		mockPi.onCall({ jsonl: [events.assistantMessage("Done", "openai/gpt-4o")] });
 		const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4" })];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
@@ -352,10 +362,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.model, "openai/gpt-4o");
+		assert.equal(result.preferredModel, "openai/gpt-4o");
 	});
 
 	it("prefers the parent session provider for ambiguous bare model ids", async () => {
-		mockPi.onCall({ output: "Done" });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Done", "github-copilot/gpt-5-mini")] });
 		const agents = [makeAgent("echo", { model: "gpt-5-mini" })];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
@@ -396,7 +407,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			}],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "Recovered on fallback" });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Recovered on fallback", "anthropic/claude-sonnet-4")] });
 		const agents = [makeAgent("echo", {
 			model: "openai/gpt-5-mini",
 			fallbackModels: ["anthropic/claude-sonnet-4"],

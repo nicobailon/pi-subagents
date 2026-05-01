@@ -58,6 +58,8 @@ type TestChainStep = TestSequentialStep | {
 interface ChainResultItem {
 	agent: string;
 	exitCode: number;
+	model?: string;
+	preferredModel?: string;
 	finalOutput?: string;
 	detached?: boolean;
 	attemptedModels?: string[];
@@ -171,7 +173,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			}],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "Step 1 recovered" });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Step 1 recovered", "anthropic/claude-sonnet-4")] });
 		mockPi.onCall({ output: "Step 2 ran" });
 		const agents = [
 			makeAgent("step1", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] }),
@@ -192,7 +194,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	});
 
 	it("prefers the parent session provider for ambiguous bare chain step models", async () => {
-		mockPi.onCall({ output: "Step 1 ran" });
+		mockPi.onCall({ jsonl: [events.assistantMessage("Step 1 ran", "github-copilot/gpt-5-mini")] });
 		mockPi.onCall({ output: "Step 2 ran" });
 		const agents = [makeAgent("step1", { model: "gpt-5-mini" }), makeAgent("step2")];
 
@@ -217,6 +219,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		assert.equal(result.details.results[0].model, "github-copilot/gpt-5-mini");
+		assert.equal(result.details.results[0].preferredModel, "github-copilot/gpt-5-mini");
 		assert.deepEqual(result.details.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
 	});
 
