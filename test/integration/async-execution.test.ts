@@ -24,12 +24,14 @@ interface AsyncExecutionResult {
 
 interface AsyncResultPayload {
 	success: boolean;
+	sessionId?: string;
 	mode?: string;
 	summary?: string;
 	results: Array<{ output?: string; model?: string; attemptedModels?: string[]; modelAttempts?: unknown[] }>;
 }
 
 interface AsyncStatusPayload {
+	sessionId?: string;
 	activityState?: string;
 	currentTool?: string;
 	currentPath?: string;
@@ -194,6 +196,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const asyncId = result.details?.asyncId;
 		assert.ok(asyncId, "expected asyncId");
 		const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
+		const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
 		const deadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -201,7 +204,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.mode, "parallel");
+		assert.equal(payload.sessionId, "session-123");
+		assert.equal(status.sessionId, "session-123");
 		const outputPath = path.join(tempDir, "async-top-output.md");
 		const outputDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(outputPath)) {
@@ -688,6 +694,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 			assert.equal(payload.success, true);
+			assert.equal(payload.sessionId, "session-1");
+			assert.equal(status.sessionId, "session-1");
 			assert.deepEqual(status.steps?.[0]?.skills, ["async-chain-step-skill"]);
 		} finally {
 			removeTempDir(chainCwd);

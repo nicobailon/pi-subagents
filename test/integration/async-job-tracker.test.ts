@@ -233,13 +233,17 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				now: () => Date.now() + 2000,
 			});
 			tracker.resetJobs(ui.ctx as never);
-			tracker.handleStarted({ id: "run-no-status", asyncDir: runDir, agent: "worker", pid: 12345 });
+			tracker.handleStarted({ id: "run-no-status", asyncDir: runDir, agent: "worker", pid: 12345, sessionId: "session-current" });
 
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
 			assert.equal(state.asyncJobs.size, 0);
-			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");
-			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "run-no-status.json"), "utf-8")).success, false);
+			const status = JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8"));
+			const result = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-no-status.json"), "utf-8"));
+			assert.equal(status.state, "failed");
+			assert.equal(status.sessionId, "session-current");
+			assert.equal(result.success, false);
+			assert.equal(result.sessionId, "session-current");
 			assert.ok(ui.renderRequests > 0, "expected startup-crash repair cleanup to request a rerender");
 		} finally {
 			removeTempDir(asyncRoot);

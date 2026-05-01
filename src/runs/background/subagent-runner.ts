@@ -877,6 +877,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		|| flatSteps.some((step) => Boolean(step.sessionFile));
 	const statusPayload: RunnerStatusPayload = {
 		runId: id,
+		...(config.sessionId ? { sessionId: config.sessionId } : {}),
 		mode: flatSteps.length > 1 ? "chain" : "single",
 		state: "running",
 		lastActivityAt: overallStartTime,

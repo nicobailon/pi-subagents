@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	type IntercomEventBus,
 	type SubagentState,
 } from "../../shared/types.ts";
 import {
@@ -46,7 +46,7 @@ function shouldFallBackToPolling(error: unknown): boolean {
 }
 
 export function createResultWatcher(
-	pi: ExtensionAPI,
+	pi: { events: IntercomEventBus },
 	state: SubagentState,
 	resultsDir: string,
 	completionTtlMs: number,

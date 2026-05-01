@@ -399,6 +399,7 @@ export function executeAsyncChain(
 		ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
 			id,
 			pid: spawnResult.pid,
+			sessionId: ctx.currentSessionId,
 			agent: firstAgents[0],
 			agents: flatAgents,
 			task: isParallelStep(firstStep)
@@ -543,6 +544,7 @@ export function executeAsyncSingle(
 		ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
 			id,
 			pid: spawnResult.pid,
+			sessionId: ctx.currentSessionId,
 			agent,
 			task: task?.slice(0, 50),
 			cwd: runnerCwd,

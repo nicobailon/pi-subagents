@@ -133,6 +133,28 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("rejects malformed status session ids", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-session-id-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			writeJson(path.join(asyncRoot, "run-session-id", "status.json"), {
+				runId: "run-session-id",
+				sessionId: { value: "session" },
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-session-id" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/sessionId must be a string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("returns a live intercom target for a running child", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-live-"));
 		try {

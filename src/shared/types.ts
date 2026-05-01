@@ -263,6 +263,7 @@ export interface AsyncStartedEvent {
 	id?: string;
 	asyncDir?: string;
 	pid?: number;
+	sessionId?: string;
 	agent?: string;
 	agents?: string[];
 	chain?: string[];
@@ -272,6 +273,7 @@ export interface AsyncStartedEvent {
 
 export interface AsyncStatus {
 	runId: string;
+	sessionId?: string;
 	mode: "single" | "chain";
 	state: "queued" | "running" | "complete" | "failed" | "paused";
 	activityState?: ActivityState;
@@ -321,6 +323,7 @@ export interface AsyncJobState {
 	asyncDir: string;
 	status: "queued" | "running" | "complete" | "failed" | "paused";
 	pid?: number;
+	sessionId?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;

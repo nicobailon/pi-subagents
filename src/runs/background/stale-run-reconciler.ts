@@ -10,6 +10,7 @@ type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 interface StartedRunMetadata {
 	runId: string;
 	pid?: number;
+	sessionId?: string;
 	mode?: "single" | "chain";
 	agents?: string[];
 	startedAt?: number;
@@ -135,6 +136,7 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 	const agents = startedRun.agents?.length ? startedRun.agents : ["subagent"];
 	return {
 		runId: startedRun.runId || path.basename(asyncDir),
+		...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
 		mode: startedRun.mode ?? "single",
 		state: "running",
 		pid: startedRun.pid,
@@ -197,6 +199,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			timestamp: now,
 			durationMs: Math.max(0, now - status.startedAt),
 			asyncDir,
+			sessionId: status.sessionId,
 			sessionFile: status.sessionFile,
 		},
 	};

@@ -27,6 +27,7 @@ interface AsyncRunStepSummary {
 export interface AsyncRunSummary {
 	id: string;
 	asyncDir: string;
+	sessionId?: string;
 	state: "queued" | "running" | "complete" | "failed" | "paused";
 	activityState?: ActivityState;
 	lastActivityAt?: number;
@@ -89,6 +90,7 @@ function flatToLogicalStepIndex(flatIndex: number, chainStepCount: number, paral
 
 interface AsyncRunListOptions {
 	states?: Array<AsyncRunSummary["state"]>;
+	sessionId?: string;
 	limit?: number;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -99,6 +101,11 @@ interface AsyncRunListOptions {
 export interface AsyncRunOverlayData {
 	active: AsyncRunSummary[];
 	recent: AsyncRunSummary[];
+}
+
+export interface AsyncRunOverlayOptions {
+	recentLimit?: number;
+	sessionId?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -147,6 +154,9 @@ function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { acti
 }
 
 function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }): AsyncRunSummary {
+	if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
+		throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': sessionId must be a string.`);
+	}
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
 	const steps = status.steps ?? [];
 	const chainStepCount = status.chainStepCount ?? steps.length;
@@ -154,6 +164,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	return {
 		id: status.runId || path.basename(asyncDir),
 		asyncDir,
+		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		state: status.state,
 		activityState,
 		lastActivityAt,
@@ -240,6 +251,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		if (!status) continue;
 		const summary = statusToSummary(asyncDir, status);
 		if (allowedStates && !allowedStates.has(summary.state)) continue;
+		if (options.sessionId && summary.sessionId !== options.sessionId) continue;
 		runs.push(summary);
 	}
 
@@ -247,8 +259,9 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	return options.limit !== undefined ? sorted.slice(0, options.limit) : sorted;
 }
 
-export function listAsyncRunsForOverlay(asyncDirRoot: string, recentLimit = 5): AsyncRunOverlayData {
-	const all = listAsyncRuns(asyncDirRoot);
+export function listAsyncRunsForOverlay(asyncDirRoot: string, options: AsyncRunOverlayOptions = {}): AsyncRunOverlayData {
+	const recentLimit = options.recentLimit ?? 5;
+	const all = listAsyncRuns(asyncDirRoot, { sessionId: options.sessionId });
 	const recent = all
 		.filter((run) => run.state === "complete" || run.state === "failed" || run.state === "paused")
 		.sort((a, b) => (b.lastUpdate ?? b.endedAt ?? b.startedAt) - (a.lastUpdate ?? a.endedAt ?? a.startedAt))

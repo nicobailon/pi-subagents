@@ -43,6 +43,29 @@ function createTestTheme(): StatusTheme {
 }
 
 describe("SubagentsStatusComponent", () => {
+	it("scopes overlay listing to the provided session id", () => {
+		let receivedOptions: unknown;
+		const component = new SubagentsStatusComponent(
+			createTestTui(() => {}),
+			createTestTheme(),
+			() => {},
+			{
+				sessionId: "session-current",
+				listRunsForOverlay: (_root, options) => {
+					receivedOptions = options;
+					return { active: [createRun("run-current", "running")], recent: [] };
+				},
+				refreshMs: 1000,
+			},
+		);
+		try {
+			assert.deepEqual(receivedOptions, { recentLimit: 5, sessionId: "session-current" });
+			assert.match(component.render(120).join("\n"), /Selected: run-current/);
+		} finally {
+			component.dispose();
+		}
+	});
+
 	it("uses parallel-running wording in summary rows for explicit parallel groups", () => {
 		const parallelRun = {
 			id: "run-parallel",
@@ -66,6 +89,7 @@ describe("SubagentsStatusComponent", () => {
 			createTestTheme(),
 			() => {},
 			{
+				sessionId: "session-current",
 				listRunsForOverlay: () => ({ active: [parallelRun], recent: [] }),
 				refreshMs: 1000,
 			},
@@ -91,6 +115,7 @@ describe("SubagentsStatusComponent", () => {
 			createTestTheme(),
 			() => {},
 			{
+				sessionId: "session-current",
 				listRunsForOverlay: () => states[Math.min(callCount++, states.length - 1)]!,
 				refreshMs: 10,
 			},
@@ -129,6 +154,7 @@ describe("SubagentsStatusComponent", () => {
 				createTestTheme(),
 				() => { closed = true; },
 				{
+					sessionId: "session-current",
 					listRunsForOverlay: () => ({ active: [run], recent: [] }),
 					refreshMs: 1000,
 				},
@@ -188,6 +214,7 @@ describe("SubagentsStatusComponent", () => {
 				createTestTheme(),
 				() => {},
 				{
+					sessionId: "session-current",
 					listRunsForOverlay: () => states[Math.min(callCount++, states.length - 1)]!,
 					refreshMs: 10,
 				},
@@ -217,6 +244,7 @@ describe("SubagentsStatusComponent", () => {
 			createTestTheme(),
 			() => {},
 			{
+				sessionId: "session-current",
 				listRunsForOverlay: () => states[Math.min(callCount++, states.length - 1)]!,
 				refreshMs: 10,
 			},
@@ -245,6 +273,7 @@ describe("SubagentsStatusComponent", () => {
 				createTestTheme(),
 				() => {},
 				{
+					sessionId: "session-current",
 					listRunsForOverlay: () => ({ active: [run], recent: [] }),
 					refreshMs: 1000,
 				},
@@ -271,6 +300,7 @@ describe("SubagentsStatusComponent", () => {
 			createTestTheme(),
 			() => {},
 			{
+				sessionId: "session-current",
 				listRunsForOverlay: () => ({ active: [run], recent: [] }),
 				refreshMs: 1000,
 			},
@@ -294,6 +324,7 @@ describe("SubagentsStatusComponent", () => {
 				createTestTheme(),
 				() => {},
 				{
+					sessionId: "session-current",
 					listRunsForOverlay: () => ({ active: [run], recent: [] }),
 					refreshMs: 1000,
 				},
@@ -320,6 +351,7 @@ describe("SubagentsStatusComponent", () => {
 			createTestTheme(),
 			() => {},
 			{
+				sessionId: "session-current",
 				listRunsForOverlay: () => ({ active: [createRun("run-a", "running")], recent: [] }),
 				refreshMs: 10,
 			},

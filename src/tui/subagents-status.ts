@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
-import { type AsyncRunOverlayData, type AsyncRunSummary, formatAsyncRunProgressLabel, listAsyncRunsForOverlay } from "../runs/background/async-status.ts";
+import { type AsyncRunOverlayData, type AsyncRunOverlayOptions, type AsyncRunSummary, formatAsyncRunProgressLabel, listAsyncRunsForOverlay } from "../runs/background/async-status.ts";
 import { ASYNC_DIR } from "../shared/types.ts";
 import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { formatScrollInfo, renderFooter, renderHeader, row } from "./render-helpers.ts";
@@ -21,7 +21,8 @@ interface StatusRow {
 }
 
 interface StatusOverlayDeps {
-	listRunsForOverlay?: (asyncDirRoot: string, recentLimit?: number) => AsyncRunOverlayData;
+	sessionId: string;
+	listRunsForOverlay?: (asyncDirRoot: string, options?: AsyncRunOverlayOptions) => AsyncRunOverlayData;
 	refreshMs?: number;
 }
 
@@ -178,7 +179,8 @@ function readRecentEvents(eventsPath: string, limit: number): { events: string[]
 export class SubagentsStatusComponent implements Component {
 	private readonly width = 84;
 	private readonly viewportHeight = 12;
-	private readonly listRunsForOverlay: (asyncDirRoot: string, recentLimit?: number) => AsyncRunOverlayData;
+	private readonly listRunsForOverlay: (asyncDirRoot: string, options?: AsyncRunOverlayOptions) => AsyncRunOverlayData;
+	private readonly sessionId: string;
 	private readonly refreshTimer: NodeJS.Timeout;
 	private screen: "list" | "detail" = "list";
 	private cursor = 0;
@@ -197,12 +199,13 @@ export class SubagentsStatusComponent implements Component {
 		tui: TUI,
 		theme: Theme,
 		done: () => void,
-		deps: StatusOverlayDeps = {},
+		deps: StatusOverlayDeps,
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.listRunsForOverlay = deps.listRunsForOverlay ?? listAsyncRunsForOverlay;
+		this.sessionId = deps.sessionId;
 		const refreshMs = deps.refreshMs ?? AUTO_REFRESH_MS;
 		this.reload();
 		this.refreshTimer = setInterval(() => {
@@ -215,7 +218,7 @@ export class SubagentsStatusComponent implements Component {
 	private reload(): void {
 		const previousSelectedId = selectedRun(this.rows, this.cursor)?.id;
 		try {
-			const overlayData = this.listRunsForOverlay(ASYNC_DIR, 5);
+			const overlayData = this.listRunsForOverlay(ASYNC_DIR, { recentLimit: 5, sessionId: this.sessionId });
 			this.active = overlayData.active;
 			this.recent = overlayData.recent;
 			this.rows = buildRows(this.active, this.recent);

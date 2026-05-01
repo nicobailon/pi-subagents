@@ -4,12 +4,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
 
-function createState() {
+function createState(): SubagentState {
 	return {
 		baseCwd: "/repo",
 		currentSessionId: null,
 		asyncJobs: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -24,6 +27,48 @@ function createState() {
 }
 
 describe("result watcher", () => {
+	it("processes deferred session-scoped results after session identity is restored", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-session-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+					},
+				},
+			};
+			const state = createState();
+			const resultPath = path.join(resultsDir, "session-run.json");
+			fs.writeFileSync(resultPath, JSON.stringify({
+				id: "session-run",
+				sessionId: "session-current",
+				success: true,
+				summary: "done",
+			}), "utf-8");
+
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+			try {
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				assert.equal(emitted.length, 0);
+				assert.equal(fs.existsSync(resultPath), true);
+
+				state.currentSessionId = "session-current";
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+			assert.equal(fs.existsSync(resultPath), false);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("logs malformed result files instead of swallowing them silently", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
 		try {
@@ -31,13 +76,14 @@ describe("result watcher", () => {
 			const emitted: unknown[] = [];
 			const pi = {
 				events: {
+					on: () => () => {},
 					emit(_event: string, data: unknown) {
 						emitted.push(data);
 					},
 				},
 			};
 			const state = createState();
-			const watcher = createResultWatcher(pi as never, state as never, resultsDir, 60_000);
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 			const originalError = console.error;
 			const logged: unknown[][] = [];
 			console.error = (...args: unknown[]) => {
@@ -91,7 +137,7 @@ describe("result watcher", () => {
 			let poll: (() => void) | undefined;
 			const emfile = new Error("too many open files") as NodeJS.ErrnoException;
 			emfile.code = "EMFILE";
-			const watcher = createResultWatcher(pi as never, state as never, resultsDir, 60_000, {
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
 				fs: {
 					...fs,
 					watch: () => {
@@ -159,6 +205,7 @@ describe("result watcher", () => {
 			const emitted: Array<{ event: string; data: unknown }> = [];
 			const pi = {
 				events: {
+					on: () => () => {},
 					emit(event: string, data: unknown) {
 						emitted.push({ event, data });
 					},
@@ -176,7 +223,7 @@ describe("result watcher", () => {
 				close() {},
 				unref() {},
 			} as fs.FSWatcher;
-			const watcher = createResultWatcher(pi as never, state as never, resultsDir, 60_000, {
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
 				fs: {
 					...fs,
 					watch: () => fakeWatcher,
@@ -246,7 +293,7 @@ describe("result watcher", () => {
 			};
 			const state = createState();
 			state.currentSessionId = "session-1";
-			const watcher = createResultWatcher(pi as never, state as never, resultsDir, 60_000);
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 			try {
 				fs.writeFileSync(path.join(resultsDir, "async-1.json"), JSON.stringify({
 					id: "async-1",
@@ -310,7 +357,7 @@ describe("result watcher", () => {
 			};
 			const state = createState();
 			state.currentSessionId = "session-1";
-			const watcher = createResultWatcher(pi as never, state as never, resultsDir, 60_000);
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 			try {
 				fs.writeFileSync(path.join(resultsDir, "async-paused.json"), JSON.stringify({
 					id: "async-paused",
@@ -363,7 +410,7 @@ describe("result watcher", () => {
 			};
 			const state = createState();
 			state.currentSessionId = "session-1";
-			const watcher = createResultWatcher(pi as never, state as never, resultsDir, 60_000);
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
 			const originalError = console.error;
 			const logged: unknown[][] = [];
 			console.error = (...args: unknown[]) => {

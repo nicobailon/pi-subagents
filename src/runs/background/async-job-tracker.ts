@@ -145,6 +145,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						startedRun: {
 							runId: job.asyncId,
 							pid: job.pid,
+							sessionId: job.sessionId,
 							mode: job.mode,
 							agents: job.agents,
 							startedAt: job.startedAt,
@@ -155,6 +156,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					if (status) {
 						const previousStatus = job.status;
 						job.status = status.state;
+						job.sessionId = status.sessionId ?? job.sessionId;
 						job.activityState = status.activityState;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
 						job.currentTool = status.currentTool;
@@ -225,6 +227,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			asyncDir,
 			status: "queued",
 			pid: typeof info.pid === "number" ? info.pid : undefined,
+			...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
 			mode: info.chain ? "chain" : "single",
 			agents,
 			stepsTotal: firstGroupCount ?? agents?.length,

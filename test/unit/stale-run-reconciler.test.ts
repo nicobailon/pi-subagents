@@ -35,6 +35,7 @@ describe("async stale-run reconciliation", () => {
 			const resultsDir = path.join(root, "results");
 			writeStatus(asyncDir, {
 				runId: "run-dead",
+				sessionId: "session-current",
 				mode: "single",
 				state: "running",
 				pid: 12345,
@@ -55,10 +56,12 @@ describe("async stale-run reconciliation", () => {
 			assert.match(result.message ?? "", /process 12345 exited or disappeared/);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
+			assert.equal(status.sessionId, "session-current");
 			assert.equal(status.steps[0].status, "failed");
 			assert.match(status.steps[0].error, /process 12345 exited or disappeared/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"));
 			assert.equal(resultJson.success, false);
+			assert.equal(resultJson.sessionId, "session-current");
 			assert.equal(resultJson.state, "failed");
 			assert.equal(resultJson.exitCode, 1);
 			assert.match(resultJson.summary, /process 12345 exited or disappeared/);

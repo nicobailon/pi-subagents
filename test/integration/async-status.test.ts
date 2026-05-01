@@ -72,8 +72,51 @@ describe("async status helpers", () => {
 				steps: [{ agent: "reviewer", status: "complete" }],
 			});
 
-			const overlay = listAsyncRunsForOverlay(root, 5);
+			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 5 });
 			assert.deepEqual(overlay.recent.map((run) => run.id), ["newer-complete", "older-failed"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("filters overlay runs by session before applying the recent limit", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-session-overlay-"));
+		try {
+			for (let index = 0; index < 5; index++) {
+				createAsyncDir(root, `other-${index}`, {
+					runId: `other-${index}`,
+					sessionId: "session-other",
+					mode: "single",
+					state: "complete",
+					startedAt: 100 + index,
+					lastUpdate: 1_000 + index,
+					endedAt: 1_000 + index,
+					steps: [{ agent: "other", status: "complete" }],
+				});
+			}
+			createAsyncDir(root, "current-running", {
+				runId: "current-running",
+				sessionId: "session-current",
+				mode: "single",
+				state: "running",
+				startedAt: 50,
+				lastUpdate: 60,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			createAsyncDir(root, "current-complete", {
+				runId: "current-complete",
+				sessionId: "session-current",
+				mode: "single",
+				state: "complete",
+				startedAt: 40,
+				lastUpdate: 70,
+				endedAt: 70,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+
+			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 1, sessionId: "session-current" });
+			assert.deepEqual(overlay.active.map((run) => run.id), ["current-running"]);
+			assert.deepEqual(overlay.recent.map((run) => run.id), ["current-complete"]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -169,7 +212,7 @@ describe("async status helpers", () => {
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 
-			const overlay = listAsyncRunsForOverlay(root, 5);
+			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 5 });
 			assert.equal(overlay.active.length, 0);
 			assert.equal(overlay.recent[0]?.id, "run-paused");
 			assert.equal(overlay.recent[0]?.activityState, undefined);
@@ -193,6 +236,27 @@ describe("async status helpers", () => {
 			assert.throws(
 				() => listAsyncRuns(root),
 				/Failed to parse async status file/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects malformed persisted session ids", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-bad-session-id-"));
+		try {
+			createAsyncDir(root, "bad-session", {
+				runId: "bad-session",
+				sessionId: { value: "session" },
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+
+			assert.throws(
+				() => listAsyncRuns(root),
+				/sessionId must be a string/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -359,7 +423,7 @@ describe("async status helpers", () => {
 				steps: [{ agent: "reviewer", status: "complete", durationMs: 3_000 }],
 			});
 
-			const overlay = listAsyncRunsForOverlay(root, 1);
+			const overlay = listAsyncRunsForOverlay(root, { recentLimit: 1 });
 			assert.equal(overlay.active.length, 1);
 			assert.equal(overlay.active[0]?.id, "run-running");
 			assert.equal(overlay.recent.length, 1);

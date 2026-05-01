@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 
+import { ASYNC_DIR } from "../../src/shared/types.ts";
+
 const SLASH_RESULT_TYPE = "subagent-slash-result";
 const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
 const SLASH_SUBAGENT_STARTED_EVENT = "subagent:slash:started";
@@ -169,7 +171,10 @@ function createCommandContext(
 			custom: overrides.custom ?? (async () => undefined),
 		},
 		modelRegistry: { getAvailable: () => [] },
-		sessionManager: overrides.sessionManager,
+		sessionManager: overrides.sessionManager ?? {
+			getSessionFile: () => null,
+			getSessionId: () => "session-test",
+		},
 	};
 }
 
@@ -877,10 +882,26 @@ describe("subagents-status slash command", { skip: !available ? "slash-commands.
 		clearSlashSnapshots?.();
 	});
 
-	it("opens the async status overlay", async () => {
+	it("opens the async status overlay scoped to the current session", async () => {
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 		const events = createEventBus();
-		let customCalls = 0;
+		const sessionFile = path.join(os.tmpdir(), `pi-status-session-${Date.now()}.jsonl`);
+		const currentId = `slash-current-${Date.now()}`;
+		const otherId = `slash-other-${Date.now()}`;
+		const writeRun = (id: string, sessionId: string) => {
+			const dir = path.join(ASYNC_DIR, id);
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({
+				runId: id,
+				sessionId,
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+		};
+		let rendered = "";
 		const pi = {
 			events,
 			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
@@ -890,17 +911,39 @@ describe("subagents-status slash command", { skip: !available ? "slash-commands.
 			sendMessage(_message: unknown) {},
 		};
 
-		registerSlashCommands!(pi, createState(process.cwd()));
-		assert.ok(commands.has("subagents-status"));
+		try {
+			writeRun(currentId, sessionFile);
+			writeRun(otherId, "session-other");
+			registerSlashCommands!(pi, createState(process.cwd()));
+			assert.ok(commands.has("subagents-status"));
 
-		await commands.get("subagents-status")!.handler("", createCommandContext({
-			hasUI: true,
-			custom: async () => {
-				customCalls++;
-				return undefined;
-			},
-		}));
+			await commands.get("subagents-status")!.handler("", createCommandContext({
+				hasUI: true,
+				sessionManager: {
+					getSessionFile: () => sessionFile,
+					getSessionId: () => "session-current-id",
+				},
+				custom: async (factory: unknown) => {
+					const component = (factory as (tui: unknown, theme: unknown, kb: unknown, done: (value?: unknown) => void) => { render(width: number): string[]; dispose(): void })(
+						{ requestRender() {} },
+						{ fg: (_token: string, text: string) => text, bg: (_token: string, text: string) => text },
+						undefined,
+						() => {},
+					);
+					try {
+						rendered = component.render(120).join("\n");
+					} finally {
+						component.dispose();
+					}
+					return undefined;
+				},
+			}));
 
-		assert.equal(customCalls, 1);
+			assert.match(rendered, new RegExp(currentId));
+			assert.doesNotMatch(rendered, new RegExp(otherId));
+		} finally {
+			fs.rmSync(path.join(ASYNC_DIR, currentId), { recursive: true, force: true });
+			fs.rmSync(path.join(ASYNC_DIR, otherId), { recursive: true, force: true });
+		}
 	});
 });
