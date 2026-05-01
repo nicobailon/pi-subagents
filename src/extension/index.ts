@@ -47,6 +47,7 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	WIDGET_KEY,
 } from "../shared/types.ts";
+import { initI18n } from "./i18n.ts";
 import {
 	clearPendingForegroundControlNotices,
 	formatSubagentControlNotice,
@@ -220,6 +221,7 @@ class SubagentControlNoticeComponent implements Component {
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") return;
+	initI18n(pi);
 	const globalStore = globalThis as Record<string, unknown>;
 	const runtimeCleanupStoreKey = "__piSubagentRuntimeCleanup";
 	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
