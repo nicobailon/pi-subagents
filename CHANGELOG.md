@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.21.4] - 2026-05-01
+
 ### Added
 - Added explicit frontmatter `package` identifiers for agents and saved chains, registering runtime names like `code-analysis.scout` while preserving separate `name` and `package` fields on save.
 - Added recursive subdirectory discovery for user and project agent and chain definitions.
