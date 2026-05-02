@@ -52,6 +52,7 @@ interface ResolveIntercomBridgeInput {
 	config: ExtensionConfig["intercomBridge"];
 	context: "fresh" | "fork" | undefined;
 	orchestratorTarget?: string;
+	hasIntercom?: () => boolean;
 	extensionDir?: string;
 	configPath?: string;
 	settingsDir?: string;
@@ -148,12 +149,13 @@ export function diagnoseIntercomBridge(input: ResolveIntercomBridgeInput): Inter
 	const orchestratorTarget = input.orchestratorTarget?.trim();
 	const configPath = path.resolve(input.configPath ?? defaultIntercomConfigPath());
 	const wantsIntercom = mode !== "off" && !(mode === "fork-only" && input.context !== "fork");
-	const piIntercomAvailable = true; // Always available via npm package; no longer checks hardcoded filesystem path
+	const piIntercomAvailable = input.hasIntercom ? input.hasIntercom() : true; // fallback to true for backwards compat
 	let configStatus: ReturnType<typeof intercomConfigStatus> | undefined;
 	let reason: string | undefined;
 	if (mode === "off") reason = "bridge mode is off";
 	else if (mode === "fork-only" && input.context !== "fork") reason = "bridge mode is fork-only and context is not fork";
 	else if (!orchestratorTarget) reason = "orchestrator target is not available";
+	else if (!piIntercomAvailable) reason = "pi-intercom extension is not loaded";
 	else {
 		configStatus = intercomConfigStatus(configPath);
 		if (!configStatus.enabled) reason = "intercom config is disabled";
@@ -196,6 +198,9 @@ export function resolveIntercomBridge(input: ResolveIntercomBridgeInput): Interc
 		return { active: false, mode, extensionDir, instruction: defaultInstruction };
 	}
 	if (!orchestratorTarget) {
+		return { active: false, mode, extensionDir, instruction: defaultInstruction };
+	}
+	if (input.hasIntercom && !input.hasIntercom()) {
 		return { active: false, mode, extensionDir, instruction: defaultInstruction };
 	}
 

@@ -344,6 +344,7 @@ async function resumeAsyncRun(input: {
 		config: input.deps.config.intercomBridge,
 		context: input.params.context,
 		orchestratorTarget: sessionName,
+		hasIntercom: () => input.deps.pi.getAllTools().some((t) => t.name === "intercom"),
 	});
 	const agents = intercomBridge.active
 		? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
@@ -1957,6 +1958,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			config: deps.config.intercomBridge,
 			context: effectiveParams.context,
 			orchestratorTarget: sessionName,
+			hasIntercom: () => deps.pi.getAllTools().some((t) => t.name === "intercom"),
 		});
 		const agents = intercomBridge.active
 			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))

@@ -156,7 +156,7 @@ function formatIntercomDiagnostic(diagnostic: IntercomBridgeDiagnostic, context:
 		`- bridge: ${diagnostic.active ? "active" : "inactive"}${diagnostic.reason ? ` (${diagnostic.reason})` : ""}`,
 		`- mode: ${diagnostic.mode}; context: ${context ?? "unspecified"}`,
 		`- orchestrator target: ${diagnostic.orchestratorTarget ?? "not available"}`,
-		`- pi-intercom: ${diagnostic.piIntercomAvailable ? "available (npm package)" : "unavailable"}`,
+		`- pi-intercom: ${diagnostic.piIntercomAvailable ? "available" : "not loaded"}`,
 	];
 	if (diagnostic.configPath && diagnostic.intercomConfigEnabled !== undefined) {
 		lines.push(`- intercom config: ${diagnostic.intercomConfigEnabled === false ? "disabled" : "enabled or absent"} (${diagnostic.configPath})`);
