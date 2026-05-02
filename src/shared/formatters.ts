@@ -18,7 +18,11 @@ export function formatTokens(n: number): string {
 /**
  * Format usage statistics into a compact string
  */
-export function formatUsage(u: Usage, model?: string): string {
+function stripThinkingSuffix(model: string): string {
+	return model.replace(/:(?:off|minimal|low|medium|high|xhigh)$/, "");
+}
+
+export function formatUsage(u: Usage, model?: string, preferredModel?: string): string {
 	const parts: string[] = [];
 	if (u.turns) parts.push(`${u.turns} turn${u.turns > 1 ? "s" : ""}`);
 	if (u.input) parts.push(`in:${formatTokens(u.input)}`);
@@ -26,7 +30,10 @@ export function formatUsage(u: Usage, model?: string): string {
 	if (u.cacheRead) parts.push(`R${formatTokens(u.cacheRead)}`);
 	if (u.cacheWrite) parts.push(`W${formatTokens(u.cacheWrite)}`);
 	if (u.cost) parts.push(`$${u.cost.toFixed(4)}`);
-	if (model) parts.push(model);
+	if (model) {
+		const differs = preferredModel && stripThinkingSuffix(preferredModel) !== stripThinkingSuffix(model);
+		parts.push(differs ? `${model} (requested ${preferredModel})` : model);
+	}
 	return parts.join(" ");
 }
 
