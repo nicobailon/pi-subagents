@@ -5,7 +5,8 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { type AgentConfig, type AgentScope } from "../../agents/agents.ts";
 import { getArtifactsDir } from "../../shared/artifacts.ts";
-import { ChainClarifyComponent, type ChainClarifyResult, type ModelInfo } from "./chain-clarify.ts";
+import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
+import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
@@ -358,11 +359,7 @@ async function resumeAsyncRun(input: {
 
 	const runId = randomUUID().slice(0, 8);
 	const artifactConfig: ArtifactConfig = { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
-	const availableModels = input.ctx.modelRegistry.getAvailable().map((m) => ({
-		provider: m.provider,
-		id: m.id,
-		fullId: `${m.provider}/${m.id}`,
-	}));
+	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const result = executeAsyncSingle(runId, {
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target, followUp),
@@ -782,11 +779,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		currentSessionId: deps.state.currentSessionId!,
 		currentModelProvider: ctx.model?.provider,
 	};
-	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
-		provider: m.provider,
-		id: m.id,
-		fullId: `${m.provider}/${m.id}`,
-	}));
+	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const currentProvider = ctx.model?.provider;
 	const controlIntercomTarget = intercomBridge.active ? intercomBridge.orchestratorTarget : undefined;
@@ -979,11 +972,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			chain: asyncChain,
 			agents,
 			ctx: asyncCtx,
-			availableModels: ctx.modelRegistry.getAvailable().map((m) => ({
-				provider: m.provider,
-				id: m.id,
-				fullId: `${m.provider}/${m.id}`,
-			})),
+			availableModels: ctx.modelRegistry.getAvailable().map(toModelInfo),
 			cwd: effectiveCwd,
 			maxOutput: params.maxOutput,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
@@ -1307,11 +1296,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	}
 
 	const currentProvider = ctx.model?.provider;
-	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
-		provider: m.provider,
-		id: m.id,
-		fullId: `${m.provider}/${m.id}`,
-	}));
+	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let taskTexts = tasks.map((t) => t.task);
 	const skillOverrides: (string[] | false | undefined)[] = tasks.map((t) =>
 		normalizeSkillInput(t.skill),
@@ -1588,11 +1573,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 
 	const currentProvider = ctx.model?.provider;
-	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
-		provider: m.provider,
-		id: m.id,
-		fullId: `${m.provider}/${m.id}`,
-	}));
+	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
 	let modelOverride: string | undefined = resolveModelCandidate(
 		(params.model as string | undefined) ?? agentConfig.model,

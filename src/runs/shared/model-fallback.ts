@@ -1,10 +1,7 @@
+import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
 
-export interface AvailableModelInfo {
-	provider: string;
-	id: string;
-	fullId: string;
-}
+export type { AvailableModelInfo };
 
 interface ModelAttemptSummary {
 	model: string;

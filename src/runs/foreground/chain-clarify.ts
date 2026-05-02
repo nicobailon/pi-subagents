@@ -18,14 +18,9 @@ import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEdit
 import { updateFrontmatterField } from "../../agents/agent-serializer.ts";
 import { serializeChain } from "../../agents/chain-serializer.ts";
 import { resolveModelCandidate, splitThinkingSuffix } from "../shared/model-fallback.ts";
+import { findModelInfo, getSupportedThinkingLevels, type ModelInfo, type ThinkingLevel } from "../../shared/model-info.ts";
 
 type ClarifyMode = 'single' | 'parallel' | 'chain';
-
-export interface ModelInfo {
-	provider: string;
-	id: string;
-	fullId: string;
-}
 
 export interface BehaviorOverride {
 	output?: string | false;
@@ -43,9 +38,6 @@ export interface ChainClarifyResult {
 }
 
 type EditMode = "template" | "output" | "reads" | "model" | "thinking" | "skills";
-
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-type ThinkingLevel = typeof THINKING_LEVELS[number];
 
 /**
  * TUI component for chain clarification.
@@ -602,7 +594,10 @@ export class ChainClarifyComponent implements Component {
 			const selected = this.filteredModels[this.modelSelectedIndex];
 			if (selected) {
 				const { thinkingSuffix } = splitThinkingSuffix(this.getEffectiveModel(this.editingStep!));
-				this.updateBehavior(this.editingStep!, "model", `${selected.fullId}${thinkingSuffix}`);
+				const requestedLevel = thinkingSuffix.slice(1);
+				const selectedModel = findModelInfo(selected.fullId, this.availableModels, this.preferredProvider);
+				const suffix = getSupportedThinkingLevels(selectedModel).some((level) => level === requestedLevel) ? thinkingSuffix : "";
+				this.updateBehavior(this.editingStep!, "model", `${selected.fullId}${suffix}`);
 			}
 			this.exitEditMode();
 			return;
@@ -645,6 +640,10 @@ export class ChainClarifyComponent implements Component {
 		}
 	}
 
+	private getAvailableThinkingLevels(stepIndex: number): ThinkingLevel[] {
+		return getSupportedThinkingLevels(findModelInfo(this.getEffectiveModel(stepIndex), this.availableModels, this.preferredProvider));
+	}
+
 	/** Enter thinking level selector mode */
 	private enterThinkingSelector(): void {
 		if (!this.getEffectiveBehavior(this.selectedStep).model) {
@@ -654,15 +653,11 @@ export class ChainClarifyComponent implements Component {
 		this.editingStep = this.selectedStep;
 		this.editMode = "thinking";
 
-		const currentModel = this.getEffectiveModel(this.selectedStep);
-		const colonIdx = currentModel.lastIndexOf(":");
-		if (colonIdx !== -1) {
-			const suffix = currentModel.substring(colonIdx + 1);
-			const levelIdx = THINKING_LEVELS.indexOf(suffix as ThinkingLevel);
-			this.thinkingSelectedIndex = levelIdx >= 0 ? levelIdx : 0;
-		} else {
-			this.thinkingSelectedIndex = 0;
-		}
+		const levels = this.getAvailableThinkingLevels(this.selectedStep);
+		const { thinkingSuffix } = splitThinkingSuffix(this.getEffectiveModel(this.selectedStep));
+		const suffix = thinkingSuffix.slice(1);
+		const levelIdx = levels.findIndex((level) => level === suffix);
+		this.thinkingSelectedIndex = levelIdx >= 0 ? levelIdx : Math.max(0, levels.indexOf("off"));
 
 		this.tui.requestRender();
 	}
@@ -673,8 +668,11 @@ export class ChainClarifyComponent implements Component {
 			return;
 		}
 
+		const levels = this.getAvailableThinkingLevels(this.editingStep!);
+		if (levels.length === 0) return;
+
 		if (matchesKey(data, "return")) {
-			const selectedLevel = THINKING_LEVELS[this.thinkingSelectedIndex];
+			const selectedLevel = levels[this.thinkingSelectedIndex] ?? "off";
 			this.applyThinkingLevel(selectedLevel);
 			this.exitEditMode();
 			return;
@@ -682,14 +680,14 @@ export class ChainClarifyComponent implements Component {
 
 		if (matchesKey(data, "up")) {
 			this.thinkingSelectedIndex = this.thinkingSelectedIndex === 0
-				? THINKING_LEVELS.length - 1
+				? levels.length - 1
 				: this.thinkingSelectedIndex - 1;
 			this.tui.requestRender();
 			return;
 		}
 
 		if (matchesKey(data, "down")) {
-			this.thinkingSelectedIndex = this.thinkingSelectedIndex === THINKING_LEVELS.length - 1
+			this.thinkingSelectedIndex = this.thinkingSelectedIndex === levels.length - 1
 				? 0
 				: this.thinkingSelectedIndex + 1;
 			this.tui.requestRender();
@@ -1044,13 +1042,18 @@ export class ChainClarifyComponent implements Component {
 			"xhigh": "Maximum reasoning (ultrathink)",
 		};
 
-		for (let i = 0; i < THINKING_LEVELS.length; i++) {
-			const level = THINKING_LEVELS[i];
-			const isSelected = i === this.thinkingSelectedIndex;
-			const prefix = isSelected ? th.fg("accent", "→ ") : "  ";
-			const levelText = isSelected ? th.fg("accent", level) : level;
-			const desc = th.fg("dim", ` - ${levelDescriptions[level]}`);
-			lines.push(this.row(` ${prefix}${levelText}${desc}`));
+		const levels = this.getAvailableThinkingLevels(this.editingStep!);
+		if (levels.length === 0) {
+			lines.push(this.row(` ${th.fg("dim", "No supported thinking levels")}`));
+		} else {
+			for (let i = 0; i < levels.length; i++) {
+				const level = levels[i]!;
+				const isSelected = i === this.thinkingSelectedIndex;
+				const prefix = isSelected ? th.fg("accent", "→ ") : "  ";
+				const levelText = isSelected ? th.fg("accent", level) : level;
+				const desc = th.fg("dim", ` - ${levelDescriptions[level]}`);
+				lines.push(this.row(` ${prefix}${levelText}${desc}`));
+			}
 		}
 
 		const contentLines = lines.length;
@@ -1059,7 +1062,9 @@ export class ChainClarifyComponent implements Component {
 			lines.push(this.row(""));
 		}
 
-		const footerText = " [Enter] Select • [Esc] Cancel • ↑↓ Navigate ";
+		const footerText = levels.length === 0
+			? " [Esc] Cancel "
+			: " [Enter] Select • [Esc] Cancel • ↑↓ Navigate ";
 		lines.push(this.renderFooter(footerText));
 
 		return lines;

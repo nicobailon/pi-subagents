@@ -7,7 +7,8 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
-import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride, type ModelInfo } from "./chain-clarify.ts";
+import { ChainClarifyComponent, type ChainClarifyResult, type BehaviorOverride } from "./chain-clarify.ts";
+import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
 	resolveChainTemplates,
 	createChainDir,
@@ -389,11 +390,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let templates: ResolvedTemplates = resolveChainTemplates(chainSteps);
 	const shouldClarify = clarify !== false && ctx.hasUI && !hasParallelSteps;
 	let tuiBehaviorOverrides: (BehaviorOverride | undefined)[] | undefined;
-	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map((m) => ({
-		provider: m.provider,
-		id: m.id,
-		fullId: `${m.provider}/${m.id}`,
-	}));
+	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const availableSkills = discoverAvailableSkills(cwd ?? ctx.cwd);
 
 	if (shouldClarify) {

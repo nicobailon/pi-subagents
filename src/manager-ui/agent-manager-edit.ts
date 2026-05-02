@@ -4,30 +4,31 @@ import { buildRuntimeName, defaultSystemPromptMode, frontmatterNameForConfig, pa
 import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "../tui/text-editor.ts";
 import type { TextEditorState } from "../tui/text-editor.ts";
 import { pad, row, renderHeader, renderFooter, formatScrollInfo } from "../tui/render-helpers.ts";
+import { findModelInfo, getSupportedThinkingLevels, type ModelInfo, type ThinkingLevel } from "../shared/model-info.ts";
 
-export interface ModelInfo { provider: string; id: string; fullId: string; }
+export type { ModelInfo };
 export interface SkillInfo { name: string; source: string; description?: string; }
 export type EditScreen = "edit" | "edit-field" | "edit-prompt";
 export type EditField = typeof FIELD_ORDER[number];
 
 export interface EditState {
 	draft: AgentConfig; isNew: boolean; fieldIndex: number; fieldMode: "text" | "model" | "thinking" | "skills" | null;
-	fieldEditor: TextEditorState; promptEditor: TextEditorState; modelSearchQuery: string; modelCursor: number; filteredModels: ModelInfo[];
+	fieldEditor: TextEditorState; promptEditor: TextEditorState; modelSearchQuery: string; modelCursor: number; models: ModelInfo[]; filteredModels: ModelInfo[];
 	thinkingCursor: number; skillSearchQuery: string; skillCursor: number; filteredSkills: SkillInfo[]; skillSelected: Set<string>; error?: string;
 	fields: EditField[];
 	title?: string;
 	overrideBase?: BuiltinAgentOverrideBase;
+	preferredProvider?: string;
 }
 interface EditInputResult { action?: "save" | "discard" | "delete"; nextScreen?: EditScreen; }
 interface CreateEditStateOptions {
 	fields?: EditField[];
 	title?: string;
 	overrideBase?: BuiltinAgentOverrideBase;
+	preferredProvider?: string;
 }
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 const FIELD_ORDER = ["name", "package", "description", "model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "tools", "extensions", "skills", "output", "reads", "progress", "interactive", "prompt"] as const;
-type ThinkingLevel = typeof THINKING_LEVELS[number];
 const PROMPT_VIEWPORT_HEIGHT = 16;
 const MODEL_SELECTOR_HEIGHT = 10;
 const SKILL_SELECTOR_HEIGHT = 10;
@@ -86,8 +87,8 @@ export function createEditState(draft: AgentConfig, isNew: boolean, models: Mode
 	return {
 		draft: { ...draft, tools: draft.tools ? [...draft.tools] : undefined, mcpDirectTools: draft.mcpDirectTools ? [...draft.mcpDirectTools] : undefined, skills: draft.skills ? [...draft.skills] : undefined, fallbackModels: draft.fallbackModels ? [...draft.fallbackModels] : undefined, extensions: draft.extensions ? [...draft.extensions] : draft.extensions, defaultReads: draft.defaultReads ? [...draft.defaultReads] : undefined, extraFields: draft.extraFields ? { ...draft.extraFields } : undefined },
 		isNew, fieldIndex: 0, fieldMode: null, fieldEditor: createEditorState(), promptEditor: createEditorState(draft.systemPrompt ?? ""),
-		modelSearchQuery: "", modelCursor: 0, filteredModels: [...models], thinkingCursor: 0, skillSearchQuery: "", skillCursor: 0, filteredSkills: [...skills], skillSelected: new Set(draft.skills ?? []),
-		fields: options.fields ?? [...FIELD_ORDER], title: options.title, overrideBase: options.overrideBase,
+		modelSearchQuery: "", modelCursor: 0, models: [...models], filteredModels: [...models], thinkingCursor: 0, skillSearchQuery: "", skillCursor: 0, filteredSkills: [...skills], skillSelected: new Set(draft.skills ?? []),
+		fields: options.fields ?? [...FIELD_ORDER], title: options.title, overrideBase: options.overrideBase, preferredProvider: options.preferredProvider,
 	};
 }
 
@@ -180,9 +181,16 @@ function openModelPicker(state: EditState, models: ModelInfo[]): void {
 	state.fieldIndex = state.fields.indexOf("model"); state.fieldMode = "model"; state.modelSearchQuery = ""; state.filteredModels = [...models];
 	const idx = state.filteredModels.findIndex((m) => m.fullId === state.draft.model || m.id === state.draft.model); state.modelCursor = idx >= 0 ? idx : 0;
 }
+function getDraftThinkingLevels(state: EditState): ThinkingLevel[] {
+	return getSupportedThinkingLevels(findModelInfo(state.draft.model, state.models, state.preferredProvider));
+}
+
 function openThinkingPicker(state: EditState): void {
 	state.fieldIndex = state.fields.indexOf("thinking"); state.fieldMode = "thinking";
-	const idx = THINKING_LEVELS.indexOf((state.draft.thinking ?? "off") as ThinkingLevel); state.thinkingCursor = idx >= 0 ? idx : 0;
+	const levels = getDraftThinkingLevels(state);
+	const currentLevel = state.draft.thinking ?? "off";
+	const idx = levels.findIndex((level) => level === currentLevel);
+	state.thinkingCursor = idx >= 0 ? idx : Math.max(0, levels.indexOf("off"));
 }
 function openSkillPicker(state: EditState, skills: SkillInfo[]): void {
 	state.fieldIndex = state.fields.indexOf("skills"); state.fieldMode = "skills"; state.skillSearchQuery = ""; state.filteredSkills = [...skills]; state.skillSelected = new Set(state.draft.skills ?? []); state.skillCursor = 0;
@@ -230,16 +238,22 @@ function renderThinkingPicker(state: EditState, width: number, theme: Theme): st
 		high: "Deep reasoning",
 		xhigh: "Maximum reasoning (ultrathink)",
 	};
-	for (let i = 0; i < THINKING_LEVELS.length; i++) {
-		const level = THINKING_LEVELS[i]!;
-		const isSelected = i === state.thinkingCursor;
-		const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-		const levelText = isSelected ? theme.fg("accent", level) : level;
-		const desc = theme.fg("dim", ` - ${descriptions[level]}`);
-		lines.push(row(` ${prefix}${levelText}${desc}`, width, theme));
+	const levels = getDraftThinkingLevels(state);
+	if (levels.length === 0) {
+		lines.push(row(` ${theme.fg("dim", "No supported thinking levels")}`, width, theme));
+	} else {
+		for (let i = 0; i < levels.length; i++) {
+			const level = levels[i]!;
+			const isSelected = i === state.thinkingCursor;
+			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
+			const levelText = isSelected ? theme.fg("accent", level) : level;
+			const desc = theme.fg("dim", ` - ${descriptions[level]}`);
+			lines.push(row(` ${prefix}${levelText}${desc}`, width, theme));
+		}
 	}
 	while (lines.length < 19) lines.push(row("", width, theme));
-	lines.push(renderFooter(" [enter] select  [esc] cancel  [↑↓] navigate ", width, theme));
+	const footer = levels.length === 0 ? " [esc] cancel " : " [enter] select  [esc] cancel  [↑↓] navigate ";
+	lines.push(renderFooter(footer, width, theme));
 	return lines;
 }
 
@@ -323,7 +337,15 @@ export function handleEditInput(screen: EditScreen, state: EditState, data: stri
 	if (screen === "edit-field") {
 		if (state.fieldMode === "model") {
 			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) { state.fieldMode = null; return { nextScreen: "edit" }; }
-			if (matchesKey(data, "return")) { const selected = state.filteredModels[state.modelCursor]; if (selected) state.draft.model = selected.fullId; state.fieldMode = null; return { nextScreen: "edit" }; }
+			if (matchesKey(data, "return")) {
+				const selected = state.filteredModels[state.modelCursor];
+				if (selected) {
+					state.draft.model = selected.fullId;
+					if (state.draft.thinking && !getDraftThinkingLevels(state).some((level) => level === state.draft.thinking)) state.draft.thinking = undefined;
+				}
+				state.fieldMode = null;
+				return { nextScreen: "edit" };
+			}
 			if (matchesKey(data, "up")) { if (state.filteredModels.length > 0) state.modelCursor = state.modelCursor === 0 ? state.filteredModels.length - 1 : state.modelCursor - 1; return; }
 			if (matchesKey(data, "down")) { if (state.filteredModels.length > 0) state.modelCursor = state.modelCursor === state.filteredModels.length - 1 ? 0 : state.modelCursor + 1; return; }
 			if (matchesKey(data, "backspace")) { if (state.modelSearchQuery.length > 0) state.modelSearchQuery = state.modelSearchQuery.slice(0, -1); }
@@ -334,10 +356,12 @@ export function handleEditInput(screen: EditScreen, state: EditState, data: stri
 			return;
 		}
 		if (state.fieldMode === "thinking") {
+			const levels = getDraftThinkingLevels(state);
 			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) { state.fieldMode = null; return { nextScreen: "edit" }; }
-			if (matchesKey(data, "return")) { const selected = THINKING_LEVELS[state.thinkingCursor]; state.draft.thinking = selected === "off" ? undefined : selected; state.fieldMode = null; return { nextScreen: "edit" }; }
-			if (matchesKey(data, "up")) { state.thinkingCursor = state.thinkingCursor === 0 ? THINKING_LEVELS.length - 1 : state.thinkingCursor - 1; return; }
-			if (matchesKey(data, "down")) { state.thinkingCursor = state.thinkingCursor === THINKING_LEVELS.length - 1 ? 0 : state.thinkingCursor + 1; return; }
+			if (levels.length === 0) return;
+			if (matchesKey(data, "return")) { const selected = levels[state.thinkingCursor] ?? "off"; state.draft.thinking = selected === "off" ? undefined : selected; state.fieldMode = null; return { nextScreen: "edit" }; }
+			if (matchesKey(data, "up")) { state.thinkingCursor = state.thinkingCursor === 0 ? levels.length - 1 : state.thinkingCursor - 1; return; }
+			if (matchesKey(data, "down")) { state.thinkingCursor = state.thinkingCursor === levels.length - 1 ? 0 : state.thinkingCursor + 1; return; }
 			return;
 		}
 		if (state.fieldMode === "skills") {

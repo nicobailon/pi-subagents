@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Hide unsupported thinking levels in subagent clarify and agent-manager pickers when Pi exposes per-model thinking metadata.
+
 ## [0.21.5] - 2026-05-02
 
 ### Fixed

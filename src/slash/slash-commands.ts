@@ -11,6 +11,7 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { isParallelStep, type ChainStep } from "../shared/settings.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
+import { toModelInfo } from "../shared/model-info.ts";
 import {
 	applySlashUpdate,
 	buildSlashInitialResult,
@@ -332,15 +333,11 @@ async function openAgentManager(
 	config: ExtensionConfig = {},
 ): Promise<void> {
 	const agentData = { ...discoverAgentsAll(ctx.cwd), cwd: ctx.cwd };
-	const models = ctx.modelRegistry.getAvailable().map((m) => ({
-		provider: m.provider,
-		id: m.id,
-		fullId: `${m.provider}/${m.id}`,
-	}));
+	const models = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const skills = discoverAvailableSkills(ctx.cwd);
 
 	const result = await ctx.ui.custom<ManagerResult>(
-		(tui, theme, _kb, done) => new AgentManagerComponent(tui, theme, agentData, models, skills, done, { newShortcut: config.agentManager?.newShortcut }),
+		(tui, theme, _kb, done) => new AgentManagerComponent(tui, theme, agentData, models, skills, done, { newShortcut: config.agentManager?.newShortcut, preferredModelProvider: ctx.model?.provider }),
 		{ overlay: true, overlayOptions: { anchor: "center", width: 84, maxHeight: "80%" } },
 	);
 	if (!result) return;

@@ -45,7 +45,7 @@ interface ChainEntry { id: string; kind: "chain"; config: ChainConfig; }
 interface NameInputState { mode: "new-agent" | "clone-agent" | "clone-chain" | "new-chain"; editor: TextEditorState; scope: "user" | "project"; allowProject: boolean; sourceId?: string; template?: AgentTemplate; error?: string; }
 interface StatusMessage { text: string; type: "error" | "info"; }
 interface OverrideScopeState { selectedScope: "user" | "project"; allowProject: boolean; }
-export interface AgentManagerOptions { newShortcut?: string; }
+export interface AgentManagerOptions { newShortcut?: string; preferredModelProvider?: string; }
 
 const BUILTIN_OVERRIDE_FIELDS: EditField[] = ["model", "fallbackModels", "thinking", "systemPromptMode", "inheritProjectContext", "inheritSkills", "defaultContext", "disabled", "tools", "skills", "prompt"];
 
@@ -135,6 +135,7 @@ export class AgentManagerComponent implements Component {
 	private skills: SkillInfo[];
 	private done: (result: ManagerResult) => void;
 	private shortcuts: ListShortcuts;
+	private preferredModelProvider: string | undefined;
 
 	constructor(tui: TUI, theme: Theme, agentData: AgentData, models: ModelInfo[], skills: SkillInfo[], done: (result: ManagerResult) => void, options: AgentManagerOptions = {}) {
 		this.tui = tui;
@@ -144,6 +145,7 @@ export class AgentManagerComponent implements Component {
 		this.skills = skills;
 		this.done = done;
 		this.shortcuts = { newShortcut: options.newShortcut?.trim() || DEFAULT_AGENT_MANAGER_NEW_SHORTCUT };
+		this.preferredModelProvider = options.preferredModelProvider;
 		this.loadEntries();
 	}
 
@@ -196,7 +198,7 @@ export class AgentManagerComponent implements Component {
 
 	private enterDetail(entry: AgentEntry): void { this.currentAgentId = entry.id; this.detailState = { resolved: true, scrollOffset: 0, recentRuns: loadRunsForAgent(entry.config.name).slice(0, 5) }; this.screen = "detail"; }
 	private enterChainDetail(entry: ChainEntry): void { this.currentChainId = entry.id; this.chainDetailState = { scrollOffset: 0 }; this.screen = "chain-detail"; }
-	private enterEdit(entry: AgentEntry): void { this.currentAgentId = entry.id; this.builtinOverrideScope = null; this.editState = createEditState(entry.config, entry.isNew, this.models, this.skills); this.screen = "edit"; }
+	private enterEdit(entry: AgentEntry): void { this.currentAgentId = entry.id; this.builtinOverrideScope = null; this.editState = createEditState(entry.config, entry.isNew, this.models, this.skills, { preferredProvider: this.preferredModelProvider }); this.screen = "edit"; }
 	private enterBuiltinOverrideScope(entry: AgentEntry): void {
 		this.currentAgentId = entry.id;
 		this.overrideScopeState = { selectedScope: this.agentData.projectSettingsPath ? "project" : "user", allowProject: Boolean(this.agentData.projectSettingsPath) };
@@ -209,6 +211,7 @@ export class AgentManagerComponent implements Component {
 			fields: BUILTIN_OVERRIDE_FIELDS,
 			title: `Builtin Override: ${entry.config.name} [${scope}]`,
 			overrideBase: this.resolveBuiltinOverrideBase(entry),
+			preferredProvider: this.preferredModelProvider,
 		});
 		this.screen = "edit";
 	}

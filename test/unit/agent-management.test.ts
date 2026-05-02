@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { handleCreate, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
-import { createEditState, handleEditInput } from "../../src/manager-ui/agent-manager-edit.ts";
+import { createEditState, handleEditInput, renderEdit } from "../../src/manager-ui/agent-manager-edit.ts";
 
 let tempDir = "";
 
@@ -146,6 +146,75 @@ Inspect
 });
 
 describe("agent manager edit prompt mode", () => {
+	it("shows only thinking levels supported by the selected model", () => {
+		const models = [{
+			provider: "deepseek",
+			id: "deepseek-v4-pro",
+			fullId: "deepseek/deepseek-v4-pro",
+			reasoning: true,
+			thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" },
+		}];
+		const state = createEditState(
+			{
+				name: "worker",
+				description: "Worker",
+				source: "user",
+				filePath: "/tmp/worker.md",
+				systemPrompt: "Do work",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				model: "deepseek/deepseek-v4-pro",
+			},
+			false,
+			models,
+			[],
+		);
+
+		state.fieldIndex = state.fields.indexOf("thinking");
+		handleEditInput("edit", state, "\r", 80, models, []);
+		const rendered = renderEdit("edit-field", state, 80, { fg(_key: string, text: string) { return text; } }).join("\n");
+
+		assert.match(rendered, /off - No extended thinking/);
+		assert.match(rendered, /high - Deep reasoning/);
+		assert.match(rendered, /xhigh - Maximum reasoning/);
+		assert.doesNotMatch(rendered, /minimal - Brief reasoning/);
+		assert.doesNotMatch(rendered, /low - Light reasoning/);
+		assert.doesNotMatch(rendered, /medium - Moderate reasoning/);
+	});
+
+	it("drops thinking when switching to a model that does not support it", () => {
+		const models = [
+			{ provider: "test", id: "reasoning-model", fullId: "test/reasoning-model", reasoning: true },
+			{ provider: "test", id: "basic-model", fullId: "test/basic-model", reasoning: false },
+		];
+		const state = createEditState(
+			{
+				name: "worker",
+				description: "Worker",
+				source: "user",
+				filePath: "/tmp/worker.md",
+				systemPrompt: "Do work",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				model: "test/reasoning-model",
+				thinking: "high",
+			},
+			false,
+			models,
+			[],
+		);
+
+		state.fieldIndex = state.fields.indexOf("model");
+		handleEditInput("edit", state, "\r", 80, models, []);
+		state.modelCursor = state.filteredModels.findIndex((model) => model.fullId === "test/basic-model");
+		handleEditInput("edit-field", state, "\r", 80, models, []);
+
+		assert.equal(state.draft.model, "test/basic-model");
+		assert.equal(state.draft.thinking, undefined);
+	});
+
 	it("keeps an empty packaged local name invalid instead of duplicating the package prefix", () => {
 		const state = createEditState(
 			{
