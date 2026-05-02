@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Align single-run async subagent widgets and `/subagents-status` rendering with foreground subagent result styling for parallel, chain, and grouped chain runs, including inline live detail when tool output expansion is enabled, while keeping multi-job async widgets compact.
+
 ## [0.22.0] - 2026-05-02
 
 ### Added

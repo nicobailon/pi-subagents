@@ -162,8 +162,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
 								: undefined;
 							const visibleSteps = activeGroup
-								? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count)
-								: status.steps;
+								? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
+								: status.steps.map((step, index) => ({ ...step, index }));
 							job.activeParallelGroup = Boolean(activeGroup);
 							job.agents = visibleSteps.map((step) => step.agent);
 							job.steps = visibleSteps;

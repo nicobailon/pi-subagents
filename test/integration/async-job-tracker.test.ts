@@ -145,6 +145,58 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("adds flat step indexes to polled active parallel group steps", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		try {
+			const runDir = path.join(asyncRoot, "run-chain");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-chain",
+				mode: "chain",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				currentStep: 1,
+				chainStepCount: 3,
+				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
+				steps: [
+					{ agent: "scout", status: "complete" },
+					{
+						agent: "reviewer",
+						status: "running",
+						currentTool: "read",
+						currentToolArgs: "src/tui/render.ts",
+						recentTools: [{ tool: "grep", args: "async widget", endMs: Date.now() - 100 }],
+						recentOutput: ["reviewer line"],
+					},
+					{ agent: "auditor", status: "running" },
+					{ agent: "writer", status: "pending" },
+				],
+			}), "utf-8");
+
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-chain", asyncDir: runDir, mode: "chain", agents: ["scout", "reviewer", "auditor", "writer"] });
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			const job = state.asyncJobs.get("run-chain");
+			assert.deepEqual(job?.steps?.map((step: { index?: number }) => step.index), [1, 2]);
+			assert.deepEqual(job?.agents, ["reviewer", "auditor"]);
+			assert.equal(job?.steps?.[0]?.currentTool, "read");
+			assert.equal(job?.steps?.[0]?.currentToolArgs, "src/tui/render.ts");
+			assert.deepEqual(job?.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "grep", args: "async widget" }]);
+			assert.deepEqual(job?.steps?.[0]?.recentOutput, ["reviewer line"]);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("schedules cleanup when polling observes a completed status without a completion event", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {

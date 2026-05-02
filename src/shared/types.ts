@@ -299,8 +299,11 @@ export interface AsyncStatus {
 		activityState?: ActivityState;
 		lastActivityAt?: number;
 		currentTool?: string;
+		currentToolArgs?: string;
 		currentToolStartedAt?: number;
 		currentPath?: string;
+		recentTools?: Array<{ tool: string; args: string; endMs: number }>;
+		recentOutput?: string[];
 		turnCount?: number;
 		toolCount?: number;
 		startedAt?: number;
@@ -320,6 +323,10 @@ export interface AsyncStatus {
 	sessionFile?: string;
 }
 
+export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
+	index?: number;
+};
+
 export interface AsyncJobState {
 	asyncId: string;
 	asyncDir: string;
@@ -338,7 +345,7 @@ export interface AsyncJobState {
 	currentStep?: number;
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
-	steps?: AsyncStatus["steps"];
+	steps?: AsyncJobStep[];
 	stepsTotal?: number;
 	runningSteps?: number;
 	completedSteps?: number;

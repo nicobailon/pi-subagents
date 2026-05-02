@@ -62,11 +62,20 @@ function stepGlyph(theme: Theme, status: string): string {
 	return theme.fg("dim", "◦");
 }
 
+function runGlyph(theme: Theme, status: AsyncRunSummary["state"]): string {
+	if (status === "running") return theme.fg("accent", "▶");
+	if (status === "queued") return theme.fg("dim", "◦");
+	if (status === "complete") return theme.fg("success", "✓");
+	if (status === "paused") return theme.fg("warning", "■");
+	return theme.fg("error", "✗");
+}
+
 function runLabel(theme: Theme, run: AsyncRunSummary, selected: boolean): string {
 	const prefix = selected ? theme.fg("accent", ">") : " ";
 	const stepLabel = formatAsyncRunProgressLabel(run);
 	const cwd = shortenPath(run.cwd ?? run.asyncDir);
-	return `${prefix} ${run.id.slice(0, 8)} ${statusColor(theme, run.state)} | ${run.mode} | ${stepLabel} | ${cwd}`;
+	const mode = ((theme as { bold?: (value: string) => string }).bold?.(run.mode)) ?? run.mode;
+	return `${prefix} ${runGlyph(theme, run.state)} ${mode} · ${stepLabel} · ${run.id.slice(0, 8)} · ${cwd}`;
 }
 
 function selectedIndex(rows: StatusRow[], cursor: number): number {
@@ -332,7 +341,13 @@ export class SubagentsStatusComponent implements Component {
 		if (run.sessionFile) {
 			lines.push(row(`session: ${truncateToWidth(shortenPath(run.sessionFile), innerW - 9)}`, width, this.theme));
 		}
-		lines.push(...this.renderStepRows(run, width, innerW));
+		if (run.mode === "chain" && (run.chainStepCount !== undefined || run.parallelGroups?.length)) {
+			lines.push(...this.renderChainProgressRows(run, width, innerW));
+		} else if (run.mode === "parallel") {
+			lines.push(...this.renderAgentRows(run, width, innerW));
+		} else {
+			lines.push(...this.renderStepRows(run, width, innerW));
+		}
 		return lines;
 	}
 
@@ -438,7 +453,7 @@ export class SubagentsStatusComponent implements Component {
 			: undefined;
 
 		const body: string[] = [];
-		body.push(...detailRows(`${run.id} | ${statusColor(this.theme, run.state)} | ${run.mode} | ${stepLabel} | ${duration}`, width, innerW, this.theme));
+		body.push(...detailRows(`${runGlyph(this.theme, run.state)} ${run.mode} · ${stepLabel} · ${statusColor(this.theme, run.state)} · ${duration}`, width, innerW, this.theme));
 		if (activity) body.push(...detailRows(activity, width, innerW, this.theme));
 		body.push(row("", width, this.theme));
 		if (run.mode === "chain" && (run.chainStepCount !== undefined || run.parallelGroups?.length)) {

@@ -142,6 +142,25 @@ function tokenUsageFromAttempts(attempts: ModelAttempt[] | undefined): TokenUsag
 	return total > 0 ? { input, output, total } : null;
 }
 
+function appendRecentStepOutput(step: RunnerStatusStep, lines: string[]): void {
+	const nonEmpty = lines.filter((line) => line.trim());
+	if (nonEmpty.length === 0) return;
+	step.recentOutput ??= [];
+	step.recentOutput.push(...nonEmpty);
+	if (step.recentOutput.length > 50) {
+		step.recentOutput.splice(0, step.recentOutput.length - 50);
+	}
+}
+
+function resetStepLiveDetail(step: RunnerStatusStep): void {
+	step.currentTool = undefined;
+	step.currentToolArgs = undefined;
+	step.currentToolStartedAt = undefined;
+	step.currentPath = undefined;
+	step.recentTools = [];
+	step.recentOutput = [];
+}
+
 interface ChildEventContext {
 	eventsPath: string;
 	runId: string;
@@ -900,6 +919,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			skills: step.skills,
 			model: step.model,
 			attemptedModels: step.modelCandidates && step.modelCandidates.length > 0 ? step.modelCandidates : step.model ? [step.model] : undefined,
+			recentTools: [],
+			recentOutput: [],
 		})),
 		artifactsDir,
 		sessionDir: config.sessionDir,
@@ -1002,13 +1023,19 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
 			step.toolCount = (step.toolCount ?? 0) + 1;
 			step.currentTool = event.toolName;
+			step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
 			step.currentToolStartedAt = now;
 			step.currentPath = currentPath;
 			pendingToolResults[flatIndex] = { tool: event.toolName, path: currentPath, mutates, startedAt: now };
 			statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
 			syncTopLevelCurrentTool();
 		} else if (event.type === "tool_execution_end") {
+			if (step.currentTool) {
+				step.recentTools ??= [];
+				step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
+			}
 			step.currentTool = undefined;
+			step.currentToolArgs = undefined;
 			step.currentToolStartedAt = undefined;
 			step.currentPath = undefined;
 			syncTopLevelCurrentTool();
@@ -1016,6 +1043,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			const toolSnapshot = pendingToolResults[flatIndex];
 			pendingToolResults[flatIndex] = undefined;
 			const resultText = extractTextFromContent(event.message.content);
+			appendRecentStepOutput(step, resultText.split("\n").slice(-10));
 			if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
 				const state = mutatingFailureStates[flatIndex]!;
 				recordMutatingFailure(state, {
@@ -1051,6 +1079,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				resetMutatingFailureState(mutatingFailureStates[flatIndex]!);
 			}
 		} else if (event.type === "message_end" && event.message?.role === "assistant") {
+			appendRecentStepOutput(step, extractTextFromContent(event.message.content).split("\n").slice(-10));
 			step.turnCount = (step.turnCount ?? 0) + 1;
 			const usage = event.message.usage;
 			if (usage) {
@@ -1277,6 +1306,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].status = "running";
 						statusPayload.steps[fi].error = undefined;
 						statusPayload.steps[fi].activityState = undefined;
+						resetStepLiveDetail(statusPayload.steps[fi]);
 						statusPayload.steps[fi].startedAt = taskStartTime;
 						statusPayload.steps[fi].endedAt = undefined;
 						statusPayload.steps[fi].durationMs = undefined;
@@ -1420,6 +1450,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].status = "running";
 			statusPayload.steps[flatIndex].activityState = undefined;
 			statusPayload.activityState = undefined;
+			resetStepLiveDetail(statusPayload.steps[flatIndex]);
 			statusPayload.steps[flatIndex].skills = seqStep.skills;
 			statusPayload.steps[flatIndex].startedAt = stepStartTime;
 			statusPayload.steps[flatIndex].lastActivityAt = stepStartTime;

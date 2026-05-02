@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 const { buildWidgetLines, renderWidget, stopResultAnimations, stopWidgetAnimation, syncResultAnimation } = await import("../../src/tui/render.ts") as {
-	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number) => string[];
+	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean) => string[];
 	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
 	stopResultAnimations: () => void;
 	stopWidgetAnimation: () => void;
@@ -79,8 +79,9 @@ describe("subagent async widget rendering", () => {
 		], theme, 120);
 
 		const text = lines.join("\n");
-		assert.match(text, /parallel · scout, reviewer, worker/);
-		assert.match(text, /3 agents running · 0\/3 done/);
+		assert.match(text, /parallel · 3 agents running · 0\/3 done/);
+		assert.match(text, /⎿  thinking…/);
+		assert.doesNotMatch(text, /parallel · scout, reviewer, worker/);
 		assert.doesNotMatch(text, /step 1\/3/);
 	});
 
@@ -90,7 +91,8 @@ describe("subagent async widget rendering", () => {
 		], theme, 120);
 
 		const text = lines.join("\n");
-		assert.match(text, /parallel · reviewer ×3 · 3 agents running/);
+		assert.match(text, /parallel · 3 agents running/);
+		assert.doesNotMatch(text, /parallel · reviewer ×3/);
 		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
 	});
 
@@ -116,10 +118,52 @@ describe("subagent async widget rendering", () => {
 		], theme, 160);
 
 		const text = lines.join("\n");
-		assert.match(text, /parallel · reviewer ×3 · 2 agents running · 1\/3 done/);
-		assert.match(text, /Agent 1\/3: reviewer · running · active now · 2 tools/);
-		assert.match(text, /Agent 2\/3: reviewer · running · read 2\.0s/);
-		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k tok/);
+		assert.match(text, /async subagent parallel \(3\) · background · \/subagents-status/);
+		assert.match(text, /parallel · 2 agents running · 1\/3 done/);
+		assert.match(text, /Agent 1\/3: reviewer · 2 tool uses/);
+		assert.match(text, /⎿  active now/);
+		assert.match(text, /Agent 2\/3: reviewer\n\s+⎿  read \| 2\.0s/);
+		assert.match(text, /Press Ctrl\+O for live detail/);
+		assert.match(text, /Agent 3\/3: reviewer · 1\.5k token/);
+	});
+
+	it("shows inline live detail for expanded async parallel widget rows", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-1",
+			asyncDir: "/tmp/1",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					currentTool: "read",
+					currentToolArgs: "src/tui/render.ts",
+					currentToolStartedAt: now - 2000,
+					recentTools: [{ tool: "grep", args: "async widget", endMs: now - 3000 }],
+					recentOutput: ["found renderWidget", "checking expanded state"],
+				},
+			],
+		};
+
+		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(collapsedText, /Press Ctrl\+O for live detail/);
+		assert.doesNotMatch(collapsedText, /found renderWidget/);
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.doesNotMatch(expandedText, /Press Ctrl\+O for live detail/);
+		assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
+		assert.match(expandedText, /output: \/tmp\/1\/output-0\.log/);
+		assert.match(expandedText, /grep: async widget/);
+		assert.match(expandedText, /found renderWidget/);
+		assert.match(expandedText, /checking expanded state/);
 	});
 
 	it("includes logical chain context for active async chain parallel groups", () => {
@@ -142,6 +186,74 @@ describe("subagent async widget rendering", () => {
 
 		const text = lines.join("\n");
 		assert.match(text, /step 2\/3 · parallel group: 1 agent running · 1\/2 done/);
+	});
+
+	it("uses logical chain steps after an async chain parallel group finishes", () => {
+		const lines = buildWidgetLines([
+			{
+				asyncId: "run-chain",
+				asyncDir: "/tmp/chain",
+				status: "running",
+				mode: "chain",
+				agents: ["scout", "reviewer", "auditor", "writer"],
+				activeParallelGroup: false,
+				currentStep: 3,
+				chainStepCount: 2,
+				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+				stepsTotal: 4,
+				steps: [
+					{ index: 0, agent: "scout", status: "complete" },
+					{ index: 1, agent: "reviewer", status: "complete" },
+					{ index: 2, agent: "auditor", status: "complete" },
+					{ index: 3, agent: "writer", status: "running", toolCount: 1 },
+				],
+			},
+		], theme, 180);
+
+		const text = lines.join("\n");
+		assert.match(text, /async subagent chain \(2\)/);
+		assert.match(text, /chain · step 2\/2/);
+		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
+		assert.match(text, /Step 2\/2: writer · 1 tool use/);
+		assert.match(text, /Press Ctrl\+O for live detail/);
+		assert.match(text, /output: \/tmp\/chain\/output-3\.log/);
+		assert.doesNotMatch(text, /step 4\/4/);
+		assert.doesNotMatch(text, /Step 4\/4/);
+	});
+
+	it("omits zero-running labels for pending active async parallel groups", () => {
+		const lines = buildWidgetLines([
+			{
+				asyncId: "parallel-pending",
+				asyncDir: "/tmp/parallel-pending",
+				status: "running",
+				mode: "parallel",
+				agents: ["scout", "reviewer", "worker"],
+				activeParallelGroup: true,
+				runningSteps: 0,
+				completedSteps: 0,
+				stepsTotal: 3,
+			},
+			{
+				asyncId: "chain-pending",
+				asyncDir: "/tmp/chain-pending",
+				status: "running",
+				mode: "chain",
+				agents: ["reviewer", "auditor"],
+				activeParallelGroup: true,
+				currentStep: 0,
+				chainStepCount: 2,
+				parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
+				runningSteps: 0,
+				completedSteps: 0,
+				stepsTotal: 2,
+			},
+		], theme, 180);
+
+		const text = lines.join("\n");
+		assert.match(text, /parallel · 0\/3 done/);
+		assert.match(text, /chain · step 1\/2 · parallel group: 0\/2 done/);
+		assert.doesNotMatch(text, /0 agents running/);
 	});
 
 	it("shows explicit overflow counts for hidden work", () => {

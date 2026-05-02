@@ -115,7 +115,8 @@ describe("SubagentsStatusComponent", () => {
 		);
 		try {
 			const output = component.render(160).join("\n");
-			assert.match(output, /parallel \| 1 agent running · 1\/3/);
+			assert.match(output, /▶ parallel · 1 agent running · 1\/3 done/);
+			assert.match(output, /Agent 1\/3: scout · complete/);
 			assert.doesNotMatch(output, /step 1\/1/);
 			assert.doesNotMatch(output, /step 2\/3/);
 		} finally {
@@ -355,7 +356,7 @@ describe("SubagentsStatusComponent", () => {
 				await wait(25);
 				const output = component.render(120).join("\n");
 				assert.match(output, /Subagent Run run-a/);
-				assert.match(output, /run-a \| complete/);
+				assert.match(output, /✓ single · step 1\/1 · complete/);
 			} finally {
 				component.dispose();
 			}

@@ -1206,5 +1206,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].output, "Done streaming");
+
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.deepEqual(status.steps[0].recentTools.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "bash", args: "ls" }]);
+		assert.deepEqual(status.steps[0].recentOutput, ["file-a", "file-b", "Done streaming"]);
 	});
 });

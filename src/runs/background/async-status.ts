@@ -13,8 +13,11 @@ interface AsyncRunStepSummary {
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
+	currentToolArgs?: string;
 	currentToolStartedAt?: number;
 	currentPath?: string;
+	recentTools?: Array<{ tool: string; args: string; endMs: number }>;
+	recentOutput?: string[];
 	turnCount?: number;
 	toolCount?: number;
 	durationMs?: number;
@@ -155,8 +158,11 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 				...(stepActivityState ? { activityState: stepActivityState } : {}),
 				...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
 				...(step.currentTool ? { currentTool: step.currentTool } : {}),
+				...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
 				...(step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
 				...(step.currentPath ? { currentPath: step.currentPath } : {}),
+				...(step.recentTools ? { recentTools: step.recentTools.map((tool) => ({ ...tool })) } : {}),
+				...(step.recentOutput ? { recentOutput: [...step.recentOutput] } : {}),
 				...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
 				...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
 				...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
@@ -270,7 +276,7 @@ function formatParallelProgress(steps: Pick<AsyncRunStepSummary, "status">[], to
 	const failed = steps.filter((step) => step.status === "failed").length;
 	const paused = steps.filter((step) => step.status === "paused").length;
 	const parts = [`${done}/${total} done`];
-	if (showRunning) parts.unshift(running === 1 ? "1 agent running" : `${running} agents running`);
+	if (showRunning && running > 0) parts.unshift(running === 1 ? "1 agent running" : `${running} agents running`);
 	if (failed > 0) parts.push(`${failed} failed`);
 	if (paused > 0) parts.push(`${paused} paused`);
 	return parts.join(" · ");

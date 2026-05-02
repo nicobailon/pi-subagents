@@ -2,6 +2,7 @@
  * Rendering functions for subagent results
  */
 
+import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, visibleWidth, type Component } from "@mariozechner/pi-tui";
@@ -14,6 +15,7 @@ import {
 } from "../shared/types.ts";
 import { formatTokens, formatUsage, formatDuration, formatToolCall, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getLastActivity, getSingleResultOutput } from "../shared/utils.ts";
+import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -264,10 +266,10 @@ function formatWidgetAgents(agents: string[]): string {
 }
 
 function widgetJobName(job: AsyncJobState): string {
-	const agents = job.agents?.length ? formatWidgetAgents(job.agents) : undefined;
-	if (job.mode === "parallel") return agents ? `parallel · ${agents}` : "parallel";
-	if (job.activeParallelGroup) return agents ? `parallel group · ${agents}` : "parallel group";
-	if (job.agents?.length) return job.agents.join(" → ");
+	if (job.mode === "parallel") return "parallel";
+	if (job.mode === "chain") return "chain";
+	if (job.mode === "single" && job.agents?.length === 1) return job.agents[0]!;
+	if (job.agents?.length) return formatWidgetAgents(job.agents);
 	return job.mode ?? "subagent";
 }
 
@@ -293,6 +295,7 @@ function widgetActivity(job: AsyncJobState): string {
 	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
 	if (activity) return activity;
 	if (facts.length) return facts.join(" · ");
+	if (job.status === "running") return "thinking…";
 	if (job.status === "queued") return "queued…";
 	if (job.status === "paused") return "Paused";
 	if (job.status === "failed") return "Failed";
@@ -308,7 +311,7 @@ function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
 }
 
 function widgetStepGlyph(status: string, theme: Theme): string {
-	if (status === "running") return theme.fg("accent", "▶");
+	if (status === "running") return theme.fg("accent", spinnerFrame());
 	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
 	if (status === "failed") return theme.fg("error", "✗");
 	if (status === "paused") return theme.fg("warning", "■");
@@ -337,14 +340,62 @@ function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number]): 
 	return facts.join(" · ");
 }
 
+function widgetAggregateStepStatus(steps: NonNullable<AsyncJobState["steps"]>): string {
+	if (steps.some((step) => step.status === "running")) return "running";
+	if (steps.some((step) => step.status === "failed")) return "failed";
+	if (steps.some((step) => step.status === "paused")) return "paused";
+	if (steps.length > 0 && steps.every((step) => step.status === "complete" || step.status === "completed")) return "complete";
+	return "pending";
+}
+
+function widgetParallelOutcome(steps: NonNullable<AsyncJobState["steps"]>, total: number): string {
+	const running = steps.filter((step) => step.status === "running").length;
+	const done = steps.filter((step) => step.status === "complete" || step.status === "completed").length;
+	const failed = steps.filter((step) => step.status === "failed").length;
+	const paused = steps.filter((step) => step.status === "paused").length;
+	const parts = [`${done}/${total} done`];
+	if (running > 0) parts.unshift(formatAgentRunningLabel(running));
+	if (failed > 0) parts.push(`${failed} failed`);
+	if (paused > 0) parts.push(`${paused} paused`);
+	return parts.join(" · ");
+}
+
+function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth()): string[] {
+	if (!job.steps?.length) return [];
+	const total = job.chainStepCount ?? job.steps.length;
+	const groups = job.parallelGroups ?? [];
+	const lines: string[] = [];
+	let flatIndex = 0;
+	for (let stepIndex = 0; stepIndex < total; stepIndex++) {
+		const group = groups.find((candidate) => candidate.stepIndex === stepIndex);
+		if (group) {
+			const steps = job.steps.slice(group.start, group.start + group.count);
+			const status = widgetAggregateStepStatus(steps);
+			lines.push(`  ${widgetStepGlyph(status, theme)} Step ${stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", widgetParallelOutcome(steps, group.count))}`);
+			flatIndex = Math.max(flatIndex, group.start + group.count);
+			continue;
+		}
+		const step = job.steps[flatIndex];
+		if (!step) {
+			lines.push(`  ${theme.fg("dim", `◦ Step ${stepIndex + 1}/${total}: pending`)}`);
+			continue;
+		}
+		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, "Step", stepIndex + 1, total, expanded, width));
+		flatIndex++;
+	}
+	return lines;
+}
+
 function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme): string[] {
-	if (!job.activeParallelGroup || !job.steps?.length) return [];
+	if (!job.steps?.length) return [];
 	if (job.mode !== "parallel" && job.mode !== "chain") return [];
+	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme);
 	const total = job.stepsTotal ?? job.steps.length;
 	return job.steps.map((step, index) => {
 		const marker = index === job.steps!.length - 1 ? "└" : "├";
 		const activity = widgetStepActivity(step);
-		return `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme)} Agent ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${activity ? ` · ${activity}` : ""}`)}`;
+		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
+		return `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${activity ? ` · ${activity}` : ""}`)}`;
 	});
 }
 
@@ -513,7 +564,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 		const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
 		const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
 		if (job.mode === "parallel") {
-			if (job.status === "running") parts.push(formatAgentRunningLabel(running));
+			if (job.status === "running" && running > 0) parts.push(formatAgentRunningLabel(running));
 			if (stepsTotal > 0) parts.push(`${done}/${stepsTotal} done`);
 		} else {
 			const activeGroup = job.currentStep !== undefined
@@ -521,24 +572,112 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 				: job.parallelGroups?.find((group) => group.start === 0);
 			const logicalStep = activeGroup?.stepIndex ?? job.currentStep ?? 0;
 			const total = job.chainStepCount ?? stepsTotal;
-			const groupProgress = job.status === "running"
-				? `${formatAgentRunningLabel(running)} · ${done}/${stepsTotal} done`
-				: `${done}/${stepsTotal} done`;
-			parts.push(`step ${logicalStep + 1}/${total} · parallel group: ${groupProgress}`);
+			const groupParts = [`${done}/${stepsTotal} done`];
+			if (job.status === "running" && running > 0) groupParts.unshift(formatAgentRunningLabel(running));
+			parts.push(`step ${logicalStep + 1}/${total} · parallel group: ${groupParts.join(" · ")}`);
 		}
 	} else if (job.currentStep !== undefined) {
-		parts.push(`step ${job.currentStep + 1}/${stepsTotal}`);
+		if (job.mode === "chain" && job.parallelGroups?.length) {
+			const total = job.chainStepCount ?? stepsTotal;
+			parts.push(`step ${flatToLogicalStepIndex(job.currentStep, total, job.parallelGroups) + 1}/${total}`);
+		} else {
+			parts.push(`step ${job.currentStep + 1}/${stepsTotal}`);
+		}
 	} else if (stepsTotal > 1) {
 		parts.push(`steps ${stepsTotal}`);
 	}
+	if (job.toolCount !== undefined) parts.push(formatToolUseStat(job.toolCount));
 	if (job.totalTokens?.total) parts.push(formatTokenStat(job.totalTokens.total));
 	const endTime = job.status === "complete" || job.status === "failed" || job.status === "paused" ? (job.updatedAt ?? Date.now()) : Date.now();
 	if (job.startedAt) parts.push(formatDuration(Math.max(0, endTime - job.startedAt)));
 	return statJoin(theme, parts);
 }
 
-export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth()): string[] {
+function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>[number]): string {
+	return statJoin(theme, [
+		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
+		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
+		step.tokens?.total ? formatTokenStat(step.tokens.total) : "",
+		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
+	]);
+}
+
+function widgetStepActivityLine(step: NonNullable<AsyncJobState["steps"]>[number], width: number, expanded: boolean): string {
+	const toolLine = formatCurrentToolLine(step, width, expanded);
+	if (toolLine) return toolLine;
+	const activity = formatActivityLabel(step.lastActivityAt, step.activityState);
+	if (activity) return activity;
+	if (step.status === "running") return "thinking…";
+	return "";
+}
+
+function widgetOutputPath(job: AsyncJobState, step: NonNullable<AsyncJobState["steps"]>[number]): string | undefined {
+	if (typeof step.index !== "number") return undefined;
+	return path.join(job.asyncDir, `output-${step.index}.log`);
+}
+
+function foregroundStyleWidgetStepLines(
+	job: AsyncJobState,
+	theme: Theme,
+	step: NonNullable<AsyncJobState["steps"]>[number],
+	itemTitle: "Agent" | "Step",
+	index: number,
+	total: number,
+	expanded: boolean,
+	width: number,
+): string[] {
+	const stats = widgetStepStats(theme, step);
+	const lines = [`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const activity = widgetStepActivityLine(step, width, expanded);
+	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
+	if (step.status === "running") {
+		if (!expanded) lines.push(`    ${theme.fg("accent", "Press Ctrl+O for live detail")}`);
+		const output = widgetOutputPath(job, step);
+		if (output) lines.push(`    ${theme.fg("dim", `output: ${shortenPath(output)}`)}`);
+		if (expanded) {
+			const liveStatus = buildLiveStatusLine(step);
+			if (liveStatus && liveStatus !== activity) lines.push(`    ${theme.fg("accent", liveStatus)}`);
+			for (const tool of step.recentTools?.slice(-3) ?? []) {
+				const maxArgsLen = Math.max(40, width - 30);
+				const argsPreview = tool.args.length <= maxArgsLen ? tool.args : `${tool.args.slice(0, maxArgsLen)}...`;
+				lines.push(`      ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
+			}
+			for (const line of step.recentOutput?.slice(-5) ?? []) {
+				lines.push(`      ${theme.fg("dim", line)}`);
+			}
+		}
+	}
+	return lines;
+}
+
+function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number): string[] {
+	if (!job.steps?.length) return [`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`];
+	if (job.mode !== "parallel" && job.mode !== "chain") return [`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`];
+	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width);
+	const total = job.stepsTotal ?? job.steps.length;
+	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
+	const lines: string[] = [];
+	for (const [index, step] of job.steps.entries()) {
+		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width));
+	}
+	return lines;
+}
+
+function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean): string[] {
+	const stats = widgetStats(job, theme);
+	const count = job.mode === "chain" ? job.chainStepCount : job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
+	const mode = widgetJobName(job);
+	const title = `async subagent ${mode}${count && count > 1 ? ` (${count})` : ""}`;
+	return [
+		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background · /subagents-status")}`,
+		`${widgetStatusGlyph(job, theme)} ${themeBold(theme, mode)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+		...foregroundStyleWidgetDetails(job, theme, expanded, width),
+	].map((line) => truncLine(line, width));
+}
+
+export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false): string[] {
 	if (jobs.length === 0) return [];
+	if (jobs.length === 1) return buildSingleWidgetLines(jobs[0]!, theme, width, expanded);
 	const running = jobs.filter((job) => job.status === "running");
 	const queued = jobs.filter((job) => job.status === "queued");
 	const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -608,7 +747,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 function refreshAnimatedWidget(): void {
 	try {
 		if (!latestWidgetCtx?.hasUI || latestWidgetJobs.length === 0) return;
-		latestWidgetCtx.ui.setWidget(WIDGET_KEY, buildWidgetLines(latestWidgetJobs, latestWidgetCtx.ui.theme));
+		latestWidgetCtx.ui.setWidget(WIDGET_KEY, buildWidgetLines(latestWidgetJobs, latestWidgetCtx.ui.theme, getTermWidth(), latestWidgetCtx.ui.getToolsExpanded?.() ?? false));
 		latestWidgetCtx.ui.requestRender?.();
 	} catch (error) {
 		if (!isStaleExtensionContextError(error)) throw error;
@@ -662,7 +801,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	latestWidgetCtx = ctx;
 	latestWidgetJobs = [...jobs];
 
-	ctx.ui.setWidget(WIDGET_KEY, buildWidgetLines(jobs, ctx.ui.theme));
+	ctx.ui.setWidget(WIDGET_KEY, buildWidgetLines(jobs, ctx.ui.theme, getTermWidth(), ctx.ui.getToolsExpanded?.() ?? false));
 	if (hasAnimatedWidgetJobs(jobs)) ensureWidgetAnimation();
 	else stopWidgetAnimation();
 }
