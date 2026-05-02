@@ -25,6 +25,7 @@ interface DoctorDeps {
 	discoverAgentsAll: typeof discoverAgentsAll;
 	discoverAvailableSkills: typeof discoverAvailableSkills;
 	diagnoseIntercomBridge: typeof diagnoseIntercomBridge;
+	getAllTools: () => { name: string }[];
 }
 
 interface DoctorReportInput {
@@ -54,6 +55,7 @@ const DEFAULT_DEPS: DoctorDeps = {
 	discoverAgentsAll,
 	discoverAvailableSkills,
 	diagnoseIntercomBridge,
+	getAllTools: () => [],
 };
 
 function errorText(error: unknown): string {
@@ -192,6 +194,7 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 			config: input.config.intercomBridge,
 			context: input.context,
 			orchestratorTarget: input.orchestratorTarget,
+			hasIntercom: () => deps.getAllTools().some((t) => t.name === "intercom"),
 		}), input.context).join("\n")).split("\n"),
 	];
 	return lines.join("\n");
