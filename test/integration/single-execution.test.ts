@@ -418,6 +418,41 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("retries with fallback models when provider errors exit zero", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "weekly quota hit" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "429 you have reached your weekly usage limit / quota exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "fallback-zero-exit-provider-error",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(result.modelAttempts?.length, 2);
+		assert.equal(result.modelAttempts?.[0]?.success, false);
+		assert.equal(result.modelAttempts?.[0]?.exitCode, 0);
+		assert.match(result.modelAttempts?.[0]?.error ?? "", /429/);
+		assert.equal(result.modelAttempts?.[1]?.success, true);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("does not retry on ordinary task/tool failures", async () => {
 		mockPi.onCall({
 			jsonl: [events.toolResult("bash", "process exited with code 127")],

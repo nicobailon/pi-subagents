@@ -811,15 +811,16 @@ export async function runSync(
 		sumUsage(aggregateUsage, result.usage);
 		totalToolCount += result.progressSummary?.toolCount ?? 0;
 		totalDurationMs += result.progressSummary?.durationMs ?? 0;
+		const attemptSucceeded = result.exitCode === 0 && !result.error;
 		const attempt: ModelAttempt = {
 			model: candidate ?? result.model ?? agent.model ?? "default",
-			success: result.exitCode === 0,
+			success: attemptSucceeded,
 			exitCode: result.exitCode,
 			error: result.error,
 			usage: { ...result.usage },
 		};
 		modelAttempts.push(attempt);
-		if (result.exitCode === 0) {
+		if (attemptSucceeded) {
 			break;
 		}
 		if (!isRetryableModelFailure(result.error) || i === modelsToTry.length - 1) {
