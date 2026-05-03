@@ -8,17 +8,24 @@ export interface SingleOutputSnapshot {
 	size?: number;
 }
 
+export function normalizeOutputSetting(output: string | false | undefined): string | false | undefined {
+	return output === "false" ? false : output;
+}
+
+function resolveOutputBaseCwd(runtimeCwd: string, requestedCwd?: string): string {
+	if (!requestedCwd) return runtimeCwd;
+	return path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd);
+}
+
 export function resolveSingleOutputPath(
 	output: string | false | undefined,
 	runtimeCwd: string,
 	requestedCwd?: string,
 ): string | undefined {
-	if (typeof output !== "string" || !output) return undefined;
-	if (path.isAbsolute(output)) return output;
-	const baseCwd = requestedCwd
-		? (path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd))
-		: runtimeCwd;
-	return path.resolve(baseCwd, output);
+	const normalizedOutput = normalizeOutputSetting(output);
+	if (typeof normalizedOutput !== "string" || !normalizedOutput) return undefined;
+	if (path.isAbsolute(normalizedOutput)) return normalizedOutput;
+	return path.resolve(resolveOutputBaseCwd(runtimeCwd, requestedCwd), normalizedOutput);
 }
 
 export function injectSingleOutputInstruction(task: string, outputPath: string | undefined): string {
@@ -74,6 +81,10 @@ export function captureSingleOutputSnapshot(outputPath: string | undefined): Sin
 	}
 }
 
+function formatIoError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 function persistSingleOutput(
 	outputPath: string | undefined,
 	fullOutput: string,
@@ -83,8 +94,21 @@ function persistSingleOutput(
 		fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 		fs.writeFileSync(outputPath, fullOutput, "utf-8");
 		return { savedPath: outputPath };
-	} catch (err) {
-		return { error: err instanceof Error ? err.message : String(err) };
+	} catch (error) {
+		return { error: formatIoError(error) };
+	}
+}
+
+function hasOutputFileChanged(outputPath: string, beforeRun: SingleOutputSnapshot | undefined): boolean | string {
+	try {
+		const stat = fs.statSync(outputPath);
+		return !beforeRun?.exists
+			|| stat.mtimeMs !== beforeRun.mtimeMs
+			|| stat.size !== beforeRun.size;
+	} catch (error) {
+		const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
+		if (code === "ENOENT" || code === "ENOTDIR") return false;
+		return `Failed to inspect output file: ${formatIoError(error)}`;
 	}
 }
 
@@ -95,29 +119,21 @@ export function resolveSingleOutput(
 ): { fullOutput: string; savedPath?: string; saveError?: string } {
 	if (!outputPath) return { fullOutput: fallbackOutput };
 
-	let changedSinceStart = false;
-	try {
-		const stat = fs.statSync(outputPath);
-		changedSinceStart = !beforeRun?.exists
-			|| stat.mtimeMs !== beforeRun.mtimeMs
-			|| stat.size !== beforeRun.size;
-	} catch (error) {
-		const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-		if (code !== "ENOENT" && code !== "ENOTDIR") {
-			return {
-				fullOutput: fallbackOutput,
-				saveError: `Failed to inspect output file: ${error instanceof Error ? error.message : String(error)}`,
-			};
-		}
+	const outputFileChange = hasOutputFileChanged(outputPath, beforeRun);
+	if (typeof outputFileChange === "string") {
+		return {
+			fullOutput: fallbackOutput,
+			saveError: outputFileChange,
+		};
 	}
 
-	if (changedSinceStart) {
+	if (outputFileChange) {
 		try {
 			return { fullOutput: fs.readFileSync(outputPath, "utf-8"), savedPath: outputPath };
 		} catch (error) {
 			return {
 				fullOutput: fallbackOutput,
-				saveError: `Failed to read changed output file: ${error instanceof Error ? error.message : String(error)}`,
+				saveError: `Failed to read changed output file: ${formatIoError(error)}`,
 			};
 		}
 	}
@@ -138,7 +154,9 @@ export function finalizeSingleOutput(params: {
 	saveError?: string;
 }): { displayOutput: string; savedPath?: string; outputReference?: SavedOutputReference; saveError?: string } {
 	let displayOutput = params.truncatedOutput || params.fullOutput;
-	if (params.exitCode === 0 && params.savedPath) {
+	if (params.exitCode !== 0) return { displayOutput };
+
+	if (params.savedPath) {
 		const outputReference = params.outputReference ?? formatSavedOutputReference(params.savedPath, params.fullOutput);
 		if (params.outputMode === "file-only") {
 			return { displayOutput: outputReference.message, savedPath: params.savedPath, outputReference };
@@ -146,9 +164,11 @@ export function finalizeSingleOutput(params: {
 		displayOutput += `\n\n${outputReference.message}`;
 		return { displayOutput, savedPath: params.savedPath, outputReference };
 	}
-	if (params.exitCode === 0 && params.saveError && params.outputPath) {
+
+	if (params.saveError && params.outputPath) {
 		displayOutput += `\n\nOutput file error: ${params.outputPath}\n${params.saveError}`;
 		return { displayOutput, saveError: params.saveError };
 	}
+
 	return { displayOutput };
 }

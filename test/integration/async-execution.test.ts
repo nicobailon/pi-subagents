@@ -575,6 +575,40 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async full output\nwith details");
 	});
 
+	it("background single runs treat string false output override as disabled", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "async no file" });
+		const id = `async-output-false-${Date.now().toString(36)}`;
+		const falsePath = path.join(tempDir, "false");
+
+		executeAsyncSingle(id, {
+			agent: "reviewer",
+			task: "Review only",
+			agentConfig: makeAgent("reviewer", { output: "pi-agent-review.md" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: "false",
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const defaultOutputPath = path.join(tempDir, "pi-agent-review.md");
+		assert.equal(payload.success, true);
+		assert.equal(fs.existsSync(falsePath), false);
+		assert.equal(fs.existsSync(defaultOutputPath), false);
+		assert.doesNotMatch(payload.summary ?? "", /Output saved to:/);
+		assert.doesNotMatch(payload.results[0]?.output ?? "", /Output saved to:/);
+	});
+
 	it("background runs detect hidden tool failures even when the child exits 0", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [events.toolResult("bash", "connection refused")],

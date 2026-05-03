@@ -15,6 +15,12 @@ import {
 
 const tempDirs: string[] = [];
 
+function createTempOutputDir(): string {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+	tempDirs.push(dir);
+	return dir;
+}
+
 afterEach(() => {
 	while (tempDirs.length > 0) {
 		const dir = tempDirs.pop();
@@ -44,6 +50,10 @@ describe("resolveSingleOutputPath", () => {
 		const resolved = resolveSingleOutputPath("reviews/report.md", "/runtime", "nested/work");
 		assert.equal(resolved, path.resolve("/runtime", "nested/work", "reviews/report.md"));
 	});
+
+	it("treats string false as disabled output", () => {
+		assert.equal(resolveSingleOutputPath("false", "/runtime", "/requested"), undefined);
+	});
 });
 
 describe("injectSingleOutputInstruction", () => {
@@ -55,8 +65,7 @@ describe("injectSingleOutputInstruction", () => {
 
 describe("resolveSingleOutput", () => {
 	it("keeps agent-written file content when the file changed during the run", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
-		tempDirs.push(dir);
+		const dir = createTempOutputDir();
 		const outputPath = path.join(dir, "review.md");
 		const before = captureSingleOutputSnapshot(outputPath);
 
@@ -69,8 +78,7 @@ describe("resolveSingleOutput", () => {
 	});
 
 	it("falls back to persisting the assistant output when the file was not changed", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
-		tempDirs.push(dir);
+		const dir = createTempOutputDir();
 		const outputPath = path.join(dir, "review.md");
 
 		fs.writeFileSync(outputPath, "stale content", "utf-8");
@@ -83,8 +91,7 @@ describe("resolveSingleOutput", () => {
 	});
 
 	it("preserves read errors from changed output paths", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
-		tempDirs.push(dir);
+		const dir = createTempOutputDir();
 		const outputPath = path.join(dir, "review.md");
 		const before = captureSingleOutputSnapshot(outputPath);
 
