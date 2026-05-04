@@ -155,6 +155,33 @@ describe("builtin agent overrides", () => {
 		assert.equal(fs.existsSync(settingsPath), false);
 	});
 
+	it("disableBuiltins hides builtins even when agentOverrides exist for them", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				disableBuiltins: true,
+				agentOverrides: { reviewer: { model: "openai/gpt-5.4", thinking: "high" } },
+			},
+		});
+
+		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer" && agent.source === "builtin");
+		assert.equal(reviewer, undefined, "builtin reviewer should be hidden when disableBuiltins is true");
+	});
+
+	it("disableBuiltins can be overridden per-agent with disabled: false", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				disableBuiltins: true,
+				agentOverrides: { reviewer: { model: "openai/gpt-5.4", disabled: false } },
+			},
+		});
+
+		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer" && agent.source === "builtin");
+		assert.ok(reviewer, "builtin reviewer should be kept when disabled: false is explicit");
+		assert.equal(reviewer.model, "openai/gpt-5.4");
+	});
+
 	it("surfaces malformed settings files instead of silently ignoring them", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -241,5 +268,90 @@ describe("builtin agent overrides", () => {
 			skills: false,
 			tools: false,
 		});
+	});
+});
+
+function writeUserAgent(home: string, name: string, body: string): void {
+	const filePath = path.join(home, ".pi", "agent", "agents", `${name}.md`);
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, body, "utf-8");
+}
+
+describe("user agent overrides", () => {
+	beforeEach(() => {
+		tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-home-"));
+		tempProject = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-"));
+		process.env.HOME = tempHome;
+		process.env.USERPROFILE = tempHome;
+	});
+
+	afterEach(() => {
+		process.env.HOME = originalHome;
+		process.env.USERPROFILE = originalUserProfile;
+		fs.rmSync(tempHome, { recursive: true, force: true });
+		fs.rmSync(tempProject, { recursive: true, force: true });
+	});
+
+	it("applies project settings overrides to user agents", () => {
+		writeUserAgent(tempHome, "worker", `---\nname: worker\ndescription: My worker\nmodel: openai/gpt-5\nthinking: medium\n---\n\nYou are a worker.\n`);
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { worker: { model: "anthropic/claude-sonnet-4", thinking: "high" } } },
+		});
+
+		const worker = discoverAgents(tempProject, "both").agents.find((a) => a.name === "worker");
+		assert.ok(worker);
+		assert.equal(worker.source, "user");
+		assert.equal(worker.model, "anthropic/claude-sonnet-4");
+		assert.equal(worker.thinking, "high");
+		assert.equal(worker.systemPrompt, "You are a worker.");
+	});
+
+	it("applies user settings overrides to user agents when no project override exists", () => {
+		writeUserAgent(tempHome, "worker", `---\nname: worker\ndescription: My worker\nmodel: openai/gpt-5\n---\n\nYou are a worker.\n`);
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { worker: { model: "fireworks/deepseek-v4" } } },
+		});
+
+		const worker = discoverAgents(tempProject, "both").agents.find((a) => a.name === "worker");
+		assert.ok(worker);
+		assert.equal(worker.model, "fireworks/deepseek-v4");
+	});
+
+	it("project settings override beats user settings override for user agents", () => {
+		writeUserAgent(tempHome, "worker", `---\nname: worker\ndescription: My worker\nmodel: openai/gpt-5\n---\n\nYou are a worker.\n`);
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { worker: { model: "fireworks/deepseek-v4" } } },
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { worker: { model: "anthropic/claude-sonnet-4" } } },
+		});
+
+		const worker = discoverAgents(tempProject, "both").agents.find((a) => a.name === "worker");
+		assert.ok(worker);
+		assert.equal(worker.model, "anthropic/claude-sonnet-4");
+	});
+
+	it("does not apply settings overrides to project agents (full file wins)", () => {
+		writeProjectAgent(tempProject, "worker", `---\nname: worker\ndescription: Project worker\nmodel: google/gemini-3-pro\n---\n\nProject worker.\n`);
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { worker: { model: "anthropic/claude-sonnet-4" } } },
+		});
+
+		const worker = discoverAgents(tempProject, "both").agents.find((a) => a.name === "worker");
+		assert.ok(worker);
+		assert.equal(worker.source, "project");
+		assert.equal(worker.model, "google/gemini-3-pro");
+	});
+
+	it("user agents overridden in discoverAgentsAll too", () => {
+		writeUserAgent(tempHome, "worker", `---\nname: worker\ndescription: My worker\nmodel: openai/gpt-5\n---\n\nYou are a worker.\n`);
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { worker: { model: "anthropic/claude-sonnet-4" } } },
+		});
+
+		const d = discoverAgentsAll(tempProject);
+		const worker = d.user.find((a) => a.name === "worker");
+		assert.ok(worker);
+		assert.equal(worker.model, "anthropic/claude-sonnet-4");
 	});
 });

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- `agentOverrides` in settings now applies to user and project agents, not just builtins. This enables per-repo model/thinking overrides without copying full agent `.md` files. Project `.pi/agents/` files still take highest priority.
+
+### Fixed
+- `disableBuiltins: true` now correctly hides builtins even when `agentOverrides` entries exist for them. Previously, any override for a builtin name would implicitly keep it visible. Use `disabled: false` in an override to explicitly opt a specific builtin out of bulk disable.
+
 ## [0.24.0] - 2026-05-03
 
 ### Changed

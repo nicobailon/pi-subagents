@@ -92,19 +92,19 @@ describe("builtin agent disabling", () => {
 		assert.ok(allBuiltins.every((agent) => agent.override?.scope === "user"));
 	});
 
-	it("an explicit user override opts a builtin out of user-scope bulk disable", () => {
+	it("an explicit user override with disabled:false opts a builtin out of user-scope bulk disable", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {
 				disableBuiltins: true,
 				agentOverrides: {
-					reviewer: { model: "openai/gpt-5.4" },
+					reviewer: { model: "openai/gpt-5.4", disabled: false },
 				},
 			},
 		});
 
 		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer");
 		assert.ok(reviewer);
-		assert.equal(reviewer.disabled, undefined);
+		assert.equal(reviewer.disabled, false);
 		assert.equal(reviewer.model, "openai/gpt-5.4");
 		assert.equal(reviewer.override?.scope, "user");
 	});
