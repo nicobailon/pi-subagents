@@ -445,6 +445,36 @@ function applyBuiltinOverrides(
 	});
 }
 
+/**
+ * Apply agentOverrides from settings to user/project agents (not just builtins).
+ * This allows per-repo model/thinking overrides without copying full agent files.
+ * Project overrides take priority over user overrides.
+ * Only non-builtin agents are affected (builtins are handled by applyBuiltinOverrides).
+ * Project-scoped agents (.pi/agents/) are NOT overridden by project settings —
+ * a full project agent file is the most explicit override and always wins.
+ */
+function applyAgentOverrides(
+	agents: AgentConfig[],
+	userSettings: SubagentSettings,
+	projectSettings: SubagentSettings,
+	userSettingsPath: string,
+	projectSettingsPath: string | null,
+): AgentConfig[] {
+	return agents.map((agent) => {
+		if (agent.source === "builtin") return agent; // already handled
+		if (agent.source === "project") return agent; // full project agent file wins over settings
+		const projectOverride = projectSettingsPath ? projectSettings.overrides[agent.name] : undefined;
+		if (projectOverride) {
+			return applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath! });
+		}
+		const userOverride = userSettings.overrides[agent.name];
+		if (userOverride) {
+			return applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath });
+		}
+		return agent;
+	});
+}
+
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
 	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools">,
@@ -744,7 +774,8 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userAgents = [...userAgentsOld, ...userAgentsNew];
 
 	const projectAgents = scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project"));
-	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents)
+	const merged = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents);
+	const agents = applyAgentOverrides(merged, userSettings, projectSettings, userSettingsPath, projectSettingsPath)
 		.filter((agent) => agent.disabled !== true);
 
 	return { agents, projectAgentsDir };
@@ -779,17 +810,18 @@ export function discoverAgentsAll(cwd: string): {
 		userSettingsPath,
 		projectSettingsPath,
 	);
-	const user = [
+	const userRaw = [
 		...loadAgentsFromDir(userDirOld, "user"),
 		...loadAgentsFromDir(userDirNew, "user"),
 	];
+	const user = applyAgentOverrides(userRaw, userSettings, projectSettings, userSettingsPath, projectSettingsPath);
 	const projectMap = new Map<string, AgentConfig>();
 	for (const dir of projectDirs) {
 		for (const agent of loadAgentsFromDir(dir, "project")) {
 			projectMap.set(agent.name, agent);
 		}
 	}
-	const project = Array.from(projectMap.values());
+	const project = Array.from(projectMap.values()); // project agents are not overridden by settings
 
 	const chainMap = new Map<string, ChainConfig>();
 	for (const dir of projectChainDirs) {
