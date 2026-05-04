@@ -155,6 +155,33 @@ describe("builtin agent overrides", () => {
 		assert.equal(fs.existsSync(settingsPath), false);
 	});
 
+	it("disableBuiltins hides builtins even when agentOverrides exist for them", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				disableBuiltins: true,
+				agentOverrides: { reviewer: { model: "openai/gpt-5.4", thinking: "high" } },
+			},
+		});
+
+		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer" && agent.source === "builtin");
+		assert.equal(reviewer, undefined, "builtin reviewer should be hidden when disableBuiltins is true");
+	});
+
+	it("disableBuiltins can be overridden per-agent with disabled: false", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				disableBuiltins: true,
+				agentOverrides: { reviewer: { model: "openai/gpt-5.4", disabled: false } },
+			},
+		});
+
+		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer" && agent.source === "builtin");
+		assert.ok(reviewer, "builtin reviewer should be kept when disabled: false is explicit");
+		assert.equal(reviewer.model, "openai/gpt-5.4");
+	});
+
 	it("surfaces malformed settings files instead of silently ignoring them", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });

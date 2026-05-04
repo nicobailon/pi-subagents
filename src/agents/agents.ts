@@ -425,6 +425,11 @@ function applyBuiltinOverrides(
 	return builtinAgents.map((agent) => {
 		const projectOverride = projectSettings.overrides[agent.name];
 		if (projectOverride && projectSettingsPath) {
+			// If disableBuiltins is true and the override doesn't explicitly keep it enabled,
+			// merge disabled: true into the override so the builtin is still hidden.
+			if (projectBulkDisabled && projectOverride.disabled !== false) {
+				return applyBuiltinOverride(agent, { ...projectOverride, disabled: true }, { scope: "project", path: projectSettingsPath });
+			}
 			return applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath });
 		}
 
@@ -434,6 +439,9 @@ function applyBuiltinOverrides(
 
 		const userOverride = userSettings.overrides[agent.name];
 		if (userOverride) {
+			if (userBulkDisabled && userOverride.disabled !== false) {
+				return applyBuiltinOverride(agent, { ...userOverride, disabled: true }, { scope: "user", path: userSettingsPath });
+			}
 			return applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath });
 		}
 
