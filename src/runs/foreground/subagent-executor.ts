@@ -35,7 +35,7 @@ import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeOutputSetting, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
 import {
 	buildSubagentResultIntercomPayload,
@@ -970,25 +970,26 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	}
 
 	if (hasSingle) {
-		const a = agents.find((x) => x.name === params.agent);
-		if (!a) {
+		const agentConfig = agents.find((candidate) => candidate.name === params.agent);
+		if (!agentConfig) {
 			return {
 				content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
 				isError: true,
 				details: { mode: "single" as const, results: [] },
 			};
 		}
-		const rawOutput = params.output !== undefined ? params.output : a.output;
-		const effectiveOutput: string | false | undefined = rawOutput === true ? a.output : (rawOutput as string | false | undefined);
+		const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
+		const effectiveOutput: string | false | undefined = rawOutput === true ? agentConfig.output : normalizeOutputSetting(rawOutput as string | false | undefined);
 		const effectiveOutputMode = params.outputMode ?? "inline";
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
-		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
-		const modelOverride = resolveModelCandidate((params.model as string | undefined) ?? a.model, availableModels, currentProvider);
+		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
+		const modelOverride = resolveModelCandidate((params.model as string | undefined) ?? agentConfig.model, availableModels, currentProvider);
+		const task = params.task ?? "";
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
-			task: params.context === "fork" ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
-			agentConfig: a,
+			task: params.context === "fork" ? wrapForkTask(task) : task,
+			agentConfig,
 			ctx: asyncCtx,
 			availableModels,
 			cwd: effectiveCwd,
@@ -1716,7 +1717,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
-	let effectiveOutput: string | false | undefined = rawOutput === true ? agentConfig.output : (rawOutput as string | false | undefined);
+	let effectiveOutput: string | false | undefined = rawOutput === true ? agentConfig.output : normalizeOutputSetting(rawOutput as string | false | undefined);
 	const effectiveOutputMode = params.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
@@ -1750,7 +1751,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		task = result.templates[0]!;
 		const override = result.behaviorOverrides[0];
 		if (override?.model) modelOverride = override.model;
-		if (override?.output !== undefined) effectiveOutput = override.output;
+		if (override?.output !== undefined) effectiveOutput = normalizeOutputSetting(override.output);
 		if (override?.skills !== undefined) skillOverride = override.skills;
 
 		if (result.runInBackground) {
