@@ -127,6 +127,8 @@ function createCommandContext(
 		setStatus: (key: string, text: string | undefined) => void;
 		setToolsExpanded: (expanded: boolean) => void;
 		sessionManager: unknown;
+		select: (title: string, choices: string[]) => Promise<string | undefined>;
+		models: Array<{ provider: string; id: string }>;
 	}> = {},
 ) {
 	return {
@@ -138,8 +140,9 @@ function createCommandContext(
 			setToolsExpanded: overrides.setToolsExpanded ?? ((_expanded: boolean) => {}),
 			onTerminalInput: () => () => {},
 			custom: overrides.custom ?? (async () => undefined),
+			select: overrides.select ?? (async (_title: string, _choices: string[]) => undefined),
 		},
-		modelRegistry: { getAvailable: () => [] },
+		modelRegistry: { getAvailable: () => overrides.models ?? [] },
 		sessionManager: overrides.sessionManager ?? {
 			getSessionFile: () => null,
 			getSessionId: () => "session-test",
@@ -762,6 +765,111 @@ Gather context
 				skill: ["research", "audit"],
 				model: "openai/gpt-5.5",
 			});
+		});
+	});
+});
+
+
+describe("subagents admin slash command", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
+	beforeEach(() => {
+		clearSlashSnapshots?.();
+	});
+
+	it("registers /subagents", async () => {
+		await withIsolatedHome(async () => {
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(_message: unknown) {},
+			};
+
+			registerSlashCommands!(pi, createState(process.cwd()));
+			assert.equal(commands.has("subagents"), true);
+		});
+	});
+
+	it("shows selected subagent metadata and updates a project agent model", async () => {
+		await withTempProject("pi-subagents-admin-model-", async (root) => {
+			const agentPath = path.join(root, ".pi", "agents", "worker.md");
+			fs.writeFileSync(agentPath, `---
+name: worker
+description: Test worker
+model: github-copilot/claude-sonnet-4
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
+---
+
+Do work.
+`, "utf-8");
+
+			const sent: unknown[] = [];
+			const notifications: string[] = [];
+			const selections = [
+				"worker [project] · github-copilot/claude-sonnet-4 — Test worker",
+				"Change model",
+				"github-copilot/gpt-5.5",
+			];
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(message: unknown) { sent.push(message); },
+			};
+
+			registerSlashCommands!(pi, createState(root));
+			await commands.get("subagents")!.handler("", createCommandContext({
+				cwd: root,
+				hasUI: true,
+				models: [{ provider: "github-copilot", id: "gpt-5.5" }],
+				notify: (message) => notifications.push(message),
+				select: async (_title, choices) => {
+					const next = selections.shift();
+					assert.ok(next, "unexpected select call");
+					assert.ok(choices.includes(next), `choice '${next}' was not offered`);
+					return next;
+				},
+			}));
+
+			const updated = fs.readFileSync(agentPath, "utf-8");
+			assert.match(updated, /^model: github-copilot\/gpt-5\.5$/m);
+			assert.match((sent[0] as { content?: string }).content ?? "", /Agent: worker \(project\)/);
+			assert.match((sent[1] as { content?: string }).content ?? "", /Updated 'worker' model to 'github-copilot\/gpt-5\.5'/);
+			assert.match(notifications[0] ?? "", /Updated 'worker' model/);
+		});
+	});
+
+	it("shows metadata for a named subagent without requiring UI", async () => {
+		await withTempProject("pi-subagents-admin-metadata-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "auditor.md"), `---
+name: auditor
+description: Audit things
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
+---
+
+Audit.
+`, "utf-8");
+
+			const sent: unknown[] = [];
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(message: unknown) { sent.push(message); },
+			};
+
+			registerSlashCommands!(pi, createState(root));
+			await commands.get("subagents")!.handler("auditor", createCommandContext({ cwd: root }));
+
+			assert.equal(sent.length, 1);
+			assert.match((sent[0] as { content?: string }).content ?? "", /Agent: auditor \(project\)/);
+			assert.match((sent[0] as { content?: string }).content ?? "", /Description: Audit things/);
 		});
 	});
 });

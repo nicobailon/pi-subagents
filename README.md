@@ -241,9 +241,10 @@ Skip this section until you want exact syntax.
 | `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence |
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel |
 | `/run-chain <chainName> -- <task>` | Launch a saved `.chain.md` workflow |
+| `/subagents [agent] [model]` | Inspect subagent metadata and interactively update its configured model |
 | `/subagents-doctor` | Show read-only setup diagnostics |
 
-Commands validate agent names locally, support tab completion, and send results back into the conversation.
+Commands validate agent names locally, support tab completion, and send results back into the conversation. `/subagents` opens a lightweight admin flow: pick an agent, review its metadata, then choose a model from Pi's available model list. User/project agents are updated in their markdown file; builtin agents are updated through `subagents.agentOverrides` in settings.
 
 ### Per-step tasks
 

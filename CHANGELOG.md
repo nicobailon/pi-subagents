@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added `/subagents` as a lightweight administration command for inspecting subagent metadata and updating configured models via Pi's available model list. User/project agents are updated in markdown; builtin agents are updated through settings-backed `subagents.agentOverrides`.
+
 ## [0.24.0] - 2026-05-03
 
 ### Changed
