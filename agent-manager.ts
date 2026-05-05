@@ -11,7 +11,7 @@ import { renderList, handleListInput, type ListAgent, type ListState, type ListA
 import { createParallelState, handleParallelInput, renderParallel, formatParallelTitle, type ParallelState, type AgentOption } from "./agent-manager-parallel.js";
 import { renderDetail, handleDetailInput, renderTaskInput, type DetailState, type DetailAction } from "./agent-manager-detail.js";
 import { renderChainDetail, handleChainDetailInput, type ChainDetailAction, type ChainDetailState } from "./agent-manager-chain-detail.js";
-import { createEditState, handleEditInput, renderEdit, type EditScreen, type EditState, type ModelInfo, type SkillInfo } from "./agent-manager-edit.js";
+import { createEditState, handleEditInput, openModelPicker, renderEdit, type EditScreen, type EditState, type ModelInfo, type SkillInfo } from "./agent-manager-edit.js";
 import { createEditorState, ensureCursorVisible, getCursorDisplayPos, handleEditorInput, renderEditor, wrapText } from "./text-editor.js";
 import type { TextEditorState } from "./text-editor.js";
 import { loadRunsForAgent } from "./run-history.js";
@@ -57,6 +57,8 @@ export class AgentManagerComponent implements Component {
 	private chainLaunchId: string | null = null;
 	private parallelMode = false;
 	private parallelState: ParallelState | null = null;
+	private quickModelEdit = false;
+	private quickModelOriginalModel: string | undefined;
 	private taskBackScreen: ManagerScreen = "list";
 	private templateCursor = 0;
 	private statusMessage?: StatusMessage;
@@ -80,7 +82,8 @@ export class AgentManagerComponent implements Component {
 
 	private enterDetail(entry: AgentEntry): void { this.currentAgentId = entry.id; this.detailState = { resolved: true, scrollOffset: 0, recentRuns: loadRunsForAgent(entry.config.name).slice(0, 5) }; this.screen = "detail"; }
 	private enterChainDetail(entry: ChainEntry): void { this.currentChainId = entry.id; this.chainDetailState = { scrollOffset: 0 }; this.screen = "chain-detail"; }
-	private enterEdit(entry: AgentEntry): void { this.currentAgentId = entry.id; this.editState = createEditState(entry.config, entry.isNew, this.models, this.skills); this.screen = "edit"; }
+	private enterEdit(entry: AgentEntry): void { this.quickModelEdit = false; this.quickModelOriginalModel = undefined; this.currentAgentId = entry.id; this.editState = createEditState(entry.config, entry.isNew, this.models, this.skills); this.screen = "edit"; }
+	private enterModelPicker(entry: AgentEntry): void { this.currentAgentId = entry.id; this.editState = createEditState(entry.config, entry.isNew, this.models, this.skills); this.quickModelEdit = true; this.quickModelOriginalModel = entry.config.model; openModelPicker(this.editState, this.models); this.screen = "edit-field"; }
 	private enterParallelBuilder(ids: string[]): void {
 		const names = ids.map((id) => this.getAgentEntry(id)?.config.name).filter((n): n is string => Boolean(n));
 		if (names.length === 0) return;
@@ -321,18 +324,42 @@ export class AgentManagerComponent implements Component {
 			}
 			case "edit": case "edit-field": case "edit-prompt": {
 				if (!this.editState) { this.screen = "list"; this.tui.requestRender(); return; }
+				const previousScreen = this.screen;
 				const result = handleEditInput(this.screen as EditScreen, this.editState, data, this.overlayWidth, this.models, this.skills);
 				if (result?.action === "discard") { this.handleEditDiscard(); return; }
 				if (result?.action === "save") { const ok = this.saveEdit(); if (ok) { const entry = this.getAgentEntry(this.currentAgentId); if (entry) this.enterDetail(entry); } this.tui.requestRender(); return; }
+				if (this.quickModelEdit && previousScreen === "edit-field" && result?.nextScreen === "edit") {
+					const changed = this.editState.draft.model !== this.quickModelOriginalModel;
+					if (changed) {
+						const ok = this.saveEdit();
+						if (ok) {
+							const entry = this.getAgentEntry(this.currentAgentId);
+							this.quickModelEdit = false;
+							this.quickModelOriginalModel = undefined;
+							if (entry) this.enterDetail(entry);
+						} else {
+							this.quickModelEdit = false;
+							this.quickModelOriginalModel = undefined;
+							this.screen = "edit";
+						}
+					} else {
+						const entry = this.getAgentEntry(this.currentAgentId);
+						this.quickModelEdit = false;
+						this.quickModelOriginalModel = undefined;
+						if (entry) this.enterDetail(entry); else this.screen = "list";
+					}
+					this.tui.requestRender();
+					return;
+				}
 				if (result?.nextScreen) this.screen = result.nextScreen; this.tui.requestRender(); return;
 			}
 		}
 	}
 
 	private handleEditDiscard(): void {
-		const entry = this.getAgentEntry(this.currentAgentId); if (!entry) { this.screen = "list"; this.editState = null; this.tui.requestRender(); return; }
-		if (entry.isNew) { this.removeAgentEntry(entry); this.editState = null; this.screen = "list"; this.tui.requestRender(); return; }
-		this.editState = null; this.enterDetail(entry); this.tui.requestRender();
+		const entry = this.getAgentEntry(this.currentAgentId); if (!entry) { this.screen = "list"; this.editState = null; this.quickModelEdit = false; this.quickModelOriginalModel = undefined; this.tui.requestRender(); return; }
+		if (entry.isNew) { this.removeAgentEntry(entry); this.editState = null; this.quickModelEdit = false; this.quickModelOriginalModel = undefined; this.screen = "list"; this.tui.requestRender(); return; }
+		this.editState = null; this.quickModelEdit = false; this.quickModelOriginalModel = undefined; this.enterDetail(entry); this.tui.requestRender();
 	}
 
 	private isBuiltin(id: string): boolean { const a = this.getAgentEntry(id); return a?.config.source === "builtin"; }
@@ -352,6 +379,7 @@ export class AgentManagerComponent implements Component {
 	private handleDetailAction(action: DetailAction, entry: AgentEntry): void {
 		if (action.type === "back") { this.screen = "list"; return; }
 		if (action.type === "edit") { if (entry.config.source === "builtin") { this.statusMessage = { text: "Builtin agents cannot be edited. Clone to user scope to override.", type: "error" }; this.screen = "list"; return; } this.enterEdit(entry); return; }
+		if (action.type === "model") { if (entry.config.source === "builtin") { this.statusMessage = { text: "Builtin agents cannot be edited. Clone to user scope to override.", type: "error" }; this.screen = "list"; return; } this.enterModelPicker(entry); return; }
 		if (action.type === "launch") { this.enterTaskInput([entry.id], "detail"); return; }
 	}
 

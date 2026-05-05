@@ -17,6 +17,7 @@ export interface DetailState {
 export type DetailAction =
 	| { type: "back" }
 	| { type: "edit" }
+	| { type: "model" }
 	| { type: "launch" };
 
 const DETAIL_VIEWPORT_HEIGHT = 12;
@@ -59,6 +60,10 @@ function buildDetailLines(
 	const reads = agent.defaultReads && agent.defaultReads.length > 0 ? agent.defaultReads.join(", ") : "(none)";
 	const progress = agent.defaultProgress ? "on" : "off";
 
+	lines.push(renderFieldLine("Name:", agent.name, contentWidth, theme));
+	lines.push(renderFieldLine("Desc:", agent.description || "(none)", contentWidth, theme));
+	lines.push(renderFieldLine("Source:", agent.source, contentWidth, theme));
+	lines.push(renderFieldLine("File:", formatPath(agent.filePath), contentWidth, theme));
 	lines.push(renderFieldLine("Model:", agent.model ?? "default", contentWidth, theme));
 	lines.push(renderFieldLine("Thinking:", agent.thinking ?? "off", contentWidth, theme));
 	lines.push(renderFieldLine("Tools:", tools, contentWidth, theme));
@@ -112,6 +117,7 @@ function buildDetailLines(
 export function handleDetailInput(state: DetailState, data: string): DetailAction | undefined {
 	if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return { type: "back" };
 	if (data === "e") return { type: "edit" };
+	if (data === "m") return { type: "model" };
 	if (data === "l") return { type: "launch" };
 	if (data === "v") { state.resolved = !state.resolved; state.scrollOffset = 0; return; }
 	if (matchesKey(data, "up")) { state.scrollOffset--; return; }
@@ -151,7 +157,7 @@ export function renderDetail(
 
 	const footer = agent.source === "builtin"
 		? " [l]aunch  [v] raw/resolved  [↑↓] scroll  [esc] back "
-		: " [l]aunch  [e]dit  [v] raw/resolved  [↑↓] scroll  [esc] back ";
+		: " [l]aunch  [m] model  [e]dit  [v] raw/resolved  [↑↓] scroll  [esc] back ";
 	lines.push(renderFooter(footer, width, theme));
 	return lines;
 }

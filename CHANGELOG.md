@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Added `/subagents` as the primary administration command for the Subagents Manager. The existing `/agents` command remains as an alias.
+- Agent detail screens now expose metadata fields and a direct `m` shortcut that opens the model picker and saves the selected model for user/project agents.
+
 ## [0.11.12] - 2026-03-28
 
 ### Changed

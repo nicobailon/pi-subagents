@@ -68,7 +68,7 @@ function applyFieldValue(field: EditField, state: EditState, value: string): voi
 	}
 }
 
-function openModelPicker(state: EditState, models: ModelInfo[]): void {
+export function openModelPicker(state: EditState, models: ModelInfo[]): void {
 	state.fieldIndex = FIELD_ORDER.indexOf("model"); state.fieldMode = "model"; state.modelSearchQuery = ""; state.filteredModels = [...models];
 	const idx = state.filteredModels.findIndex((m) => m.fullId === state.draft.model || m.id === state.draft.model); state.modelCursor = idx >= 0 ? idx : 0;
 }

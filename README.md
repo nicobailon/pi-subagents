@@ -131,7 +131,8 @@ Subagents only get direct MCP tools when `mcp:` items are explicitly listed. Eve
 | `/run <agent> <task>` | Run a single agent with a task |
 | `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence with per-step tasks |
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel with per-step tasks |
-| `/agents` | Open the Agents Manager overlay |
+| `/agents` | Open the Subagents Manager overlay |
+| `/subagents` | Open the Subagents Manager overlay for metadata/model administration |
 
 All commands validate agent names locally and tab-complete them, then route through the tool framework for full live progress rendering. Results are sent to the conversation for the LLM to discuss.
 
@@ -211,14 +212,14 @@ You can combine `--fork` and `--bg` in any order:
 
 ## Agents Manager
 
-Press **Ctrl+Shift+A** or type `/agents` to open the Agents Manager overlay — a TUI for browsing, viewing, editing, creating, and launching agents and chains.
+Press **Ctrl+Shift+A** or type `/subagents` (alias: `/agents`) to open the Subagents Manager overlay — a TUI for browsing, viewing metadata, editing, creating, and launching agents and chains.
 
 **Screens:**
 
 | Screen | Description |
 |--------|-------------|
 | List | Browse all agents and chains with search/filter, scope badges, chain badges |
-| Detail | View resolved prompt, frontmatter fields, recent run history |
+| Detail | View metadata, resolved prompt, frontmatter fields, recent run history; press `m` to update the model directly |
 | Edit | Edit fields with specialized pickers (model, thinking, skills, prompt editor) |
 | Chain Detail | View chain steps with flow visualization and dependency map |
 | Parallel Builder | Build parallel execution slots, add same agent multiple times, per-slot task overrides |
@@ -236,6 +237,13 @@ Press **Ctrl+Shift+A** or type `/agents` to open the Agents Manager overlay — 
 - `Ctrl+R` — run selected (1 agent: launch, 2+: sequential chain)
 - `Ctrl+P` — open parallel builder (from selection or cursor agent)
 - `Esc` — clear query, then selection, then close overlay
+
+**Detail screen keybindings:**
+- `m` — open the model picker and save the selected model to the subagent
+- `e` — edit all metadata/frontmatter fields (user/project agents only)
+- `v` — toggle raw/resolved prompt view
+- `l` — launch the selected subagent
+- `Esc` — back to list
 
 **Parallel builder keybindings:**
 - `↑↓` — navigate slots

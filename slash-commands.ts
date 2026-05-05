@@ -118,7 +118,7 @@ async function requestSlashRun(
 		const startTimeout = setTimeout(() => {
 			finish(() => reject(new Error(
 				"Slash subagent bridge did not start within 15s. Ensure the extension is loaded correctly.",
-			)));
+			)), false);
 		}, startTimeoutMs);
 
 		const onStarted = (data: unknown) => {
@@ -134,7 +134,10 @@ async function requestSlashRun(
 			const response = data as Partial<SlashSubagentResponse>;
 			if (response.requestId !== requestId) return;
 			clearTimeout(startTimeout);
-			finish(() => resolve(response as SlashSubagentResponse));
+			// Keep the status line alive until the caller records the final snapshot.
+			// Clearing it before finalizeSlashResult() can trigger the last TUI redraw
+			// while the visible result card still points at the live "running" state.
+			finish(() => resolve(response as SlashSubagentResponse), false);
 		};
 
 		const onUpdate = (data: unknown) => {
@@ -152,7 +155,7 @@ async function requestSlashRun(
 			? ctx.ui.onTerminalInput((input) => {
 				if (!matchesKey(input, Key.escape)) return undefined;
 				pi.events.emit(SLASH_SUBAGENT_CANCEL_EVENT, { requestId });
-				finish(() => reject(new Error("Cancelled")));
+				finish(() => reject(new Error("Cancelled")), false);
 				return { consume: true };
 			})
 			: undefined;
@@ -161,7 +164,7 @@ async function requestSlashRun(
 		const unsubResponse = pi.events.on(SLASH_SUBAGENT_RESPONSE_EVENT, onResponse);
 		const unsubUpdate = pi.events.on(SLASH_SUBAGENT_UPDATE_EVENT, onUpdate);
 
-		const finish = (next: () => void) => {
+		const finish = (next: () => void, clearStatus = true) => {
 			if (done) return;
 			done = true;
 			clearTimeout(startTimeout);
@@ -169,7 +172,7 @@ async function requestSlashRun(
 			unsubResponse();
 			unsubUpdate();
 			onTerminalInput?.();
-			if (ctx.hasUI) ctx.ui.setStatus("subagent-slash", undefined);
+			if (clearStatus && ctx.hasUI) ctx.ui.setStatus("subagent-slash", undefined);
 			next();
 		};
 
@@ -181,7 +184,7 @@ async function requestSlashRun(
 		if (!started) {
 			finish(() => reject(new Error(
 				"No slash subagent bridge responded. Ensure the subagent extension is loaded correctly.",
-			)));
+			)), false);
 		}
 	});
 }
@@ -201,14 +204,16 @@ async function runSlashSubagent(
 	params: SubagentParamsLike,
 ): Promise<void> {
 	const requestId = randomUUID();
-	const initialDetails = buildSlashInitialResult(requestId, params);
-	const initialText = extractSlashMessageText(initialDetails.result.content) || "Running subagent...";
-	pi.sendMessage({
-		customType: SLASH_RESULT_TYPE,
-		content: initialText,
-		display: true,
-		details: initialDetails,
-	});
+	if (ctx.hasUI) {
+		const initialDetails = buildSlashInitialResult(requestId, params);
+		const initialText = extractSlashMessageText(initialDetails.result.content) || "Running subagent...";
+		pi.sendMessage({
+			customType: SLASH_RESULT_TYPE,
+			content: initialText,
+			display: true,
+			details: initialDetails,
+		});
+	}
 
 	try {
 		const response = await requestSlashRun(pi, ctx, requestId, params);
@@ -217,9 +222,10 @@ async function runSlashSubagent(
 		pi.sendMessage({
 			customType: SLASH_RESULT_TYPE,
 			content: text,
-			display: false,
+			display: !ctx.hasUI,
 			details: finalDetails,
 		});
+		if (ctx.hasUI) ctx.ui.setStatus("subagent-slash", undefined);
 		if (response.isError && ctx.hasUI) {
 			ctx.ui.notify(response.errorText || "Subagent failed", "error");
 		}
@@ -229,9 +235,10 @@ async function runSlashSubagent(
 		pi.sendMessage({
 			customType: SLASH_RESULT_TYPE,
 			content: message,
-			display: false,
+			display: !ctx.hasUI,
 			details: failedDetails,
 		});
+		if (ctx.hasUI) ctx.ui.setStatus("subagent-slash", undefined);
 		if (message === "Cancelled") {
 			if (ctx.hasUI) ctx.ui.notify("Cancelled", "warning");
 			return;
@@ -385,11 +392,18 @@ export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
 ): void {
+	const openSubagentsManagerCommand = async (_args: string, ctx: ExtensionContext) => {
+		await openAgentManager(pi, ctx);
+	};
+
 	pi.registerCommand("agents", {
-		description: "Open the Agents Manager",
-		handler: async (_args, ctx) => {
-			await openAgentManager(pi, ctx);
-		},
+		description: "Open the Subagents Manager",
+		handler: openSubagentsManagerCommand,
+	});
+
+	pi.registerCommand("subagents", {
+		description: "Administer subagents: inspect metadata, edit prompts/settings, and update models",
+		handler: openSubagentsManagerCommand,
 	});
 
 	pi.registerCommand("run", {
