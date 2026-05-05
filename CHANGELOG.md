@@ -6,6 +6,9 @@
 - Added `/subagents` as the primary administration command for the Subagents Manager. The existing `/agents` command remains as an alias.
 - Agent detail screens now expose metadata fields and a direct `m` shortcut that opens the model picker and saves the selected model for user/project agents.
 
+### Fixed
+- Subagent model selection now uses `--model` instead of `--models`, so configured agent models are honored even when a forked child session restores the parent conversation's model.
+
 ## [0.11.12] - 2026-03-28
 
 ### Changed

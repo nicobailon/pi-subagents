@@ -51,10 +51,10 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	const modelArg = applyThinkingSuffix(input.model, input.thinking);
 	if (modelArg) {
-		// Use --models (not --model) because pi CLI silently ignores --model
-		// without a companion --provider flag. --models resolves the provider
-		// automatically via resolveModelScope. See: #8
-		args.push("--models", modelArg);
+		// Use --model to force the subagent's configured model even when the
+		// child process opens an existing/forked session. --models only scopes
+		// model cycling and does not override the restored session model.
+		args.push("--model", modelArg);
 	}
 
 	const toolExtensionPaths: string[] = [];
