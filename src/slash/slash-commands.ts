@@ -7,6 +7,7 @@ import { discoverAgents, discoverAgentsAll, type ChainConfig } from "../agents/a
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { isParallelStep, type ChainStep } from "../shared/settings.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
+import { openSubagentsAdmin } from "./subagents-admin.ts";
 import {
 	applySlashUpdate,
 	buildSlashInitialResult,
@@ -404,6 +405,13 @@ export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
 ): void {
+	pi.registerCommand("subagents", {
+		description: "Administer subagents: inspect metadata and update configured models",
+		handler: async (args, ctx) => {
+			await openSubagentsAdmin(pi, ctx, args);
+		},
+	});
+
 	pi.registerCommand("run", {
 		description: "Run a subagent directly: /run agent[output=file] [task] [--bg] [--fork]",
 		getArgumentCompletions: makeAgentCompletions(state, false),
