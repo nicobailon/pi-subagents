@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Restore explicit nested delegation for child agents that include `subagent` in their `tools` allowlist while keeping normal child sessions non-orchestrating by default.
+
 ## [0.24.0] - 2026-05-03
 
 ### Changed

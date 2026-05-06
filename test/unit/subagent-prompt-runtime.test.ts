@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import registerSubagentPromptRuntime, {
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
+	CHILD_SUBAGENT_NESTED_DELEGATION_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
 	rewriteSubagentPrompt,
 	stripInheritedSkills,
@@ -14,6 +15,7 @@ const envSnapshot = {
 	PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
 	PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
+	PI_SUBAGENT_ALLOW_NESTED: process.env.PI_SUBAGENT_ALLOW_NESTED,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -40,6 +42,8 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_INHERIT_SKILLS = envSnapshot.PI_SUBAGENT_INHERIT_SKILLS;
 	if (envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME;
 	else process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
+	if (envSnapshot.PI_SUBAGENT_ALLOW_NESTED === undefined) delete process.env.PI_SUBAGENT_ALLOW_NESTED;
+	else process.env.PI_SUBAGENT_ALLOW_NESTED = envSnapshot.PI_SUBAGENT_ALLOW_NESTED;
 });
 
 describe("subagent prompt runtime", () => {
@@ -79,6 +83,20 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."));
 		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
 		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
+	});
+
+	it("injects a nested-delegation boundary when explicitly allowed", () => {
+		process.env.PI_SUBAGENT_ALLOW_NESTED = "1";
+		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
+			inheritProjectContext: true,
+			inheritSkills: true,
+		});
+
+		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_NESTED_DELEGATION_INSTRUCTIONS));
+		assert.ok(rewritten.includes("You may use the subagent tool only for bounded child work"));
+		assert.ok(!rewritten.includes("Do not propose or run subagents."));
+		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_NESTED_DELEGATION_INSTRUCTIONS), 0);
+		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_NESTED_DELEGATION_INSTRUCTIONS), 0);
 	});
 
 	it("keeps explicitly injected skill content when inherited skills are stripped", () => {

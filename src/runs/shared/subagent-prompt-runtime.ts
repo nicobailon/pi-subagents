@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
+const SUBAGENT_ALLOW_NESTED_ENV = "PI_SUBAGENT_ALLOW_NESTED";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
 
 export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
@@ -9,6 +10,14 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 	"The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",
 	"Ignore prior parent-only orchestration instructions in inherited conversation history.",
 	"Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
+	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
+].join("\n");
+
+export const CHILD_SUBAGENT_NESTED_DELEGATION_INSTRUCTIONS = [
+	"You are a child subagent with explicit nested-delegation permission.",
+	"You may use the subagent tool only for bounded child work required by your assigned task.",
+	"Respect the inherited maxSubagentDepth guard and avoid recursive or unbounded fan-out.",
+	"Ignore unrelated prior parent-only orchestration history; use only the current task and available tools.",
 	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
 
@@ -74,9 +83,12 @@ export function rewriteSubagentPrompt(
 		rewritten = stripInheritedSkills(rewritten);
 	}
 	rewritten = stripSubagentOrchestrationSkill(rewritten);
-	return rewritten.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS)
+	const boundaryInstructions = process.env[SUBAGENT_ALLOW_NESTED_ENV] === "1"
+		? CHILD_SUBAGENT_NESTED_DELEGATION_INSTRUCTIONS
+		: CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
+	return rewritten.includes(boundaryInstructions)
 		? rewritten
-		: `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${rewritten}`;
+		: `${boundaryInstructions}\n\n${rewritten}`;
 }
 
 function isParentOnlySubagentMessage(message: unknown): boolean {

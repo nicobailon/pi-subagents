@@ -137,6 +137,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
 		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
 		assert.equal(env.PI_SUBAGENT_CHILD, "1");
+		assert.equal(env.PI_SUBAGENT_ALLOW_NESTED, undefined);
 		assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
 		assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
 	});
@@ -160,6 +161,20 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env.PI_SUBAGENT_RUN_ID, "78f659a3");
 		assert.equal(env.PI_SUBAGENT_CHILD_AGENT, "worker");
 		assert.equal(env.PI_SUBAGENT_CHILD_INDEX, "2");
+	});
+
+	it("allows nested delegation only when the child explicitly receives the subagent tool", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["subagent", "read"],
+		});
+
+		assert.equal(env.PI_SUBAGENT_CHILD, "1");
+		assert.equal(env.PI_SUBAGENT_ALLOW_NESTED, "1");
 	});
 
 	it("emits explicit builtin tool allowlists", () => {

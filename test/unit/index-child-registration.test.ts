@@ -3,13 +3,14 @@ import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_ALLOW_NESTED_ENV, SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function parentToolEnv(): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
+	delete env[SUBAGENT_ALLOW_NESTED_ENV];
 	return env;
 }
 
@@ -83,6 +84,47 @@ describe("subagent extension child mode", () => {
 			registerSubagentExtension(fakePi);
 			if (calls.length > 0) {
 				throw new Error("Unexpected child-mode registrations: " + calls.join(", "));
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, stdio: "pipe" },
+		);
+	});
+
+	it("registers the subagent tool in child mode when nested delegation is explicitly allowed", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			import { SUBAGENT_ALLOW_NESTED_ENV, SUBAGENT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			process.env[SUBAGENT_CHILD_ENV] = "1";
+			process.env[SUBAGENT_ALLOW_NESTED_ENV] = "1";
+			const calls = [];
+			const fakePi = new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				registerTool(tool) { calls.push(["registerTool", tool.name]); },
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!calls.some(([kind, name]) => kind === "registerTool" && name === "subagent")) {
+				throw new Error("Expected child nested delegation to register subagent tool, got " + JSON.stringify(calls));
 			}
 		`;
 
