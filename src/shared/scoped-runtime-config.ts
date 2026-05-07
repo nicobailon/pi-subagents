@@ -93,14 +93,43 @@ export function readProjectRuntimeConfig(cwd: string): ProjectRuntimeConfig {
 	}
 }
 
+function pickScopedRuntimeConfig(config: Partial<ScopedRuntimeConfig>): ScopedRuntimeConfig {
+	return {
+		...(config.defaultSessionDir !== undefined ? { defaultSessionDir: config.defaultSessionDir } : {}),
+		...(config.worktreeRoot !== undefined ? { worktreeRoot: config.worktreeRoot } : {}),
+		...(config.worktreeSetupHook !== undefined ? { worktreeSetupHook: config.worktreeSetupHook } : {}),
+		...(config.worktreeSetupHookTimeoutMs !== undefined ? { worktreeSetupHookTimeoutMs: config.worktreeSetupHookTimeoutMs } : {}),
+		...(config.keepWorktrees !== undefined ? { keepWorktrees: config.keepWorktrees } : {}),
+	};
+}
+
+function mergeAgentDefaults(
+	globalConfig: ExtensionConfig,
+	projectConfig: Partial<ExtensionConfig>,
+): Record<string, ScopedRuntimeConfig> | undefined {
+	const globalDefaults = globalConfig.agentDefaults;
+	const projectDefaults = projectConfig.agentDefaults;
+	if (!globalDefaults && !projectDefaults) return undefined;
+	const globalScoped = pickScopedRuntimeConfig(globalConfig);
+	const projectScoped = pickScopedRuntimeConfig(projectConfig);
+	const merged: Record<string, ScopedRuntimeConfig> = {};
+	for (const agent of new Set([...Object.keys(globalDefaults ?? {}), ...Object.keys(projectDefaults ?? {})])) {
+		merged[agent] = {
+			...globalScoped,
+			...(globalDefaults?.[agent] ?? {}),
+			...projectScoped,
+			...(projectDefaults?.[agent] ?? {}),
+		};
+	}
+	return merged;
+}
+
 export function mergeRuntimeConfig(globalConfig: ExtensionConfig, projectConfig: Partial<ExtensionConfig>): ExtensionConfig {
+	const agentDefaults = mergeAgentDefaults(globalConfig, projectConfig);
 	return {
 		...globalConfig,
 		...projectConfig,
-		agentDefaults: {
-			...(globalConfig.agentDefaults ?? {}),
-			...(projectConfig.agentDefaults ?? {}),
-		},
+		...(agentDefaults ? { agentDefaults } : {}),
 	};
 }
 

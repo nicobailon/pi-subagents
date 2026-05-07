@@ -59,7 +59,15 @@ describe("scoped runtime config", () => {
 			{
 				defaultSessionDir: "~/global-sessions",
 				worktreeRoot: "~/global-worktrees",
-				agentDefaults: { worker: { worktreeRoot: "~/global-worker-worktrees" } },
+				keepWorktrees: true,
+				agentDefaults: {
+					worker: {
+						defaultSessionDir: "~/global-worker-sessions",
+						worktreeRoot: "~/global-worker-worktrees",
+						worktreeSetupHook: "~/global-worker-hook.mjs",
+					},
+					reviewer: { worktreeRoot: "~/global-reviewer-worktrees" },
+				},
 			},
 			{
 				defaultSessionDir: ".pi/subagents/sessions",
@@ -70,10 +78,12 @@ describe("scoped runtime config", () => {
 		assert.deepEqual(resolveAgentRuntimeConfig(merged, "worker"), {
 			defaultSessionDir: ".pi/subagents/sessions",
 			worktreeRoot: ".pi/subagents/worktrees/worker",
-			worktreeSetupHook: undefined,
+			worktreeSetupHook: "~/global-worker-hook.mjs",
 			worktreeSetupHookTimeoutMs: undefined,
-			keepWorktrees: undefined,
+			keepWorktrees: true,
 		});
+		assert.equal(resolveAgentRuntimeConfig(merged, "reviewer").worktreeRoot, "~/global-reviewer-worktrees");
+		assert.equal(resolveAgentRuntimeConfig(merged, "delegate").worktreeRoot, "~/global-worktrees");
 
 		const agent = makeAgent({ worktreeRoot: ".pi/subagents/worktrees/frontmatter" });
 		assert.equal(resolveAgentRuntimeConfig(merged, "worker", agent).worktreeRoot, ".pi/subagents/worktrees/frontmatter");
