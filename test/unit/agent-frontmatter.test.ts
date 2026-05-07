@@ -272,6 +272,24 @@ Do work
 		assert.equal(worker?.worktreeSetupHookTimeoutMs, 45000);
 		assert.equal(worker?.keepWorktrees, true);
 	});
+
+	it("leaves optional runtime booleans unset when omitted from frontmatter", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-runtime-optional-bool-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
+name: worker
+description: Worker
+---
+
+Do work
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const worker = result.agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.keepWorktrees, undefined);
+	});
 });
 
 describe("agent frontmatter prompt assembly defaults", () => {

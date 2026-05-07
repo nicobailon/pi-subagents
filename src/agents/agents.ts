@@ -635,6 +635,9 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		}
 
 		const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+		const keepWorktrees = frontmatter.keepWorktrees === undefined
+			? undefined
+			: frontmatter.keepWorktrees === "true";
 
 		agents.push({
 			name: runtimeName,
@@ -664,7 +667,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			worktreeSetupHookTimeoutMs: Number.isInteger(Number(frontmatter.worktreeSetupHookTimeoutMs)) && Number(frontmatter.worktreeSetupHookTimeoutMs) > 0
 				? Number(frontmatter.worktreeSetupHookTimeoutMs)
 				: undefined,
-			keepWorktrees: frontmatter.keepWorktrees === "true",
+			keepWorktrees,
 			interactive: frontmatter.interactive === "true",
 			maxSubagentDepth:
 				Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
