@@ -80,7 +80,7 @@ describe("scoped runtime config", () => {
 	});
 
 	it("expands runtime path templates relative to the project root", () => {
-		const expanded = expandRuntimePath(".pi/subagents/{agent}/{model}/{runId}/{index}", {
+		const expanded = expandRuntimePath(".pi/subagents/{agent}/{provider}/{model}/{runId}/{index}", {
 			cwd: "/repo/packages/app",
 			baseDir: "/repo",
 			agent: "worker",
@@ -88,6 +88,6 @@ describe("scoped runtime config", () => {
 			runId: "abc123",
 			index: 2,
 		});
-		assert.equal(expanded, path.join("/repo", ".pi", "subagents", "worker", "openai__gpt-5.5", "abc123", "2"));
+		assert.equal(expanded, path.join("/repo", ".pi", "subagents", "worker", "openai", "gpt-5.5", "abc123", "2"));
 	});
 });

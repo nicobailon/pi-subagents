@@ -817,8 +817,8 @@ Project-local runtime config can live in `.pi/settings.json`:
     "worktreeRoot": ".pi/subagents/worktrees",
     "agentDefaults": {
       "worker": {
-        "defaultSessionDir": ".pi/subagents/sessions/{agent}/{model}",
-        "worktreeRoot": ".pi/subagents/worktrees/{agent}/{model}",
+        "defaultSessionDir": ".pi/subagents/sessions/{agent}/{provider}/{model}",
+        "worktreeRoot": ".pi/subagents/worktrees/{agent}/{provider}/{model}",
         "keepWorktrees": true
       }
     }
@@ -826,7 +826,7 @@ Project-local runtime config can live in `.pi/settings.json`:
 }
 ```
 
-Supported path template variables are `{projectRoot}`, `{cwd}`, `{agent}`, `{model}`, `{runId}`, and `{index}`. Relative paths resolve from the nearest project root (`.pi/` or `.agents/`) when available, otherwise from the request cwd. `{agent}` and `{model}` are sanitized as path segments, so provider/model IDs such as `openai/gpt-5.5` become `openai__gpt-5.5`.
+Supported path template variables are `{projectRoot}`, `{cwd}`, `{agent}`, `{provider}`, `{model}`, `{runId}`, and `{index}`. Relative paths resolve from the nearest project root (`.pi/` or `.agents/`) when available, otherwise from the request cwd. `{provider}` and `{model}` can split provider/model IDs such as `openai/gpt-5.5` into `openai/gpt-5.5`; only path separators and NUL bytes inside a single segment are escaped.
 
 ### `maxSubagentDepth`
 

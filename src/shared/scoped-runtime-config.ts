@@ -23,6 +23,7 @@ export interface RuntimePathContext {
 	cwd: string;
 	baseDir?: string;
 	agent?: string;
+	provider?: string;
 	model?: string;
 	runId?: string;
 	index?: number;
@@ -114,16 +115,31 @@ export function resolveAgentRuntimeConfig(config: ExtensionConfig, agent: string
 	};
 }
 
+function splitProviderModel(model: string | undefined): { provider?: string; model?: string } {
+	const raw = model?.trim();
+	if (!raw) return {};
+	const slashIndex = raw.indexOf("/");
+	if (slashIndex === -1) return { model: raw };
+	return {
+		provider: raw.slice(0, slashIndex) || undefined,
+		model: raw.slice(slashIndex + 1) || undefined,
+	};
+}
+
 function toPathSegment(value: string | undefined, fallback: string): string {
-	return (value?.trim() || fallback).replace(/[\\/\0:*?"<>|]+/g, "__");
+	return (value?.trim() || fallback).replace(/[\\/\0]+/g, "__");
 }
 
 export function expandRuntimePath(rawPath: string, context: RuntimePathContext): string {
+	const modelParts = splitProviderModel(context.model);
+	const provider = context.provider ?? modelParts.provider;
+	const model = modelParts.model ?? context.model;
 	const expanded = rawPath
 		.replaceAll("{cwd}", context.cwd)
 		.replaceAll("{projectRoot}", context.baseDir ?? context.cwd)
 		.replaceAll("{agent}", toPathSegment(context.agent, "agent"))
-		.replaceAll("{model}", toPathSegment(context.model, "model"))
+		.replaceAll("{provider}", toPathSegment(provider, "provider"))
+		.replaceAll("{model}", toPathSegment(model, "model"))
 		.replaceAll("{runId}", context.runId ?? "run")
 		.replaceAll("{index}", String(context.index ?? 0));
 	const withHome = expanded.startsWith("~/") ? path.join(os.homedir(), expanded.slice(2)) : expanded;
