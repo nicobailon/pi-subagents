@@ -7,6 +7,7 @@ export interface WorktreeSetup {
 	cwd: string;
 	worktrees: WorktreeInfo[];
 	baseCommit: string;
+	keepWorktrees?: boolean;
 }
 
 interface WorktreeInfo {
@@ -43,6 +44,10 @@ interface WorktreeSetupHookConfig {
 interface CreateWorktreesOptions {
 	agents?: string[];
 	setupHook?: WorktreeSetupHookConfig;
+	setupHooks?: Array<WorktreeSetupHookConfig | undefined>;
+	worktreeRoot?: string;
+	worktreeRoots?: Array<string | undefined>;
+	keepWorktrees?: boolean;
 }
 
 interface ResolvedWorktreeSetupHook {
@@ -152,8 +157,9 @@ function buildWorktreeBranch(runId: string, index: number): string {
 	return `pi-parallel-${runId}-${index}`;
 }
 
-function buildWorktreePath(runId: string, index: number): string {
-	return path.join(os.tmpdir(), `pi-worktree-${runId}-${index}`);
+function buildWorktreePath(runId: string, index: number, worktreeRoot?: string): string {
+	if (worktreeRoot) fs.mkdirSync(worktreeRoot, { recursive: true });
+	return path.join(worktreeRoot ?? os.tmpdir(), `pi-worktree-${runId}-${index}`);
 }
 
 function resolveRepoCwdRelative(cwd: string): string {
@@ -168,9 +174,9 @@ function resolveRepoCwdRelative(cwd: string): string {
 	return normalizedPrefix === "." ? "" : normalizedPrefix;
 }
 
-export function resolveExpectedWorktreeAgentCwd(cwd: string, runId: string, index: number): string {
+export function resolveExpectedWorktreeAgentCwd(cwd: string, runId: string, index: number, worktreeRoot?: string): string {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
-	const worktreePath = buildWorktreePath(runId, index);
+	const worktreePath = buildWorktreePath(runId, index, worktreeRoot);
 	return cwdRelative ? path.join(worktreePath, cwdRelative) : worktreePath;
 }
 
@@ -320,9 +326,10 @@ function createSingleWorktree(
 	baseCommit: string,
 	setupHook: ResolvedWorktreeSetupHook | undefined,
 	agent: string | undefined,
+	worktreeRoot: string | undefined,
 ): WorktreeInfo {
 	const branch = buildWorktreeBranch(runId, index);
-	const worktreePath = buildWorktreePath(runId, index);
+	const worktreePath = buildWorktreePath(runId, index, worktreeRoot);
 	const add = runGit(toplevel, ["worktree", "add", worktreePath, "-b", branch, "HEAD"]);
 	if (add.status !== 0) {
 		const message = add.stderr.trim() || add.stdout.trim() || `failed to create worktree ${worktreePath}`;
@@ -492,6 +499,7 @@ function hasWorktreeChanges(diff: WorktreeDiff): boolean {
 export function createWorktrees(cwd: string, runId: string, count: number, options?: CreateWorktreesOptions): WorktreeSetup {
 	const repo = resolveRepoState(cwd);
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
+	const setupHooks = options?.setupHooks?.map((hook) => resolveWorktreeSetupHook(repo.toplevel, hook));
 	const worktrees: WorktreeInfo[] = [];
 
 	try {
@@ -502,8 +510,9 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 				runId,
 				index,
 				repo.baseCommit,
-				setupHook,
+				setupHooks?.[index] ?? setupHook,
 				options?.agents?.[index],
+				options?.worktreeRoots?.[index] ?? options?.worktreeRoot,
 			));
 		}
 	} catch (error) {
@@ -519,6 +528,7 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 		cwd: repo.toplevel,
 		worktrees,
 		baseCommit: repo.baseCommit,
+		keepWorktrees: options?.keepWorktrees === true,
 	};
 }
 
@@ -547,7 +557,8 @@ export function diffWorktrees(setup: WorktreeSetup, agents: string[], diffsDir: 
 	return diffs;
 }
 
-export function cleanupWorktrees(setup: WorktreeSetup): void {
+export function cleanupWorktrees(setup: WorktreeSetup, options?: { keep?: boolean }): void {
+	if (options?.keep || setup.keepWorktrees) return;
 	for (let index = setup.worktrees.length - 1; index >= 0; index--) {
 		cleanupSingleWorktree(setup.cwd, setup.worktrees[index]!);
 	}

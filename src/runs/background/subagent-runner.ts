@@ -1248,9 +1248,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				try {
 					worktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, {
 						agents: group.parallel.map((task) => task.agent),
+						worktreeRoots: group.parallel.map((task) => task.worktreeRoot),
+						setupHooks: group.parallel.map((task) => task.worktreeSetupHook
+							? { hookPath: task.worktreeSetupHook, timeoutMs: task.worktreeSetupHookTimeoutMs }
+							: undefined),
 						setupHook: config.worktreeSetupHook
 							? { hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs }
 							: undefined,
+						keepWorktrees: group.parallel.some((task) => task.keepWorktrees === true),
 					});
 				} catch (error) {
 					const setupError = error instanceof Error ? error.message : String(error);

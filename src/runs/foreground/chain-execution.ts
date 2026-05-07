@@ -55,9 +55,11 @@ import {
 	type SingleResult,
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
+	type ExtensionConfig,
 } from "../../shared/types.ts";
 import { resolveModelCandidate } from "../shared/model-fallback.ts";
 import { validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { expandRuntimePath, resolveAgentRuntimeConfig } from "../../shared/scoped-runtime-config.ts";
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -333,6 +335,8 @@ interface ChainExecutionParams {
 	maxSubagentDepth: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	runtimeConfig?: ExtensionConfig;
+	projectBaseDir?: string;
 }
 
 interface ChainExecutionResult {
@@ -515,11 +519,27 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					);
 				}
 				try {
+					const runtimeConfig = params.runtimeConfig ?? {};
 					worktreeSetup = createWorktrees(parallelCwd, `${runId}-s${stepIndex}`, step.parallel.length, {
 						agents: step.parallel.map((task) => task.agent),
+						worktreeRoots: step.parallel.map((task, taskIndex) => {
+							const agent = agents.find((candidate) => candidate.name === task.agent);
+							const runtime = resolveAgentRuntimeConfig(runtimeConfig, task.agent, agent);
+							return runtime.worktreeRoot
+								? expandRuntimePath(runtime.worktreeRoot, { cwd: parallelCwd, baseDir: params.projectBaseDir, agent: task.agent, runId: `${runId}-s${stepIndex}`, index: taskIndex })
+								: undefined;
+						}),
+						setupHooks: step.parallel.map((task) => {
+							const agent = agents.find((candidate) => candidate.name === task.agent);
+							const runtime = resolveAgentRuntimeConfig(runtimeConfig, task.agent, agent);
+							return runtime.worktreeSetupHook
+								? { hookPath: expandRuntimePath(runtime.worktreeSetupHook, { cwd: parallelCwd, baseDir: params.projectBaseDir, agent: task.agent, runId: `${runId}-s${stepIndex}` }), timeoutMs: runtime.worktreeSetupHookTimeoutMs }
+								: undefined;
+						}),
 						setupHook: params.worktreeSetupHook
 							? { hookPath: params.worktreeSetupHook, timeoutMs: params.worktreeSetupHookTimeoutMs }
 							: undefined,
+						keepWorktrees: step.parallel.some((task) => resolveAgentRuntimeConfig(runtimeConfig, task.agent, agents.find((candidate) => candidate.name === task.agent)).keepWorktrees === true),
 					});
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);

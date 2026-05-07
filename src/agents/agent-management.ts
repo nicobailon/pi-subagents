@@ -291,6 +291,22 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (typeof cfg.progress !== "boolean") return "config.progress must be a boolean when provided.";
 		target.defaultProgress = cfg.progress;
 	}
+	for (const key of ["defaultSessionDir", "worktreeRoot", "worktreeSetupHook"] as const) {
+		if (!hasKey(cfg, key)) continue;
+		if (cfg[key] === false || cfg[key] === "") target[key] = undefined;
+		else if (typeof cfg[key] === "string") target[key] = cfg[key] as string;
+		else return `config.${key} must be a string or false when provided.`;
+	}
+	if (hasKey(cfg, "worktreeSetupHookTimeoutMs")) {
+		if (cfg.worktreeSetupHookTimeoutMs === false || cfg.worktreeSetupHookTimeoutMs === "") target.worktreeSetupHookTimeoutMs = undefined;
+		else if (typeof cfg.worktreeSetupHookTimeoutMs === "number" && Number.isInteger(cfg.worktreeSetupHookTimeoutMs) && cfg.worktreeSetupHookTimeoutMs > 0) {
+			target.worktreeSetupHookTimeoutMs = cfg.worktreeSetupHookTimeoutMs;
+		} else return "config.worktreeSetupHookTimeoutMs must be an integer > 0 or false when provided.";
+	}
+	if (hasKey(cfg, "keepWorktrees")) {
+		if (typeof cfg.keepWorktrees !== "boolean") return "config.keepWorktrees must be a boolean when provided.";
+		target.keepWorktrees = cfg.keepWorktrees;
+	}
 	if (hasKey(cfg, "maxSubagentDepth")) {
 		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") target.maxSubagentDepth = undefined;
 		else if (typeof cfg.maxSubagentDepth === "number" && Number.isInteger(cfg.maxSubagentDepth) && cfg.maxSubagentDepth >= 0) {
@@ -365,6 +381,11 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.output) lines.push(`Output: ${agent.output}`);
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
 	if (agent.defaultProgress) lines.push("Progress: true");
+	if (agent.defaultSessionDir) lines.push(`Default session dir: ${agent.defaultSessionDir}`);
+	if (agent.worktreeRoot) lines.push(`Worktree root: ${agent.worktreeRoot}`);
+	if (agent.worktreeSetupHook) lines.push(`Worktree setup hook: ${agent.worktreeSetupHook}`);
+	if (agent.worktreeSetupHookTimeoutMs !== undefined) lines.push(`Worktree setup hook timeout: ${agent.worktreeSetupHookTimeoutMs}ms`);
+	if (agent.keepWorktrees) lines.push("Keep worktrees: true");
 	if (agent.maxSubagentDepth !== undefined) lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
 	if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);
 	return lines.join("\n");

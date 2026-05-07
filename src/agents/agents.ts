@@ -88,7 +88,12 @@ export interface AgentConfig {
 	extensions?: string[];
 	output?: string;
 	defaultReads?: string[];
-	defaultProgress?: boolean;
+	defaultProgress?: boolean;	
+	defaultSessionDir?: string;
+	worktreeRoot?: string;
+	worktreeSetupHook?: string;
+	worktreeSetupHookTimeoutMs?: number;
+	keepWorktrees?: boolean;
 	interactive?: boolean;
 	maxSubagentDepth?: number;
 	disabled?: boolean;
@@ -653,6 +658,13 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			output: frontmatter.output,
 			defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
 			defaultProgress: frontmatter.defaultProgress === "true",
+			defaultSessionDir: frontmatter.defaultSessionDir,
+			worktreeRoot: frontmatter.worktreeRoot,
+			worktreeSetupHook: frontmatter.worktreeSetupHook,
+			worktreeSetupHookTimeoutMs: Number.isInteger(Number(frontmatter.worktreeSetupHookTimeoutMs)) && Number(frontmatter.worktreeSetupHookTimeoutMs) > 0
+				? Number(frontmatter.worktreeSetupHookTimeoutMs)
+				: undefined,
+			keepWorktrees: frontmatter.keepWorktrees === "true",
 			interactive: frontmatter.interactive === "true",
 			maxSubagentDepth:
 				Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0

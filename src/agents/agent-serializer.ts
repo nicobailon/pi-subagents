@@ -19,6 +19,11 @@ export const KNOWN_FIELDS = new Set([
 	"output",
 	"defaultReads",
 	"defaultProgress",
+	"defaultSessionDir",
+	"worktreeRoot",
+	"worktreeSetupHook",
+	"worktreeSetupHookTimeoutMs",
+	"keepWorktrees",
 	"interactive",
 	"maxSubagentDepth",
 ]);
@@ -65,6 +70,13 @@ export function serializeAgent(config: AgentConfig): string {
 	if (readsValue) lines.push(`defaultReads: ${readsValue}`);
 
 	if (config.defaultProgress) lines.push("defaultProgress: true");
+	if (config.defaultSessionDir) lines.push(`defaultSessionDir: ${config.defaultSessionDir}`);
+	if (config.worktreeRoot) lines.push(`worktreeRoot: ${config.worktreeRoot}`);
+	if (config.worktreeSetupHook) lines.push(`worktreeSetupHook: ${config.worktreeSetupHook}`);
+	if (Number.isInteger(config.worktreeSetupHookTimeoutMs) && config.worktreeSetupHookTimeoutMs! > 0) {
+		lines.push(`worktreeSetupHookTimeoutMs: ${config.worktreeSetupHookTimeoutMs}`);
+	}
+	if (config.keepWorktrees) lines.push("keepWorktrees: true");
 	if (config.interactive) lines.push("interactive: true");
 	if (Number.isInteger(config.maxSubagentDepth) && config.maxSubagentDepth >= 0) {
 		lines.push(`maxSubagentDepth: ${config.maxSubagentDepth}`);

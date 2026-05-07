@@ -16,6 +16,10 @@ export interface RunnerSubagentStep {
 	outputMode?: "inline" | "file-only";
 	sessionFile?: string;
 	maxSubagentDepth?: number;
+	worktreeRoot?: string;
+	worktreeSetupHook?: string;
+	worktreeSetupHookTimeoutMs?: number;
+	keepWorktrees?: boolean;
 }
 
 export interface ParallelStepGroup {

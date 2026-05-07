@@ -18,10 +18,12 @@ import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveModelCandidate, type AvailableModelInfo } from "../shared/model-fallback.ts";
+import { expandRuntimePath, resolveAgentRuntimeConfig } from "../../shared/scoped-runtime-config.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import {
 	type ArtifactConfig,
 	type Details,
+	type ExtensionConfig,
 	type MaxOutputConfig,
 	type ResolvedControlConfig,
 	type SubagentRunMode,
@@ -81,6 +83,8 @@ interface AsyncChainParams {
 	maxSubagentDepth: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	runtimeConfig?: ExtensionConfig;
+	projectBaseDir?: string;
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
@@ -106,6 +110,8 @@ interface AsyncSingleParams {
 	maxSubagentDepth: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	runtimeConfig?: ExtensionConfig;
+	projectBaseDir?: string;
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
@@ -260,6 +266,7 @@ export function executeAsyncChain(
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior) => {
 		const a = agents.find((x) => x.name === s.agent)!;
+		const runtime = resolveAgentRuntimeConfig(params.runtimeConfig ?? {}, s.agent, a);
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
 		const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
@@ -303,6 +310,12 @@ export function executeAsyncChain(
 			outputMode: behavior.outputMode,
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
+			worktreeRoot: runtime.worktreeRoot,
+			worktreeSetupHook: runtime.worktreeSetupHook
+				? expandRuntimePath(runtime.worktreeSetupHook, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: s.agent })
+				: undefined,
+			worktreeSetupHookTimeoutMs: runtime.worktreeSetupHookTimeoutMs,
+			keepWorktrees: runtime.keepWorktrees,
 		};
 	};
 
@@ -331,12 +344,21 @@ export function executeAsyncChain(
 						let behaviorCwd: string | undefined;
 						if (s.worktree) {
 							try {
-								behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, taskIndex);
+								const agent = agents.find((candidate) => candidate.name === t.agent);
+								const runtime = resolveAgentRuntimeConfig(params.runtimeConfig ?? {}, t.agent, agent);
+								const worktreeRoot = runtime.worktreeRoot
+									? expandRuntimePath(runtime.worktreeRoot, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: t.agent, runId: `${id}-s${stepIndex}`, index: taskIndex })
+									: undefined;
+								behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, taskIndex, worktreeRoot);
 							} catch {
 								behaviorCwd = undefined;
 							}
 						}
-						return buildSeqStep(t, nextSessionFile(), behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex]);
+						const step = buildSeqStep(t, nextSessionFile(), behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex]);
+						if (step.worktreeRoot) {
+							step.worktreeRoot = expandRuntimePath(step.worktreeRoot, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: t.agent, runId: `${id}-s${stepIndex}`, index: taskIndex });
+						}
+						return step;
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,

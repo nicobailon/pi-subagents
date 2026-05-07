@@ -806,7 +806,27 @@ Forces depth-0 single, parallel, and chain runs into background mode and bypasse
 { "defaultSessionDir": "~/.pi/agent/sessions/subagent/" }
 ```
 
-Session directory precedence is: `params.sessionDir`, then `config.defaultSessionDir`, then a directory derived from the parent session. Sessions are always enabled.
+Session directory precedence is: `params.sessionDir`, then an agent frontmatter `defaultSessionDir`, then `subagents.agentDefaults.<agent>.defaultSessionDir`, then project/global `config.defaultSessionDir`, then a directory derived from the parent session. Sessions are always enabled.
+
+Project-local runtime config can live in `.pi/settings.json`:
+
+```json
+{
+  "subagents": {
+    "defaultSessionDir": ".pi/subagents/sessions",
+    "worktreeRoot": ".pi/subagents/worktrees",
+    "agentDefaults": {
+      "worker": {
+        "defaultSessionDir": ".pi/subagents/sessions/{agent}",
+        "worktreeRoot": ".pi/subagents/worktrees/{agent}",
+        "keepWorktrees": true
+      }
+    }
+  }
+}
+```
+
+Supported path template variables are `{projectRoot}`, `{cwd}`, `{agent}`, `{runId}`, and `{index}`. Relative paths resolve from the nearest project root (`.pi/` or `.agents/`) when available, otherwise from the request cwd.
 
 ### `maxSubagentDepth`
 
@@ -838,14 +858,18 @@ Bridge activation also requires `pi-intercom` to be installed and enabled throug
 
 The default injected guidance tells children to use `contact_supervisor` with `reason: "need_decision"` when blocked or needing a decision, `reason: "progress_update"` only for meaningful blocked/progress updates, generic `intercom` as fallback plumbing, and avoid routine completion handoffs.
 
-### `worktreeSetupHook`
+### `worktreeRoot`, `worktreeSetupHook`, and `keepWorktrees`
 
 ```json
 {
+  "worktreeRoot": ".pi/subagents/worktrees",
   "worktreeSetupHook": "./scripts/setup-worktree.mjs",
-  "worktreeSetupHookTimeoutMs": 45000
+  "worktreeSetupHookTimeoutMs": 45000,
+  "keepWorktrees": true
 }
 ```
+
+`worktreeRoot` changes where `worktree: true` creates temporary worktrees. Without it, worktrees still use the OS temp directory. `keepWorktrees` leaves created worktrees in place after diff capture so humans can inspect them directly. These fields can be configured globally, project-wide in `.pi/settings.json`, per-agent through `subagents.agentDefaults.<agent>`, or directly in agent frontmatter. More specific config wins.
 
 The hook runs once per created worktree. Paths must be absolute, `~/...`, or repo-relative; bare command names are rejected.
 

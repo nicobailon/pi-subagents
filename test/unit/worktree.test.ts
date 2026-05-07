@@ -110,6 +110,37 @@ describe("worktree", () => {
 		}
 	});
 
+	it("createWorktrees can create worktrees under a custom root", () => {
+		const repoDir = createRepo("pi-worktree-custom-root-");
+		const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-root-"));
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repoDir, "custom-root", 1, { worktreeRoot });
+			assert.equal(path.dirname(setup.worktrees[0]!.path), worktreeRoot);
+			assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+		} finally {
+			if (setup) cleanupWorktrees(setup);
+			cleanupRepo(repoDir);
+			fs.rmSync(worktreeRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("cleanupWorktrees keeps worktrees when the setup is marked keepWorktrees", () => {
+		const repoDir = createRepo("pi-worktree-keep-");
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repoDir, "keep", 1, { keepWorktrees: true });
+			const worktreePath = setup.worktrees[0]!.path;
+			cleanupWorktrees(setup);
+			assert.equal(fs.existsSync(worktreePath), true, "worktree should remain for manual review");
+		} finally {
+			if (setup) {
+				cleanupWorktrees({ ...setup, keepWorktrees: false });
+			}
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("createWorktrees rejects dirty repositories", () => {
 		const repoDir = createRepo("pi-worktree-dirty-");
 		try {

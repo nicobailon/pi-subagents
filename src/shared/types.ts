@@ -494,16 +494,25 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
-export interface ExtensionConfig {
+export interface WorktreeRuntimeConfig {
+	worktreeRoot?: string;
+	worktreeSetupHook?: string;
+	worktreeSetupHookTimeoutMs?: number;
+	keepWorktrees?: boolean;
+}
+
+export interface ScopedRuntimeConfig extends WorktreeRuntimeConfig {
+	defaultSessionDir?: string;
+}
+
+export interface ExtensionConfig extends ScopedRuntimeConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
-	defaultSessionDir?: string;
 	maxSubagentDepth?: number;
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;
-	worktreeSetupHook?: string;
-	worktreeSetupHookTimeoutMs?: number;
 	intercomBridge?: IntercomBridgeConfig;
+	agentDefaults?: Record<string, ScopedRuntimeConfig>;
 }
 
 // ============================================================================

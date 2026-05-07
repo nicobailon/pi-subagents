@@ -4,7 +4,6 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { type AgentConfig, type AgentScope } from "../../agents/agents.ts";
-import { getArtifactsDir } from "../../shared/artifacts.ts";
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
@@ -37,6 +36,7 @@ import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBrid
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
+import { expandRuntimePath, mergeRuntimeConfig, readProjectRuntimeConfig, resolveAgentRuntimeConfig } from "../../shared/scoped-runtime-config.ts";
 import {
 	buildSubagentResultIntercomPayload,
 	deliverSubagentIntercomMessageEvent,
@@ -158,6 +158,7 @@ interface ExecutionContextData {
 	effectiveAsync: boolean;
 	controlConfig: ResolvedControlConfig;
 	intercomBridge: IntercomBridgeState;
+	projectBaseDir?: string;
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -796,6 +797,12 @@ function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): Age
 	);
 }
 
+function collectRequestedAgentNames(params: SubagentParamsLike): string[] {
+	if (params.tasks?.length) return params.tasks.flatMap((task) => Array.from({ length: task.count ?? 1 }, () => task.agent));
+	if (params.chain?.length) return params.chain.flatMap((step) => getStepAgents(step as ChainStep));
+	return params.agent ? [params.agent] : [];
+}
+
 function collectChainSessionFiles(
 	chain: ChainStep[],
 	sessionFileForIndex: (idx?: number) => string | undefined,
@@ -936,6 +943,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
+			runtimeConfig: deps.config,
+			projectBaseDir: data.projectBaseDir,
 			controlConfig,
 			controlIntercomTarget,
 			childIntercomTarget,
@@ -963,6 +972,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
+			runtimeConfig: deps.config,
+			projectBaseDir: data.projectBaseDir,
 			controlConfig,
 			controlIntercomTarget,
 			childIntercomTarget,
@@ -1005,6 +1016,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			maxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
+			runtimeConfig: deps.config,
+			projectBaseDir: data.projectBaseDir,
 			controlConfig,
 			controlIntercomTarget,
 			childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(agent, index) : undefined,
@@ -1065,6 +1078,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		maxSubagentDepth: currentMaxSubagentDepth,
 		worktreeSetupHook: deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
+		runtimeConfig: deps.config,
+		projectBaseDir: data.projectBaseDir,
 	});
 
 	if (chainResult.requestedAsync) {
@@ -1100,6 +1115,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
+			runtimeConfig: deps.config,
+			projectBaseDir: data.projectBaseDir,
 			controlConfig,
 			controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 			childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
@@ -1173,17 +1190,32 @@ function createParallelWorktreeSetup(
 	cwd: string,
 	runId: string,
 	tasks: TaskParam[],
-	setupHook: ExtensionConfig["worktreeSetupHook"],
-	setupHookTimeoutMs: ExtensionConfig["worktreeSetupHookTimeoutMs"],
+	agents: AgentConfig[],
+	config: ExtensionConfig,
+	projectBaseDir?: string,
 ): { setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> } {
 	if (!enabled) return {};
 	try {
+		const worktreeRoots = tasks.map((task, index) => {
+			const agentConfig = agents.find((agent) => agent.name === task.agent);
+			const runtime = resolveAgentRuntimeConfig(config, task.agent, agentConfig);
+			return runtime.worktreeRoot
+				? expandRuntimePath(runtime.worktreeRoot, { cwd, baseDir: projectBaseDir, agent: task.agent, runId, index })
+				: undefined;
+		});
+		const setupHooks = tasks.map((task) => {
+			const agentConfig = agents.find((agent) => agent.name === task.agent);
+			const runtime = resolveAgentRuntimeConfig(config, task.agent, agentConfig);
+			return runtime.worktreeSetupHook
+				? { hookPath: expandRuntimePath(runtime.worktreeSetupHook, { cwd, baseDir: projectBaseDir, agent: task.agent, runId }), timeoutMs: runtime.worktreeSetupHookTimeoutMs }
+				: undefined;
+		});
 		return {
 			setup: createWorktrees(cwd, runId, tasks.length, {
 				agents: tasks.map((task) => task.agent),
-				setupHook: setupHook
-					? { hookPath: setupHook, timeoutMs: setupHookTimeoutMs }
-					: undefined,
+				worktreeRoots,
+				setupHooks,
+				keepWorktrees: tasks.some((task) => resolveAgentRuntimeConfig(config, task.agent, agents.find((agent) => agent.name === task.agent)).keepWorktrees === true),
 			}),
 		};
 	} catch (error) {
@@ -1540,8 +1572,9 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		effectiveCwd,
 		runId,
 		tasks,
-		deps.config.worktreeSetupHook,
-		deps.config.worktreeSetupHookTimeoutMs,
+		agents,
+		deps.config,
+		data.projectBaseDir,
 	);
 	if (errorResult) return errorResult;
 
@@ -1978,6 +2011,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.lastForegroundControlId ??= null;
 		const requestCwd = resolveRequestedCwd(ctx.cwd, params.cwd);
 		const paramsWithResolvedCwd = params.cwd === undefined ? params : { ...params, cwd: requestCwd };
+		let projectRuntime;
+		try {
+			projectRuntime = readProjectRuntimeConfig(requestCwd);
+		} catch (error) {
+			return toExecutionErrorResult(paramsWithResolvedCwd, error);
+		}
+		const runtimeConfig = mergeRuntimeConfig(deps.config, projectRuntime.config);
+		const runtimeDeps: ExecutorDeps = { ...deps, config: runtimeConfig };
 		if (params.action) {
 			if (params.action === "doctor") {
 				let currentSessionFile: string | null = null;
@@ -1998,7 +2039,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						type: "text",
 						text: buildDoctorReport({
 							cwd: requestCwd,
-							config: deps.config,
+							config: runtimeConfig,
 							state: deps.state,
 							context: paramsWithResolvedCwd.context,
 							requestedSessionDir: paramsWithResolvedCwd.sessionDir,
@@ -2018,7 +2059,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return inspectSubagentStatus(paramsWithResolvedCwd);
 			}
 			if (params.action === "resume") {
-				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps: runtimeDeps });
 			}
 			if (params.action === "interrupt") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
@@ -2057,7 +2098,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return handleManagementAction(params.action, paramsWithResolvedCwd, { ...ctx, cwd: requestCwd });
 		}
 
-		const { blocked, depth, maxDepth } = checkSubagentDepth(deps.config.maxSubagentDepth);
+		const { blocked, depth, maxDepth } = checkSubagentDepth(runtimeConfig.maxSubagentDepth);
 		if (blocked) {
 			return {
 				content: [
@@ -2081,7 +2122,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let effectiveParams = applyForceTopLevelAsyncOverride(
 			normalizedParams,
 			depth,
-			deps.config.forceTopLevelAsync === true,
+			runtimeConfig.forceTopLevelAsync === true,
 		);
 
 		const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
@@ -2092,7 +2133,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		effectiveParams = applyAgentDefaultContext(effectiveParams, discoveredAgents);
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
-			config: deps.config.intercomBridge,
+			config: runtimeConfig.intercomBridge,
 			context: effectiveParams.context,
 			orchestratorTarget: sessionName,
 			cwd: effectiveCwd,
@@ -2126,24 +2167,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		}
-		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
+		const requestedAsync = effectiveParams.async ?? (runtimeConfig.asyncByDefault === true);
 		const backgroundRequestedWhileClarifying = hasTasks && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync
 			&& (hasChain ? effectiveParams.clarify === false : effectiveParams.clarify !== true);
-		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
+		const controlConfig = resolveControlConfig(runtimeConfig.control, effectiveParams.control);
 
 		const artifactConfig: ArtifactConfig = {
 			...DEFAULT_ARTIFACT_CONFIG,
 			enabled: effectiveParams.artifacts !== false,
 		};
-		const artifactsDir = effectiveAsync ? deps.tempArtifactsDir : getArtifactsDir(parentSessionFile);
 
 		let sessionRoot: string;
 		if (effectiveParams.sessionDir) {
 			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
 		} else {
-			const baseSessionRoot = deps.config.defaultSessionDir
-				? path.resolve(deps.expandTilde(deps.config.defaultSessionDir))
+			const baseSessionDir = runtimeConfig.defaultSessionDir;
+			const baseSessionRoot = baseSessionDir
+				? expandRuntimePath(baseSessionDir, { cwd: requestCwd, baseDir: projectRuntime.baseDir, runId })
 				: deps.getSubagentSessionRoot(parentSessionFile);
 			sessionRoot = path.join(baseSessionRoot, runId);
 		}
@@ -2156,8 +2197,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				new Error(`Failed to create session directory '${sessionRoot}': ${message}`),
 			);
 		}
-		const sessionDirForIndex = (idx?: number) =>
-			path.join(sessionRoot, `run-${idx ?? 0}`);
+		const artifactsDir = effectiveAsync ? deps.tempArtifactsDir : path.join(sessionRoot, "subagent-artifacts");
+		const requestedAgentNames = collectRequestedAgentNames(effectiveParams);
+		const sessionDirForIndex = (idx?: number) => {
+			const index = idx ?? 0;
+			const agentName = requestedAgentNames[index];
+			const agentConfig = agentName ? agents.find((agent) => agent.name === agentName) : undefined;
+			const agentRuntime = resolveAgentRuntimeConfig(runtimeConfig, agentName, agentConfig);
+			if (!effectiveParams.sessionDir && agentRuntime.defaultSessionDir) {
+				const agentSessionRoot = expandRuntimePath(agentRuntime.defaultSessionDir, {
+					cwd: requestCwd,
+					baseDir: projectRuntime.baseDir,
+					agent: agentName,
+					runId,
+					index,
+				});
+				return path.join(agentSessionRoot, runId, `run-${index}`);
+			}
+			return path.join(sessionRoot, `run-${index}`);
+		};
 		const childSessionFileForIndex = (idx?: number) =>
 			sessionFileForIndex(idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 
@@ -2183,6 +2241,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			effectiveAsync,
 			controlConfig,
 			intercomBridge,
+			projectBaseDir: projectRuntime.baseDir,
 		};
 
 		const foregroundMode: "single" | "parallel" | "chain" = hasChain ? "chain" : hasTasks ? "parallel" : "single";
@@ -2204,11 +2263,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 
 		try {
-			const asyncResult = runAsyncPath(execData, deps);
+			const asyncResult = runAsyncPath(execData, runtimeDeps);
 			if (asyncResult) return withForkContext(asyncResult, effectiveParams.context);
-			if (hasChain && effectiveParams.chain) return withForkContext(await runChainPath(execData, deps), effectiveParams.context);
-			if (hasTasks && effectiveParams.tasks) return withForkContext(await runParallelPath(execData, deps), effectiveParams.context);
-			if (hasSingle) return withForkContext(await runSinglePath(execData, deps), effectiveParams.context);
+			if (hasChain && effectiveParams.chain) return withForkContext(await runChainPath(execData, runtimeDeps), effectiveParams.context);
+			if (hasTasks && effectiveParams.tasks) return withForkContext(await runParallelPath(execData, runtimeDeps), effectiveParams.context);
+			if (hasSingle) return withForkContext(await runSinglePath(execData, runtimeDeps), effectiveParams.context);
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		} finally {
