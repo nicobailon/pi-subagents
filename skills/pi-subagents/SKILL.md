@@ -185,8 +185,8 @@ Scoped runtime config example:
     "worktreeRoot": ".pi/subagents/worktrees",
     "agentDefaults": {
       "worker": {
-        "defaultSessionDir": ".pi/subagents/sessions/{agent}",
-        "worktreeRoot": ".pi/subagents/worktrees/{agent}",
+        "defaultSessionDir": ".pi/subagents/sessions/{agent}/{model}",
+        "worktreeRoot": ".pi/subagents/worktrees/{agent}/{model}",
         "keepWorktrees": true
       }
     }
@@ -199,9 +199,9 @@ Session directory precedence is: run `sessionDir`, agent frontmatter
 project/global `defaultSessionDir`, then the parent-session-derived fallback.
 Worktree runtime precedence is: agent frontmatter, `agentDefaults.<agent>`,
 project/global config, then built-in defaults. Supported path template variables
-are `{projectRoot}`, `{cwd}`, `{agent}`, `{runId}`, and `{index}`. Relative paths
+are `{projectRoot}`, `{cwd}`, `{agent}`, `{model}`, `{runId}`, and `{index}`. Relative paths
 resolve from the nearest project root (`.pi/` or `.agents/`) when available,
-otherwise from the request cwd.
+otherwise from the request cwd. `{agent}` and `{model}` are sanitized as path segments, so provider/model IDs such as `openai/gpt-5.5` become `openai__gpt-5.5`.
 
 ## Discovery and Scope Rules
 

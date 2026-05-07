@@ -525,15 +525,17 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						worktreeRoots: step.parallel.map((task, taskIndex) => {
 							const agent = agents.find((candidate) => candidate.name === task.agent);
 							const runtime = resolveAgentRuntimeConfig(runtimeConfig, task.agent, agent);
+							const model = resolveModelCandidate(task.model ?? agent?.model, availableModels, ctx.model?.provider);
 							return runtime.worktreeRoot
-								? expandRuntimePath(runtime.worktreeRoot, { cwd: parallelCwd, baseDir: params.projectBaseDir, agent: task.agent, runId: `${runId}-s${stepIndex}`, index: taskIndex })
+								? expandRuntimePath(runtime.worktreeRoot, { cwd: parallelCwd, baseDir: params.projectBaseDir, agent: task.agent, model, runId: `${runId}-s${stepIndex}`, index: taskIndex })
 								: undefined;
 						}),
-						setupHooks: step.parallel.map((task) => {
+						setupHooks: step.parallel.map((task, taskIndex) => {
 							const agent = agents.find((candidate) => candidate.name === task.agent);
 							const runtime = resolveAgentRuntimeConfig(runtimeConfig, task.agent, agent);
+							const model = resolveModelCandidate(task.model ?? agent?.model, availableModels, ctx.model?.provider);
 							return runtime.worktreeSetupHook
-								? { hookPath: expandRuntimePath(runtime.worktreeSetupHook, { cwd: parallelCwd, baseDir: params.projectBaseDir, agent: task.agent, runId: `${runId}-s${stepIndex}` }), timeoutMs: runtime.worktreeSetupHookTimeoutMs }
+								? { hookPath: expandRuntimePath(runtime.worktreeSetupHook, { cwd: parallelCwd, baseDir: params.projectBaseDir, agent: task.agent, model, runId: `${runId}-s${stepIndex}`, index: taskIndex }), timeoutMs: runtime.worktreeSetupHookTimeoutMs }
 								: undefined;
 						}),
 						setupHook: params.worktreeSetupHook

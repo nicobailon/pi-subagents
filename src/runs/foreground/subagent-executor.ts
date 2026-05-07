@@ -803,6 +803,36 @@ function collectRequestedAgentNames(params: SubagentParamsLike): string[] {
 	return params.agent ? [params.agent] : [];
 }
 
+function currentModelPathName(ctx: ExtensionContext): string | undefined {
+	return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+}
+
+function collectRequestedModelNames(
+	params: SubagentParamsLike,
+	agents: AgentConfig[],
+	availableModels: ModelInfo[],
+	preferredProvider: string | undefined,
+	currentModel: string | undefined,
+): (string | undefined)[] {
+	const resolve = (agentName: string | undefined, overrideModel: string | undefined) => {
+		const agentConfig = agentName ? agents.find((agent) => agent.name === agentName) : undefined;
+		return resolveModelCandidate(overrideModel ?? agentConfig?.model, availableModels, preferredProvider) ?? currentModel;
+	};
+	if (params.tasks?.length) {
+		return params.tasks.flatMap((task) => Array.from({ length: task.count ?? 1 }, () => resolve(task.agent, task.model)));
+	}
+	if (params.chain?.length) {
+		return params.chain.flatMap((step) => {
+			const chainStep = step as ChainStep;
+			if (isParallelStep(chainStep)) {
+				return chainStep.parallel.map((task) => resolve(task.agent, task.model));
+			}
+			return [resolve(chainStep.agent, chainStep.model)];
+		});
+	}
+	return params.agent ? [resolve(params.agent, params.model as string | undefined)] : [];
+}
+
 function collectChainSessionFiles(
 	chain: ChainStep[],
 	sessionFileForIndex: (idx?: number) => string | undefined,
@@ -1192,7 +1222,8 @@ function createParallelWorktreeSetup(
 	tasks: TaskParam[],
 	agents: AgentConfig[],
 	config: ExtensionConfig,
-	projectBaseDir?: string,
+	projectBaseDir: string | undefined,
+	modelNames: (string | undefined)[] = [],
 ): { setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> } {
 	if (!enabled) return {};
 	try {
@@ -1200,14 +1231,14 @@ function createParallelWorktreeSetup(
 			const agentConfig = agents.find((agent) => agent.name === task.agent);
 			const runtime = resolveAgentRuntimeConfig(config, task.agent, agentConfig);
 			return runtime.worktreeRoot
-				? expandRuntimePath(runtime.worktreeRoot, { cwd, baseDir: projectBaseDir, agent: task.agent, runId, index })
+				? expandRuntimePath(runtime.worktreeRoot, { cwd, baseDir: projectBaseDir, agent: task.agent, model: modelNames[index], runId, index })
 				: undefined;
 		});
-		const setupHooks = tasks.map((task) => {
+		const setupHooks = tasks.map((task, index) => {
 			const agentConfig = agents.find((agent) => agent.name === task.agent);
 			const runtime = resolveAgentRuntimeConfig(config, task.agent, agentConfig);
 			return runtime.worktreeSetupHook
-				? { hookPath: expandRuntimePath(runtime.worktreeSetupHook, { cwd, baseDir: projectBaseDir, agent: task.agent, runId }), timeoutMs: runtime.worktreeSetupHookTimeoutMs }
+				? { hookPath: expandRuntimePath(runtime.worktreeSetupHook, { cwd, baseDir: projectBaseDir, agent: task.agent, model: modelNames[index], runId, index }), timeoutMs: runtime.worktreeSetupHookTimeoutMs }
 				: undefined;
 		});
 		return {
@@ -1575,6 +1606,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		agents,
 		deps.config,
 		data.projectBaseDir,
+		modelOverrides.map((model) => model ?? currentModelPathName(ctx)),
 	);
 	if (errorResult) return errorResult;
 
@@ -2178,13 +2210,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			enabled: effectiveParams.artifacts !== false,
 		};
 
+		const availableModelsForRuntimePaths: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+		const currentProviderForRuntimePaths = ctx.model?.provider;
+		const currentModelForRuntimePaths = currentModelPathName(ctx);
+
 		let sessionRoot: string;
 		if (effectiveParams.sessionDir) {
 			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
 		} else {
 			const baseSessionDir = runtimeConfig.defaultSessionDir;
 			const baseSessionRoot = baseSessionDir
-				? expandRuntimePath(baseSessionDir, { cwd: requestCwd, baseDir: projectRuntime.baseDir, runId })
+				? expandRuntimePath(baseSessionDir, { cwd: requestCwd, baseDir: projectRuntime.baseDir, model: currentModelForRuntimePaths, runId })
 				: deps.getSubagentSessionRoot(parentSessionFile);
 			sessionRoot = path.join(baseSessionRoot, runId);
 		}
@@ -2199,6 +2235,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const artifactsDir = effectiveAsync ? deps.tempArtifactsDir : path.join(sessionRoot, "subagent-artifacts");
 		const requestedAgentNames = collectRequestedAgentNames(effectiveParams);
+		const requestedModelNames = collectRequestedModelNames(
+			effectiveParams,
+			agents,
+			availableModelsForRuntimePaths,
+			currentProviderForRuntimePaths,
+			currentModelForRuntimePaths,
+		);
 		const sessionDirForIndex = (idx?: number) => {
 			const index = idx ?? 0;
 			const agentName = requestedAgentNames[index];
@@ -2209,6 +2252,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					cwd: requestCwd,
 					baseDir: projectRuntime.baseDir,
 					agent: agentName,
+					model: requestedModelNames[index],
 					runId,
 					index,
 				});

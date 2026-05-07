@@ -312,7 +312,7 @@ export function executeAsyncChain(
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			worktreeRoot: runtime.worktreeRoot,
 			worktreeSetupHook: runtime.worktreeSetupHook
-				? expandRuntimePath(runtime.worktreeSetupHook, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: s.agent })
+				? expandRuntimePath(runtime.worktreeSetupHook, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: s.agent, model: primaryModel })
 				: undefined,
 			worktreeSetupHookTimeoutMs: runtime.worktreeSetupHookTimeoutMs,
 			keepWorktrees: runtime.keepWorktrees,
@@ -346,8 +346,9 @@ export function executeAsyncChain(
 							try {
 								const agent = agents.find((candidate) => candidate.name === t.agent);
 								const runtime = resolveAgentRuntimeConfig(params.runtimeConfig ?? {}, t.agent, agent);
+								const model = resolveModelCandidate(parallelBehaviors[taskIndex]?.model ?? agent?.model, availableModels, ctx.currentModelProvider);
 								const worktreeRoot = runtime.worktreeRoot
-									? expandRuntimePath(runtime.worktreeRoot, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: t.agent, runId: `${id}-s${stepIndex}`, index: taskIndex })
+									? expandRuntimePath(runtime.worktreeRoot, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: t.agent, model, runId: `${id}-s${stepIndex}`, index: taskIndex })
 									: undefined;
 								behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, taskIndex, worktreeRoot);
 							} catch {
@@ -356,7 +357,7 @@ export function executeAsyncChain(
 						}
 						const step = buildSeqStep(t, nextSessionFile(), behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex]);
 						if (step.worktreeRoot) {
-							step.worktreeRoot = expandRuntimePath(step.worktreeRoot, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: t.agent, runId: `${id}-s${stepIndex}`, index: taskIndex });
+							step.worktreeRoot = expandRuntimePath(step.worktreeRoot, { cwd: runnerCwd, baseDir: params.projectBaseDir, agent: t.agent, model: step.model, runId: `${id}-s${stepIndex}`, index: taskIndex });
 						}
 						return step;
 					}),

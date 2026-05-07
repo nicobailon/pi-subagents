@@ -23,6 +23,7 @@ export interface RuntimePathContext {
 	cwd: string;
 	baseDir?: string;
 	agent?: string;
+	model?: string;
 	runId?: string;
 	index?: number;
 }
@@ -113,11 +114,16 @@ export function resolveAgentRuntimeConfig(config: ExtensionConfig, agent: string
 	};
 }
 
+function toPathSegment(value: string | undefined, fallback: string): string {
+	return (value?.trim() || fallback).replace(/[\\/\0:*?"<>|]+/g, "__");
+}
+
 export function expandRuntimePath(rawPath: string, context: RuntimePathContext): string {
 	const expanded = rawPath
 		.replaceAll("{cwd}", context.cwd)
 		.replaceAll("{projectRoot}", context.baseDir ?? context.cwd)
-		.replaceAll("{agent}", context.agent ?? "agent")
+		.replaceAll("{agent}", toPathSegment(context.agent, "agent"))
+		.replaceAll("{model}", toPathSegment(context.model, "model"))
 		.replaceAll("{runId}", context.runId ?? "run")
 		.replaceAll("{index}", String(context.index ?? 0));
 	const withHome = expanded.startsWith("~/") ? path.join(os.homedir(), expanded.slice(2)) : expanded;
