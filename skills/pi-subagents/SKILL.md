@@ -170,8 +170,38 @@ Direct settings example:
 
 Useful override fields: `model`, `fallbackModels`, `thinking`,
 `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`,
-`disabled`, `skills`, `tools`, and `systemPrompt`. Create a user or project
+`disabled`, `skills`, `tools`, and `systemPrompt`. Runtime path fields can also
+be scoped globally, project-wide, per agent, or in agent frontmatter:
+`defaultSessionDir`, `worktreeRoot`, `worktreeSetupHook`,
+`worktreeSetupHookTimeoutMs`, and `keepWorktrees`. Create a user or project
 agent with the same name only when you want a substantially different agent.
+
+Scoped runtime config example:
+
+```json
+{
+  "subagents": {
+    "defaultSessionDir": ".pi/subagents/sessions",
+    "worktreeRoot": ".pi/subagents/worktrees",
+    "agentDefaults": {
+      "worker": {
+        "defaultSessionDir": ".pi/subagents/sessions/{agent}",
+        "worktreeRoot": ".pi/subagents/worktrees/{agent}",
+        "keepWorktrees": true
+      }
+    }
+  }
+}
+```
+
+Session directory precedence is: run `sessionDir`, agent frontmatter
+`defaultSessionDir`, `subagents.agentDefaults.<agent>.defaultSessionDir`,
+project/global `defaultSessionDir`, then the parent-session-derived fallback.
+Worktree runtime precedence is: agent frontmatter, `agentDefaults.<agent>`,
+project/global config, then built-in defaults. Supported path template variables
+are `{projectRoot}`, `{cwd}`, `{agent}`, `{runId}`, and `{index}`. Relative paths
+resolve from the nearest project root (`.pi/` or `.agents/`) when available,
+otherwise from the request cwd.
 
 ## Discovery and Scope Rules
 
