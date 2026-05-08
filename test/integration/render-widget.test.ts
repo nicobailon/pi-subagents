@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-const { buildWidgetLines, renderWidget, stopResultAnimations, stopWidgetAnimation, syncResultAnimation } = await import("../../src/tui/render.ts") as {
+interface RenderableComponent {
+	render(width: number): string[];
+}
+
+const { buildWidgetLines, renderSubagentResult, renderWidget, stopResultAnimations, stopWidgetAnimation, syncResultAnimation } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean) => string[];
+	renderSubagentResult: (result: Record<string, unknown>, options: { expanded: boolean }, theme: { fg(name: string, text: string): string; bold(text: string): string }) => RenderableComponent;
 	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
 	stopResultAnimations: () => void;
 	stopWidgetAnimation: () => void;
@@ -459,5 +464,50 @@ describe("subagent async widget rendering", () => {
 		} finally {
 			stopWidgetAnimation();
 		}
+	});
+});
+
+describe("renderSubagentResult single-compact stat line", () => {
+	function renderSingleResult(usage: { turns: number } | undefined, progress: { toolCount: number; tokens: number; durationMs: number }): string {
+		const result = {
+			content: [{ type: "text", text: "ok" }],
+			details: {
+				mode: "single",
+				context: "fresh",
+				results: [{
+					agent: "worker",
+					task: "do the thing",
+					exitCode: 0,
+					usage,
+					progress: { status: "running", ...progress },
+				}],
+			},
+		};
+		const component = renderSubagentResult(result, { expanded: false }, theme);
+		return component.render(160).map((line) => line.trimEnd()).join("\n");
+	}
+
+	it("renders the assistant turn count as plain text rather than a wide-glyph prefix", () => {
+		// Regression: U+27F3 (CLOCKWISE GAPPED CIRCLE ARROW) has east-asian-width Neutral
+		// (1 cell), but most macOS / iTerm2 / Apple-Color-Emoji font stacks draw it 2 cells
+		// wide. The layout reserved 1 cell, so the next character (the digit) was painted
+		// over the right half of the circle. Use the same `${n} turn(s)` text the widget
+		// path uses so width is unambiguous.
+		const text = renderSingleResult({ turns: 4 }, { toolCount: 8, tokens: 1900, durationMs: 15_500 });
+		assert.doesNotMatch(text, /\u27f3/, "single-compact line must not emit U+27F3");
+		assert.match(text, /worker · 4 turns · 8 tool uses · 1\.9k token · 15\.5s/);
+	});
+
+	it("uses singular 'turn' for a single assistant turn", () => {
+		const text = renderSingleResult({ turns: 1 }, { toolCount: 1, tokens: 100, durationMs: 1_000 });
+		assert.match(text, /worker · 1 turn · 1 tool use · /);
+		assert.doesNotMatch(text, /1 turns/);
+	});
+
+	it("omits the turn segment entirely when usage.turns is zero or missing", () => {
+		const withZero = renderSingleResult({ turns: 0 }, { toolCount: 2, tokens: 200, durationMs: 2_000 });
+		assert.doesNotMatch(withZero, /turn/);
+		const withNone = renderSingleResult(undefined, { toolCount: 2, tokens: 200, durationMs: 2_000 });
+		assert.doesNotMatch(withNone, /turn/);
 	});
 });

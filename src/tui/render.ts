@@ -206,6 +206,10 @@ function formatToolUseStat(count: number): string {
 	return `${count} tool use${count === 1 ? "" : "s"}`;
 }
 
+function formatTurnStat(count: number): string {
+	return `${count} turn${count === 1 ? "" : "s"}`;
+}
+
 function formatProgressStats(theme: Theme, progress: Pick<AgentProgress, "toolCount" | "tokens" | "durationMs"> | undefined, includeDuration = true): string {
 	if (!progress) return "";
 	const parts: string[] = [];
@@ -274,7 +278,7 @@ function widgetActivity(job: AsyncJobState): string {
 	if (job.currentTool && job.currentToolStartedAt !== undefined) facts.push(`${job.currentTool} ${formatDuration(Math.max(0, Date.now() - job.currentToolStartedAt))}`);
 	else if (job.currentTool) facts.push(job.currentTool);
 	if (job.currentPath) facts.push(shortenPath(job.currentPath));
-	if (job.turnCount !== undefined) facts.push(`${job.turnCount} turns`);
+	if (job.turnCount !== undefined) facts.push(formatTurnStat(job.turnCount));
 	if (job.toolCount !== undefined) facts.push(`${job.toolCount} tools`);
 	const activity = formatActivityLabel(job.lastActivityAt, job.activityState)
 		?? (job.status === "running" ? getCachedLastActivity(job.outputFile) : "");
@@ -317,7 +321,7 @@ function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number]): 
 	if (step.currentTool && step.currentToolStartedAt !== undefined) facts.push(`${step.currentTool} ${formatDuration(Math.max(0, Date.now() - step.currentToolStartedAt))}`);
 	else if (step.currentTool) facts.push(step.currentTool);
 	if (step.currentPath) facts.push(shortenPath(step.currentPath));
-	if (step.turnCount !== undefined) facts.push(`${step.turnCount} turns`);
+	if (step.turnCount !== undefined) facts.push(formatTurnStat(step.turnCount));
 	if (step.toolCount !== undefined) facts.push(`${step.toolCount} tools`);
 	if (step.tokens?.total) facts.push(formatTokenStat(step.tokens.total));
 	const activity = formatActivityLabel(step.lastActivityAt, step.activityState);
@@ -569,7 +573,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 
 function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>[number]): string {
 	return statJoin(theme, [
-		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
+		step.turnCount !== undefined ? formatTurnStat(step.turnCount) : "",
 		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
 		step.tokens?.total ? formatTokenStat(step.tokens.total) : "",
 		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
@@ -833,7 +837,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	const isRunning = r.progress?.status === "running";
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
 	const stats = statJoin(theme, [
-		r.usage?.turns ? `⟳${r.usage.turns}` : "",
+		r.usage?.turns ? formatTurnStat(r.usage.turns) : "",
 		formatProgressStats(theme, progress),
 	]);
 	const c = new Container();
