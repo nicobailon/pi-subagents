@@ -238,6 +238,24 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForAsyncResultFile(chainId, 10_000);
 	});
 
+	it("async single treats string false as disabled output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "async review done" });
+		const id = `async-string-false-output-${Date.now().toString(36)}`;
+		const result = executeAsyncSingle(id, {
+			agent: "reviewer",
+			task: "Review only",
+			agentConfig: makeAgent("reviewer"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			output: "false",
+		});
+		assert.equal(result.isError, undefined);
+		await waitForAsyncResultFile(id, 10_000);
+		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+	});
+
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Async top-level report" });
 		const executor = createSubagentExecutor!({

@@ -223,6 +223,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.finalOutput, "Applied edit");
 	});
 
+	it("reports a clear error when the child exits non-zero without stderr", async () => {
+		mockPi.onCall({ exitCode: 143 });
+		const agents = makeAgentConfigs(["echo"]);
+
+		const result = await runSync(tempDir, agents, "echo", "Do something", {});
+
+		assert.equal(result.exitCode, 143);
+		assert.match(result.error ?? "", /Subagent process exited with code 143 \(SIGTERM\)/);
+		assert.equal(result.progress.status, "failed");
+	});
+
 	it("returns error for unknown agent", async () => {
 		const agents = makeAgentConfigs(["echo"]);
 		const result = await runSync(tempDir, agents, "nonexistent", "Do something", {});

@@ -979,7 +979,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			};
 		}
 		const rawOutput = params.output !== undefined ? params.output : a.output;
-		const effectiveOutput: string | false | undefined = rawOutput === true ? a.output : (rawOutput as string | false | undefined);
+		const effectiveOutput: string | false | undefined = rawOutput === "false" ? false : (rawOutput === true || rawOutput === "true") ? a.output : (rawOutput as string | false | undefined);
 		const effectiveOutputMode = params.outputMode ?? "inline";
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
@@ -1716,7 +1716,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
-	let effectiveOutput: string | false | undefined = rawOutput === true ? agentConfig.output : (rawOutput as string | false | undefined);
+	let effectiveOutput: string | false | undefined = rawOutput === "false" ? false : (rawOutput === true || rawOutput === "true") ? agentConfig.output : (rawOutput as string | false | undefined);
 	const effectiveOutputMode = params.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);

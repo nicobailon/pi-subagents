@@ -271,6 +271,41 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
 	});
 
+	it("treats string false as disabled output in single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Single review done" });
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"single-string-false-output",
+			{ agent: "echo", task: "Review", output: "false" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+	});
+
+	it("treats string true as the agent default output path in single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Saved via default path" });
+		const defaultOutput = "default-output.md";
+		const executor = makeExecutor([makeAgent("echo", { output: defaultOutput })]);
+
+		const result = await executor.execute(
+			"single-string-true-output",
+			{ agent: "echo", task: "Review", output: "true" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const outputPath = path.join(tempDir, defaultOutput);
+		assert.equal(result.isError, undefined);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Saved via default path");
+		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
+	});
+
 	it("top-level parallel reads are injected once with chain-style prefix", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Read done" });
 		const executor = makeExecutor();

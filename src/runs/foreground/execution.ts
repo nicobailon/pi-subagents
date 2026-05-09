@@ -636,6 +636,10 @@ async function runSingleAttempt(
 	if (result.error && result.exitCode === 0) {
 		result.exitCode = 1;
 	}
+	if (result.exitCode !== 0 && !result.error) {
+		const signalHint = result.exitCode === 143 ? " (SIGTERM)" : result.exitCode === 137 ? " (SIGKILL)" : "";
+		result.error = `Subagent process exited with code ${result.exitCode}${signalHint}.`;
+	}
 	if (result.exitCode === 0 && !result.error) {
 		const errInfo = detectSubagentError(result.messages);
 		if (errInfo.hasError) {

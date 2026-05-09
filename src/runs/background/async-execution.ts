@@ -494,7 +494,8 @@ export function executeAsyncSingle(
 		};
 	}
 
-	const outputPath = resolveSingleOutputPath(params.output, ctx.cwd, runnerCwd);
+	const normalizedOutput = params.output === "false" ? false : params.output === "true" ? agentConfig.output : params.output;
+	const outputPath = resolveSingleOutputPath(normalizedOutput, ctx.cwd, runnerCwd);
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
