@@ -4,7 +4,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STEP_COMPLETE_EVENT } from "../../shared/types.ts";
 
 interface ChainStepResult {
 	agent: string;
@@ -38,6 +38,20 @@ interface SubagentResult {
 	results?: ChainStepResult[];
 	taskIndex?: number;
 	totalTasks?: number;
+}
+
+interface SubagentStepResult {
+	id?: string;
+	runId?: string;
+	agent?: string;
+	index?: number;
+	totalTasks?: number;
+	success?: boolean;
+	exitCode?: number;
+	summary?: string;
+	durationMs?: number;
+	sessionFile?: string;
+	intercomTarget?: string;
 }
 
 export default function registerSubagentNotify(pi: ExtensionAPI): void {
@@ -104,5 +118,54 @@ export default function registerSubagentNotify(pi: ExtensionAPI): void {
 		);
 	};
 
-	globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
+	const handleStepComplete = (data: unknown) => {
+		const result = data as SubagentStepResult;
+		const now = Date.now();
+		const key = `step:${result.runId ?? result.id ?? "unknown"}:${result.index ?? "?"}:${result.exitCode ?? "?"}`;
+		if (markSeenWithTtl(seen, key, now, ttlMs)) return;
+
+		const agent = result.agent ?? "unknown";
+		const status = result.success === false || (typeof result.exitCode === "number" && result.exitCode !== 0) ? "failed" : "completed";
+		const taskInfo = result.index !== undefined && result.totalTasks !== undefined
+			? ` (${result.index + 1}/${result.totalTasks})`
+			: result.index !== undefined
+				? ` (#${result.index + 1})`
+				: "";
+		const displaySummary = typeof result.summary === "string" && result.summary.trim() ? result.summary : "(no output)";
+		const sessionLine = result.sessionFile ? `Session file: ${result.sessionFile}` : undefined;
+		const content = [
+			`Background step ${status}: **${agent}**${taskInfo}`,
+			"",
+			displaySummary,
+			sessionLine ? "" : undefined,
+			sessionLine,
+		]
+			.filter((line) => line !== undefined)
+			.join("\n");
+
+		pi.sendMessage(
+			{
+				customType: "subagent-notify",
+				content,
+				display: true,
+				details: {
+					agent,
+					status,
+					taskInfo,
+					resultPreview: displaySummary,
+					durationMs: result.durationMs,
+					...(sessionLine ? { sessionLabel: "session file", sessionValue: result.sessionFile } : {}),
+				},
+			},
+			{ triggerTurn: true },
+		);
+	};
+
+	const unsubscribes = [
+		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
+		pi.events.on(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, handleStepComplete),
+	];
+	globalStore[unsubscribeStoreKey] = () => {
+		for (const unsubscribe of unsubscribes) unsubscribe();
+	};
 }

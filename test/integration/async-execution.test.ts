@@ -991,6 +991,52 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(chainResult.content[0]?.text ?? "", /cwd does not exist/);
 	});
 
+	it("background parallel worktree setup failures emit step failure events", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const repoDir = createRepo("pi-subagent-async-worktree-fail-");
+		const id = `async-worktree-setup-fail-${Date.now().toString(36)}`;
+		try {
+			fs.writeFileSync(path.join(repoDir, "dirty.txt"), "dirty\n", "utf-8");
+			const result = executeAsyncChain(id, {
+				chain: [
+					{
+						parallel: [
+							{ agent: "worker", task: "Do work" },
+							{ agent: "scout", task: "Scout work" },
+						],
+						worktree: true,
+					},
+				],
+				agents: [makeAgent("worker"), makeAgent("scout")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				cwd: repoDir,
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+
+			assert.equal(result.isError, undefined);
+			await waitForAsyncResultFile(id);
+			const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
+			const records = eventsText.trim().split("\n").map((line) => JSON.parse(line));
+			const stepFailures = records.filter((record) => record.type === "subagent.step.failed");
+			assert.equal(stepFailures.length, 2);
+			assert.deepEqual(stepFailures.map((record) => record.agent), ["worker", "scout"]);
+			assert.deepEqual(stepFailures.map((record) => record.stepIndex), [0, 1]);
+			assert.deepEqual(stepFailures.map((record) => record.totalTasks), [2, 2]);
+			assert.ok(stepFailures.every((record) => /clean git working tree|dirty|uncommitted/i.test(record.summary)));
+		} finally {
+			removeTempDir(repoDir);
+		}
+	});
+
 	it("returns a tool error when the async runner process cannot spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const originalExecPath = process.execPath;
 		process.execPath = path.join(tempDir, "missing-node");

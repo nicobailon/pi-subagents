@@ -10,6 +10,7 @@ import {
 	type SubagentState,
 	POLL_INTERVAL_MS,
 	RESULTS_DIR,
+	SUBAGENT_ASYNC_STEP_COMPLETE_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 } from "../../shared/types.ts";
@@ -78,7 +79,36 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
 					continue;
 				}
-				if (!parsed || typeof parsed !== "object" || (parsed as { type?: unknown }).type !== "subagent.control") continue;
+				if (!parsed || typeof parsed !== "object") continue;
+				const eventType = (parsed as { type?: unknown }).type;
+				if (eventType === "subagent.step.completed" || eventType === "subagent.step.failed") {
+					const record = parsed as {
+						runId?: string;
+						stepIndex?: number;
+						agent?: string;
+						exitCode?: number;
+						durationMs?: number;
+						totalTasks?: number;
+						summary?: string;
+						sessionFile?: string;
+						intercomTarget?: string;
+					};
+					pi.events.emit(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, {
+						id: job.asyncId,
+						runId: record.runId ?? job.asyncId,
+						agent: record.agent,
+						index: record.stepIndex,
+						totalTasks: record.totalTasks ?? job.stepsTotal ?? job.chainStepCount,
+						success: eventType === "subagent.step.completed",
+						exitCode: record.exitCode,
+						durationMs: record.durationMs,
+						summary: record.summary,
+						sessionFile: record.sessionFile,
+						intercomTarget: record.intercomTarget,
+					});
+					continue;
+				}
+				if (eventType !== "subagent.control") continue;
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
 				if (!record.event || !Array.isArray(record.channels)) continue;
 				const payload = {

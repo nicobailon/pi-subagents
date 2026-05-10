@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STEP_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
 function createPi() {
 	const events = new EventEmitter();
@@ -110,6 +110,42 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: "Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action.",
 				display: true,
+			},
+			options: { triggerTurn: true },
+		});
+	});
+
+	it("sends per-step notifications that trigger a parent turn", () => {
+		const { events, sent } = createPi();
+
+		events.emit(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, {
+			id: "async-run-1",
+			runId: "async-run-1",
+			agent: "reviewer",
+			index: 1,
+			totalTasks: 4,
+			success: true,
+			exitCode: 0,
+			summary: "Reviewed and found no blockers.",
+			durationMs: 1200,
+			sessionFile: "/tmp/reviewer.jsonl",
+		});
+
+		assert.equal(sent.length, 1);
+		assert.deepEqual(sent[0], {
+			message: {
+				customType: "subagent-notify",
+				content: "Background step completed: **reviewer** (2/4)\n\nReviewed and found no blockers.\n\nSession file: /tmp/reviewer.jsonl",
+				display: true,
+				details: {
+					agent: "reviewer",
+					status: "completed",
+					taskInfo: " (2/4)",
+					resultPreview: "Reviewed and found no blockers.",
+					durationMs: 1200,
+					sessionLabel: "session file",
+					sessionValue: "/tmp/reviewer.jsonl",
+				},
 			},
 			options: { triggerTurn: true },
 		});
