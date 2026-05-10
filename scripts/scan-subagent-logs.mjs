@@ -52,8 +52,22 @@ function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return undefined; }
 }
 
-function readLines(file) {
-  try { return fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean); } catch { return []; }
+function readLines(file, maxBytes = 2 * 1024 * 1024) {
+  try {
+    const stat = fs.statSync(file);
+    const start = Math.max(0, stat.size - maxBytes);
+    const length = stat.size - start;
+    const fd = fs.openSync(file, "r");
+    try {
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, start);
+      let text = buffer.toString("utf8");
+      if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+      return text.split(/\r?\n/).filter(Boolean);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch { return []; }
 }
 
 function safeStat(file) {
@@ -106,8 +120,11 @@ function scanRun(runDir) {
   }
 
   for (const [index, step] of Object.entries(status.steps || [])) {
-    if (step?.status === "failed" || step?.status === "paused" || step?.activityState === "needs_attention") {
-      findings.push(issue(`step:${runId}:${index}:${step.status || step.activityState}:${step.endedAt || step.lastActivityAt || ""}`, runId, step.status === "failed" ? "high" : "medium", `step ${Number(index) + 1} ${step.status || step.activityState}: ${step.agent || "unknown"}`, {
+    const failedOrPaused = step?.status === "failed" || step?.status === "paused";
+    const needsAttention = step?.activityState === "needs_attention" && !["complete", "completed", "failed", "paused"].includes(step?.status);
+    if (failedOrPaused || needsAttention) {
+      const label = failedOrPaused ? step.status : step.activityState;
+      findings.push(issue(`step:${runId}:${index}:${label}:${step.endedAt || step.lastActivityAt || ""}`, runId, step.status === "failed" ? "high" : "medium", `step ${Number(index) + 1} ${label}: ${step.agent || "unknown"}`, {
         agent: step.agent,
         stepIndex: Number(index),
         exitCode: step.exitCode,
