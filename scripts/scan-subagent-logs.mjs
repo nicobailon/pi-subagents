@@ -124,7 +124,10 @@ function scanRun(runDir) {
     const needsAttention = step?.activityState === "needs_attention" && !["complete", "completed", "failed", "paused"].includes(step?.status);
     if (failedOrPaused || needsAttention) {
       const label = failedOrPaused ? step.status : step.activityState;
-      findings.push(issue(`step:${runId}:${index}:${label}:${step.endedAt || step.lastActivityAt || ""}`, runId, step.status === "failed" ? "high" : "medium", `step ${Number(index) + 1} ${label}: ${step.agent || "unknown"}`, {
+      const issueId = needsAttention
+        ? `step:${runId}:${index}:needs_attention`
+        : `step:${runId}:${index}:${label}:${step.endedAt || step.lastActivityAt || ""}`;
+      findings.push(issue(issueId, runId, step.status === "failed" ? "high" : "medium", `step ${Number(index) + 1} ${label}: ${step.agent || "unknown"}`, {
         agent: step.agent,
         stepIndex: Number(index),
         exitCode: step.exitCode,
