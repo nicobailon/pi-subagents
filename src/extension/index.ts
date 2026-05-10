@@ -18,6 +18,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { loadCodePreviewSettings, withCodePreviewShell } from "pi-code-previews";
 import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
@@ -218,6 +219,8 @@ class SubagentControlNoticeComponent implements Component {
 		return lines;
 	}
 }
+
+await loadCodePreviewSettings();
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") return;
@@ -472,7 +475,7 @@ DIAGNOSTICS:
 
 	};
 
-	pi.registerTool(tool);
+	pi.registerTool(withCodePreviewShell(tool));
 	registerSlashCommands(pi, state);
 
 	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";

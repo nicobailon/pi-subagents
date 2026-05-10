@@ -73,6 +73,7 @@
   },
   "dependencies": {
     "jiti": "^2.7.0",
+    "pi-code-previews": "^0.1.25",
     "typebox": "^1.1.24"
   },
   "devDependencies": {
