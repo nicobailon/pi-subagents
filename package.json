@@ -1,27 +1,26 @@
 {
   "name": "pi-subagents",
-  "version": "0.24.2",
+  "version": "0.24.3",
   "description": "Pi extension for delegating tasks to subagents with chains, parallel execution, and TUI clarification",
-  "author": "Nico Bailon",
-  "license": "MIT",
-  "type": "module",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-subagents.git"
-  },
+  "keywords": [
+    "agents",
+    "ai",
+    "cli",
+    "pi",
+    "pi-coding-agent",
+    "pi-package",
+    "subagents"
+  ],
   "homepage": "https://github.com/nicobailon/pi-subagents#readme",
   "bugs": {
     "url": "https://github.com/nicobailon/pi-subagents/issues"
   },
-  "keywords": [
-    "pi-package",
-    "pi",
-    "pi-coding-agent",
-    "subagents",
-    "ai",
-    "agents",
-    "cli"
-  ],
+  "license": "MIT",
+  "author": "Nico Bailon",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicobailon/pi-subagents.git"
+  },
   "bin": {
     "pi-subagents": "install.mjs"
   },
@@ -34,22 +33,23 @@
     "README.md",
     "CHANGELOG.md"
   ],
+  "type": "module",
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
     "test:integration": "node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
     "test:all": "npm run test:unit && npm run test:integration"
   },
-  "pi": {
-    "extensions": [
-      "./src/extension/index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
-    ]
+  "dependencies": {
+    "jiti": "^2.7.0",
+    "pi-code-previews": "^0.1.25",
+    "typebox": "^1.1.24"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@earendil-works/pi-tui": "^0.74.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
@@ -71,15 +71,15 @@
       "optional": true
     }
   },
-  "dependencies": {
-    "jiti": "^2.7.0",
-    "pi-code-previews": "^0.1.25",
-    "typebox": "^1.1.24"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-agent-core": "^0.74.0",
-    "@earendil-works/pi-ai": "^0.74.0",
-    "@earendil-works/pi-coding-agent": "^0.74.0",
-    "@earendil-works/pi-tui": "^0.74.0"
+  "pi": {
+    "extensions": [
+      "./src/extension/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
   }
 }
