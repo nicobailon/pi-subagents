@@ -207,3 +207,50 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.ok(args.includes("--system-prompt"));
 	});
 });
+
+describe("buildPiArgs MCP direct tool allowlist", () => {
+	it("includes prefixed MCP direct tool names in --tools", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-mcp-"));
+		const origEnv = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			fs.writeFileSync(path.join(agentDir, "mcp-cache.json"), JSON.stringify({
+				servers: {
+					"chrome-devtools": {
+						configHash: "abc",
+						tools: [
+							{ name: "take_screenshot", description: "Take a screenshot" },
+							{ name: "navigate", description: "Navigate to URL" },
+						],
+						resources: [],
+						cachedAt: new Date().toISOString(),
+					},
+				},
+			}));
+
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read", "bash"],
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			const toolsIdx = args.indexOf("--tools");
+			assert.ok(toolsIdx !== -1, "--tools should be present");
+			const toolsList = args[toolsIdx + 1]!.split(",");
+
+			assert.ok(toolsList.includes("read"));
+			assert.ok(toolsList.includes("bash"));
+			assert.ok(toolsList.includes("chrome_devtools_take_screenshot"),
+				`should include chrome_devtools_take_screenshot in --tools, got: ${toolsList}`);
+			assert.ok(toolsList.includes("chrome_devtools_navigate"),
+				`should include chrome_devtools_navigate in --tools, got: ${toolsList}`);
+		} finally {
+			process.env.PI_CODING_AGENT_DIR = origEnv;
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+});
