@@ -12,6 +12,51 @@ export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 
+function resolveMcpDirectToolNames(serverNames: string[]): string[] {
+	const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+	const cachePath = path.join(agentDir, "mcp-cache.json");
+	const configPath = path.join(agentDir, "mcp.json");
+
+	let cache: Record<string, unknown>;
+	try {
+		cache = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+	} catch {
+		return [];
+	}
+
+	let prefix: "server" | "none" | "short" = "server";
+	try {
+		const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+		if (config?.settings?.toolPrefix === "none" || config?.settings?.toolPrefix === "short") {
+			prefix = config.settings.toolPrefix;
+		}
+	} catch {
+		// Config is optional; default prefix is "server".
+	}
+
+	const servers = (cache as { servers?: Record<string, { tools?: Array<{ name: string }> }> }).servers;
+	if (!servers) return [];
+
+	const names: string[] = [];
+	for (const serverName of serverNames) {
+		const serverCache = servers[serverName];
+		if (!serverCache?.tools) continue;
+
+		const serverPrefix = prefix === "none"
+			? ""
+			: prefix === "short"
+				? (serverName.replace(/-?mcp$/i, "").replace(/-/g, "_") || "mcp")
+				: serverName.replace(/-/g, "_");
+
+		for (const tool of serverCache.tools) {
+			const prefixedName = serverPrefix ? `${serverPrefix}_${tool.name}` : tool.name;
+			names.push(prefixedName);
+		}
+	}
+
+	return names;
+}
+
 interface BuildPiArgsInput {
 	baseArgs: string[];
 	task: string;
@@ -70,13 +115,20 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 
 	const toolExtensionPaths: string[] = [];
-	if (input.tools?.length) {
+	if (input.tools?.length || input.mcpDirectTools?.length) {
 		const builtinTools: string[] = [];
-		for (const tool of input.tools) {
+		for (const tool of input.tools ?? []) {
 			if (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")) {
 				toolExtensionPaths.push(tool);
 			} else {
 				builtinTools.push(tool);
+			}
+		}
+		if (input.mcpDirectTools?.length) {
+			for (const name of resolveMcpDirectToolNames(input.mcpDirectTools)) {
+				if (!builtinTools.includes(name)) {
+					builtinTools.push(name);
+				}
 			}
 		}
 		if (builtinTools.length > 0) {

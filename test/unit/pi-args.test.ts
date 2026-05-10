@@ -209,25 +209,49 @@ describe("buildPiArgs system prompt mode wiring", () => {
 });
 
 describe("buildPiArgs MCP direct tool allowlist", () => {
-	it("includes prefixed MCP direct tool names in --tools", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-mcp-"));
-		const origEnv = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		try {
-			fs.writeFileSync(path.join(agentDir, "mcp-cache.json"), JSON.stringify({
-				servers: {
-					"chrome-devtools": {
-						configHash: "abc",
-						tools: [
-							{ name: "take_screenshot", description: "Take a screenshot" },
-							{ name: "navigate", description: "Navigate to URL" },
-						],
-						resources: [],
-						cachedAt: new Date().toISOString(),
-					},
-				},
-			}));
+	let agentDir: string;
+	let origEnv: string | undefined;
 
+	function setup(cacheContent?: object, mcpConfig?: object) {
+		agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-mcp-"));
+		origEnv = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		if (cacheContent) {
+			fs.writeFileSync(path.join(agentDir, "mcp-cache.json"), JSON.stringify(cacheContent));
+		}
+		if (mcpConfig) {
+			fs.writeFileSync(path.join(agentDir, "mcp.json"), JSON.stringify(mcpConfig));
+		}
+	}
+
+	function teardown() {
+		process.env.PI_CODING_AGENT_DIR = origEnv;
+		fs.rmSync(agentDir, { recursive: true, force: true });
+	}
+
+	const cacheWithChromeDevtools = {
+		servers: {
+			"chrome-devtools": {
+				configHash: "abc",
+				tools: [
+					{ name: "take_screenshot", description: "Take a screenshot" },
+					{ name: "navigate", description: "Navigate to URL" },
+				],
+				resources: [],
+				cachedAt: new Date().toISOString(),
+			},
+		},
+	};
+
+	function getToolsList(args: string[]): string[] {
+		const idx = args.indexOf("--tools");
+		if (idx === -1) return [];
+		return args[idx + 1]!.split(",");
+	}
+
+	it("includes prefixed MCP direct tool names in --tools (default server prefix)", () => {
+		setup(cacheWithChromeDevtools);
+		try {
 			const { args } = buildPiArgs({
 				baseArgs: ["-p"],
 				task: "hello",
@@ -238,19 +262,136 @@ describe("buildPiArgs MCP direct tool allowlist", () => {
 				mcpDirectTools: ["chrome-devtools"],
 			});
 
-			const toolsIdx = args.indexOf("--tools");
-			assert.ok(toolsIdx !== -1, "--tools should be present");
-			const toolsList = args[toolsIdx + 1]!.split(",");
-
+			const toolsList = getToolsList(args);
 			assert.ok(toolsList.includes("read"));
 			assert.ok(toolsList.includes("bash"));
 			assert.ok(toolsList.includes("chrome_devtools_take_screenshot"),
-				`should include chrome_devtools_take_screenshot in --tools, got: ${toolsList}`);
+				`expected chrome_devtools_take_screenshot, got: ${toolsList}`);
 			assert.ok(toolsList.includes("chrome_devtools_navigate"),
-				`should include chrome_devtools_navigate in --tools, got: ${toolsList}`);
+				`expected chrome_devtools_navigate, got: ${toolsList}`);
 		} finally {
-			process.env.PI_CODING_AGENT_DIR = origEnv;
-			fs.rmSync(agentDir, { recursive: true, force: true });
+			teardown();
+		}
+	});
+
+	it("uses short prefix (strips -mcp suffix, replaces dashes)", () => {
+		const cache = {
+			servers: {
+				"firebase-mcp": {
+					configHash: "x",
+					tools: [{ name: "deploy", description: "Deploy" }],
+					resources: [],
+					cachedAt: new Date().toISOString(),
+				},
+			},
+		};
+		setup(cache, { settings: { toolPrefix: "short" } });
+		try {
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read"],
+				mcpDirectTools: ["firebase-mcp"],
+			});
+
+			const toolsList = getToolsList(args);
+			assert.ok(toolsList.includes("firebase_deploy"),
+				`expected firebase_deploy, got: ${toolsList}`);
+		} finally {
+			teardown();
+		}
+	});
+
+	it("uses no prefix when toolPrefix is none", () => {
+		setup(cacheWithChromeDevtools, { settings: { toolPrefix: "none" } });
+		try {
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read"],
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			const toolsList = getToolsList(args);
+			assert.ok(toolsList.includes("take_screenshot"),
+				`expected take_screenshot, got: ${toolsList}`);
+			assert.ok(toolsList.includes("navigate"),
+				`expected navigate, got: ${toolsList}`);
+		} finally {
+			teardown();
+		}
+	});
+
+	it("includes MCP tools in --tools even without explicit builtin tools", () => {
+		setup(cacheWithChromeDevtools);
+		try {
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			const toolsList = getToolsList(args);
+			assert.ok(toolsList.includes("chrome_devtools_take_screenshot"),
+				`expected chrome_devtools_take_screenshot, got: ${toolsList}`);
+			assert.ok(toolsList.includes("chrome_devtools_navigate"),
+				`expected chrome_devtools_navigate, got: ${toolsList}`);
+			// Should NOT include random builtins — only MCP tools
+			assert.ok(!toolsList.includes("read"));
+			assert.ok(!toolsList.includes("bash"));
+		} finally {
+			teardown();
+		}
+	});
+
+	it("falls back gracefully when mcp-cache.json is missing", () => {
+		setup(); // no cache file
+		try {
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read", "bash"],
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			const toolsList = getToolsList(args);
+			// Only explicit tools, no MCP tools resolved
+			assert.deepEqual(toolsList, ["read", "bash"]);
+		} finally {
+			teardown();
+		}
+	});
+
+	it("ignores server not present in cache", () => {
+		setup(cacheWithChromeDevtools);
+		try {
+			const { args } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read"],
+				mcpDirectTools: ["nonexistent-server"],
+			});
+
+			const toolsList = getToolsList(args);
+			// Only explicit tools, unknown server silently ignored
+			assert.deepEqual(toolsList, ["read"]);
+		} finally {
+			teardown();
 		}
 	});
 });
