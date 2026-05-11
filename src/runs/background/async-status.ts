@@ -27,6 +27,7 @@ interface AsyncRunStepSummary {
 	model?: string;
 	attemptedModels?: string[];
 	error?: string;
+	cost: number;
 }
 
 export interface AsyncRunSummary {
@@ -53,6 +54,7 @@ export interface AsyncRunSummary {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	totalCost: number;
 	sessionFile?: string;
 }
 
@@ -162,11 +164,13 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 				...(step.model ? { model: step.model } : {}),
 				...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 				...(step.error ? { error: step.error } : {}),
+			cost: step.cost ?? 0,
 			};
 		}),
 		...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
 		...(status.outputFile ? { outputFile: status.outputFile } : {}),
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
+		totalCost: status.totalCost ?? 0,
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
 	};
 }
