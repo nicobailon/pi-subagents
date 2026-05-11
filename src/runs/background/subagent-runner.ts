@@ -1089,6 +1089,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				const totalInput = statusPayload.totalTokens?.input ?? 0;
 				const totalOutput = statusPayload.totalTokens?.output ?? 0;
 				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output };
+				const eventCost = usage.cost?.total ?? 0;
+				step.cost = (step.cost ?? 0) + eventCost;
+				statusPayload.totalCost = statusPayload.steps.reduce((sum, s) => sum + (s.cost ?? 0), 0);
 			}
 			statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
 		}
