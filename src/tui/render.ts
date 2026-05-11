@@ -206,12 +206,13 @@ function formatToolUseStat(count: number): string {
 	return `${count} tool use${count === 1 ? "" : "s"}`;
 }
 
-function formatProgressStats(theme: Theme, progress: Pick<AgentProgress, "toolCount" | "tokens" | "durationMs"> | undefined, includeDuration = true): string {
+function formatProgressStats(theme: Theme, progress: Pick<AgentProgress, "toolCount" | "tokens" | "durationMs"> | undefined, includeDuration: boolean = true, cost?: number): string {
 	if (!progress) return "";
 	const parts: string[] = [];
 	if (progress.toolCount > 0) parts.push(formatToolUseStat(progress.toolCount));
 	if (progress.tokens > 0) parts.push(formatTokenStat(progress.tokens));
 	if (includeDuration && progress.durationMs > 0) parts.push(formatDuration(progress.durationMs));
+	if (cost !== undefined && cost > 0) parts.push(formatCost(cost));
 	return statJoin(theme, parts);
 }
 
@@ -834,7 +835,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
 	const stats = statJoin(theme, [
 		r.usage?.turns ? `⟳${r.usage.turns}` : "",
-		formatProgressStats(theme, progress),
+		formatProgressStats(theme, progress, true, r.usage?.cost),
 	]);
 	const c = new Container();
 	const width = getTermWidth() - 4;
