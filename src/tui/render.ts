@@ -15,7 +15,7 @@ import {
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
-import { formatTokens, formatUsage, formatDuration, formatToolCall, shortenPath } from "../shared/formatters.ts";
+import { formatTokens, formatUsage, formatDuration, formatToolCall, formatCost, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getLastActivity, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
@@ -178,9 +178,11 @@ function formatCurrentToolLine(progress: Pick<AgentProgress, "currentTool" | "cu
 			? progress.currentToolArgs
 			: `${progress.currentToolArgs.slice(0, maxToolArgsLen)}...`)
 		: "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 	const durationSuffix = progress.currentToolStartedAt !== undefined
 		? ` | ${formatDuration(Math.max(0, Date.now() - progress.currentToolStartedAt))}`
 		: "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 	return toolArgsPreview
 		? `${progress.currentTool}: ${toolArgsPreview}${durationSuffix}`
 		: `${progress.currentTool}${durationSuffix}`;
@@ -562,6 +564,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 	}
 	if (job.toolCount !== undefined) parts.push(formatToolUseStat(job.toolCount));
 	if (job.totalTokens?.total) parts.push(formatTokenStat(job.totalTokens.total));
+	if (job.totalCost > 0) parts.push(formatCost(job.totalCost));
 	const endTime = job.status === "complete" || job.status === "failed" || job.status === "paused" ? (job.updatedAt ?? Date.now()) : Date.now();
 	if (job.startedAt) parts.push(formatDuration(Math.max(0, endTime - job.startedAt)));
 	return statJoin(theme, parts);
@@ -661,6 +664,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const activity = widgetStepActivityLine(step, width, false);
 		const stepStats = widgetStepStats(theme, step);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 		lines.push(`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 	}
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", "  Press Ctrl+O for live detail"));
@@ -831,6 +835,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	const progress = r.progress || r.progressSummary;
 	const isRunning = r.progress?.status === "running";
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 	const stats = statJoin(theme, [
 		r.usage?.turns ? `⟳${r.usage.turns}` : "",
 		formatProgressStats(theme, progress),
@@ -890,6 +895,7 @@ function renderMultiCompact(d: Details, theme: Theme): Component {
 				? theme.fg("warning", "■")
 				: theme.fg("success", "✓");
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 	const c = new Container();
 	const width = getTermWidth() - 4;
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(d.mode))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
@@ -915,6 +921,7 @@ function renderMultiCompact(d: Details, theme: Theme): Component {
 		const stepStats = formatProgressStats(theme, rProg);
 		const glyph = rPending ? theme.fg("dim", "◦") : resultGlyph(r, output, theme, rRunning);
 		const pendingLabel = rPending ? ` ${theme.fg("dim", "· pending")}` : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 		const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`  ${line}`, width), 0, 0));
@@ -946,6 +953,7 @@ export function renderSubagentResult(
 		const t = result.content[0];
 		const text = t?.type === "text" ? t.text : "(no output)";
 		const contextPrefix = d?.context === "fork" ? `${theme.fg("warning", "[fork]")} ` : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 		return new Text(truncLine(`${contextPrefix}${text}`, getTermWidth() - 4), 0, 0);
 	}
 
@@ -964,6 +972,7 @@ export function renderSubagentResult(
 					? theme.fg("success", "ok")
 					: theme.fg("error", "failed");
 		const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 		const output = r.truncation?.text || getSingleResultOutput(r);
 
 		const progressInfo = isRunning && r.progress
@@ -971,12 +980,13 @@ export function renderSubagentResult(
 			: r.progressSummary
 				? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
 				: "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 
 		const w = getTermWidth() - 4;
 		const fit = (text: string) => expanded ? text : truncLine(text, w);
 		const toolCallLines = getToolCallLines(r, expanded);
 		const c = new Container();
-		c.addChild(new Text(fit(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`), 0, 0));
+		c.addChild(new Text(fit(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}${costInfo}`), 0, 0));
 		c.addChild(new Spacer(1));
 		const taskMaxLen = Math.max(20, w - 8);
 		const taskPreview = expanded || r.task.length <= taskMaxLen
@@ -1087,9 +1097,11 @@ export function renderSubagentResult(
 		totalSummary.toolCount || totalSummary.tokens
 			? ` | ${totalSummary.toolCount} tools, ${formatTokens(totalSummary.tokens)} tok, ${formatDuration(totalSummary.durationMs)}`
 			: "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 
 	const modeLabel = d.mode;
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 	const multiLabel = buildMultiProgressLabel(d, hasRunning);
 	const itemTitle = multiLabel.itemTitle;
 	
@@ -1122,7 +1134,7 @@ export function renderSubagentResult(
 	const c = new Container();
 	c.addChild(
 		new Text(
-			fit(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}`),
+			fit(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}${costStr}`),
 			0,
 			0,
 		),
@@ -1166,7 +1178,9 @@ export function renderSubagentResult(
 					? theme.fg("warning", "warning")
 					: theme.fg("success", "done");
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 		const modelDisplay = r.model ? theme.fg("dim", ` (${r.model})`) : "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 		const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
 		const stepHeader = rRunning
 			? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${modelDisplay}${stats}`

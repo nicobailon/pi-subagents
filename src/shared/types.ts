@@ -148,6 +148,7 @@ export interface AgentProgress {
 	toolCount: number;
 	turnCount?: number;
 	tokens: number;
+	cost: number;
 	durationMs: number;
 	error?: string;
 	failedTool?: string;
@@ -318,10 +319,12 @@ export interface AsyncStatus {
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		error?: string;
+		cost: number;
 	}>;
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	totalCost: number;
 	sessionFile?: string;
 }
 
@@ -358,6 +361,7 @@ export interface AsyncJobState {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	totalCost: number;
 	sessionFile?: string;
 	controlEventCursor?: number;
 }

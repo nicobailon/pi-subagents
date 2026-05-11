@@ -915,7 +915,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			attemptedModels: step.modelCandidates && step.modelCandidates.length > 0 ? step.modelCandidates : step.model ? [step.model] : undefined,
 			recentTools: [],
 			recentOutput: [],
+			cost: 0,
 		})),
+		totalCost: 0,
 		artifactsDir,
 		sessionDir: config.sessionDir,
 		outputFile: path.join(asyncDir, "output-0.log"),
@@ -1349,6 +1351,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 						statusPayload.steps[fi].error = singleResult.error;
+						statusPayload.steps[fi].cost = singleResult.usage.cost ?? 0;
+						statusPayload.totalCost = statusPayload.steps.reduce((sum, s) => sum + (s.cost ?? 0), 0);
 						statusPayload.lastUpdate = taskEndTime;
 						writeAtomicJson(statusPath, statusPayload);
 

@@ -222,6 +222,7 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 		skills: progress.skills,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
+		cost: progress.cost,
 		durationMs: progress.durationMs,
 		error: progress.error,
 		failedTool: progress.failedTool,
