@@ -194,6 +194,7 @@ async function runSingleAttempt(
 		recentOutput: [...shared.attemptNotes],
 		toolCount: 0,
 		tokens: 0,
+		cost: 0,
 		durationMs: 0,
 		lastActivityAt: startTime,
 	};

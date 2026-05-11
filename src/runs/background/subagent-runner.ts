@@ -1091,7 +1091,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output };
 				const eventCost = usage.cost?.total ?? 0;
 				step.cost = (step.cost ?? 0) + eventCost;
-				statusPayload.totalCost = statusPayload.steps.reduce((sum, s) => sum + (s.cost ?? 0), 0);
+				statusPayload.totalCost = recalcTotalCost();
 			}
 			statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
 		}
@@ -1357,7 +1357,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 						statusPayload.steps[fi].error = singleResult.error;
 						statusPayload.steps[fi].cost = singleResult.usage.cost ?? 0;
-						statusPayload.totalCost = statusPayload.steps.reduce((sum, s) => sum + (s.cost ?? 0), 0);
+						statusPayload.totalCost = recalcTotalCost();
 						statusPayload.lastUpdate = taskEndTime;
 						writeAtomicJson(statusPath, statusPayload);
 
@@ -1535,7 +1535,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
 			statusPayload.steps[flatIndex].error = singleResult.error;
 			statusPayload.steps[flatIndex].cost = singleResult.usage.cost ?? 0;
-			statusPayload.totalCost = statusPayload.steps.reduce((sum, s) => sum + (s.cost ?? 0), 0);
+			statusPayload.totalCost = recalcTotalCost();
 			if (stepTokens) {
 				statusPayload.steps[flatIndex].tokens = stepTokens;
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
