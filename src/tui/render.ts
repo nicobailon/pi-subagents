@@ -15,7 +15,7 @@ import {
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
-import { formatTokens, formatUsage, formatDuration, formatToolCall, shortenPath } from "../shared/formatters.ts";
+import { formatTokens, formatUsage, formatDuration, formatToolCall, formatCost, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getLastActivity, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
@@ -562,6 +562,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 	}
 	if (job.toolCount !== undefined) parts.push(formatToolUseStat(job.toolCount));
 	if (job.totalTokens?.total) parts.push(formatTokenStat(job.totalTokens.total));
+	if (job.totalCost > 0) parts.push(formatCost(job.totalCost));
 	const endTime = job.status === "complete" || job.status === "failed" || job.status === "paused" ? (job.updatedAt ?? Date.now()) : Date.now();
 	if (job.startedAt) parts.push(formatDuration(Math.max(0, endTime - job.startedAt)));
 	return statJoin(theme, parts);
@@ -971,12 +972,13 @@ export function renderSubagentResult(
 			: r.progressSummary
 				? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
 				: "";
+		const costInfo = r.usage.cost > 0 ? ` | ${formatCost(r.usage.cost)}` : "";
 
 		const w = getTermWidth() - 4;
 		const fit = (text: string) => expanded ? text : truncLine(text, w);
 		const toolCallLines = getToolCallLines(r, expanded);
 		const c = new Container();
-		c.addChild(new Text(fit(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`), 0, 0));
+		c.addChild(new Text(fit(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}${costInfo}`), 0, 0));
 		c.addChild(new Spacer(1));
 		const taskMaxLen = Math.max(20, w - 8);
 		const taskPreview = expanded || r.task.length <= taskMaxLen
@@ -1088,6 +1090,9 @@ export function renderSubagentResult(
 			? ` | ${totalSummary.toolCount} tools, ${formatTokens(totalSummary.tokens)} tok, ${formatDuration(totalSummary.durationMs)}`
 			: "";
 
+	const totalCost = d.results.reduce((sum, r) => sum + (r.usage.cost ?? 0), 0);
+	const costStr = totalCost > 0 ? ` | ${formatCost(totalCost)}` : "";
+
 	const modeLabel = d.mode;
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
 	const multiLabel = buildMultiProgressLabel(d, hasRunning);
@@ -1122,7 +1127,7 @@ export function renderSubagentResult(
 	const c = new Container();
 	c.addChild(
 		new Text(
-			fit(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}`),
+			fit(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}${costStr}`),
 			0,
 			0,
 		),

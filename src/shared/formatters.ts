@@ -40,6 +40,14 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Format cost in USD with 4 decimal places
+ */
+export function formatCost(cost: number): string {
+	if (cost <= 0) return "";
+	return `$${cost.toFixed(4)}`;
+}
+
+/**
  * Build a summary string for a completed/failed chain
  */
 export function buildChainSummary(

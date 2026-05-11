@@ -211,7 +211,7 @@ export function getDisplayItems(messages: Message[] | undefined): DisplayItem[] 
 	return items;
 }
 
-function compactCompletedProgress(progress: AgentProgress): AgentProgress {
+export function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 	if (progress.status === "running") return progress;
 	return {
 		index: progress.index,
@@ -222,6 +222,7 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 		skills: progress.skills,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
+		cost: progress.cost,
 		durationMs: progress.durationMs,
 		error: progress.error,
 		failedTool: progress.failedTool,

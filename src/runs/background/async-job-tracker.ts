@@ -175,6 +175,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.sessionDir = status.sessionDir ?? job.sessionDir;
 						job.outputFile = status.outputFile ?? job.outputFile;
 						job.totalTokens = status.totalTokens ?? job.totalTokens;
+						job.totalCost = status.totalCost ?? job.totalCost;
 						job.sessionFile = status.sessionFile ?? job.sessionFile;
 						if ((job.status === "complete" || job.status === "failed" || job.status === "paused") && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 							scheduleCleanup(job.asyncId);
@@ -225,6 +226,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			activeParallelGroup: Boolean(firstGroupCount && firstGroupCount > 0),
 			startedAt: now,
 			updatedAt: now,
+			totalCost: 0,
 		});
 		ensurePoller();
 		if (state.lastUiContext) {
