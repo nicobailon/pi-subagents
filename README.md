@@ -355,7 +355,7 @@ Agent locations, lowest to highest priority:
 | User | `~/.pi/agent/agents/**/*.md` |
 | Project | `.pi/agents/**/*.md` |
 
-Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively. `.chain.md` files do not define agents. If both `.agents/` and `.pi/agents/` define the same parsed runtime agent name, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
+Project discovery also reads legacy `.agents/**/*.md` files. Nested subdirectories are discovered recursively, except the legacy `.agents/skills/`, `.agents/prompts/`, and `.agents/commands/` subtrees are reserved for non-agent content and are not scanned as agents. `.chain.md` files do not define agents. If both `.agents/` and `.pi/agents/` define the same parsed runtime agent name, `.pi/agents/` wins. Use `agentScope: "user" | "project" | "both"` to control discovery; `both` is the default and project definitions win runtime-name collisions.
 
 Builtin agents load at the lowest priority, so a user or project agent with the same name overrides them. They do not pin a provider model; they inherit your current Pi default model unless you set `subagents.agentOverrides.<name>.model`. `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `worker` is the implementation agent for normal tasks and approved oracle handoffs.
 

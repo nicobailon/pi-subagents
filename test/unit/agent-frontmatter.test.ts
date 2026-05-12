@@ -565,6 +565,114 @@ Canonical prompt
 		assert.equal(result.projectAgentsDir, path.join(dir, ".pi", "agents"));
 	});
 
+	it("excludes known non-agent subtrees from legacy .agents discovery", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-legacy-agent-exclusions-"));
+		tempDirs.push(dir);
+		fs.mkdirSync(path.join(dir, ".agents", "nested"), { recursive: true });
+		fs.mkdirSync(path.join(dir, ".agents", "skills", "code-review"), { recursive: true });
+		fs.mkdirSync(path.join(dir, ".agents", "prompts"), { recursive: true });
+		fs.mkdirSync(path.join(dir, ".agents", "commands"), { recursive: true });
+		fs.mkdirSync(path.join(dir, ".pi", "agents", "skills"), { recursive: true });
+		fs.writeFileSync(path.join(dir, ".agents", "legacy.md"), `---
+name: legacy-allowed
+description: Legacy allowed
+---
+
+Legacy prompt
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".agents", "nested", "nested.md"), `---
+name: legacy-nested-allowed
+description: Legacy nested allowed
+---
+
+Nested prompt
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".agents", "skills", "code-review", "SKILL.md"), `---
+name: legacy-skill
+description: Legacy skill should not be an agent
+---
+
+Skill prompt
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".agents", "prompts", "prompt.md"), `---
+name: legacy-prompt
+description: Legacy prompt should not be an agent
+---
+
+Prompt body
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".agents", "commands", "command.md"), `---
+name: legacy-command
+description: Legacy command should not be an agent
+---
+
+Command body
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".pi", "agents", "skills", "canonical.md"), `---
+name: canonical-under-skills
+description: Canonical agent under skills dir
+---
+
+Canonical prompt
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const names = new Set(result.agents.map((agent) => agent.name));
+		assert.equal(names.has("legacy-allowed"), true);
+		assert.equal(names.has("legacy-nested-allowed"), true);
+		assert.equal(names.has("canonical-under-skills"), true);
+		assert.equal(names.has("legacy-skill"), false);
+		assert.equal(names.has("legacy-prompt"), false);
+		assert.equal(names.has("legacy-command"), false);
+
+		const allProjectNames = new Set(discoverAgentsAll(dir).project.map((agent) => agent.name));
+		assert.equal(allProjectNames.has("legacy-skill"), false);
+		assert.equal(allProjectNames.has("legacy-prompt"), false);
+		assert.equal(allProjectNames.has("legacy-command"), false);
+	});
+
+	it("excludes known non-agent subtrees from user legacy .agents discovery", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-legacy-agent-exclusions-"));
+		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-legacy-agent-home-"));
+		tempDirs.push(dir);
+		tempDirs.push(homeDir);
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+
+		try {
+			process.env.HOME = homeDir;
+			process.env.USERPROFILE = homeDir;
+			fs.mkdirSync(path.join(homeDir, ".agents", "skills"), { recursive: true });
+			fs.writeFileSync(path.join(homeDir, ".agents", "user-agent.md"), `---
+name: user-legacy-allowed
+description: User legacy allowed
+---
+
+User prompt
+`, "utf-8");
+			fs.writeFileSync(path.join(homeDir, ".agents", "skills", "SKILL.md"), `---
+name: user-legacy-skill
+description: User legacy skill should not be an agent
+---
+
+Skill prompt
+`, "utf-8");
+
+			const names = new Set(discoverAgents(dir, "user").agents.map((agent) => agent.name));
+			assert.equal(names.has("user-legacy-allowed"), true);
+			assert.equal(names.has("user-legacy-skill"), false);
+
+			const allUserNames = new Set(discoverAgentsAll(dir).user.map((agent) => agent.name));
+			assert.equal(allUserNames.has("user-legacy-allowed"), true);
+			assert.equal(allUserNames.has("user-legacy-skill"), false);
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
 	it("prefers .pi/agents over .agents on project agent name collisions", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-agent-collision-"));
 		tempDirs.push(dir);

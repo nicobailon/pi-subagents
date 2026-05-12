@@ -517,34 +517,47 @@ export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "us
 	return filePath;
 }
 
-function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) => boolean): string[] {
+const LEGACY_AGENT_NON_AGENT_SUBTREES = ["skills", "prompts", "commands"];
+
+function legacyAgentExcludedDirs(dir: string): string[] {
+	return LEGACY_AGENT_NON_AGENT_SUBTREES.map((name) => path.join(dir, name));
+}
+
+function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) => boolean, excludedDirs: string[] = []): string[] {
 	const files: string[] = [];
-	if (!fs.existsSync(dir)) return files;
+	const excluded = new Set(excludedDirs.map((excludedDir) => path.resolve(excludedDir)));
 
-	let entries: fs.Dirent[];
-	try {
-		entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-	} catch {
-		return files;
-	}
+	function walk(currentDir: string): void {
+		if (!fs.existsSync(currentDir)) return;
+		if (excluded.has(path.resolve(currentDir))) return;
 
-	for (const entry of entries) {
-		const filePath = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
-			files.push(...listMarkdownFilesRecursive(filePath, predicate));
-			continue;
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(currentDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+		} catch {
+			return;
 		}
-		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-		if (!predicate(entry.name)) continue;
-		files.push(filePath);
+
+		for (const entry of entries) {
+			const filePath = path.join(currentDir, entry.name);
+			if (entry.isDirectory()) {
+				walk(filePath);
+				continue;
+			}
+			if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+			if (!predicate(entry.name)) continue;
+			files.push(filePath);
+		}
 	}
+
+	walk(dir);
 	return files;
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: AgentSource, options: { excludedDirs?: string[] } = {}): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
-	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
+	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"), options.excludedDirs)) {
 		let content: string;
 		try {
 			content = fs.readFileSync(filePath, "utf-8");
@@ -665,6 +678,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 	return agents;
 }
 
+function loadLegacyAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+	return loadAgentsFromDir(dir, source, { excludedDirs: legacyAgentExcludedDirs(dir) });
+}
+
 function loadChainsFromDir(dir: string, source: AgentSource): ChainConfig[] {
 	const chains: ChainConfig[] = [];
 
@@ -740,10 +757,12 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	);
 
 	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user");
-	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user");
+	const userAgentsNew = scope === "project" ? [] : loadLegacyAgentsFromDir(userDirNew, "user");
 	const userAgents = [...userAgentsOld, ...userAgentsNew];
 
-	const projectAgents = scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project"));
+	const projectAgents = scope === "user" ? [] : projectAgentDirs.flatMap((dir) =>
+		path.basename(dir) === ".agents" ? loadLegacyAgentsFromDir(dir, "project") : loadAgentsFromDir(dir, "project")
+	);
 	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents)
 		.filter((agent) => agent.disabled !== true);
 
@@ -781,11 +800,12 @@ export function discoverAgentsAll(cwd: string): {
 	);
 	const user = [
 		...loadAgentsFromDir(userDirOld, "user"),
-		...loadAgentsFromDir(userDirNew, "user"),
+		...loadLegacyAgentsFromDir(userDirNew, "user"),
 	];
 	const projectMap = new Map<string, AgentConfig>();
 	for (const dir of projectDirs) {
-		for (const agent of loadAgentsFromDir(dir, "project")) {
+		const agents = path.basename(dir) === ".agents" ? loadLegacyAgentsFromDir(dir, "project") : loadAgentsFromDir(dir, "project");
+		for (const agent of agents) {
 			projectMap.set(agent.name, agent);
 		}
 	}
