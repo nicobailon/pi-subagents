@@ -787,6 +787,14 @@ Makes top-level calls use background execution when the request does not explici
 
 Forces depth-0 single, parallel, and chain runs into background mode and bypasses clarify UI by forcing `clarify: false`. Nested calls keep their own inherited settings.
 
+### `slashCommands`
+
+```json
+{ "slashCommands": false }
+```
+
+Disables the integrated `pi-subagents` slash commands registered by the extension, including `/run`, `/chain`, `/run-chain`, `/parallel`, and `/subagents-doctor`. The `subagent` tool remains available for natural-language delegation and direct tool calls.
+
 ### `parallel`
 
 ```json

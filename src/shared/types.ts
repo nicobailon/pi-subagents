@@ -497,6 +497,7 @@ interface TopLevelParallelConfig {
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
+	slashCommands?: boolean;
 	defaultSessionDir?: string;
 	maxSubagentDepth?: number;
 	control?: ControlConfig;

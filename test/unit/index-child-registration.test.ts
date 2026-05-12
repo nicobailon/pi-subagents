@@ -66,6 +66,55 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("does not register integrated slash commands when slashCommands is false", () => {
+		const script = String.raw`
+			import * as fs from "node:fs";
+			import * as os from "node:os";
+			import * as path from "node:path";
+			import registerSubagentExtension from "./src/extension/index.ts";
+			const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-home-"));
+			process.env.HOME = home;
+			const configDir = path.join(home, ".pi", "agent", "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ slashCommands: false }), "utf-8");
+			const commands = [];
+			const events = { on() { return () => {}; }, emit() {} };
+			const fakePi = new Proxy({
+				events,
+				registerTool() {},
+				registerCommand(name) { commands.push(name); },
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			const integrated = ["run", "chain", "run-chain", "parallel", "subagents-doctor"];
+			const registeredIntegrated = commands.filter((name) => integrated.includes(name));
+			if (registeredIntegrated.length > 0) {
+				throw new Error("Unexpected slash command registrations: " + registeredIntegrated.join(", "));
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("returns before registering parent tools, slash commands, renderers, or event handlers", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
