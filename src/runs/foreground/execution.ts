@@ -400,6 +400,16 @@ async function runSingleAttempt(
 			progress.durationMs = Date.now() - startTime;
 			emitUpdateSnapshot(getFinalOutput(result.messages) || "(running...)");
 		};
+		let lastThrottledFireUpdate = 0;
+		const FIRE_UPDATE_MIN_INTERVAL_MS = 100;
+		const throttledFireUpdate = () => {
+			if (!options.onUpdate || processClosed) return;
+			const now = Date.now();
+			progress.durationMs = now - startTime;
+			if (lastThrottledFireUpdate && now - lastThrottledFireUpdate < FIRE_UPDATE_MIN_INTERVAL_MS) return;
+			lastThrottledFireUpdate = now;
+			emitUpdateSnapshot(getFinalOutput(result.messages) || "(running...)");
+		};
 
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
@@ -432,7 +442,7 @@ async function runSingleAttempt(
 				const mutates = isMutatingTool(evt.toolName, toolArgs);
 				observedMutationAttempt = observedMutationAttempt || mutates;
 				pendingToolResult = { tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now };
-				fireUpdate();
+				throttledFireUpdate();
 			}
 
 			if (evt.type === "tool_execution_end") {
@@ -447,7 +457,7 @@ async function runSingleAttempt(
 				progress.currentToolArgs = undefined;
 				progress.currentToolStartedAt = undefined;
 				progress.currentPath = undefined;
-				fireUpdate();
+				throttledFireUpdate();
 			}
 
 			if (evt.type === "message_end" && evt.message) {
@@ -477,7 +487,7 @@ async function runSingleAttempt(
 					}
 				}
 				updateActivityState(now);
-				fireUpdate();
+				throttledFireUpdate();
 			}
 
 			if (evt.type === "tool_result_end" && evt.message) {
@@ -506,7 +516,7 @@ async function runSingleAttempt(
 				} else if (toolSnapshot?.mutates) {
 					resetMutatingFailureState(mutatingFailures);
 				}
-				fireUpdate();
+				throttledFireUpdate();
 			}
 		};
 

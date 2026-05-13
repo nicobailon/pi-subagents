@@ -467,7 +467,7 @@ DIAGNOSTICS:
 
 		renderResult(result, options, theme, context) {
 			syncResultAnimation(result, context);
-			return renderSubagentResult(result, options, theme);
+			return renderSubagentResult(result, options, theme, context);
 		},
 
 	};

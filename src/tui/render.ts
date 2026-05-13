@@ -940,8 +940,24 @@ export function renderSubagentResult(
 	result: AgentToolResult<Details>,
 	options: { expanded: boolean },
 	theme: Theme,
+	context?: { state: Record<string, unknown> },
 ): Component {
 	const d = result.details;
+
+	// Memoization: if details haven't changed and result is not actively running,
+	// reuse cached component. For running results we skip caching since the spinner
+	// glyph needs rebuilding every tick. The throttle in execution.ts prevents
+	// excessive update events from the subprocess.
+	if (context) {
+		const cachedDetails = context.state._saLastDetails as Details | undefined;
+		const cachedComponent = context.state._saLastComponent as Container | undefined;
+		const isRunning = d?.progress?.some((p) => p.status === "running")
+			|| d?.results?.some((r) => r.progress?.status === "running");
+		if (!isRunning && cachedDetails === d && cachedComponent) {
+			return cachedComponent;
+		}
+	}
+
 	if (!d || !d.results.length) {
 		const t = result.content[0];
 		const text = t?.type === "text" ? t.text : "(no output)";
@@ -954,7 +970,11 @@ export function renderSubagentResult(
 
 	if (d.mode === "single" && d.results.length === 1) {
 		const r = d.results[0];
-		if (!expanded) return renderSingleCompact(d, r, theme);
+		if (!expanded) {
+			const comp = renderSingleCompact(d, r, theme);
+			if (context) { context.state._saLastDetails = d; context.state._saLastComponent = comp; }
+			return comp;
+		}
 		const isRunning = r.progress?.status === "running";
 		const icon = isRunning
 			? theme.fg("warning", "running")
@@ -1044,10 +1064,15 @@ export function renderSubagentResult(
 			c.addChild(new Spacer(1));
 			c.addChild(new Text(fit(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 		}
+		if (context) { context.state._saLastDetails = d; context.state._saLastComponent = c; }
 		return c;
 	}
 
-	if (!expanded) return renderMultiCompact(d, theme);
+	if (!expanded) {
+		const comp = renderMultiCompact(d, theme);
+		if (context) { context.state._saLastDetails = d; context.state._saLastComponent = comp; }
+		return comp;
+	}
 
 	const hasRunning = d.progress?.some((p) => p.status === "running") 
 		|| d.results.some((r) => r.progress?.status === "running");
@@ -1244,5 +1269,6 @@ export function renderSubagentResult(
 		c.addChild(new Spacer(1));
 		c.addChild(new Text(fit(theme.fg("dim", `Artifacts dir: ${shortenPath(d.artifacts.dir)}`)), 0, 0));
 	}
+	if (context) { context.state._saLastDetails = d; context.state._saLastComponent = c; }
 	return c;
 }
