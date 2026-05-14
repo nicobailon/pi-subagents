@@ -25,6 +25,7 @@ import {
 } from "../shared/types.ts";
 import {
 	AGENT_MODEL_REQUIREMENTS,
+	type AgentConfig
 } from "../shared/model-requirements.ts";
 
 interface InlineConfig {

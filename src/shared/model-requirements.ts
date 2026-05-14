@@ -1,3 +1,9 @@
+export interface AgentConfig {
+  model: string;
+  thinking?: string;
+  fallbackModels?: string[];
+}
+
 export type FallbackEntry = {
   providers: string[];
   model: string;
