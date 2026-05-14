@@ -1,12 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
-import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
@@ -109,7 +108,6 @@ interface StepResult {
 	truncated?: boolean;
 }
 
-const require = createRequire(import.meta.url);
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
 function findLatestSessionFile(sessionDir: string): string | null {
@@ -424,21 +422,9 @@ function runPiStreaming(
 }
 
 function resolvePiPackageRootFallback(): string {
-	// Try to resolve the main entry point and walk up to find the package root
-	const entryPoint = require.resolve("@earendil-works/pi-coding-agent");
-	// Entry point is typically /path/to/dist/index.js, so go up to find package root
-	let dir = path.dirname(entryPoint);
-	while (dir !== path.dirname(dir)) {
-		const pkgJsonPath = path.join(dir, "package.json");
-		try {
-			const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
-			if (pkg.name === "@earendil-works/pi-coding-agent") return dir;
-		} catch {
-			// Keep walking up until a readable package.json is found.
-		}
-		dir = path.dirname(dir);
-	}
-	throw new Error("Could not resolve @earendil-works/pi-coding-agent package root");
+	const root = resolveInstalledPiPackageRoot();
+	if (root) return root;
+	throw new Error(`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`);
 }
 
 async function exportSessionHtml(sessionFile: string, outputDir: string, piPackageRoot?: string): Promise<string> {

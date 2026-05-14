@@ -1,23 +1,34 @@
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
+export const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+
+export function findPiPackageRootFromEntry(entryPoint: string): string | undefined {
+	let dir = path.dirname(entryPoint);
+	while (dir !== path.dirname(dir)) {
+		const packageJsonPath = path.join(dir, "package.json");
+		if (fs.existsSync(packageJsonPath)) {
+			const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as { name?: unknown };
+			if (pkg.name === PI_CODING_AGENT_PACKAGE) return dir;
+		}
+		dir = path.dirname(dir);
+	}
+	return undefined;
+}
+
+export function resolveInstalledPiPackageRoot(): string | undefined {
+	return findPiPackageRootFromEntry(fileURLToPath(import.meta.resolve(PI_CODING_AGENT_PACKAGE)));
+}
 
 export function resolvePiPackageRoot(): string | undefined {
 	try {
 		const entry = process.argv[1];
-		if (!entry) return undefined;
-		let dir = path.dirname(fs.realpathSync(entry));
-		while (dir !== path.dirname(dir)) {
-			try {
-				const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
-				if (pkg.name === "@earendil-works/pi-coding-agent") return dir;
-			} catch {}
-			dir = path.dirname(dir);
-		}
-	} catch {}
-	return undefined;
+		return entry ? findPiPackageRootFromEntry(fs.realpathSync(entry)) : undefined;
+	} catch {
+		// process.argv[1] probing is best-effort; callers can fall back to PATH/package resolution.
+		return undefined;
+	}
 }
 
 export interface PiSpawnDeps {
@@ -27,6 +38,7 @@ export interface PiSpawnDeps {
 	existsSync?: (filePath: string) => boolean;
 	readFileSync?: (filePath: string, encoding: "utf-8") => string;
 	resolvePackageJson?: () => string;
+	resolvePackageEntry?: () => string;
 	piPackageRoot?: string;
 }
 
@@ -60,7 +72,11 @@ export function resolveWindowsPiCliScript(deps: PiSpawnDeps = {}): string | unde
 		const resolvePackageJson = deps.resolvePackageJson ?? (() => {
 			const root = deps.piPackageRoot ?? resolvePiPackageRoot();
 			if (root) return path.join(root, "package.json");
-			return require.resolve("@earendil-works/pi-coding-agent/package.json");
+			const packageRoot = deps.resolvePackageEntry
+				? findPiPackageRootFromEntry(deps.resolvePackageEntry())
+				: resolveInstalledPiPackageRoot();
+			if (!packageRoot) throw new Error(`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`);
+			return path.join(packageRoot, "package.json");
 		});
 		const packageJsonPath = resolvePackageJson();
 		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
@@ -71,11 +87,12 @@ export function resolveWindowsPiCliScript(deps: PiSpawnDeps = {}): string | unde
 			? binField
 			: binField?.pi ?? Object.values(binField ?? {})[0];
 		if (!binPath) return undefined;
-		const candidate = normalizePath(path.resolve(path.dirname(packageJsonPath), binPath));
+		const candidate = path.resolve(path.dirname(packageJsonPath), binPath);
 		if (isRunnableNodeScript(candidate, existsSync)) {
 			return candidate;
 		}
 	} catch {
+		// Windows CLI resolution is optional; falling back to `pi` lets PATH handle execution.
 		return undefined;
 	}
 

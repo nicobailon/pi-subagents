@@ -627,7 +627,6 @@ function foregroundStyleWidgetStepLines(
 
 function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number): string[] {
 	if (!job.steps?.length) return [`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`];
-	if (job.mode !== "parallel" && job.mode !== "chain") return [`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`];
 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width);
 	const total = job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";

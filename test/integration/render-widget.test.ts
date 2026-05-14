@@ -202,6 +202,60 @@ describe("subagent async widget rendering", () => {
 		assert.match(expandedText, /checking expanded state/);
 	});
 
+	it("shows step detail and Ctrl+O hint for running single async jobs with steps", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "single-run",
+			asyncDir: "/tmp/single-run",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			stepsTotal: 1,
+			steps: [
+				{
+					index: 0,
+					agent: "worker",
+					status: "running",
+					currentTool: "read",
+					currentToolArgs: "src/tui/render.ts",
+					currentToolStartedAt: now - 2000,
+					recentOutput: ["reading render widget"],
+				},
+			],
+		};
+
+		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
+		assert.match(collapsedText, /async subagent worker · background/);
+		assert.match(collapsedText, /Step 1\/1: worker · running/);
+		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
+		assert.match(collapsedText, /Press Ctrl\+O for live detail/);
+		assert.match(collapsedText, /output: \/tmp\/single-run\/output-0\.log/);
+		assert.doesNotMatch(collapsedText, /reading render widget/);
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.doesNotMatch(expandedText, /Press Ctrl\+O for live detail/);
+		assert.match(expandedText, /reading render widget/);
+	});
+
+	it("keeps generic activity fallback for single async jobs without steps", () => {
+		const now = Date.now();
+		const text = buildWidgetLines([
+			{
+				asyncId: "single-no-steps",
+				asyncDir: "/tmp/single-no-steps",
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				currentTool: "read",
+				currentToolStartedAt: now - 1000,
+			},
+		], theme, 180).join("\n");
+
+		assert.match(text, /⎿  read 1\.0s/);
+		assert.doesNotMatch(text, /Step 1\/1/);
+		assert.doesNotMatch(text, /Press Ctrl\+O for live detail/);
+	});
+
 	it("includes logical chain context for active async chain parallel groups", () => {
 		const lines = buildWidgetLines([
 			{

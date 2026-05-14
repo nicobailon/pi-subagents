@@ -72,6 +72,7 @@
     }
   },
   "dependencies": {
+    "jiti": "^2.7.0",
     "typebox": "^1.1.24"
   },
   "devDependencies": {
