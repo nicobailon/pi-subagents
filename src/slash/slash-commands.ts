@@ -23,6 +23,9 @@ import {
 	type SingleResult,
 	type SubagentState,
 } from "../shared/types.ts";
+import {
+	AGENT_MODEL_REQUIREMENTS,
+} from "../shared/model-requirements.ts";
 
 interface InlineConfig {
 	output?: string | false;
@@ -522,6 +525,62 @@ export function registerSlashCommands(
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
 			await runSlashSubagent(pi, ctx, { action: "doctor" });
+		},
+	});
+
+	pi.registerCommand("generate-config", {
+		description: "Generate subagent config",
+		handler: async (_args, ctx) => {
+			const models = ctx.modelRegistry.getAvailable();
+			const availableProviders = new Set(models.map((m) => m.provider));
+			const agents: Record<string, AgentConfig> = {};
+			for (const [role, req] of Object.entries(AGENT_MODEL_REQUIREMENTS)) {
+				let resolved;
+				resolveLoop:
+				for (const entry of req.fallbackChain) {
+					for (const provider of entry.providers) {
+						if (availableProviders.has(provider)) {
+							resolved = {
+								model: `${provider}/${entry.model}`,
+								thinking: entry.thinking,
+							};
+							break resolveLoop;
+						}
+					}
+				}
+				if (resolved) {
+					const thinking = resolved.thinking ?? req.thinking;
+					const agentConfig = thinking ? { model: resolved.model, thinking } : { model: resolved.model };
+					const expandedFallbacks = req.fallbackChain.flatMap((entry) =>
+						entry.providers
+							.filter((provider) => availableProviders.has(provider))
+							.map((provider) => ({ model: `${provider}/${entry.model}`, ...(entry.thinking ? { thinking: entry.thinking } : {}) }))
+						);
+					const uniqueFallbacks = expandedFallbacks.filter((entry, index, allEntries) =>
+						allEntries.findIndex((candidate) =>
+							candidate.model === entry.model &&
+							candidate.thinking === entry.thinking
+						) === index
+						);
+					const primaryIndex = uniqueFallbacks.findIndex((entry) => entry.model === agentConfig.model)
+					if (primaryIndex === -1) {
+						agents[role] = agentConfig
+						continue;
+					}
+					const fallbackModels = uniqueFallbacks.slice(primaryIndex + 1)
+					if (fallbackModels.length === 0) {
+						agents[role] = agentConfig
+						continue;
+					}
+					agents[role] = {
+						...agentConfig,
+						fallbackModels: fallbackModels.map((entry) => entry.model + (entry.thinking ? `:${entry.thinking}` : "")),
+					};
+				} else {
+					agents[role] = { model: "opencode/gpt-5-nano" }
+				}
+			}
+			ctx.ui.notify(JSON.stringify({subagents: {agentOverrides: agents}}, null, 2), "info");
 		},
 	});
 
