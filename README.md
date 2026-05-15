@@ -850,7 +850,7 @@ The default injected guidance tells children to use `contact_supervisor` with `r
 }
 ```
 
-Async subagent completions, per-step completions, and async control notices default to a sibling Pi handler instead of triggering the active parent feed. The parent receives passive handler ack/summary messages only; set `triggerParentOnSummary: true` only when summaries should start a parent turn. Set `enabled: false` to opt out and restore direct parent wake behavior.
+Async subagent completions, per-step completions, and async control notices default to a sibling Pi handler instead of triggering the active parent feed. The parent receives passive handler ack/summary messages only; set `triggerParentOnSummary: true` only when summaries should start a parent turn. Set `enabled: false` to opt out of sibling handling; fallback delivery is still display-only and does not trigger a parent turn.
 
 Fields:
 

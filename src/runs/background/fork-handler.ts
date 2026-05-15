@@ -143,7 +143,7 @@ function sendFallback(pi: Pick<ExtensionAPI, "sendMessage">, event: SubagentBack
 			display: true,
 			details: event.details,
 		},
-		{ triggerTurn: true },
+		{ triggerTurn: false },
 	);
 }
 
