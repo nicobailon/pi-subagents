@@ -479,6 +479,8 @@ export interface RunSyncOptions {
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
+	/** Override the agent's default thinking level */
+	thinking?: string | false;
 	/** Skills to inject (overrides agent default if provided) */
 	skills?: string[];
 }

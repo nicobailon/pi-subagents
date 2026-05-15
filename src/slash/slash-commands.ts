@@ -31,6 +31,7 @@ interface InlineConfig {
 	model?: string;
 	skill?: string[] | false;
 	progress?: boolean;
+	thinking?: string | false;
 }
 
 const parseInlineConfig = (raw: string): InlineConfig => {
@@ -41,6 +42,7 @@ const parseInlineConfig = (raw: string): InlineConfig => {
 		const eq = trimmed.indexOf("=");
 		if (eq === -1) {
 			if (trimmed === "progress") config.progress = true;
+			else if (trimmed === "thinking") config.thinking = "concise";
 			continue;
 		}
 		const key = trimmed.slice(0, eq).trim();
@@ -52,6 +54,7 @@ const parseInlineConfig = (raw: string): InlineConfig => {
 			case "model": config.model = val || undefined; break;
 			case "skill": case "skills": config.skill = val === "false" ? false : val.split("+").filter(Boolean); break;
 			case "progress": config.progress = val !== "false"; break;
+			case "thinking": config.thinking = val === "false" ? false : val; break;
 		}
 	}
 	return config;
@@ -135,6 +138,7 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 			progress: step.progress,
 			skill: step.skill ?? step.skills,
 			model: step.model,
+			thinking: step.thinking,
 		};
 	});
 };
@@ -433,6 +437,7 @@ export function registerSlashCommands(
 			if (inline.outputMode !== undefined) params.outputMode = inline.outputMode;
 			if (inline.skill !== undefined) params.skill = inline.skill;
 			if (inline.model) params.model = inline.model;
+			if (inline.thinking !== undefined) params.thinking = inline.thinking;
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
 			await runSlashSubagent(pi, ctx, params);
@@ -455,6 +460,7 @@ export function registerSlashCommands(
 				...(config.model ? { model: config.model } : {}),
 				...(config.skill !== undefined ? { skill: config.skill } : {}),
 				...(config.progress !== undefined ? { progress: config.progress } : {}),
+				...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
 			}));
 			const params: SubagentParamsLike = { chain, task: parsed.task, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
@@ -509,6 +515,7 @@ export function registerSlashCommands(
 				...(config.model ? { model: config.model } : {}),
 				...(config.skill !== undefined ? { skill: config.skill } : {}),
 				...(config.progress !== undefined ? { progress: config.progress } : {}),
+				...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
 			}));
 			const params: SubagentParamsLike = { tasks, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;

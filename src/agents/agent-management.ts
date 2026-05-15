@@ -196,6 +196,11 @@ function parseStepList(raw: unknown): { steps?: ChainStepConfig[]; error?: strin
 			if (typeof s.progress === "boolean") step.progress = s.progress;
 			else return { error: `config.steps[${i}].progress must be a boolean.` };
 		}
+		if (hasKey(s, "thinking")) {
+			if (s.thinking === false) step.thinking = false;
+			else if (typeof s.thinking === "string") step.thinking = s.thinking;
+			else return { error: `config.steps[${i}].thinking must be a string or false.` };
+		}
 		steps.push(step);
 	}
 	return { steps };

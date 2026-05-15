@@ -1315,6 +1315,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			availableModels: input.availableModels,
 			preferredModelProvider: input.ctx.model?.provider,
 			skills: effectiveSkills === false ? [] : effectiveSkills,
+				thinking: task.thinking,
 				onUpdate: input.onUpdate
 					? (progressUpdate) => {
 						const stepResults = progressUpdate.details?.results || [];

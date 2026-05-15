@@ -112,6 +112,7 @@ export interface ChainStepConfig {
 	model?: string;
 	skills?: string[] | false;
 	progress?: boolean;
+	thinking?: string | false;
 }
 
 export interface ChainConfig {

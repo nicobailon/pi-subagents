@@ -248,6 +248,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				availableModels: input.availableModels,
 				preferredModelProvider: input.ctx.model?.provider,
 				skills: behavior.skills === false ? [] : behavior.skills,
+				thinking: task.thinking,
 				onUpdate: input.onUpdate
 					? (progressUpdate) => {
 						const stepResults = progressUpdate.details?.results || [];
@@ -797,6 +798,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				availableModels,
 				preferredModelProvider: ctx.model?.provider,
 				skills: behavior.skills === false ? [] : behavior.skills,
+				thinking: seqStep.thinking,
 				onUpdate: onUpdate
 					? (p) => {
 						const stepResults = p.details?.results || [];

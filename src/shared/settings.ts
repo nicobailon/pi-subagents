@@ -51,6 +51,7 @@ export interface SequentialStep {
 	progress?: boolean;
 	skill?: string | string[] | false;
 	model?: string;
+	thinking?: string | false;
 }
 
 /** Parallel task item within a parallel step */
@@ -65,6 +66,7 @@ interface ParallelTaskItem {
 	progress?: boolean;
 	skill?: string | string[] | false;
 	model?: string;
+	thinking?: string | false;
 }
 
 /** Parallel step: multiple agents running concurrently */

@@ -56,6 +56,10 @@ function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 			if (rawValue === "true") step.progress = true;
 			else if (rawValue === "false") step.progress = false;
 		}
+		if (key === "thinking") {
+			if (rawValue === "false") step.thinking = false;
+			else if (rawValue) step.thinking = rawValue;
+		}
 	}
 
 	return step;
@@ -128,6 +132,8 @@ export function serializeChain(config: ChainConfig): string {
 		if (step.skills === false) lines.push("skills: false");
 		else if (Array.isArray(step.skills) && step.skills.length > 0) lines.push(`skills: ${step.skills.join(", ")}`);
 		if (step.progress !== undefined) lines.push(`progress: ${step.progress ? "true" : "false"}`);
+		if (step.thinking === false) lines.push("thinking: false");
+		else if (step.thinking) lines.push(`thinking: ${step.thinking}`);
 		lines.push("");
 		lines.push(step.task ?? "");
 		if (i < config.steps.length - 1) lines.push("");
