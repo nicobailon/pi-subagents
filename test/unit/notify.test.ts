@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
+import { deliverBackgroundForkEvent } from "../../src/runs/background/fork-handler.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, type BackgroundForkHandlersConfig } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
@@ -165,7 +167,7 @@ describe("registerSubagentNotify", () => {
 	it("forks background completions by default without triggering the main feed", async () => {
 		const mockPi = createMockPi();
 		mockPi.install();
-		mockPi.onCall({ output: "completion handled in fork" });
+		mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_ENV, "PI_SUBAGENT_BACKGROUND_HANDLER"] });
 		try {
 			const parentSessionFile = "/tmp/parent-session.jsonl";
 			const { events, sent } = createPi({ enabled: true }, () => parentSessionFile);
@@ -183,7 +185,8 @@ describe("registerSubagentNotify", () => {
 			assert.equal((sent[0] as any).message.customType, "subagent-fork-handler");
 			assert.equal((sent[0] as any).message.details.status, "running");
 			assert.equal((sent[1] as any).message.details.status, "complete");
-			assert.match((sent[1] as any).message.content, /completion handled in fork/);
+			assert.match((sent[1] as any).message.content, /"PI_SUBAGENT_CHILD":"1"/);
+			assert.match((sent[1] as any).message.content, /"PI_SUBAGENT_BACKGROUND_HANDLER":"1"/);
 			const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
 			assert.ok(callFile, "mock pi was not called");
 			const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf8"));
@@ -221,5 +224,27 @@ describe("registerSubagentNotify", () => {
 		} finally {
 			mockPi.uninstall();
 		}
+	});
+
+	it("falls back without throwing when fork setup serialization fails", async () => {
+		const sent: Array<{ message: unknown; options: unknown }> = [];
+		const pi = {
+			sendMessage(message: unknown, options: unknown) {
+				sent.push({ message, options });
+			},
+		};
+		const circular: Record<string, unknown> = {};
+		circular.self = circular;
+
+		await deliverBackgroundForkEvent(pi as never, { enabled: true }, {
+			type: "async-complete",
+			title: "Background task completed: worker",
+			content: "Background task completed: **worker**\n\nDone",
+			details: circular,
+		});
+
+		assert.equal(sent.length, 1);
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
 	});
 });

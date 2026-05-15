@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { SUBAGENT_CHILD_ENV } from "../shared/pi-args.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import type { BackgroundForkHandlersConfig } from "../../shared/types.ts";
 
@@ -158,41 +159,41 @@ export async function deliverBackgroundForkEvent(
 		return;
 	}
 
-	const run: BackgroundForkRun = (() => {
-		const id = makeRunId(event);
-		const dir = path.join(HANDLERS_DIR, id);
-		return {
-			id,
-			type: event.type,
-			title: event.title,
-			cwd: event.cwd ?? process.cwd(),
-			dir,
-			eventPath: path.join(dir, "event.json"),
-			promptPath: path.join(dir, "prompt.md"),
-			stdoutPath: path.join(dir, "stdout.log"),
-			stderrPath: path.join(dir, "stderr.log"),
-			sessionDir: path.join(dir, "sessions"),
-			...(event.parentSessionFile ? { parentSessionFile: event.parentSessionFile } : {}),
-		};
-	})();
-
-	await fs.promises.mkdir(run.sessionDir, { recursive: true });
-	await fs.promises.writeFile(run.eventPath, `${JSON.stringify(event, null, 2)}\n`, "utf8");
-	await fs.promises.writeFile(run.promptPath, buildPrompt(event, run), "utf8");
-
-	const baseArgs = [
-		"-p",
-		"--session-dir",
-		run.sessionDir,
-		"--append-system-prompt",
-		buildSystemPrompt(run),
-		...(run.parentSessionFile ? ["--fork", run.parentSessionFile] : []),
-		`@${run.promptPath}`,
-	];
-	const command = resolved.piCommand ? { command: resolved.piCommand, args: baseArgs } : getPiSpawnCommand(baseArgs);
 	let stdoutFd: number | undefined;
 	let stderrFd: number | undefined;
 	try {
+		const run: BackgroundForkRun = (() => {
+			const id = makeRunId(event);
+			const dir = path.join(HANDLERS_DIR, id);
+			return {
+				id,
+				type: event.type,
+				title: event.title,
+				cwd: event.cwd ?? process.cwd(),
+				dir,
+				eventPath: path.join(dir, "event.json"),
+				promptPath: path.join(dir, "prompt.md"),
+				stdoutPath: path.join(dir, "stdout.log"),
+				stderrPath: path.join(dir, "stderr.log"),
+				sessionDir: path.join(dir, "sessions"),
+				...(event.parentSessionFile ? { parentSessionFile: event.parentSessionFile } : {}),
+			};
+		})();
+
+		await fs.promises.mkdir(run.sessionDir, { recursive: true });
+		await fs.promises.writeFile(run.eventPath, `${JSON.stringify(event, null, 2)}\n`, "utf8");
+		await fs.promises.writeFile(run.promptPath, buildPrompt(event, run), "utf8");
+
+		const baseArgs = [
+			"-p",
+			"--session-dir",
+			run.sessionDir,
+			"--append-system-prompt",
+			buildSystemPrompt(run),
+			...(run.parentSessionFile ? ["--fork", run.parentSessionFile] : []),
+			`@${run.promptPath}`,
+		];
+		const command = resolved.piCommand ? { command: resolved.piCommand, args: baseArgs } : getPiSpawnCommand(baseArgs);
 		stdoutFd = fs.openSync(run.stdoutPath, "a");
 		stderrFd = fs.openSync(run.stderrPath, "a");
 		const child = spawn(command.command, command.args, {
@@ -200,6 +201,7 @@ export async function deliverBackgroundForkEvent(
 			detached: true,
 			env: {
 				...process.env,
+				[SUBAGENT_CHILD_ENV]: "1",
 				PI_SUBAGENT_BACKGROUND_HANDLER: "1",
 				PI_SUBAGENT_BACKGROUND_HANDLER_RUN_ID: run.id,
 			},
