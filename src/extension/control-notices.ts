@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { deliverBackgroundForkEvent } from "../runs/background/fork-handler.ts";
 import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.ts";
-import type { ControlEvent, SubagentState } from "../shared/types.ts";
+import type { BackgroundForkHandlersConfig, ControlEvent, SubagentState } from "../shared/types.ts";
 
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 
@@ -39,20 +40,33 @@ function deliverControlNotice(input: {
 	pi: Pick<ExtensionAPI, "sendMessage">;
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
+	backgroundForkHandlers?: BackgroundForkHandlersConfig;
+	getParentSessionFile?: () => string | null | undefined;
 }): void {
 	const childIntercomTarget = controlNoticeTarget(input.details);
 	const key = controlNotificationKey(input.details.event, childIntercomTarget);
 	if (input.visibleControlNotices.has(key)) return;
 	input.visibleControlNotices.add(key);
 	const noticeText = input.details.noticeText ?? formatControlNoticeMessage(input.details.event, childIntercomTarget);
+	const messageDetails = { ...input.details, childIntercomTarget, noticeText };
+	if (input.details.source !== "foreground") {
+		void deliverBackgroundForkEvent(input.pi, input.backgroundForkHandlers, {
+			type: "control-notice",
+			title: `Subagent needs attention: ${input.details.event.agent}`,
+			content: noticeText,
+			parentSessionFile: input.getParentSessionFile?.() ?? undefined,
+			details: messageDetails,
+		});
+		return;
+	}
 	input.pi.sendMessage(
 		{
 			customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
 			content: noticeText,
 			display: true,
-			details: { ...input.details, childIntercomTarget, noticeText },
+			details: messageDetails,
 		},
-		{ triggerTurn: input.details.source !== "foreground" },
+		{ triggerTurn: false },
 	);
 }
 
@@ -70,6 +84,8 @@ export function handleSubagentControlNotice(input: {
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
 	foregroundDelayMs?: number;
+	backgroundForkHandlers?: BackgroundForkHandlersConfig;
+	getParentSessionFile?: () => string | null | undefined;
 }): void {
 	if (!input.details?.event || input.details.event.type === "active_long_running") return;
 	if (input.details.source !== "foreground") {

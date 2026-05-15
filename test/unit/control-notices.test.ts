@@ -5,6 +5,7 @@ import {
 	handleSubagentControlNotice,
 } from "../../src/extension/control-notices.ts";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
+import { createMockPi } from "../support/mock-pi.ts";
 
 function makeState(): SubagentState {
 	return {
@@ -55,20 +56,34 @@ function wait(ms: number): Promise<void> {
 }
 
 describe("subagent control notice delivery", () => {
-	it("delivers async needs-attention notices immediately", () => {
-		const state = makeState();
-		const recorder = makeRecorder();
+	it("forks async needs-attention notices without triggering the main feed", async () => {
+		const mockPi = createMockPi();
+		mockPi.install();
+		mockPi.onCall({ output: "control handled in fork" });
+		try {
+			const state = makeState();
+			const recorder = makeRecorder();
 
-		handleSubagentControlNotice({
-			pi: recorder.pi,
-			state,
-			visibleControlNotices: new Set(),
-			details: { source: "async", event: needsAttentionEvent() },
-			foregroundDelayMs: 20,
-		});
+			handleSubagentControlNotice({
+				pi: recorder.pi,
+				state,
+				visibleControlNotices: new Set(),
+				details: { source: "async", event: needsAttentionEvent() },
+				foregroundDelayMs: 20,
+			});
 
-		assert.equal(recorder.sent.length, 1);
-		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
+			const start = Date.now();
+			while (Date.now() - start < 2_000 && recorder.sent.length < 2) {
+				await wait(20);
+			}
+			assert.equal(recorder.sent.length, 2);
+			assert.equal(recorder.sent.some((entry) => (entry as any).options?.triggerTurn === true), false);
+			assert.equal((recorder.sent[0] as any).message.customType, "subagent-fork-handler");
+			assert.equal((recorder.sent[1] as any).message.details.status, "complete");
+			assert.match(String((recorder.sent[1] as any).message.content), /control handled in fork/);
+		} finally {
+			mockPi.uninstall();
+		}
 	});
 
 	it("queues foreground needs-attention notices until the same step is still actionable", async () => {

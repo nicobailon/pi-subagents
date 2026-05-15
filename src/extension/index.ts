@@ -488,7 +488,7 @@ DIAGNOSTICS:
 			}
 		}
 	}
-	registerSubagentNotify(pi);
+	registerSubagentNotify(pi, config.backgroundForkHandlers, () => state.lastUiContext?.sessionManager.getSessionFile() ?? undefined);
 
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
@@ -499,6 +499,8 @@ DIAGNOSTICS:
 			state,
 			visibleControlNotices,
 			details: payload as SubagentControlMessageDetails,
+			backgroundForkHandlers: config.backgroundForkHandlers,
+			getParentSessionFile: () => state.lastUiContext?.sessionManager.getSessionFile() ?? undefined,
 		});
 	};
 	const eventUnsubscribes = [

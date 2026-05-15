@@ -4,7 +4,8 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STEP_COMPLETE_EVENT } from "../../shared/types.ts";
+import { deliverBackgroundForkEvent } from "./fork-handler.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, type BackgroundForkHandlersConfig } from "../../shared/types.ts";
 
 interface ChainStepResult {
 	agent: string;
@@ -54,7 +55,7 @@ interface SubagentStepResult {
 	intercomTarget?: string;
 }
 
-export default function registerSubagentNotify(pi: ExtensionAPI): void {
+export default function registerSubagentNotify(pi: ExtensionAPI, backgroundForkHandlers?: BackgroundForkHandlersConfig, getParentSessionFile?: () => string | null | undefined): void {
 	const unsubscribeStoreKey = "__pi_subagents_notify_unsubscribe__";
 	const globalStore = globalThis as Record<string, unknown>;
 	const previousUnsubscribe = globalStore[unsubscribeStoreKey];
@@ -108,14 +109,14 @@ export default function registerSubagentNotify(pi: ExtensionAPI): void {
 			.filter((line) => line !== undefined)
 			.join("\n");
 
-		pi.sendMessage(
-			{
-				customType: "subagent-notify",
-				content,
-				display: true,
-			},
-			{ triggerTurn: true },
-		);
+		void deliverBackgroundForkEvent(pi, backgroundForkHandlers, {
+			type: "async-complete",
+			title: `Background task ${status}: ${agent}${taskInfo}`,
+			content,
+			cwd: process.cwd(),
+			parentSessionFile: getParentSessionFile?.() ?? undefined,
+			details: { agent, status, taskInfo, resultPreview: displaySummary, durationMs: result.durationMs, sessionLabel: sessionLine ? "session" : undefined, sessionValue: result.shareUrl ?? result.sessionFile },
+		});
 	};
 
 	const handleStepComplete = (data: unknown) => {
@@ -143,22 +144,21 @@ export default function registerSubagentNotify(pi: ExtensionAPI): void {
 			.filter((line) => line !== undefined)
 			.join("\n");
 
-		pi.sendMessage(
-			{
-				customType: "subagent-notify",
-				content,
-				display: true,
-				details: {
-					agent,
-					status,
-					taskInfo,
-					resultPreview: displaySummary,
-					durationMs: result.durationMs,
-					...(sessionLine ? { sessionLabel: "session file", sessionValue: result.sessionFile } : {}),
-				},
+		void deliverBackgroundForkEvent(pi, backgroundForkHandlers, {
+			type: "async-step-complete",
+			title: `Background step ${status}: ${agent}${taskInfo}`,
+			content,
+			cwd: process.cwd(),
+			parentSessionFile: getParentSessionFile?.() ?? undefined,
+			details: {
+				agent,
+				status,
+				taskInfo,
+				resultPreview: displaySummary,
+				durationMs: result.durationMs,
+				...(sessionLine ? { sessionLabel: "session file", sessionValue: result.sessionFile } : {}),
 			},
-			{ triggerTurn: true },
-		);
+		});
 	};
 
 	const unsubscribes = [

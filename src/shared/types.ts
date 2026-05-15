@@ -490,6 +490,15 @@ export interface IntercomBridgeConfig {
 	instructionFile?: string;
 }
 
+export type BackgroundForkHandlerNotify = "ack-and-summary" | "summary" | "none";
+
+export interface BackgroundForkHandlersConfig {
+	enabled?: boolean;
+	notify?: BackgroundForkHandlerNotify;
+	triggerParentOnSummary?: boolean;
+	piCommand?: string;
+}
+
 interface TopLevelParallelConfig {
 	maxTasks?: number;
 	concurrency?: number;
@@ -505,6 +514,7 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	intercomBridge?: IntercomBridgeConfig;
+	backgroundForkHandlers?: BackgroundForkHandlersConfig;
 }
 
 // ============================================================================
