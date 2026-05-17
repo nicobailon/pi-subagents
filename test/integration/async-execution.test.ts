@@ -1186,7 +1186,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.assistantMessage("still working")] },
-				{ delay: 500, jsonl: [events.assistantMessage("done")] },
+				{ delay: 2_000, jsonl: [events.assistantMessage("done")] },
 			],
 		});
 
@@ -1216,21 +1216,32 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			},
 		});
 
+		const statusPath = path.join(asyncDir, "status.json");
 		const deadline = Date.now() + 10_000;
 		let eventText = "";
+		let statusDuringEvent: AsyncStatusPayload | undefined;
 		while (Date.now() < deadline) {
 			if (fs.existsSync(eventsPath)) {
 				eventText = fs.readFileSync(eventsPath, "utf-8");
-				if (eventText.includes('"type":"active_long_running"')) break;
+			}
+			if (eventText.includes('"type":"active_long_running"') && fs.existsSync(statusPath)) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+				if (status.activityState === "active_long_running" && status.steps?.[0]?.activityState === "active_long_running") {
+					statusDuringEvent = status;
+					break;
+				}
+			}
+			if (eventText.includes('"type":"active_long_running"') && fs.existsSync(resultPath)) {
+				assert.fail("run completed before status.json exposed active_long_running");
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 
 		assert.match(eventText, /"type":"active_long_running"/);
 		assert.match(eventText, /"reason":"turn_threshold"/);
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(status.activityState, "active_long_running");
-		assert.equal(status.steps?.[0]?.activityState, "active_long_running");
+		assert.ok(statusDuringEvent, "expected status.json to expose active_long_running while the run is still active");
+		assert.equal(statusDuringEvent.activityState, "active_long_running");
+		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "active_long_running");
 
 		const doneDeadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {
@@ -1245,7 +1256,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ jsonl: [events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }), events.toolEnd("edit"), events.toolResult("edit", "No exact match found for subagent-runner.ts", true)] },
 				{ jsonl: [events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }), events.toolEnd("edit"), events.toolResult("edit", "No exact match found for subagent-runner.ts", true)] },
 				{ jsonl: [events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }), events.toolEnd("edit"), events.toolResult("edit", "No exact match found for subagent-runner.ts", true)] },
-				{ delay: 500, jsonl: [events.assistantMessage("I need another attempt.")] },
+				{ delay: 2_000, jsonl: [events.assistantMessage("I need another attempt.")] },
 			],
 		});
 
@@ -1275,12 +1286,23 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			},
 		});
 
+		const statusPath = path.join(asyncDir, "status.json");
 		const deadline = Date.now() + 10_000;
 		let eventText = "";
+		let statusDuringEvent: AsyncStatusPayload | undefined;
 		while (Date.now() < deadline) {
 			if (fs.existsSync(eventsPath)) {
 				eventText = fs.readFileSync(eventsPath, "utf-8");
-				if (eventText.includes('"reason":"tool_failures"')) break;
+			}
+			if (eventText.includes('"reason":"tool_failures"') && fs.existsSync(statusPath)) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+				if (status.activityState === "needs_attention" && status.steps?.[0]?.activityState === "needs_attention") {
+					statusDuringEvent = status;
+					break;
+				}
+			}
+			if (eventText.includes('"reason":"tool_failures"') && fs.existsSync(resultPath)) {
+				assert.fail("run completed before status.json exposed needs_attention");
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
@@ -1288,9 +1310,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(eventText, /"type":"needs_attention"/);
 		assert.match(eventText, /"reason":"tool_failures"/);
 		assert.match(eventText, /subagent-runner\.ts/);
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(status.activityState, "needs_attention");
-		assert.equal(status.steps?.[0]?.activityState, "needs_attention");
+		assert.ok(statusDuringEvent, "expected status.json to expose needs_attention while the run is still active");
+		assert.equal(statusDuringEvent.activityState, "needs_attention");
+		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
 
 		const doneDeadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {

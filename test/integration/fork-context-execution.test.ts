@@ -916,7 +916,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(openedPaths, Array(6).fill(path.join(tempDir, "parent-chain.jsonl")));
 		assert.deepEqual(branchedLeafIds, Array(6).fill("leaf-chain"));
-		const sessionArgs = readSessionArgsFromCalls();
+		const sessionArgs = readSessionArgsFromCalls()
+			.filter((sessionArg) => path.resolve(sessionArg).startsWith(`${path.resolve(tempDir)}${path.sep}`));
 		assert.equal(sessionArgs.length, 6, "1 sequential + 4 parallel + 1 sequential");
 		assert.equal(new Set(sessionArgs).size, 6);
 	});
@@ -948,17 +949,19 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		writeAgent(tempDir, "echo", "openai/gpt-5-main");
 		writeAgent(worktreeDir, "echo", "anthropic/claude-haiku-4-5");
 		const executor = makeExecutorWithDiscoverAgents(discoverAgents);
+		const task = `test ${path.basename(tempDir)}`;
 
 		const result = await executor.execute(
 			"id",
-			{ agent: "echo", task: "test", cwd: "worktree" },
+			{ agent: "echo", task, cwd: "worktree" },
 			new AbortController().signal,
 			undefined,
 			makeCtx(makeSessionManagerRecorder().manager),
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readCallArgs();
+		const args = readAllCallArgs().find((callArgs) => callArgs.at(-1) === `Task: ${task}`);
+		assert.ok(args, "expected a recorded mock pi call for this test task");
 		const modelIndex = args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);
 		assert.equal(args[modelIndex + 1], "anthropic/claude-haiku-4-5");
