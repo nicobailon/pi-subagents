@@ -840,7 +840,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	const isRunning = r.progress?.status === "running";
 	const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
 	const stats = statJoin(theme, [
-		r.usage?.turns ? `⟳${r.usage.turns}` : "",
+		r.usage?.turns ? `⟳ ${r.usage.turns}` : "",
 		formatProgressStats(theme, progress),
 	]);
 	const c = new Container();

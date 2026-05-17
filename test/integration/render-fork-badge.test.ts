@@ -153,7 +153,7 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /^✓ reviewer/);
-		assert.match(text, /⟳2/);
+		assert.match(text, /⟳ 2/);
 		assert.match(text, /3 tool uses/);
 		assert.match(text, /1\.2k token/);
 		assert.match(text, /⎿  Done/);
