@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatDuration, formatTokens, shortenPath } from "../../shared/formatters.ts";
+import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type SubagentRunMode, type TokenUsage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
@@ -25,6 +25,7 @@ interface AsyncRunStepSummary {
 	tokens?: TokenUsage;
 	skills?: string[];
 	model?: string;
+	thinking?: string;
 	attemptedModels?: string[];
 	error?: string;
 	cost: number;
@@ -162,6 +163,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 				...(step.tokens ? { tokens: step.tokens } : {}),
 				...(step.skills ? { skills: step.skills } : {}),
 				...(step.model ? { model: step.model } : {}),
+				...(step.thinking ? { thinking: step.thinking } : {}),
 				...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 				...(step.error ? { error: step.error } : {}),
 			cost: step.cost ?? 0,
@@ -239,7 +241,8 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	const parts = [`${step.index + 1}. ${step.agent}`, step.status];
 	const activity = formatActivityFacts(step);
 	if (activity) parts.push(activity);
-	if (step.model) parts.push(step.model);
+	const modelThinking = formatModelThinking(step.model, step.thinking);
+	if (modelThinking) parts.push(modelThinking);
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	return parts.join(" | ");

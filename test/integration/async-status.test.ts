@@ -53,6 +53,35 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("formats model thinking in step summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-model-thinking-"));
+		try {
+			createAsyncDir(root, "run-model", {
+				runId: "run-model",
+				mode: "parallel",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{ agent: "reviewer", status: "running", model: "openai-codex/gpt-5.5:high" },
+					{ agent: "scout", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
+					{ agent: "local", status: "running", model: "ollama/qwen2.5-coder:7b" },
+					{ agent: "fallback", status: "running", model: "anthropic/claude-sonnet-4-5:low", thinking: "high" },
+				],
+			});
+
+			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
+			assert.match(text, /1\. reviewer \| running \| gpt-5\.5 · thinking high/);
+			assert.match(text, /2\. scout \| running \| claude-haiku-4-5 · thinking low/);
+			assert.match(text, /3\. local \| running \| qwen2\.5-coder:7b(?! · thinking)/);
+			assert.match(text, /4\. fallback \| running \| claude-sonnet-4-5 · thinking low/);
+			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
+			assert.doesNotMatch(text, /gpt-5\.5:high/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("uses persisted running attention state from detached runners", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-running-state-"));
 		try {

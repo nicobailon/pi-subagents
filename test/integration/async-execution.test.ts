@@ -36,6 +36,7 @@ interface AsyncStatusPayload {
 	currentTool?: string;
 	currentPath?: string;
 	state?: string;
+	totalTokens?: { total: number };
 	steps?: Array<{
 		skills?: string[];
 		activityState?: string;
@@ -43,6 +44,9 @@ interface AsyncStatusPayload {
 		status?: string;
 		exitCode?: number;
 		error?: string;
+		model?: string;
+		thinking?: string;
+		tokens?: { total: number };
 	}>;
 }
 
@@ -448,8 +452,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "worker",
 			task: "Do work",
 			agentConfig: makeAgent("worker", {
-				model: "openai/gpt-5-mini",
-				fallbackModels: ["anthropic/claude-sonnet-4"],
+				model: "openai/gpt-5-mini:high",
+				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			availableModels: [
@@ -481,12 +485,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
-		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4:low");
+		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4:low"]);
 		assert.equal(payload.results[0].modelAttempts.length, 2);
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-		assert.ok(statusPayload.totalTokens.total > 0);
-		assert.ok(statusPayload.steps[0].tokens.total > 0);
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(statusPayload.steps[0]?.model, "anthropic/claude-sonnet-4:low");
+		assert.equal(statusPayload.steps[0]?.thinking, "low");
+		assert.ok(statusPayload.totalTokens!.total > 0);
+		assert.ok(statusPayload.steps[0]?.tokens!.total > 0);
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);
 	});

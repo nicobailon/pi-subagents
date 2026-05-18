@@ -163,6 +163,55 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
 	});
 
+	it("shows model and thinking for active async widget rows", () => {
+		const lines = buildWidgetLines([
+			{
+				asyncId: "run-1",
+				asyncDir: "/tmp/1",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer", "scout"],
+				activeParallelGroup: true,
+				runningSteps: 2,
+				completedSteps: 0,
+				stepsTotal: 2,
+				steps: [
+					{ agent: "reviewer", status: "running", model: "openai-codex/gpt-5.5:high" },
+					{ agent: "scout", status: "running", model: "anthropic/claude-haiku-4-5", thinking: "low" },
+				],
+			},
+		], theme, 180);
+
+		const text = lines.join("\n");
+		assert.match(text, /Agent 1\/2: reviewer · running \(gpt-5\.5 · thinking high\)/);
+		assert.match(text, /Agent 2\/2: scout · running \(claude-haiku-4-5 · thinking low\)/);
+		assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
+		assert.doesNotMatch(text, /gpt-5\.5:high/);
+	});
+
+	it("keeps async row status visible before long model badges on narrow widgets", () => {
+		const lines = buildWidgetLines([
+			{
+				asyncId: "run-1",
+				asyncDir: "/tmp/1",
+				status: "running",
+				mode: "parallel",
+				agents: ["reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 1,
+				completedSteps: 0,
+				stepsTotal: 1,
+				steps: [
+					{ agent: "reviewer", status: "running", model: "anthropic/claude-opus-4-5-20260501-super-long-model-name:high" },
+				],
+			},
+		], theme, 68);
+
+		const row = lines.find((line) => line.includes("Agent 1/1")) ?? "";
+		assert.match(row, /Agent 1\/1: reviewer · running/);
+		assert.doesNotMatch(row, /Agent 1\/1: reviewer \(/);
+	});
+
 	it("shows inline live detail for expanded async parallel widget rows", () => {
 		const now = Date.now();
 		const job = {

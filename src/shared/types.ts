@@ -316,6 +316,7 @@ export interface AsyncStatus {
 		tokens?: TokenUsage;
 		skills?: string[];
 		model?: string;
+		thinking?: string;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		error?: string;

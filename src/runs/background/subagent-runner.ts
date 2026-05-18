@@ -66,6 +66,7 @@ import {
 	formatWorktreeTaskCwdConflict,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
+import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 
 interface SubagentRunConfig {
@@ -545,6 +546,7 @@ interface SingleStepContext {
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
+	onAttemptStart?: (attempt: { model?: string; thinking?: string }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
 }
 
@@ -597,6 +599,7 @@ async function runSingleStep(
 
 	for (let index = 0; index < candidates.length; index++) {
 		const candidate = candidates[index];
+		ctx.onAttemptStart?.({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		const { args, env, tempDir } = buildPiArgs({
 			baseArgs: ["--mode", "json", "-p"],
@@ -914,6 +917,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			skills: step.skills,
 			model: step.model,
+			thinking: step.thinking,
 			attemptedModels: step.modelCandidates && step.modelCandidates.length > 0 ? step.modelCandidates : step.model ? [step.model] : undefined,
 			recentTools: [],
 			recentOutput: [],
@@ -1010,6 +1014,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		});
 		appendControlEvent(event);
 		return true;
+	};
+	const updateStepModel = (flatIndex: number, model: string | undefined, thinking: string | undefined, now = Date.now()): void => {
+		const step = statusPayload.steps[flatIndex];
+		if (!step) return;
+		step.model = model;
+		step.thinking = thinking;
+		statusPayload.lastUpdate = now;
+		writeAtomicJson(statusPath, statusPayload);
 	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
@@ -1339,6 +1351,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							registerInterrupt: (interrupt) => {
 								activeChildInterrupt = interrupt;
 							},
+							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 						});
 						if (task.sessionFile) {
@@ -1353,6 +1366,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].durationMs = taskDuration;
 						statusPayload.steps[fi].exitCode = singleResult.exitCode;
 						statusPayload.steps[fi].model = singleResult.model;
+						statusPayload.steps[fi].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[fi].thinking);
 						statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 						statusPayload.steps[fi].error = singleResult.error;
@@ -1484,6 +1498,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				registerInterrupt: (interrupt) => {
 					activeChildInterrupt = interrupt;
 				},
+				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 			});
 			if (seqStep.sessionFile) {
@@ -1531,6 +1546,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
 			statusPayload.steps[flatIndex].exitCode = singleResult.exitCode;
 			statusPayload.steps[flatIndex].model = singleResult.model;
+			statusPayload.steps[flatIndex].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[flatIndex].thinking);
 			statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
 			statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
 			statusPayload.steps[flatIndex].error = singleResult.error;

@@ -445,7 +445,7 @@ DIAGNOSTICS:
 			}
 			const isParallel = (args.tasks?.length ?? 0) > 0;
 			const parallelCount = effectiveParallelTaskCount(args.tasks as Array<{ count?: unknown }> | undefined);
-			const asyncLabel = args.async === true && !isParallel ? theme.fg("warning", " [async]") : "";
+			const asyncLabel = args.async === true && args.clarify !== true && !isParallel ? theme.fg("warning", " [async]") : "";
 			if (args.chain?.length)
 				return new Text(
 					`${theme.fg("toolTitle", theme.bold("subagent "))}chain (${args.chain.length})${asyncLabel}`,

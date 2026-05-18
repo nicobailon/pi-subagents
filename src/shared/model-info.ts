@@ -27,6 +27,16 @@ export function toModelInfo(model: RegistryModelLike): ModelInfo {
 	};
 }
 
+/** Resolve the effective thinking level from a model string (which may contain a known suffix like `:high`)
+ * and an explicit thinking config value. Returns `undefined` when no thinking is applicable
+ * (e.g. no model was specified, or the model has no suffix and no config was provided). */
+export function resolveEffectiveThinking(model: string | undefined, configThinking: string | undefined): string | undefined {
+	if (!model) return undefined;
+	const { thinkingSuffix } = splitKnownThinkingSuffix(model);
+	if (thinkingSuffix) return thinkingSuffix.slice(1);
+	return THINKING_LEVELS.find((level) => level === configThinking);
+}
+
 export function splitKnownThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
 	const colonIdx = model.lastIndexOf(":");
 	if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };

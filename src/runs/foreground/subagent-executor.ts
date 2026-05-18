@@ -2127,9 +2127,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return toExecutionErrorResult(effectiveParams, error);
 		}
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
-		const backgroundRequestedWhileClarifying = hasTasks && requestedAsync && effectiveParams.clarify === true;
-		const effectiveAsync = requestedAsync
-			&& (hasChain ? effectiveParams.clarify === false : effectiveParams.clarify !== true);
+		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
+		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 
 		const artifactConfig: ArtifactConfig = {

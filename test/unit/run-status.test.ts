@@ -83,8 +83,8 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "reviewer", status: "running", startedAt: 100 },
-					{ agent: "reviewer", status: "running", startedAt: 100 },
+					{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
+					{ agent: "reviewer", status: "running", startedAt: 100, model: "anthropic/claude-haiku-4-5", thinking: "low" },
 					{ agent: "reviewer", status: "pending" },
 				],
 			}, null, 2), "utf-8");
@@ -100,9 +100,10 @@ describe("async run status inspection", () => {
 			assert.match(text, /Mode: parallel/);
 			assert.match(text, /Progress: 2 agents running · 0\/3 done/);
 			assert.match(text, new RegExp(`Output: ${runOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-			assert.match(text, /Agent 1\/3: reviewer running/);
-			assert.match(text, /Agent 2\/3: reviewer running/);
+			assert.match(text, /Agent 1\/3: reviewer running \(gpt-5\.5 · thinking high\)/);
+			assert.match(text, /Agent 2\/3: reviewer running \(claude-haiku-4-5 · thinking low\)/);
 			assert.match(text, /Agent 3\/3: reviewer pending/);
+			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
 			assert.match(text, new RegExp(`  Output: ${firstStepOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.match(text, new RegExp(`  Output: ${secondStepOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.doesNotMatch(text, /Step 1: reviewer/);

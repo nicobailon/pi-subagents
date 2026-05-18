@@ -66,6 +66,48 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("does not show async badge for explicit foreground clarify chain calls", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			let registeredTool;
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { registeredTool = tool; },
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!registeredTool) throw new Error("tool not registered");
+			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+			const asyncChain = registeredTool.renderCall({ chain: [{ agent: "worker" }, { agent: "reviewer" }], async: true }, theme).text;
+			const clarifyChain = registeredTool.renderCall({ chain: [{ agent: "worker" }, { agent: "reviewer" }], async: true, clarify: true }, theme).text;
+			if (!asyncChain.includes("[async]")) throw new Error("expected async chain badge, got " + asyncChain);
+			if (clarifyChain.includes("[async]")) throw new Error("unexpected clarify async badge: " + clarifyChain);
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("returns before registering parent tools, slash commands, renderers, or event handlers", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";

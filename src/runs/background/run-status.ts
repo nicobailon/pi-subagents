@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
@@ -142,8 +143,10 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			].filter((line): line is string => Boolean(line));
 			for (const [index, step] of (status.steps ?? []).entries()) {
 				const stepActivityText = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
+				const modelThinking = formatModelThinking(step.model, step.thinking);
+				const modelText = modelThinking ? ` (${modelThinking})` : "";
 				const errorText = step.error ? `, error: ${step.error}` : "";
-				lines.push(`${stepLineLabel(status, index)}: ${step.agent} ${step.status}${stepActivityText ? `, ${stepActivityText}` : ""}${errorText}`);
+				lines.push(`${stepLineLabel(status, index)}: ${step.agent} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${errorText}`);
 				const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
 				if (stepOutputPath !== outputPath && fs.existsSync(stepOutputPath)) lines.push(`  Output: ${stepOutputPath}`);
 				if (step.status === "running") {

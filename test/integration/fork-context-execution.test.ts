@@ -20,6 +20,8 @@ interface ExecutorModule {
 			content: Array<{ text?: string }>;
 			details?: {
 				context?: "fresh" | "fork";
+				mode?: "single" | "parallel" | "chain";
+				asyncId?: string;
 				results?: Array<{ detached?: boolean; exitCode?: number; skills?: string[] }>;
 			};
 		}>;
@@ -773,6 +775,53 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.details?.mode, "parallel");
 		assert.ok(result.details?.asyncId, "expected an asyncId for background top-level parallel runs");
 		assert.match(result.content[0]?.text ?? "", /Async parallel:/);
+	});
+
+	it("runs async chain requests in the background when clarify is omitted", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"id",
+			{
+				chain: [
+					{ agent: "echo", task: "task one" },
+					{ agent: "second", task: "task two" },
+				],
+				async: true,
+			},
+			new AbortController().signal,
+			undefined,
+			makeCtx(makeSessionManagerRecorder().manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.mode, "chain");
+		assert.ok(result.details?.asyncId, "expected an asyncId for background chain runs");
+		assert.match(result.content[0]?.text ?? "", /Async chain:/);
+	});
+
+	it("keeps explicit clarify async chain requests in the foreground", async () => {
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"id",
+			{
+				chain: [
+					{ agent: "echo", task: "task one" },
+					{ agent: "second", task: "task two" },
+				],
+				async: true,
+				clarify: true,
+			},
+			new AbortController().signal,
+			undefined,
+			makeCtx(makeSessionManagerRecorder().manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.mode, "chain");
+		assert.equal(result.details?.asyncId, undefined);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Async chain:/);
 	});
 
 	it("rejects invalid background top-level parallel requests during executor preflight", async () => {

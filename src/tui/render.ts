@@ -15,7 +15,7 @@ import {
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
-import { formatTokens, formatUsage, formatDuration, formatToolCall, formatCost, shortenPath } from "../shared/formatters.ts";
+import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, formatCost, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getLastActivity, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
@@ -358,7 +358,8 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme): string[] 
 		const marker = index === job.steps!.length - 1 ? "└" : "├";
 		const activity = widgetStepActivity(step);
 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-		return `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${activity ? ` · ${activity}` : ""}`)}`;
+		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+		return `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`;
 	});
 }
 
@@ -578,6 +579,11 @@ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>
 	]);
 }
 
+function modelThinkingBadge(theme: Theme, model?: string, thinking?: string): string {
+	const label = formatModelThinking(model, thinking);
+	return label ? theme.fg("dim", ` (${label})`) : "";
+}
+
 function widgetStepActivityLine(step: NonNullable<AsyncJobState["steps"]>[number], width: number, expanded: boolean): string {
 	const toolLine = formatCurrentToolLine(step, width, expanded);
 	if (toolLine) return toolLine;
@@ -604,7 +610,8 @@ function foregroundStyleWidgetStepLines(
 ): string[] {
 	const status = widgetStepStatus(step.status, theme);
 	const stats = widgetStepStats(theme, step);
-	const lines = [`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+	const lines = [`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const activity = widgetStepActivityLine(step, width, expanded);
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
 	if (step.status === "running") {
@@ -663,7 +670,8 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const activity = widgetStepActivityLine(step, width, false);
 		const stepStats = widgetStepStats(theme, step);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
-		lines.push(`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+		lines.push(`  ${widgetStepGlyph(step.status, theme)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 	}
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", "  Press Ctrl+O for live detail"));
 	return lines.map((line) => truncLine(line, width));
@@ -839,7 +847,8 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	]);
 	const c = new Container();
 	const width = getTermWidth() - 4;
-	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning)} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
+	const modelDisplay = modelThinkingBadge(theme, r.model);
+	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning)} ${theme.fg("toolTitle", theme.bold(r.agent))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	if (isRunning && r.progress) {
 		const activity = compactCurrentActivity(r.progress);
@@ -1172,7 +1181,7 @@ export function renderSubagentResult(
 					? theme.fg("warning", "warning")
 					: theme.fg("success", "done");
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
-		const modelDisplay = r.model ? theme.fg("dim", ` (${r.model})`) : "";
+		const modelDisplay = modelThinkingBadge(theme, r.model);
 		const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
 		const stepHeader = rRunning
 			? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${modelDisplay}${stats}`

@@ -71,6 +71,10 @@ Have worker implement this approved plan. Afterward, run parallel reviewers, sum
 ```
 
 ```text
+Run a review loop on this change until reviewers stop finding fixes worth doing, with a max of 3 rounds.
+```
+
+```text
 Use scout to understand the auth flow, then have planner turn that into an implementation plan.
 ```
 
@@ -85,6 +89,7 @@ Those are ordinary Pi requests. Pi decides whether to call `subagent`, which age
 | Review a diff | “Use reviewer to review this diff.” |
 | Run parallel reviewers | “Run reviewers for correctness, tests, and cleanup.” |
 | Implement then review | “Implement this, then review it.” |
+| Review until clean | “Run a review loop on this change with a max of 3 rounds.” |
 | Execute a plan carefully | “Have worker implement this approved plan, then run reviewers and apply the feedback.” |
 | Scout before planning | “Use scout to inspect the auth flow before planning.” |
 | Run in the background | “Run this in the background.” |
@@ -185,6 +190,7 @@ The package includes reusable prompt templates for common workflows. You do not 
 | Prompt | Use it for |
 |--------|------------|
 | `/parallel-review` | Launch fresh-context reviewers with distinct angles, then synthesize what to fix. |
+| `/review-loop` | Run parent-controlled worker, reviewer, and fix-worker cycles until clean or capped. |
 | `/parallel-research` | Combine `researcher` and `scout` for external evidence, local code context, and practical tradeoffs. |
 | `/parallel-context-build` | Run `context-builder` agents in parallel to produce planning handoff context and meta-prompts. |
 | `/parallel-handoff-plan` | Combine external research and `context-builder` passes into an implementation handoff plan and meta-prompt. |
@@ -583,7 +589,7 @@ The package bundles a `pi-subagents` skill that is automatically available to th
 
 What the bundled skill covers:
 - **Delegation patterns**: when to launch which agent, whether to use single, parallel, chain, or async mode, and whether to use fresh or forked context
-- **Prompt workflow recipes**: how to apply the packaged techniques directly with `subagent(...)` when the user describes the workflow in natural language instead of invoking a slash command. This includes parallel review, parallel research, parallel context-build, parallel handoff-plan, gather-context-and-clarify, and parallel cleanup
+- **Prompt workflow recipes**: how to apply the packaged techniques directly with `subagent(...)` when the user describes the workflow in natural language instead of invoking a slash command. This includes parallel review, review-loop, parallel research, parallel context-build, parallel handoff-plan, gather-context-and-clarify, and parallel cleanup
 - **Role-agent prompting guidance**: compact contract prompts instead of long scripts, what to include in role-specific meta prompts, and retrieval budgets for researchers
 - **Safety boundaries**: child agents must not run subagents, must not invent intercom targets, and must escalate unapproved decisions
 - **Intercom conventions**: when to ask vs send, and how parent-side result delivery works with `pi-intercom`
@@ -620,8 +626,8 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
   { agent: "reviewer" }
 ]}
 
-// Chain without TUI, suitable for background execution
-{ chain: [...], clarify: false, async: true }
+// Chain in the background, suitable for unblocking the main chat
+{ chain: [...], async: true }
 
 // Chain with fan-out/fan-in
 { chain: [
@@ -710,7 +716,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. |
 | `clarify` | boolean | true for chains | Show TUI preview/edit flow. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
-| `async` | boolean | false | Background execution. Chains require `clarify: false`. |
+| `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
 | `cwd` | string | runtime cwd | Override working directory. |
 | `maxOutput` | object | 200KB, 5000 lines | Final output truncation limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
