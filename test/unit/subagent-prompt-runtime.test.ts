@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import registerSubagentPromptRuntime, {
+	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
 	rewriteSubagentPrompt,
@@ -14,6 +15,7 @@ const envSnapshot = {
 	PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
 	PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
+	PI_SUBAGENT_FANOUT_CHILD: process.env.PI_SUBAGENT_FANOUT_CHILD,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -40,6 +42,8 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_INHERIT_SKILLS = envSnapshot.PI_SUBAGENT_INHERIT_SKILLS;
 	if (envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME;
 	else process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
+	if (envSnapshot.PI_SUBAGENT_FANOUT_CHILD === undefined) delete process.env.PI_SUBAGENT_FANOUT_CHILD;
+	else process.env.PI_SUBAGENT_FANOUT_CHILD = envSnapshot.PI_SUBAGENT_FANOUT_CHILD;
 });
 
 describe("subagent prompt runtime", () => {
@@ -228,5 +232,62 @@ describe("subagent prompt runtime", () => {
 		];
 
 		assert.equal(contextHandler?.({ messages }), undefined);
+	});
+
+	it("injects the softer fanout boundary when PI_SUBAGENT_FANOUT_CHILD=1 and does not forbid dispatch", () => {
+		process.env.PI_SUBAGENT_FANOUT_CHILD = "1";
+		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
+			inheritProjectContext: true,
+			inheritSkills: true,
+		});
+		assert.ok(rewritten.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(!rewritten.includes("Do not propose or run subagents."));
+		assert.ok(rewritten.includes("explicit fanout responsibility"));
+		assert.ok(rewritten.includes("You may dispatch the subagents listed in your `tools`"));
+	});
+
+	it("keeps the strict boundary for non-fanout children", () => {
+		delete process.env.PI_SUBAGENT_FANOUT_CHILD;
+		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
+			inheritProjectContext: true,
+			inheritSkills: true,
+		});
+		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(rewritten.includes("Do not propose or run subagents."));
+	});
+
+	it("replaces an inherited strict boundary with the fanout boundary for fanout children", () => {
+		process.env.PI_SUBAGENT_FANOUT_CHILD = "1";
+		const polluted = `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
+		const rewritten = rewriteSubagentPrompt(polluted, {
+			inheritProjectContext: true,
+			inheritSkills: true,
+		});
+		assert.ok(rewritten.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(!rewritten.includes("Do not propose or run subagents."));
+	});
+
+	it("preserves subagent tool calls and tool results in fanout child history", () => {
+		process.env.PI_SUBAGENT_FANOUT_CHILD = "1";
+		const messages = [
+			{ role: "user", content: "Task" },
+			{ role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { action: "list" } }] },
+			{ role: "toolResult", toolName: "subagent", content: "Executable agents: ..." },
+			{ role: "assistant", content: [{ type: "toolCall", name: "read", input: { path: "README.md" } }] },
+		];
+		const filtered = stripParentOnlySubagentMessages(messages);
+		assert.equal(filtered, messages, "messages should pass through unchanged for fanout children");
+	});
+
+	it("still strips parent-only custom messages from fanout child history", () => {
+		process.env.PI_SUBAGENT_FANOUT_CHILD = "1";
+		const messages = [
+			{ role: "user", content: "Task" },
+			{ role: "custom", customType: "subagent-notify", content: "parent-only artifact" },
+			{ role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { action: "list" } }] },
+		];
+		const filtered = stripParentOnlySubagentMessages(messages);
+		assert.equal(filtered.length, 2);
+		assert.ok(!filtered.some((m) => (m as { customType?: string }).customType === "subagent-notify"));
 	});
 });

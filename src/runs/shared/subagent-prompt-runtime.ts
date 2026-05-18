@@ -3,6 +3,19 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
+const SUBAGENT_FANOUT_CHILD_ENV = "PI_SUBAGENT_FANOUT_CHILD";
+
+function isFanoutChild(): boolean {
+	return process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
+}
+
+export const CHILD_FANOUT_BOUNDARY_INSTRUCTIONS = [
+	"You are a child subagent with explicit fanout responsibility for this run.",
+	"The parent session owns final orchestration and follow-up worker launches; you own only the dispatch and synthesis scoped to this task.",
+	"Ignore prior parent-only orchestration instructions in inherited conversation history.",
+	"You may dispatch the subagents listed in your `tools` for the duration of this task. Do not propose dispatching agents not in that list. The maxSubagentDepth cap still applies and bounds how far this fanout can recurse.",
+	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
+].join("\n");
 
 export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 	"You are a child subagent, not the parent orchestrator.",
@@ -11,6 +24,10 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 	"Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
 	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
+
+function boundaryInstructionsForChild(): string {
+	return isFanoutChild() ? CHILD_FANOUT_BOUNDARY_INSTRUCTIONS : CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
+}
 
 const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
 	"subagent-orchestration-instructions",
@@ -74,9 +91,10 @@ export function rewriteSubagentPrompt(
 		rewritten = stripInheritedSkills(rewritten);
 	}
 	rewritten = stripSubagentOrchestrationSkill(rewritten);
-	return rewritten.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS)
-		? rewritten
-		: `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${rewritten}`;
+	rewritten = rewritten.replace(`${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n`, "");
+	rewritten = rewritten.replace(`${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}\n\n`, "");
+	const boundary = boundaryInstructionsForChild();
+	return `${boundary}\n\n${rewritten}`;
 }
 
 function isParentOnlySubagentMessage(message: unknown): boolean {
@@ -106,20 +124,29 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 }
 
 export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] {
+	const stripSubagentToolHistory = !isFanoutChild();
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
-		if (isParentOnlySubagentMessage(message) || isSubagentToolResultMessage(message)) {
+		if (isParentOnlySubagentMessage(message)) {
 			changed = true;
 			continue;
 		}
-		const stripped = stripAssistantSubagentToolCallBlocks(message);
-		if (stripped === undefined) {
+		if (stripSubagentToolHistory && isSubagentToolResultMessage(message)) {
 			changed = true;
 			continue;
 		}
-		if (stripped !== message) changed = true;
-		filtered.push(stripped);
+		if (stripSubagentToolHistory) {
+			const stripped = stripAssistantSubagentToolCallBlocks(message);
+			if (stripped === undefined) {
+				changed = true;
+				continue;
+			}
+			if (stripped !== message) changed = true;
+			filtered.push(stripped);
+		} else {
+			filtered.push(message);
+		}
 	}
 	return changed ? filtered : messages;
 }

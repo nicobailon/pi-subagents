@@ -206,4 +206,39 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.ok(args.includes("--system-prompt"));
 	});
+
+	it("sets PI_SUBAGENT_FANOUT_CHILD when the child agent's tools include subagent", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			tools: ["read", "grep", "find", "ls", "bash", "subagent"],
+		});
+		assert.equal(env.PI_SUBAGENT_FANOUT_CHILD, "1");
+	});
+
+	it("does not set PI_SUBAGENT_FANOUT_CHILD when subagent is not in the tools list", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			tools: ["read", "grep", "bash"],
+		});
+		assert.equal(env.PI_SUBAGENT_FANOUT_CHILD, undefined);
+	});
+
+	it("does not set PI_SUBAGENT_FANOUT_CHILD when no tools list is provided", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: true,
+			inheritSkills: true,
+		});
+		assert.equal(env.PI_SUBAGENT_FANOUT_CHILD, undefined);
+	});
 });

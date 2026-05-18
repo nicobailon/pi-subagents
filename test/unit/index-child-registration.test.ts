@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -125,6 +125,48 @@ describe("subagent extension child mode", () => {
 			registerSubagentExtension(fakePi);
 			if (calls.length > 0) {
 				throw new Error("Unexpected child-mode registrations: " + calls.join(", "));
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, stdio: "pipe" },
+		);
+	});
+
+	it("registers the subagent tool in a fanout child (PI_SUBAGENT_FANOUT_CHILD=1)", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			process.env[SUBAGENT_CHILD_ENV] = "1";
+			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+			let registered = false;
+			const events = { on() { return () => {}; }, emit() {} };
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { if (tool && tool.name === "subagent") registered = true; },
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!registered) {
+				throw new Error("expected subagent tool to be registered in fanout child mode");
 			}
 		`;
 
