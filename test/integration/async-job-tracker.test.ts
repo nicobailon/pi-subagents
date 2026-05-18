@@ -441,6 +441,65 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("emits async step completion records from events.jsonl", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		try {
+			const runDir = path.join(asyncRoot, "run-step-complete");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-step-complete",
+				mode: "chain",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				chainStepCount: 2,
+				steps: [
+					{ agent: "reviewer", status: "complete" },
+					{ agent: "worker", status: "running" },
+				],
+			}), "utf-8");
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.step.completed",
+				runId: "run-step-complete",
+				stepIndex: 0,
+				totalTasks: 2,
+				agent: "reviewer",
+				exitCode: 0,
+				durationMs: 1234,
+				summary: "review complete",
+				sessionFile: "/tmp/reviewer-session.jsonl",
+			})}\n`, "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-step-complete", asyncDir: runDir, mode: "chain", agents: ["reviewer", "worker"], chainStepCount: 2 });
+
+			await new Promise((resolve) => setTimeout(resolve, 30));
+
+			assert.deepEqual(recorder.events.find((event) => event.channel === "subagent:async-step-complete"), {
+				channel: "subagent:async-step-complete",
+				data: {
+					id: "run-step-complete",
+					runId: "run-step-complete",
+					agent: "reviewer",
+					index: 0,
+					totalTasks: 2,
+					success: true,
+					exitCode: 0,
+					durationMs: 1234,
+					summary: "review complete",
+					sessionFile: "/tmp/reviewer-session.jsonl",
+					intercomTarget: undefined,
+				},
+			});
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("honors async control notification channels", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {

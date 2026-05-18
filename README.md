@@ -844,6 +844,27 @@ Bridge activation also requires `pi-intercom` to be installed and enabled throug
 
 The default injected guidance tells children to use `contact_supervisor` with `reason: "need_decision"` when blocked or needing a decision, `reason: "progress_update"` only for meaningful blocked/progress updates, generic `intercom` as fallback plumbing, and avoid routine completion handoffs.
 
+### `backgroundForkHandlers`
+
+```json
+{
+  "backgroundForkHandlers": {
+    "enabled": true,
+    "notify": "ack-and-summary",
+    "triggerParentOnSummary": false
+  }
+}
+```
+
+Async subagent completions and async control notices default to a sibling Pi handler instead of triggering the active parent feed. Successful and failed per-step completion records are coalesced into the aggregate async completion handler to avoid duplicate step + final summaries; actionable in-progress problems should use control notices. The parent receives passive handler ack/summary messages only; set `triggerParentOnSummary: true` only when summaries should start a parent turn. Set `enabled: false` to opt out of sibling handling; fallback delivery is still display-only and does not trigger a parent turn.
+
+Fields:
+
+- `enabled`: default `true`; route interrupting background notifications through a sibling handler.
+- `notify`: default `ack-and-summary`; accepts `ack-and-summary`, `summary`, or `none`.
+- `triggerParentOnSummary`: default `false`; keep summaries display-only unless explicitly enabled.
+- `piCommand`: optional Pi executable override for tests or custom installs.
+
 ### `worktreeSetupHook`
 
 ```json

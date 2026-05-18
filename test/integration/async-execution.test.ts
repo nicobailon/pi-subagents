@@ -997,6 +997,52 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(chainResult.content[0]?.text ?? "", /cwd does not exist/);
 	});
 
+	it("background parallel worktree setup failures emit step failure events", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const repoDir = createRepo("pi-subagent-async-worktree-fail-");
+		const id = `async-worktree-setup-fail-${Date.now().toString(36)}`;
+		try {
+			fs.writeFileSync(path.join(repoDir, "dirty.txt"), "dirty\n", "utf-8");
+			const result = executeAsyncChain(id, {
+				chain: [
+					{
+						parallel: [
+							{ agent: "worker", task: "Do work" },
+							{ agent: "scout", task: "Scout work" },
+						],
+						worktree: true,
+					},
+				],
+				agents: [makeAgent("worker"), makeAgent("scout")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				cwd: repoDir,
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+
+			assert.equal(result.isError, undefined);
+			await waitForAsyncResultFile(id);
+			const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
+			const records = eventsText.trim().split("\n").map((line) => JSON.parse(line));
+			const stepFailures = records.filter((record) => record.type === "subagent.step.failed");
+			assert.equal(stepFailures.length, 2);
+			assert.deepEqual(stepFailures.map((record) => record.agent), ["worker", "scout"]);
+			assert.deepEqual(stepFailures.map((record) => record.stepIndex), [0, 1]);
+			assert.deepEqual(stepFailures.map((record) => record.totalTasks), [2, 2]);
+			assert.ok(stepFailures.every((record) => /clean git working tree|dirty|uncommitted/i.test(record.summary)));
+		} finally {
+			removeTempDir(repoDir);
+		}
+	});
+
 	it("returns a tool error when the async runner process cannot spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const originalExecPath = process.execPath;
 		process.execPath = path.join(tempDir, "missing-node");
@@ -1302,8 +1348,21 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("background runs stream child events and live output while active", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
-				{ delay: 200, jsonl: [events.toolStart("bash", { command: "ls" })] },
-				{ delay: 600, jsonl: [events.toolEnd("bash"), events.toolResult("bash", "file-a\nfile-b")] },
+				{
+					delay: 200,
+					jsonl: [
+						events.toolStart("bash", { command: "ls" }),
+						{ type: "message_update", message: { content: [{ type: "text", text: "verbose partial" }] } },
+					],
+				},
+				{
+					delay: 600,
+					jsonl: [
+						{ type: "tool_execution_update", toolName: "bash", args: { command: "ls" } },
+						events.toolEnd("bash"),
+						events.toolResult("bash", "file-a\nfile-b"),
+					],
+				},
 				{ delay: 600, jsonl: [events.assistantMessage("Done streaming")], stderr: "warning: mock stderr\n" },
 			],
 		});
@@ -1365,6 +1424,18 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].output, "Done streaming");
+
+		const eventsLog = fs.readFileSync(eventsPath, "utf-8");
+		assert.equal(
+			eventsLog.includes('"type":"message_update"'),
+			false,
+			"verbose message updates should not be persisted to async events.jsonl",
+		);
+		assert.equal(
+			eventsLog.includes('"type":"tool_execution_update"'),
+			false,
+			"verbose tool updates should not be persisted to async events.jsonl",
+		);
 
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 		assert.deepEqual(status.steps[0].recentTools.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "bash", args: "ls" }]);

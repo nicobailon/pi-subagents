@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
+import { deliverBackgroundForkEvent } from "../../src/runs/background/fork-handler.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, type BackgroundForkHandlersConfig } from "../../src/shared/types.ts";
+import { createMockPi } from "../support/mock-pi.ts";
 
-function createPi() {
+function createPi(backgroundForkHandlers: BackgroundForkHandlersConfig = { enabled: false }, getParentSessionFile?: () => string | null | undefined) {
 	const events = new EventEmitter();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
 	const pi = {
@@ -14,9 +19,18 @@ function createPi() {
 		},
 	};
 
-	registerSubagentNotify(pi as never);
+	registerSubagentNotify(pi as never, backgroundForkHandlers, getParentSessionFile);
 
 	return { events, sent };
+}
+
+async function waitForSent(sent: unknown[], count: number, timeoutMs = 2_000): Promise<void> {
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		if (sent.length >= count) return;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	throw new Error(`timed out waiting for ${count} sent messages; saw ${sent.length}`);
 }
 
 describe("registerSubagentNotify", () => {
@@ -33,14 +47,9 @@ describe("registerSubagentNotify", () => {
 		});
 
 		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0], {
-			message: {
-				customType: "subagent-notify",
-				content: "Background task completed: **worker**\n\n(no output)",
-				display: true,
-			},
-			options: { triggerTurn: true },
-		});
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.equal((sent[0] as any).message.content, "Background task completed: **worker**\n\n(no output)");
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
 	});
 
 	it("preserves non-empty completion summaries", () => {
@@ -59,14 +68,9 @@ describe("registerSubagentNotify", () => {
 		});
 
 		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0], {
-			message: {
-				customType: "subagent-notify",
-				content: `Background task completed: **worker** (2/3)\n\n${summary}`,
-				display: true,
-			},
-			options: { triggerTurn: true },
-		});
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.equal((sent[0] as any).message.content, `Background task completed: **worker** (2/3)\n\n${summary}`);
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
 	});
 
 	it("preserves session paths in notification content", () => {
@@ -82,14 +86,10 @@ describe("registerSubagentNotify", () => {
 			sessionFile: "/tmp/session.jsonl",
 		});
 
-		assert.deepEqual(sent, [{
-			message: {
-				customType: "subagent-notify",
-				content: "Background task completed: **worker**\n\nDone\n\nSession file: /tmp/session.jsonl",
-				display: true,
-			},
-			options: { triggerTurn: true },
-		}]);
+		assert.equal(sent.length, 1);
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.equal((sent[0] as any).message.content, "Background task completed: **worker**\n\nDone\n\nSession file: /tmp/session.jsonl");
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
 	});
 
 	it("labels paused completions as paused even without an exit code", () => {
@@ -105,13 +105,152 @@ describe("registerSubagentNotify", () => {
 		});
 
 		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0], {
-			message: {
-				customType: "subagent-notify",
-				content: "Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action.",
-				display: true,
-			},
-			options: { triggerTurn: true },
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.equal((sent[0] as any).message.content, "Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action.");
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
+	});
+
+	it("suppresses failed per-step notifications because final completion covers them", () => {
+		const { events, sent } = createPi({ enabled: false });
+
+		events.emit(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, {
+			id: "async-run-1",
+			runId: "async-run-1",
+			agent: "reviewer",
+			index: 1,
+			totalTasks: 4,
+			success: false,
+			exitCode: 1,
+			summary: "Review failed with blockers.",
+			durationMs: 1200,
+			sessionFile: "/tmp/reviewer.jsonl",
 		});
+
+		assert.equal(sent.length, 0);
+	});
+
+	it("suppresses single-step notifications because final completion covers them", () => {
+		const { events, sent } = createPi({ enabled: false });
+
+		events.emit(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, {
+			id: "async-run-single",
+			runId: "async-run-single",
+			agent: "worker",
+			index: 0,
+			totalTasks: 1,
+			success: true,
+			exitCode: 0,
+			summary: "Single worker done.",
+		});
+
+		assert.equal(sent.length, 0);
+	});
+
+	it("uses non-triggering fallback when a fork handler launch fails", async () => {
+		const { events, sent } = createPi({ enabled: true, piCommand: "/definitely/missing/pi-subagents-handler" });
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "notify-fork-fail-1",
+			agent: "worker",
+			success: true,
+			summary: "Done after failed fork",
+			exitCode: 0,
+			timestamp: 456,
+		});
+
+		await waitForSent(sent, 1);
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.equal((sent[0] as any).message.content, "Background task completed: **worker**\n\nDone after failed fork");
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
+	});
+
+	it("forks background completions by default without triggering the main feed", async () => {
+		const mockPi = createMockPi();
+		mockPi.install();
+		mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_ENV, "PI_SUBAGENT_BACKGROUND_HANDLER"] });
+		try {
+			const parentSessionFile = "/tmp/parent-session.jsonl";
+			const { events, sent } = createPi({ enabled: true }, () => parentSessionFile);
+			events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+				id: "notify-fork-1",
+				agent: "worker",
+				success: true,
+				summary: "Done",
+				exitCode: 0,
+				timestamp: 456,
+			});
+
+			await waitForSent(sent, 2);
+			assert.equal(sent.some((entry) => (entry as any).options?.triggerTurn === true), false);
+			assert.equal((sent[0] as any).message.customType, "subagent-fork-handler");
+			assert.equal((sent[0] as any).message.details.status, "running");
+			assert.equal((sent[1] as any).message.details.status, "complete");
+			assert.match((sent[1] as any).message.content, /"PI_SUBAGENT_CHILD":"1"/);
+			assert.match((sent[1] as any).message.content, /"PI_SUBAGENT_BACKGROUND_HANDLER":"1"/);
+			const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
+			assert.ok(callFile, "mock pi was not called");
+			const call = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf8"));
+			const forkIndex = call.args.indexOf("--fork");
+			assert.notEqual(forkIndex, -1);
+			assert.equal(call.args[forkIndex + 1], parentSessionFile);
+		} finally {
+			mockPi.uninstall();
+		}
+	});
+
+	it("suppresses successful per-step completions because final completion covers them", () => {
+		const { events, sent } = createPi({ enabled: true });
+		events.emit(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, {
+			id: "async-run-2",
+			runId: "async-run-2",
+			agent: "reviewer",
+			index: 0,
+			totalTasks: 2,
+			success: true,
+			exitCode: 0,
+			summary: "Reviewed.",
+			durationMs: 1200,
+		});
+
+		assert.equal(sent.length, 0);
+	});
+
+	it("suppresses failed per-step completions because final completion covers them", () => {
+		const { events, sent } = createPi({ enabled: true });
+		events.emit(SUBAGENT_ASYNC_STEP_COMPLETE_EVENT, {
+			id: "async-run-2-failed",
+			runId: "async-run-2-failed",
+			agent: "reviewer",
+			index: 0,
+			totalTasks: 2,
+			success: false,
+			exitCode: 1,
+			summary: "Review failed.",
+			durationMs: 1200,
+		});
+
+		assert.equal(sent.length, 0);
+	});
+
+	it("falls back without throwing when fork setup serialization fails", async () => {
+		const sent: Array<{ message: unknown; options: unknown }> = [];
+		const pi = {
+			sendMessage(message: unknown, options: unknown) {
+				sent.push({ message, options });
+			},
+		};
+		const circular: Record<string, unknown> = {};
+		circular.self = circular;
+
+		await deliverBackgroundForkEvent(pi as never, { enabled: true }, {
+			type: "async-complete",
+			title: "Background task completed: worker",
+			content: "Background task completed: **worker**\n\nDone",
+			details: circular,
+		});
+
+		assert.equal(sent.length, 1);
+		assert.equal((sent[0] as any).message.customType, "subagent-notify");
+		assert.deepEqual((sent[0] as any).options, { triggerTurn: false });
 	});
 });

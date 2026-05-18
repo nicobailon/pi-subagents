@@ -38,7 +38,8 @@
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
     "test:integration": "node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test:all": "npm run test:unit && npm run test:integration",
+    "logs:scan": "node scripts/scan-subagent-logs.mjs"
   },
   "pi": {
     "extensions": [
@@ -55,9 +56,13 @@
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "pi-forks": "^0.1.0"
   },
   "peerDependenciesMeta": {
+    "pi-forks": {
+      "optional": true
+    },
     "@earendil-works/pi-agent-core": {
       "optional": true
     },

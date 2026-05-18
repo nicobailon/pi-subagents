@@ -69,6 +69,19 @@ import {
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 
+const CHILD_EVENT_TYPES_OMITTED_FROM_ASYNC_LOG = new Set(["message_update", "tool_execution_update"]);
+
+function shouldPersistChildEvent(event: Record<string, unknown>): boolean {
+	return typeof event.type !== "string" || !CHILD_EVENT_TYPES_OMITTED_FROM_ASYNC_LOG.has(event.type);
+}
+
+function summarizeStepOutputForEvent(output: string | undefined, error?: string): string {
+	const text = error ? `${error}${output?.trim() ? `\n\nOutput:\n${output}` : ""}` : (output ?? "");
+	const trimmed = text.trim();
+	if (trimmed.length <= 4000) return trimmed;
+	return `${trimmed.slice(0, 4000)}\n\n… truncated per-step notification; use subagent status or the final run result for full output.`;
+}
+
 interface SubagentRunConfig {
 	id: string;
 	steps: RunnerStep[];
@@ -246,7 +259,7 @@ function runPiStreaming(
 		};
 
 		const appendChildEvent = (event: Record<string, unknown>) => {
-			if (!childEventContext) return;
+			if (!childEventContext || !shouldPersistChildEvent(event)) return;
 			appendJsonl(childEventContext.eventsPath, JSON.stringify({
 				...event,
 				subagentSource: "child",
@@ -776,7 +789,20 @@ function markParallelGroupSetupFailure(input: {
 		input.statusPayload.steps[flatTaskIndex].endedAt = input.failedAt;
 		input.statusPayload.steps[flatTaskIndex].durationMs = 0;
 		input.statusPayload.steps[flatTaskIndex].exitCode = 1;
-		input.results.push({ agent: input.group.parallel[taskIndex].agent, output: input.setupError, success: false, sessionFile: input.group.parallel[taskIndex].sessionFile });
+		const task = input.group.parallel[taskIndex];
+		input.results.push({ agent: task.agent, output: input.setupError, success: false, sessionFile: task.sessionFile });
+		appendJsonl(input.eventsPath, JSON.stringify({
+			type: "subagent.step.failed",
+			ts: input.failedAt,
+			runId: input.runId,
+			stepIndex: flatTaskIndex,
+			agent: task.agent,
+			exitCode: 1,
+			durationMs: 0,
+			totalTasks: input.statusPayload.steps.length,
+			summary: input.setupError,
+			sessionFile: task.sessionFile,
+		}));
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
@@ -1370,6 +1396,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							type: singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
 							ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
 							exitCode: singleResult.exitCode, durationMs: taskDuration,
+							totalTasks: flatSteps.length,
+							summary: summarizeStepOutputForEvent(singleResult.output, singleResult.error),
+							sessionFile: singleResult.sessionFile,
+							intercomTarget: singleResult.intercomTarget,
 						}));
 						if (singleResult.completionGuardTriggered) {
 							const event = buildControlEvent({
@@ -1556,7 +1586,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				agent: seqStep.agent,
 				exitCode: singleResult.exitCode,
 				durationMs: stepEndTime - stepStartTime,
+				totalTasks: flatSteps.length,
 				tokens: stepTokens,
+				summary: summarizeStepOutputForEvent(singleResult.output, singleResult.error),
+				sessionFile: singleResult.sessionFile,
+				intercomTarget: singleResult.intercomTarget,
 			}));
 			if (singleResult.completionGuardTriggered) {
 				const event = buildControlEvent({

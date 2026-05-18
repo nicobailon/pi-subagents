@@ -283,7 +283,7 @@ async function runSlashSubagent(
 		content: initialText,
 		display: true,
 		details: initialDetails,
-	});
+	}, { triggerTurn: false });
 	persistSlashSessionSnapshot(ctx);
 
 	try {
@@ -294,7 +294,7 @@ async function runSlashSubagent(
 			content: buildSlashExportText(response),
 			display: true,
 			details: finalDetails,
-		});
+		}, { triggerTurn: false });
 		persistSlashSessionSnapshot(ctx);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
@@ -310,7 +310,7 @@ async function runSlashSubagent(
 			content: `## Subagent result\n\n${message}`,
 			display: true,
 			details: failedDetails,
-		});
+		}, { triggerTurn: false });
 		persistSlashSessionSnapshot(ctx);
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
