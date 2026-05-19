@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OutputMode } from "../shared/types.ts";
+import { getAgentDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
@@ -131,7 +132,7 @@ interface AgentDiscoveryResult {
 }
 
 function getUserChainDir(): string {
-	return path.join(os.homedir(), ".pi", "agent", "chains");
+	return path.join(getAgentDir(), "chains");
 }
 
 function splitToolList(rawTools: string[] | undefined): { tools?: string[]; mcpDirectTools?: string[] } {
@@ -217,7 +218,7 @@ function findNearestProjectRoot(cwd: string): string | null {
 }
 
 function getUserAgentSettingsPath(): string {
-	return path.join(os.homedir(), ".pi", "agent", "settings.json");
+	return path.join(getAgentDir(), "settings.json");
 }
 
 function getProjectAgentSettingsPath(cwd: string): string | null {
@@ -723,7 +724,7 @@ function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; pref
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");
 
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
 	const userSettingsPath = getUserAgentSettingsPath();
@@ -762,7 +763,7 @@ export function discoverAgentsAll(cwd: string): {
 	userSettingsPath: string;
 	projectSettingsPath: string | null;
 } {
-	const userDirOld = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const userChainDir = getUserChainDir();
 	const { readDirs: projectDirs, preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);

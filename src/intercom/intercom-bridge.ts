@@ -4,12 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agents.ts";
 import type { ExtensionConfig, IntercomBridgeConfig, IntercomBridgeMode } from "../shared/types.ts";
+import { getAgentDir } from "../shared/utils.ts";
 
 const PI_INTERCOM_PACKAGE_NAME = "pi-intercom";
 const CONFIG_DIR = ".pi";
 
 function defaultAgentDir(): string {
-	return path.join(os.homedir(), ".pi", "agent");
+	return getAgentDir();
 }
 
 function defaultIntercomExtensionDir(agentDir = defaultAgentDir()): string {

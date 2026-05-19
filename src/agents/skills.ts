@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { getAgentDir } from "../shared/utils.ts";
 
 export type SkillSource =
 	| "project"
@@ -50,7 +51,7 @@ let loadSkillsCache: { cwd: string; skills: CachedSkillEntry[]; timestamp: numbe
 const LOAD_SKILLS_CACHE_TTL_MS = 5000;
 
 const CONFIG_DIR = ".pi";
-const AGENT_DIR = path.join(os.homedir(), ".pi", "agent");
+const AGENT_DIR = getAgentDir();
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
 
 const SOURCE_PRIORITY: Record<SkillSource, number> = {

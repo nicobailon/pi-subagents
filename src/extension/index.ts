@@ -21,6 +21,7 @@ import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWi
 import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
+import { getAgentDir } from "../shared/utils.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { renderWidget, renderSubagentResult, stopResultAnimations, stopWidgetAnimation, syncResultAnimation } from "../tui/render.ts";
 import { SubagentParams } from "./schemas.ts";
@@ -73,7 +74,7 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 }
 
 function loadConfig(): ExtensionConfig {
-	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "subagent", "config.json");
+	const configPath = path.join(getAgentDir(), "extensions", "subagent", "config.json");
 	try {
 		if (fs.existsSync(configPath)) {
 			return JSON.parse(fs.readFileSync(configPath, "utf-8")) as ExtensionConfig;

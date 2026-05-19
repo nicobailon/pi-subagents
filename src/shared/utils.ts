@@ -10,6 +10,17 @@ import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
 
 // ============================================================================
+// Agent Directory Resolution
+// ============================================================================
+
+/** Resolve the pi agent config directory, respecting PI_CODING_AGENT_DIR. */
+export function getAgentDir(): string {
+	const envDir = process.env.PI_CODING_AGENT_DIR;
+	if (envDir) return envDir;
+	return path.join(os.homedir(), ".pi", "agent");
+}
+
+// ============================================================================
 // File System Utilities
 // ============================================================================
 
