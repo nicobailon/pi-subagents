@@ -33,7 +33,7 @@ import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
-import { SUBAGENT_CHILD_ENV } from "../runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
 import {
@@ -207,7 +207,11 @@ class SubagentControlNoticeComponent implements Component {
 }
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
-	if (process.env[SUBAGENT_CHILD_ENV] === "1") return;
+	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
+		const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+		const maxDepth = Number(process.env.PI_SUBAGENT_MAX_DEPTH ?? "0");
+		if (Number.isFinite(depth) && Number.isFinite(maxDepth) && depth >= maxDepth) return;
+	}
 	const globalStore = globalThis as Record<string, unknown>;
 	const runtimeCleanupStoreKey = "__piSubagentRuntimeCleanup";
 	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
@@ -322,7 +326,37 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return new SubagentControlNoticeComponent({ ...details, noticeText: formatSubagentControlNotice(details, content) }, theme);
 	});
 
+	const nestedChildExecutionBudget = process.env[SUBAGENT_CHILD_ENV] === "1"
+		? Number(process.env.PI_SUBAGENT_NESTED_EXECUTION_BUDGET ?? process.env.PI_SUBAGENT_NESTED_CALL_BUDGET ?? "1")
+		: Number.POSITIVE_INFINITY;
+	let nestedChildExecutionCalls = 0;
+	let nestedChildManagementCalls = 0;
+	const terminateNestedSubagentViolation = (message: string): never => {
+		console.error(message);
+		process.exit(2);
+	};
 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
+		if (process.env[SUBAGENT_CHILD_ENV] === "1") {
+			const childAgent = process.env[SUBAGENT_CHILD_AGENT_ENV] || "unknown";
+			const budget = Number.isInteger(nestedChildExecutionBudget) && nestedChildExecutionBudget >= 0 ? nestedChildExecutionBudget : 1;
+			const isExecutionCall = !params.action;
+			if (isExecutionCall) {
+				if (nestedChildExecutionCalls >= budget) {
+					terminateNestedSubagentViolation(`Nested subagent execution blocked for child '${childAgent}': execution budget ${budget} already used. The child process is terminating to prevent repeated fanout.`);
+				}
+				nestedChildExecutionCalls += 1;
+			} else {
+				if (nestedChildExecutionCalls > 0 || nestedChildManagementCalls >= 1) {
+					terminateNestedSubagentViolation(`Nested subagent management call blocked for child '${childAgent}' after a prior subagent call. The child process is terminating to prevent repeated fanout.`);
+				}
+				nestedChildManagementCalls += 1;
+				return Promise.resolve({
+					content: [{ type: "text", text: `Nested subagent management actions are disabled for child '${childAgent}'. If you have enough information, answer now; otherwise make exactly one parallel execution call.` }],
+					isError: true,
+					details: { mode: "management", results: [] },
+				});
+			}
+		}
 		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
 		return executor.execute(id, params, signal, onUpdate, ctx);
 	};
@@ -385,8 +419,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		label: "Subagent",
 		description: `Delegate to subagents or manage agent definitions.
 
+CHILD SESSION RULE: If you are a child subagent, do not use management actions such as action=list/get/status. Make at most one execution call, then answer from that result.
+
 EXECUTION (use exactly ONE mode):
-• Before executing, use { action: "list" } to inspect configured agents/chains. Only execute agents listed as executable/non-disabled.
+• Optional discovery: { action: "list" } inspects configured agents/chains. Do not call it unless discovery is actually needed; execution can run directly with known agent names.
 • SINGLE: { agent, task? } - one task; omit task for self-contained agents
 • CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
 • PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)

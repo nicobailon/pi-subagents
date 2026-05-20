@@ -14,6 +14,9 @@ const envSnapshot = {
 	PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
 	PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
+	PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+	PI_SUBAGENT_DEPTH: process.env.PI_SUBAGENT_DEPTH,
+	PI_SUBAGENT_MAX_DEPTH: process.env.PI_SUBAGENT_MAX_DEPTH,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -40,6 +43,12 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_INHERIT_SKILLS = envSnapshot.PI_SUBAGENT_INHERIT_SKILLS;
 	if (envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME;
 	else process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
+	if (envSnapshot.PI_SUBAGENT_CHILD === undefined) delete process.env.PI_SUBAGENT_CHILD;
+	else process.env.PI_SUBAGENT_CHILD = envSnapshot.PI_SUBAGENT_CHILD;
+	if (envSnapshot.PI_SUBAGENT_DEPTH === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+	else process.env.PI_SUBAGENT_DEPTH = envSnapshot.PI_SUBAGENT_DEPTH;
+	if (envSnapshot.PI_SUBAGENT_MAX_DEPTH === undefined) delete process.env.PI_SUBAGENT_MAX_DEPTH;
+	else process.env.PI_SUBAGENT_MAX_DEPTH = envSnapshot.PI_SUBAGENT_MAX_DEPTH;
 });
 
 describe("subagent prompt runtime", () => {
@@ -67,14 +76,15 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("Current working directory: /repo"));
 	});
 
-	it("injects a child-only boundary that forbids proposing or running subagents", () => {
+	it("injects a child-only boundary that defaults against running subagents", () => {
 		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
 			inheritProjectContext: true,
 			inheritSkills: true,
 		});
 
 		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-		assert.ok(rewritten.includes("Do not propose or run subagents."));
+		assert.ok(rewritten.includes("Do not propose or run subagents unless your assigned agent prompt explicitly defines you as an orchestrator/conductor/reviewer"));
+		assert.ok(rewritten.includes("use subagents only within the available maxSubagentDepth"));
 		assert.ok(rewritten.includes("If you need to edit files, call the actual edit/write tools."));
 		assert.ok(rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."));
 		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
@@ -152,6 +162,11 @@ describe("subagent prompt runtime", () => {
 				},
 			],
 		);
+
+		assert.deepEqual(
+			stripParentOnlySubagentMessages([user, subagentResult, readResult, mixedAssistant, pureSubagentCall], { preserveSubagentToolMessages: true }),
+			[user, subagentResult, readResult, mixedAssistant, pureSubagentCall],
+		);
 	});
 
 	it("sets the child intercom session name from env during agent startup", async () => {
@@ -210,6 +225,28 @@ describe("subagent prompt runtime", () => {
 
 		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, otherCustom, currentTask] }), {
 			messages: [priorParentTurn, otherCustom, currentTask],
+		});
+	});
+
+	it("preserves subagent tool calls and results in child context when nested depth remains", () => {
+		process.env.PI_SUBAGENT_CHILD = "1";
+		process.env.PI_SUBAGENT_DEPTH = "1";
+		process.env.PI_SUBAGENT_MAX_DEPTH = "2";
+		let contextHandler: ((event: { messages: unknown[] }) => { messages: unknown[] } | undefined) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined) {
+				if (event === "context") contextHandler = handler;
+			},
+		} as { on(event: string, handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined): void });
+
+		const user = { role: "user", content: "Run nested reviewers." };
+		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "parent-only" };
+		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "reviewer" } }] };
+		const subagentResult = { role: "toolResult", toolName: "subagent", content: "nested results" };
+		const currentTask = { role: "user", content: "Synthesize." };
+
+		assert.deepEqual(contextHandler?.({ messages: [user, instruction, subagentCall, subagentResult, currentTask] }), {
+			messages: [user, subagentCall, subagentResult, currentTask],
 		});
 	});
 

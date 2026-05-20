@@ -2,13 +2,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
+const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
 
 export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 	"You are a child subagent, not the parent orchestrator.",
-	"The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",
+	"The parent session usually owns delegation, orchestration, review fanout, and follow-up worker launches.",
 	"Ignore prior parent-only orchestration instructions in inherited conversation history.",
-	"Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
+	"Do not propose or run subagents unless your assigned agent prompt explicitly defines you as an orchestrator/conductor/reviewer and the subagent tool is available.",
+	"If your assigned role explicitly requires orchestration, use subagents only within the available maxSubagentDepth and only for the assigned task.",
 	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
 
@@ -96,7 +98,8 @@ function isSubagentToolCallBlock(block: unknown): boolean {
 	return b?.type === "toolCall" && b.name === "subagent";
 }
 
-function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undefined {
+function stripAssistantSubagentToolCallBlocks(message: unknown, options: { preserveSubagentToolMessages: boolean }): unknown | undefined {
+	if (options.preserveSubagentToolMessages) return message;
 	const m = message as { role?: string; content?: unknown };
 	if (m?.role !== "assistant" || !Array.isArray(m.content)) return message;
 	const filteredContent = m.content.filter((block) => !isSubagentToolCallBlock(block));
@@ -105,15 +108,23 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] {
+function nestedSubagentAvailableInThisChild(): boolean {
+	if (process.env[SUBAGENT_CHILD_ENV] !== "1") return false;
+	const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+	const maxDepth = Number(process.env.PI_SUBAGENT_MAX_DEPTH ?? "0");
+	return Number.isFinite(depth) && Number.isFinite(maxDepth) && depth < maxDepth;
+}
+
+export function stripParentOnlySubagentMessages(messages: unknown[], options: { preserveSubagentToolMessages?: boolean } = {}): unknown[] {
+	const preserveSubagentToolMessages = options.preserveSubagentToolMessages === true;
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
-		if (isParentOnlySubagentMessage(message) || isSubagentToolResultMessage(message)) {
+		if (isParentOnlySubagentMessage(message) || (!preserveSubagentToolMessages && isSubagentToolResultMessage(message))) {
 			changed = true;
 			continue;
 		}
-		const stripped = stripAssistantSubagentToolCallBlocks(message);
+		const stripped = stripAssistantSubagentToolCallBlocks(message, { preserveSubagentToolMessages });
 		if (stripped === undefined) {
 			changed = true;
 			continue;
@@ -126,7 +137,9 @@ export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] 
 
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	pi.on("context", (event) => {
-		const messages = stripParentOnlySubagentMessages(event.messages);
+		const messages = stripParentOnlySubagentMessages(event.messages, {
+			preserveSubagentToolMessages: nestedSubagentAvailableInThisChild(),
+		});
 		if (messages === event.messages) return undefined;
 		return { messages };
 	});

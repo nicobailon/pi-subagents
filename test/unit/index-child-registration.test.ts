@@ -3,13 +3,25 @@ import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function parentToolEnv(): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
+	delete env[SUBAGENT_CHILD_AGENT_ENV];
+	delete env.PI_SUBAGENT_DEPTH;
+	delete env.PI_SUBAGENT_MAX_DEPTH;
+	return env;
+}
+
+function childToolEnv(depth: string, maxDepth: string): NodeJS.ProcessEnv {
+	const env = parentToolEnv();
+	env[SUBAGENT_CHILD_ENV] = "1";
+	env[SUBAGENT_CHILD_AGENT_ENV] = "reviewer";
+	env.PI_SUBAGENT_DEPTH = depth;
+	env.PI_SUBAGENT_MAX_DEPTH = maxDepth;
 	return env;
 }
 
@@ -108,11 +120,9 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("returns before registering parent tools, slash commands, renderers, or event handlers", () => {
+	it("returns before registering tools when child depth is exhausted", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
-			import { SUBAGENT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
-			process.env[SUBAGENT_CHILD_ENV] = "1";
 			const calls = [];
 			const fakePi = new Proxy({}, {
 				get(_target, prop) {
@@ -138,7 +148,55 @@ describe("subagent extension child mode", () => {
 				"--eval",
 				script,
 			],
-			{ cwd: projectRoot, stdio: "pipe" },
+			{ cwd: projectRoot, env: childToolEnv("2", "2"), stdio: "pipe" },
+		);
+	});
+
+	it("registers a constrained subagent tool for child sessions below max depth", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			let registeredTool;
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { registeredTool = tool; },
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!registeredTool) throw new Error("expected child subagent tool registration");
+			if (!registeredTool.description.includes("CHILD SESSION RULE")) throw new Error("missing child session rule");
+			const result = await registeredTool.execute(
+				"child-management-check",
+				{ action: "list" },
+				new AbortController().signal,
+				undefined,
+				{ cwd: process.cwd(), hasUI: false, sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; } }, modelRegistry: { getAvailable() { return []; } } },
+			);
+			if (result?.isError !== true) throw new Error("expected child management call to be rejected");
+			const text = result.content?.[0]?.text ?? "";
+			if (!text.includes("Nested subagent management actions are disabled")) throw new Error("unexpected result: " + text);
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: childToolEnv("1", "2"), stdio: "pipe" },
 		);
 	});
 });
