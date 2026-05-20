@@ -14,6 +14,14 @@ const theme = {
 
 const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
 
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function outputPathPattern(posixPath: string): RegExp {
+	return new RegExp(`output: ${posixPath.split("/").map(escapeRegExp).join("[\\\\/]")}`);
+}
+
 function firstGrapheme(text: string): string {
 	return Array.from(text.trimStart())[0] ?? "";
 }
@@ -232,7 +240,7 @@ describe("subagent async widget rendering", () => {
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
 		assert.doesNotMatch(expandedText, /Press Ctrl\+O for live detail/);
 		assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
-		assert.match(expandedText, /output: \/tmp\/1\/output-0\.log/);
+		assert.match(expandedText, outputPathPattern("/tmp/1/output-0.log"));
 		assert.match(expandedText, /grep: async widget/);
 		assert.match(expandedText, /found renderWidget/);
 		assert.match(expandedText, /checking expanded state/);
@@ -266,7 +274,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(collapsedText, /Step 1\/1: worker · running/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(collapsedText, /Press Ctrl\+O for live detail/);
-		assert.match(collapsedText, /output: \/tmp\/single-run\/output-0\.log/);
+		assert.match(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));
 		assert.doesNotMatch(collapsedText, /reading render widget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
@@ -344,7 +352,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
 		assert.match(text, /Step 2\/2: writer · running · 1 tool use/);
 		assert.match(text, /Press Ctrl\+O for live detail/);
-		assert.match(text, /output: \/tmp\/chain\/output-3\.log/);
+		assert.match(text, outputPathPattern("/tmp/chain/output-3.log"));
 		assert.doesNotMatch(text, /step 4\/4/);
 		assert.doesNotMatch(text, /Step 4\/4/);
 	});

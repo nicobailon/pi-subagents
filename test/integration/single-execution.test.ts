@@ -1022,7 +1022,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		const args = readCallArgs();
 		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
-		assert.ok(extensionArgs.some((arg) => arg.endsWith("src/runs/shared/subagent-prompt-runtime.ts")));
+		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
 		assert.ok(extensionArgs.includes("./custom-tool.ts"));
 		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
 	});
