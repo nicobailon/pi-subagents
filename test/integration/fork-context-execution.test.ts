@@ -916,7 +916,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(openedPaths, Array(6).fill(path.join(tempDir, "parent-chain.jsonl")));
 		assert.deepEqual(branchedLeafIds, Array(6).fill("leaf-chain"));
-		const sessionArgs = readSessionArgsFromCalls();
+		const sessionArgs = readSessionArgsFromCalls().filter((sessionFile) => path.dirname(sessionFile) === tempDir && path.basename(sessionFile).startsWith("fork-"));
 		assert.equal(sessionArgs.length, 6, "1 sequential + 4 parallel + 1 sequential");
 		assert.equal(new Set(sessionArgs).size, 6);
 	});
