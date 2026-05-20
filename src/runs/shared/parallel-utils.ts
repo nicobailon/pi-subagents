@@ -106,4 +106,4 @@ export function aggregateParallelOutputs(
 		.join("\n\n");
 }
 
-export const MAX_PARALLEL_CONCURRENCY = 4;
+export const MAX_PARALLEL_CONCURRENCY = 5;

@@ -196,7 +196,7 @@ describe("aggregateParallelOutputs", () => {
 });
 
 describe("MAX_PARALLEL_CONCURRENCY", () => {
-	it("is 4", () => {
-		assert.equal(MAX_PARALLEL_CONCURRENCY, 4);
+	it("is 5", () => {
+		assert.equal(MAX_PARALLEL_CONCURRENCY, 5);
 	});
 });

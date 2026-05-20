@@ -578,8 +578,8 @@ export function resolveTempScopeId(options?: {
 	return "shared";
 }
 
-const MAX_PARALLEL = 8;
-export const MAX_CONCURRENCY = 4;
+const MAX_PARALLEL = 10;
+export const MAX_CONCURRENCY = 5;
 export const TEMP_ROOT_DIR = path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId()}`);
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");

@@ -67,16 +67,16 @@ describe("resolveCurrentMaxSubagentDepth", () => {
 describe("top-level parallel config helpers", () => {
 	it("resolves maxTasks from config or falls back to the default", () => {
 		assert.equal(resolveTopLevelParallelMaxTasks(12), 12);
-		assert.equal(resolveTopLevelParallelMaxTasks(undefined), 8);
-		assert.equal(resolveTopLevelParallelMaxTasks(0), 8);
-		assert.equal(resolveTopLevelParallelMaxTasks("oops"), 8);
+		assert.equal(resolveTopLevelParallelMaxTasks(undefined), 10);
+		assert.equal(resolveTopLevelParallelMaxTasks(0), 10);
+		assert.equal(resolveTopLevelParallelMaxTasks("oops"), 10);
 	});
 
 	it("resolves concurrency from per-call override, config, or default", () => {
 		assert.equal(resolveTopLevelParallelConcurrency(2, 6), 2);
 		assert.equal(resolveTopLevelParallelConcurrency(undefined, 6), 6);
 		assert.equal(resolveTopLevelParallelConcurrency(0, 6), 6);
-		assert.equal(resolveTopLevelParallelConcurrency(undefined, 0), 4);
+		assert.equal(resolveTopLevelParallelConcurrency(undefined, 0), 5);
 	});
 });
 

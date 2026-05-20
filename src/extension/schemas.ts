@@ -76,7 +76,7 @@ const ChainItem = Type.Object({
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
 	parallel: Type.Optional(Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" })),
-	concurrency: Type.Optional(Type.Number({ description: "Max concurrent tasks (default: 4)" })),
+	concurrency: Type.Optional(Type.Number({ description: "Max concurrent tasks (default: 5)" })),
 	failFast: Type.Optional(Type.Boolean({ description: "Stop on first failure (default: false)" })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for each parallel task."
@@ -130,7 +130,7 @@ export const SubagentParams = Type.Object({
 		description: "Agent or chain config for create/update. Agent: name, package (optional namespace; runtime name becomes package.name), description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext ('fresh'|'fork'), model, tools (comma-separated), extensions (comma-separated), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth. Chain: name, package, description, scope, steps (array of {agent, task?, output?, outputMode?, reads?, model?, skill?, progress?}). Presence of 'steps' creates a chain instead of an agent. String values must be valid JSON."
 	})),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
-	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
+	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 5." })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for each parallel task. " +
 			"Prevents filesystem conflicts. Requires clean git state. " +

@@ -4,6 +4,9 @@
 
 ### Added
 
+### Changed
+- Raise default top-level and chain parallel concurrency from 4 to 5, and default max parallel tasks from 8 to 10.
+
 ### Fixed
 
 ## [0.24.4] - 2026-05-20

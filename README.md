@@ -711,7 +711,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all. |
 | `model` | string | agent default | Override model. |
 | `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `reads`, `progress`, `skill`, and `model`. |
-| `concurrency` | number | config or `4` | Top-level parallel concurrency. |
+| `concurrency` | number | config or `5` | Top-level parallel concurrency. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
 | `chain` | array | - | Sequential and parallel chain steps. |
 | `context` | `fresh \| fork` | agent default or `fresh` | `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, and `oracle` default to `fork`. |
@@ -806,7 +806,7 @@ Forces depth-0 single, parallel, and chain runs into background mode and bypasse
 }
 ```
 
-`maxTasks` defaults to `8`; `concurrency` defaults to `4`. Per-call `concurrency` takes precedence.
+`maxTasks` defaults to `10`; `concurrency` defaults to `5`. Per-call `concurrency` takes precedence.
 
 ### `defaultSessionDir`
 
