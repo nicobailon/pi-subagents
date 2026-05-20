@@ -641,6 +641,8 @@ async function runSingleStep(
 				agent: step.agent,
 				task,
 				messages: run.messages,
+				tools: step.tools,
+				mcpDirectTools: step.mcpDirectTools,
 			})
 			: undefined;
 		const completionGuardTriggered = completionGuard?.triggered === true && !run.observedMutationAttempt;

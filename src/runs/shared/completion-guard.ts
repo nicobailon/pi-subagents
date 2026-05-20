@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import { isMutatingBashCommand } from "./long-running-guard.ts";
+import { isMutatingBashCommand, isReadOnlyToolName } from "./long-running-guard.ts";
 
 const REVIEW_ONLY_PATTERNS = [
 	/\breview only\b/i,
@@ -59,6 +59,24 @@ interface CompletionMutationGuardInput {
 	agent: string;
 	task: string;
 	messages: Message[];
+	/**
+	 * Frontmatter-declared tools (non-MCP). When all declared tools are
+	 * read-only the guard skips its mutation-expectation regex chain.
+	 * `undefined` means the agent omitted the field and inherits the default
+	 * tool surface — treated as possibly mutating.
+	 *
+	 * Edge case: a `tools: false` override of a builtin collapses to
+	 * `undefined` in agents.ts; that path is rare and falls through to the
+	 * prose-regex logic, which is the safe direction.
+	 */
+	tools?: string[];
+	/**
+	 * Frontmatter-declared MCP tools (`mcp:`-prefixed entries in `tools:`).
+	 * Treated as possibly mutating: we don't model individual MCP tool
+	 * capabilities, so any declared MCP tool disqualifies the read-only
+	 * short-circuit.
+	 */
+	mcpDirectTools?: string[];
 }
 
 interface CompletionMutationGuardResult {
@@ -83,7 +101,33 @@ function stripScopedNoEditConstraints(task: string): string {
 	return stripped;
 }
 
-export function expectsImplementationMutation(agent: string, task: string): boolean {
+/**
+ * An agent that declares only read-only tools cannot mutate the workspace,
+ * so no amount of "please implement this" prose in the task should make the
+ * guard expect mutation. This is the floor: declared capability is checked
+ * before any task-text inference.
+ *
+ * Future refactor (deferred): restructure the whole function as
+ * `canMutate(agent, tools) && askedToMutate(agent, task)` so the orthogonal
+ * axes are visible at the top level instead of layered short-circuits.
+ */
+function declaresOnlyReadOnlyTools(
+	tools: string[] | undefined,
+	mcpDirectTools: string[] | undefined,
+): boolean {
+	if (tools === undefined) return false;
+	if (mcpDirectTools && mcpDirectTools.length > 0) return false;
+	if (tools.length === 0) return false;
+	return tools.every(isReadOnlyToolName);
+}
+
+export function expectsImplementationMutation(
+	agent: string,
+	task: string,
+	tools?: string[],
+	mcpDirectTools?: string[],
+): boolean {
+	if (declaresOnlyReadOnlyTools(tools, mcpDirectTools)) return false;
 	const taskText = stripFrameworkInstructions(task);
 	const taskTextWithoutScopedConstraints = stripScopedNoEditConstraints(taskText);
 	if (REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskTextWithoutScopedConstraints))) return false;
@@ -115,7 +159,7 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = expectsImplementationMutation(input.agent, input.task);
+	const expectedMutation = expectsImplementationMutation(input.agent, input.task, input.tools, input.mcpDirectTools);
 	const attemptedMutation = hasMutationToolCall(input.messages);
 	return {
 		expectedMutation,

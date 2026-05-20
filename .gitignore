@@ -5,3 +5,6 @@ node_modules/
 .fallow/
 
 package-lock.json
+
+# pi-lens local cache (committed by mistake earlier; ignored going forward)
+.pi-lens/

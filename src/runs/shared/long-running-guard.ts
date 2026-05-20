@@ -38,7 +38,40 @@ const MUTATING_BASH_PATTERNS = [
 	/\b(writeFile|writeFileSync|appendFile|appendFileSync)\b/,
 	/\bwrite_text\s*\(/,
 	/\bopen\s*\([^)]*,\s*["'][wa]/,
+	// Python heredoc pattern `with open(p) as f: f.write(...)` lacks an explicit
+	// mode arg so the open() rule above doesn't match. The `.write(` call on a
+	// file-handle named `f` is the unambiguous mutation evidence.
+	/\bf\.write\s*\(/,
 ];
+
+// Tools that cannot mutate the workspace. Used by completion-guard to
+// short-circuit the mutation-expectation regex chain for agents whose
+// frontmatter declares only these tools. Unknown tool names (extensions,
+// MCP, custom) are conservatively treated as possibly mutating; add an entry
+// here only when the tool is provably read-only.
+//
+// Do NOT add capability-escalating tools (e.g. `subagent`, `delegate`,
+// `bash` with arbitrary command) here even when their direct effect is
+// non-mutating. An agent with `tools: read, grep, subagent` can spawn a
+// worker that writes to disk one hop away; classifying it as read-only
+// would hide a real category of false-negatives. The set should only contain
+// tools whose declared semantics make filesystem mutation impossible at any
+// transitive depth.
+export const READ_ONLY_TOOL_NAMES = new Set<string>([
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"web_search",
+	"fetch_content",
+	"get_search_content",
+	"intercom",
+	"contact_supervisor",
+]);
+
+export function isReadOnlyToolName(name: string): boolean {
+	return READ_ONLY_TOOL_NAMES.has(name);
+}
 
 const MUTATING_FAILURE_HINTS = [
 	"failed",
