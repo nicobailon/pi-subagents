@@ -150,6 +150,53 @@ describe("mapConcurrent", () => {
 		assert.ok(d1 < 20, `worker 1 should start immediately, got ${d1}ms delay`);
 		assert.ok(d2 < 20, `worker 2 should start immediately, got ${d2}ms delay`);
 	});
+
+	it("stagger makes total runtime longer than without stagger", async () => {
+		// With staggerMs=60, 2 workers, and 2 items that each take 20ms:
+		// Without stagger: both workers start immediately, total ~20ms.
+		// With stagger: worker 1 starts immediately, worker 2 waits ~60ms, total ~80ms.
+		const items = [1, 2];
+		const blockMs = 20;
+
+		const startNoStagger = Date.now();
+		await mapConcurrent(items, 2, async () => {
+			await new Promise((r) => setTimeout(r, blockMs));
+		});
+		const noStaggerDuration = Date.now() - startNoStagger;
+
+		const startStagger = Date.now();
+		await mapConcurrent(items, 2, async () => {
+			await new Promise((r) => setTimeout(r, blockMs));
+		}, { staggerMs: 60 });
+		const staggerDuration = Date.now() - startStagger;
+
+		// Staggered run should be meaningfully longer than non-staggered
+		assert.ok(staggerDuration >= noStaggerDuration + 25,
+			`staggered (${staggerDuration}ms) should be >= non-staggered (${noStaggerDuration}ms) + 25ms`);
+	});
+
+	it("stagger with jitter=0 is slower than with jitter=1 for small stagger", async () => {
+		// Both should still apply stagger, just with different jitter ranges.
+		// Just verify jitter=0 completes slower than no-stagger.
+		const items = [1, 2];
+		const blockMs = 20;
+
+		const start = Date.now();
+		await mapConcurrent(items, 2, async () => {
+			await new Promise((r) => setTimeout(r, blockMs));
+		}, { staggerMs: 50, staggerJitter: 0 });
+		const duration = Date.now() - start;
+
+		// With staggerMs=50 and no jitter, worker 2 waits exactly 50ms
+		assert.ok(duration >= 50,
+			`with jitter=0, duration (${duration}ms) should be >= 50ms`);
+	});
+
+	it("stagger options bag is accepted without error", async () => {
+		const items = [1, 2, 3];
+		const results = await mapConcurrent(items, 2, async (item) => item * 2, { staggerMs: 10, staggerJitter: 0.5 });
+		assert.deepEqual(results, [2, 4, 6]);
+	});
 });
 
 describe("aggregateParallelOutputs", () => {

@@ -588,6 +588,12 @@ export interface IntercomBridgeConfig {
 interface TopLevelParallelConfig {
 	maxTasks?: number;
 	concurrency?: number;
+	/** Milliseconds to wait between starting each parallel worker. Default 0 (no delay).
+	 *  Worker N sleeps for N × staggerMs ± staggerJitter × staggerMs before its first task. */
+	staggerMs?: number;
+	/** Jitter fraction applied to stagger delay (0–1). Default 0.2 (±20%).
+	 *  Only effective when staggerMs > 0. */
+	staggerJitter?: number;
 }
 
 export interface ExtensionConfig {
@@ -675,6 +681,10 @@ export function resolveTempScopeId(options?: {
 
 const MAX_PARALLEL = 8;
 export const MAX_CONCURRENCY = 4;
+/** Default stagger between parallel worker starts (ms). 0 = no delay. */
+export const DEFAULT_STAGGER_MS = 0;
+/** Default jitter fraction for stagger (0.2 = ±20%). */
+export const DEFAULT_STAGGER_JITTER = 0.2;
 export const TEMP_ROOT_DIR = path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId()}`);
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
@@ -715,6 +725,32 @@ export function resolveTopLevelParallelConcurrency(
 	return normalizeTopLevelParallelValue(override)
 		?? normalizeTopLevelParallelValue(configValue)
 		?? MAX_CONCURRENCY;
+}
+
+function normalizeStaggerMs(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+	if (typeof value === "string") {
+		const parsed = Number(value);
+		if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+	}
+	return undefined;
+}
+
+export function resolveTopLevelParallelStaggerMs(configValue: unknown): number {
+	return normalizeStaggerMs(configValue) ?? DEFAULT_STAGGER_MS;
+}
+
+function normalizeStaggerJitter(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1) return value;
+	if (typeof value === "string") {
+		const parsed = Number(value);
+		if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+	}
+	return undefined;
+}
+
+export function resolveTopLevelParallelStaggerJitter(configValue: unknown): number {
+	return normalizeStaggerJitter(configValue) ?? DEFAULT_STAGGER_JITTER;
 }
 
 export function getAsyncConfigPath(suffix: string): string {

@@ -113,6 +113,8 @@ interface ParallelChainRunInput {
 	totalSteps: number;
 	worktreeSetup?: WorktreeSetup;
 	maxSubagentDepth: number;
+	staggerMs?: number;
+	staggerJitter?: number;
 	nestedRoute?: NestedRouteInfo;
 }
 
@@ -295,6 +297,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			recordRun(task.agent, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
 			return result;
 		},
+		{ staggerMs: input.staggerMs, staggerJitter: input.staggerJitter },
 	);
 
 	return parallelResults;
@@ -337,6 +340,8 @@ interface ChainExecutionParams {
 	nestedRoute?: NestedRouteInfo;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	staggerMs?: number;
+	staggerJitter?: number;
 }
 
 interface ChainExecutionResult {
@@ -598,6 +603,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					nestedRoute: params.nestedRoute,
 					worktreeSetup,
 					maxSubagentDepth: params.maxSubagentDepth,
+					staggerMs: params.staggerMs,
+					staggerJitter: params.staggerJitter,
 				});
 				globalTaskIndex += step.parallel.length;
 

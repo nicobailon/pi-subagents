@@ -7,6 +7,8 @@ import {
 	normalizeMaxSubagentDepth,
 	resolveTopLevelParallelConcurrency,
 	resolveTopLevelParallelMaxTasks,
+	resolveTopLevelParallelStaggerMs,
+	resolveTopLevelParallelStaggerJitter,
 	resolveChildMaxSubagentDepth,
 	resolveCurrentMaxSubagentDepth,
 } from "../../src/shared/types.ts";
@@ -77,6 +79,28 @@ describe("top-level parallel config helpers", () => {
 		assert.equal(resolveTopLevelParallelConcurrency(undefined, 6), 6);
 		assert.equal(resolveTopLevelParallelConcurrency(0, 6), 6);
 		assert.equal(resolveTopLevelParallelConcurrency(undefined, 0), 4);
+	});
+
+	it("resolves staggerMs from config or falls back to default 0", () => {
+		assert.equal(resolveTopLevelParallelStaggerMs(100), 100);
+		assert.equal(resolveTopLevelParallelStaggerMs(undefined), 0);
+		assert.equal(resolveTopLevelParallelStaggerMs(0), 0);
+		assert.equal(resolveTopLevelParallelStaggerMs(-5), 0);
+		assert.equal(resolveTopLevelParallelStaggerMs(Infinity), 0);
+		assert.equal(resolveTopLevelParallelStaggerMs("oops"), 0);
+		assert.equal(resolveTopLevelParallelStaggerMs("200"), 200);
+	});
+
+	it("resolves staggerJitter from config or falls back to default 0.2", () => {
+		assert.equal(resolveTopLevelParallelStaggerJitter(0.3), 0.3);
+		assert.equal(resolveTopLevelParallelStaggerJitter(undefined), 0.2);
+		assert.equal(resolveTopLevelParallelStaggerJitter(0), 0);
+		assert.equal(resolveTopLevelParallelStaggerJitter(1), 1);
+		assert.equal(resolveTopLevelParallelStaggerJitter(1.5), 0.2);
+		assert.equal(resolveTopLevelParallelStaggerJitter(-0.1), 0.2);
+		assert.equal(resolveTopLevelParallelStaggerJitter(Infinity), 0.2);
+		assert.equal(resolveTopLevelParallelStaggerJitter("0.5"), 0.5);
+		assert.equal(resolveTopLevelParallelStaggerJitter("oops"), 0.2);
 	});
 });
 

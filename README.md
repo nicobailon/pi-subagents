@@ -807,12 +807,16 @@ Forces depth-0 single, parallel, and chain runs into background mode and bypasse
 {
   "parallel": {
     "maxTasks": 12,
-    "concurrency": 6
+    "concurrency": 6,
+    "staggerMs": 100,
+    "staggerJitter": 0.2
   }
 }
 ```
 
 `maxTasks` defaults to `8`; `concurrency` defaults to `4`. Per-call `concurrency` takes precedence.
+
+`staggerMs` defaults to `0` (no delay). When set, each parallel worker waits `workerIndex × staggerMs ± staggerJitter × staggerMs` before starting, spreading out parallel worker startup to avoid synchronized API bursts. `staggerJitter` defaults to `0.2` (±20%) and accepts values between `0` (deterministic spacing) and `1`.
 
 ### `defaultSessionDir`
 

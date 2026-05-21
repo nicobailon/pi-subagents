@@ -94,6 +94,8 @@ interface SubagentRunConfig {
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
 	resultMode?: SubagentRunMode;
+	staggerMs?: number;
+	staggerJitter?: number;
 	nestedRoute?: NestedRouteInfo;
 	nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> };
 }
@@ -1435,6 +1437,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						if (singleResult.exitCode !== 0 && failFast) aborted = true;
 						return { ...singleResult, skipped: false };
 					},
+					{ staggerMs: config.staggerMs, staggerJitter: config.staggerJitter },
 				);
 
 				flatIndex += group.parallel.length;

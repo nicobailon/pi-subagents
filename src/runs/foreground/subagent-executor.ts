@@ -84,6 +84,8 @@ import {
 	checkSubagentDepth,
 	resolveTopLevelParallelConcurrency,
 	resolveTopLevelParallelMaxTasks,
+	resolveTopLevelParallelStaggerMs,
+	resolveTopLevelParallelStaggerJitter,
 	resolveChildMaxSubagentDepth,
 	resolveCurrentMaxSubagentDepth,
 	wrapForkTask,
@@ -1107,6 +1109,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			controlConfig,
 			controlIntercomTarget,
 			childIntercomTarget,
+			staggerMs: resolveTopLevelParallelStaggerMs(deps.config.parallel?.staggerMs),
+			staggerJitter: resolveTopLevelParallelStaggerJitter(deps.config.parallel?.staggerJitter),
 			nestedRoute,
 		});
 	}
@@ -1135,6 +1139,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			controlConfig,
 			controlIntercomTarget,
 			childIntercomTarget,
+			staggerMs: resolveTopLevelParallelStaggerMs(deps.config.parallel?.staggerMs),
+			staggerJitter: resolveTopLevelParallelStaggerJitter(deps.config.parallel?.staggerJitter),
 			nestedRoute,
 		});
 	}
@@ -1237,6 +1243,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		maxSubagentDepth: currentMaxSubagentDepth,
 		worktreeSetupHook: deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
+		staggerMs: resolveTopLevelParallelStaggerMs(deps.config.parallel?.staggerMs),
+		staggerJitter: resolveTopLevelParallelStaggerJitter(deps.config.parallel?.staggerJitter),
 	});
 
 	if (chainResult.requestedAsync) {
@@ -1323,6 +1331,8 @@ interface ForegroundParallelRunInput {
 	modelOverrides: (string | undefined)[];
 	behaviors: Array<ReturnType<typeof resolveStepBehavior>>;
 	firstProgressIndex: number;
+	staggerMs?: number;
+	staggerJitter?: number;
 	controlConfig: ResolvedControlConfig;
 	onControlEvent?: (event: ControlEvent) => void;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
@@ -1531,7 +1541,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				input.foregroundControl.updatedAt = Date.now();
 			}
 		});
-	});
+	}, { staggerMs: input.staggerMs, staggerJitter: input.staggerJitter });
 }
 
 async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details>> {
@@ -1559,6 +1569,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	const tasks = params.tasks!;
 	const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
 	const parallelConcurrency = resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency);
+	const parallelStaggerMs = resolveTopLevelParallelStaggerMs(deps.config.parallel?.staggerMs);
+	const parallelStaggerJitter = resolveTopLevelParallelStaggerJitter(deps.config.parallel?.staggerJitter);
 
 	if (tasks.length > maxParallelTasks)
 		return {
@@ -1771,6 +1783,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 			foregroundControl,
 			concurrencyLimit: parallelConcurrency,
+			staggerMs: parallelStaggerMs,
+			staggerJitter: parallelStaggerJitter,
 			maxSubagentDepths,
 			liveResults,
 			liveProgress,

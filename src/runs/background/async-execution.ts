@@ -113,6 +113,8 @@ interface AsyncChainParams {
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
+	staggerMs?: number;
+	staggerJitter?: number;
 	nestedRoute?: NestedRouteInfo;
 }
 
@@ -420,6 +422,8 @@ export function executeAsyncChain(
 				controlIntercomTarget,
 				childIntercomTargets,
 				resultMode,
+				staggerMs: params.staggerMs,
+				staggerJitter: params.staggerJitter,
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
 					parentRunId: nestedAddress.parentRunId,
