@@ -535,7 +535,11 @@ export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "us
 	return filePath;
 }
 
-function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) => boolean): string[] {
+function listMarkdownFilesRecursive(
+	dir: string,
+	predicate: (fileName: string) => boolean,
+	shouldSkipDir: (dirPath: string) => boolean = () => false,
+): string[] {
 	const files: string[] = [];
 	if (!fs.existsSync(dir)) return files;
 
@@ -549,7 +553,9 @@ function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) =
 	for (const entry of entries) {
 		const filePath = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
-			files.push(...listMarkdownFilesRecursive(filePath, predicate));
+			if (!shouldSkipDir(filePath)) {
+				files.push(...listMarkdownFilesRecursive(filePath, predicate, shouldSkipDir));
+			}
 			continue;
 		}
 		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
@@ -559,10 +565,19 @@ function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) =
 	return files;
 }
 
+function isLegacySkillsDir(rootDir: string, dirPath: string): boolean {
+	if (path.basename(rootDir) !== ".agents") return false;
+	return path.relative(rootDir, dirPath).split(path.sep).includes("skills");
+}
+
 function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
-	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
+	for (const filePath of listMarkdownFilesRecursive(
+		dir,
+		(fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"),
+		(dirPath) => isLegacySkillsDir(dir, dirPath),
+	)) {
 		let content: string;
 		try {
 			content = fs.readFileSync(filePath, "utf-8");
