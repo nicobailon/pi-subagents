@@ -614,10 +614,27 @@ description: Canonical
 
 Canonical prompt
 `, "utf-8");
+		fs.writeFileSync(path.join(dir, ".agents", "skills", "review-skill.md"), `---
+name: review-skill
+description: This is a skill, not a subagent
+---
+
+# Review Skill
+`, "utf-8");
+		fs.mkdirSync(path.join(dir, ".agents", "skills", "nested-skill"), { recursive: true });
+		fs.writeFileSync(path.join(dir, ".agents", "skills", "nested-skill", "SKILL.md"), `---
+name: nested-skill
+description: This nested skill is also not a subagent
+---
+
+# Nested Skill
+`, "utf-8");
 
 		const result = discoverAgents(dir, "project");
 		assert.ok(result.agents.find((agent) => agent.name === "legacy" && agent.filePath === path.join(dir, ".agents", "legacy.md")));
 		assert.ok(result.agents.find((agent) => agent.name === "canonical" && agent.filePath === path.join(dir, ".pi", "agents", "canonical.md")));
+		assert.equal(result.agents.some((agent) => agent.name === "review-skill"), false);
+		assert.equal(result.agents.some((agent) => agent.name === "nested-skill"), false);
 		assert.equal(result.projectAgentsDir, path.join(dir, ".pi", "agents"));
 	});
 
