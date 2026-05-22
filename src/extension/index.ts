@@ -208,8 +208,14 @@ class SubagentControlNoticeComponent implements Component {
 }
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
+	// When running as a child subagent (SUBAGENT_CHILD_ENV=1):
+	// - The fanout-child extension is loaded independently via --extension when fanoutAuthorized.
+	// - Calling registerFanoutChildSubagentExtension here would register tool "subagent"
+	//   on BOTH this extension's api AND the fanout-child extension's api, causing the
+	//   pi resource-loader to detect a conflict between the two extension files.
+	// - Instead, we simply return early and let the independent fanout-child.ts extension
+	//   handle registration.
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
-		if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") registerFanoutChildSubagentExtension(pi);
 		return;
 	}
 	const globalStore = globalThis as Record<string, unknown>;
