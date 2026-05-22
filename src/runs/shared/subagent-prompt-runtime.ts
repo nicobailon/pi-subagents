@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SUBAGENT_FANOUT_CHILD_ENV } from "./pi-args.ts";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -9,6 +10,15 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 	"The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",
 	"Ignore prior parent-only orchestration instructions in inherited conversation history.",
 	"Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
+	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
+].join("\n");
+
+export const CHILD_FANOUT_BOUNDARY_INSTRUCTIONS = [
+	"You are a child subagent with explicit fanout responsibility for this assigned task.",
+	"The parent session owns final orchestration, acceptance, and follow-up implementation launches.",
+	"You may use the `subagent` tool only for the fanout work explicitly requested in this task.",
+	"Do not broaden yourself into general parent orchestration. Do not launch follow-up workers unless the task explicitly asks for that.",
+	"The maxSubagentDepth cap still applies and may block further fanout.",
 	"If you need to edit files, call the actual edit/write tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
 
@@ -62,9 +72,17 @@ export function stripSubagentOrchestrationSkill(prompt: string): string {
 		.replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) => SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block);
 }
 
+function stripChildBoundaryInstructions(prompt: string): string {
+	let rewritten = prompt;
+	for (const boundary of [CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_FANOUT_BOUNDARY_INSTRUCTIONS]) {
+		rewritten = rewritten.split(boundary).join("");
+	}
+	return rewritten.replace(/^(?:[ \t]*\r?\n)+/, "");
+}
+
 export function rewriteSubagentPrompt(
 	prompt: string,
-	options: { inheritProjectContext: boolean; inheritSkills: boolean },
+	options: { inheritProjectContext: boolean; inheritSkills: boolean; fanoutChild?: boolean },
 ): string {
 	let rewritten = prompt;
 	if (!options.inheritProjectContext) {
@@ -74,9 +92,9 @@ export function rewriteSubagentPrompt(
 		rewritten = stripInheritedSkills(rewritten);
 	}
 	rewritten = stripSubagentOrchestrationSkill(rewritten);
-	return rewritten.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS)
-		? rewritten
-		: `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${rewritten}`;
+	rewritten = stripChildBoundaryInstructions(rewritten);
+	const boundary = options.fanoutChild ? CHILD_FANOUT_BOUNDARY_INSTRUCTIONS : CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
+	return `${boundary}\n\n${rewritten}`;
 }
 
 function isParentOnlySubagentMessage(message: unknown): boolean {
@@ -139,10 +157,12 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 
 		const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
 		const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-		if (inheritProjectContext === undefined && inheritSkills === undefined) return;
+		const fanoutChild = readBooleanEnv(SUBAGENT_FANOUT_CHILD_ENV);
+		if (inheritProjectContext === undefined && inheritSkills === undefined && fanoutChild === undefined) return;
 		const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
 			inheritProjectContext: inheritProjectContext ?? true,
 			inheritSkills: inheritSkills ?? true,
+			fanoutChild: fanoutChild === true,
 		});
 		if (rewritten === event.systemPrompt) return;
 		return { systemPrompt: rewritten };

@@ -2,3 +2,6 @@
 .DS_Store
 AGENTS.md
 node_modules/
+.fallow/
+
+package-lock.json

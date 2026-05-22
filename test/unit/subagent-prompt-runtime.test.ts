@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import registerSubagentPromptRuntime, {
+	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
 	rewriteSubagentPrompt,
@@ -14,6 +16,7 @@ const envSnapshot = {
 	PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
 	PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
+	PI_SUBAGENT_FANOUT_CHILD: process.env.PI_SUBAGENT_FANOUT_CHILD,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -40,6 +43,8 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_INHERIT_SKILLS = envSnapshot.PI_SUBAGENT_INHERIT_SKILLS;
 	if (envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME === undefined) delete process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME;
 	else process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
+	if (envSnapshot.PI_SUBAGENT_FANOUT_CHILD === undefined) delete process.env.PI_SUBAGENT_FANOUT_CHILD;
+	else process.env.PI_SUBAGENT_FANOUT_CHILD = envSnapshot.PI_SUBAGENT_FANOUT_CHILD;
 });
 
 describe("subagent prompt runtime", () => {
@@ -79,6 +84,32 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."));
 		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
 		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
+	});
+
+	it("replaces inherited child boundaries with the fanout boundary when authorized", () => {
+		const strictPrompt = `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
+		const rewritten = rewriteSubagentPrompt(strictPrompt, {
+			inheritProjectContext: true,
+			inheritSkills: true,
+			fanoutChild: true,
+		});
+
+		assert.ok(rewritten.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(rewritten.includes("You may use the `subagent` tool only for the fanout work explicitly requested in this task."));
+		assert.ok(!rewritten.includes("Do not propose or run subagents."));
+		assert.equal(rewritten.lastIndexOf(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS), 0);
+	});
+
+	it("replaces inherited fanout boundaries with the strict boundary when fanout is not authorized", () => {
+		const fanoutPrompt = `${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}\n\n${BASE_PROMPT}`;
+		const rewritten = rewriteSubagentPrompt(fanoutPrompt, {
+			inheritProjectContext: true,
+			inheritSkills: true,
+		});
+
+		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(!rewritten.includes("explicit fanout responsibility"));
+		assert.equal(rewritten.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
 	});
 
 	it("keeps explicitly injected skill content when inherited skills are stripped", () => {
@@ -190,6 +221,23 @@ describe("subagent prompt runtime", () => {
 		assert.ok(!rewritten.systemPrompt.includes("# Project Context"));
 		assert.ok(!rewritten.systemPrompt.includes("<available_skills>"));
 		assert.ok(rewritten.systemPrompt.includes("Current date: 2026-04-16"));
+	});
+
+	it("uses the fanout boundary through before_agent_start when fanout env is set", async () => {
+		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
+				if (event === "before_agent_start") beforeAgentStart = handler;
+			},
+		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void });
+
+		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "1";
+		process.env.PI_SUBAGENT_INHERIT_SKILLS = "1";
+		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+
+		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
+		assert.ok(rewritten);
+		assert.ok(rewritten.systemPrompt.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
 	});
 
 	it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {

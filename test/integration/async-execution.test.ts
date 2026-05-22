@@ -24,6 +24,8 @@ interface AsyncExecutionResult {
 
 interface AsyncResultPayload {
 	success: boolean;
+	state?: string;
+	exitCode?: number;
 	sessionId?: string;
 	mode?: string;
 	summary?: string;
@@ -36,6 +38,7 @@ interface AsyncStatusPayload {
 	currentTool?: string;
 	currentPath?: string;
 	state?: string;
+	totalTokens?: { total: number };
 	steps?: Array<{
 		skills?: string[];
 		activityState?: string;
@@ -43,6 +46,9 @@ interface AsyncStatusPayload {
 		status?: string;
 		exitCode?: number;
 		error?: string;
+		model?: string;
+		thinking?: string;
+		tokens?: { total: number };
 	}>;
 }
 
@@ -125,6 +131,17 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	return resultPath;
+}
+
+function readLastMockPiArgs(mockPi: MockPi): string[] {
+	const callFile = fs.readdirSync(mockPi.dir)
+		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+		.sort()
+		.at(-1);
+	assert.ok(callFile, "expected a recorded mock pi call");
+	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { args?: string[] };
+	assert.ok(Array.isArray(payload.args), "expected recorded args");
+	return payload.args;
 }
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -448,8 +465,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "worker",
 			task: "Do work",
 			agentConfig: makeAgent("worker", {
-				model: "openai/gpt-5-mini",
-				fallbackModels: ["anthropic/claude-sonnet-4"],
+				model: "openai/gpt-5-mini:high",
+				fallbackModels: ["anthropic/claude-sonnet-4:low"],
 			}),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			availableModels: [
@@ -481,12 +498,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
-		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4:low");
+		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4:low"]);
 		assert.equal(payload.results[0].modelAttempts.length, 2);
-		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-		assert.ok(statusPayload.totalTokens.total > 0);
-		assert.ok(statusPayload.steps[0].tokens.total > 0);
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(statusPayload.steps[0]?.model, "anthropic/claude-sonnet-4:low");
+		assert.equal(statusPayload.steps[0]?.thinking, "low");
+		assert.ok(statusPayload.totalTokens!.total > 0);
+		assert.ok(statusPayload.steps[0]?.tokens!.total > 0);
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);
 	});
@@ -533,6 +552,107 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(statusPayload.steps?.[0]?.error ?? "", /429 quota exceeded/);
 	});
 
+	it("background runs treat recovered child errors as successful", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolResult("read", "EISDIR: illegal operation on a directory", true),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "temporary provider failure" }],
+						model: "openai/gpt-5-mini",
+						stopReason: "error",
+						errorMessage: "provider transport failed",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+				events.assistantMessage("Recovered asynchronously"),
+			],
+		});
+		const id = `async-recovered-child-error-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.results[0]?.success, true);
+		assert.equal(payload.results[0]?.error, undefined);
+		assert.equal(payload.results[0]?.output, "Recovered asynchronously");
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(statusPayload.state, "complete");
+		assert.equal(statusPayload.steps?.[0]?.status, "complete");
+		assert.equal(statusPayload.steps?.[0]?.exitCode, 0);
+	});
+
+	it("background runs keep provider errors failed when followed only by empty assistant output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "temporary provider failure" }],
+						model: "openai/gpt-5-mini",
+						stopReason: "error",
+						errorMessage: "provider transport failed",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+				events.assistantMessage(""),
+			],
+		});
+		const id = `async-provider-error-empty-stop-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.equal(payload.state, "failed");
+		assert.equal(payload.exitCode, 1);
+		assert.equal(payload.results[0]?.success, false);
+		assert.match(payload.results[0]?.error ?? "", /provider transport failed/);
+		assert.equal(payload.results[0]?.output, "");
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(statusPayload.state, "failed");
+		assert.equal(statusPayload.steps?.[0]?.status, "failed");
+		assert.equal(statusPayload.steps?.[0]?.exitCode, 1);
+	});
+
 	it("background file-only runs write full output but return only a file reference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "async full output\nwith details" });
 		const id = `async-file-only-${Date.now().toString(36)}`;
@@ -573,6 +693,39 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.output ?? "", /Output saved to:/);
 		assert.doesNotMatch(payload.results[0]?.output ?? "", /async full output/);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async full output\nwith details");
+	});
+
+	it("background single runs treat string false as disabled output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "async inline report" });
+		const id = `async-string-false-output-${Date.now().toString(36)}`;
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { output: "default-report.md" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			output: "false",
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.output, "async inline report");
+		assert.doesNotMatch(payload.summary ?? "", /Output saved to:/);
+		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "default-report.md")), false);
+		assert.doesNotMatch(readLastMockPiArgs(mockPi).at(-1) ?? "", /Write your findings to:/);
 	});
 
 	it("background runs detect hidden tool failures even when the child exits 0", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -662,6 +815,42 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(eventsText, /Subagent failed: worker/);
 		assert.doesNotMatch(eventsText, /Status:/);
 		assert.doesNotMatch(eventsText, /Interrupt:/);
+	});
+
+	it("background bash-enabled non-implementation agents can opt out of the completion guard", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "cold start test after patch" });
+
+		const id = `async-completion-guard-optout-${Date.now().toString(36)}`;
+		const sessionRoot = path.join(tempDir, "sessions");
+
+		executeAsyncSingle(id, {
+			agent: "test-runner",
+			task: "Run cold start test after patch",
+			agentConfig: makeAgent("test-runner", { tools: ["read", "grep", "bash", "ls"], completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(payload.success, true);
+		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.results[0].success, true);
+		assert.equal(payload.results[0].output, "cold start test after patch");
+
+		const eventsPath = path.join(ASYNC_DIR, id, "events.jsonl");
+		const eventsText = fs.readFileSync(eventsPath, "utf-8");
+		assert.doesNotMatch(eventsText, /"reason":"completion_guard"/);
 	});
 
 	it("background runs prefer the parent session provider for ambiguous bare model ids", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1180,7 +1369,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.assistantMessage("still working")] },
-				{ delay: 500, jsonl: [events.assistantMessage("done")] },
+				{ delay: 2_000, jsonl: [events.assistantMessage("done")] },
 			],
 		});
 
@@ -1210,21 +1399,32 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			},
 		});
 
+		const statusPath = path.join(asyncDir, "status.json");
 		const deadline = Date.now() + 10_000;
 		let eventText = "";
+		let statusDuringEvent: AsyncStatusPayload | undefined;
 		while (Date.now() < deadline) {
 			if (fs.existsSync(eventsPath)) {
 				eventText = fs.readFileSync(eventsPath, "utf-8");
-				if (eventText.includes('"type":"active_long_running"')) break;
+			}
+			if (eventText.includes('"type":"active_long_running"') && fs.existsSync(statusPath)) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+				if (status.activityState === "active_long_running" && status.steps?.[0]?.activityState === "active_long_running") {
+					statusDuringEvent = status;
+					break;
+				}
+			}
+			if (eventText.includes('"type":"active_long_running"') && fs.existsSync(resultPath)) {
+				assert.fail("run completed before status.json exposed active_long_running");
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 
 		assert.match(eventText, /"type":"active_long_running"/);
 		assert.match(eventText, /"reason":"turn_threshold"/);
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(status.activityState, "active_long_running");
-		assert.equal(status.steps?.[0]?.activityState, "active_long_running");
+		assert.ok(statusDuringEvent, "expected status.json to expose active_long_running while the run is still active");
+		assert.equal(statusDuringEvent.activityState, "active_long_running");
+		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "active_long_running");
 
 		const doneDeadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {
@@ -1239,7 +1439,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ jsonl: [events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }), events.toolEnd("edit"), events.toolResult("edit", "No exact match found for subagent-runner.ts", true)] },
 				{ jsonl: [events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }), events.toolEnd("edit"), events.toolResult("edit", "No exact match found for subagent-runner.ts", true)] },
 				{ jsonl: [events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }), events.toolEnd("edit"), events.toolResult("edit", "No exact match found for subagent-runner.ts", true)] },
-				{ delay: 500, jsonl: [events.assistantMessage("I need another attempt.")] },
+				{ delay: 2_000, jsonl: [events.assistantMessage("I need another attempt.")] },
 			],
 		});
 
@@ -1269,12 +1469,23 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			},
 		});
 
+		const statusPath = path.join(asyncDir, "status.json");
 		const deadline = Date.now() + 10_000;
 		let eventText = "";
+		let statusDuringEvent: AsyncStatusPayload | undefined;
 		while (Date.now() < deadline) {
 			if (fs.existsSync(eventsPath)) {
 				eventText = fs.readFileSync(eventsPath, "utf-8");
-				if (eventText.includes('"reason":"tool_failures"')) break;
+			}
+			if (eventText.includes('"reason":"tool_failures"') && fs.existsSync(statusPath)) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+				if (status.activityState === "needs_attention" && status.steps?.[0]?.activityState === "needs_attention") {
+					statusDuringEvent = status;
+					break;
+				}
+			}
+			if (eventText.includes('"reason":"tool_failures"') && fs.existsSync(resultPath)) {
+				assert.fail("run completed before status.json exposed needs_attention");
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
@@ -1282,9 +1493,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(eventText, /"type":"needs_attention"/);
 		assert.match(eventText, /"reason":"tool_failures"/);
 		assert.match(eventText, /subagent-runner\.ts/);
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(status.activityState, "needs_attention");
-		assert.equal(status.steps?.[0]?.activityState, "needs_attention");
+		assert.ok(statusDuringEvent, "expected status.json to expose needs_attention while the run is still active");
+		assert.equal(statusDuringEvent.activityState, "needs_attention");
+		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
 
 		const doneDeadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {

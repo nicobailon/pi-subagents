@@ -149,6 +149,29 @@ function exactResultPath(resultsDir: string, runId: string): string | null {
 	return fs.existsSync(resultPath) ? resultPath : null;
 }
 
+export function findAsyncRunPrefixMatches(prefix: string, asyncDirRoot: string, resultsDir: string): Array<{ id: string; location: AsyncRunLocation }> {
+	const requestedId = assertRunId(prefix, "id");
+	if (!requestedId) return [];
+	const asyncRoot = path.resolve(asyncDirRoot);
+	const resultRoot = path.resolve(resultsDir);
+	const matchingIds = [...new Set([
+		...prefixedRunIds(asyncRoot, requestedId),
+		...prefixedRunIds(resultRoot, requestedId, ".json"),
+	])].sort();
+	return matchingIds.map((id) => {
+		const asyncDir = path.join(asyncRoot, id);
+		assertInsideRoot(asyncRoot, asyncDir, "Async run directory");
+		return {
+			id,
+			location: {
+				asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
+				resultPath: exactResultPath(resultRoot, id),
+				resolvedId: id,
+			},
+		};
+	});
+}
+
 export function resolveAsyncRunLocation(params: AsyncResumeParams, asyncDirRoot: string, resultsDir: string): AsyncRunLocation {
 	const asyncRoot = path.resolve(asyncDirRoot);
 	const resultRoot = path.resolve(resultsDir);
@@ -175,22 +198,12 @@ export function resolveAsyncRunLocation(params: AsyncResumeParams, asyncDirRoot:
 		};
 	}
 
-	const matchingIds = [...new Set([
-		...prefixedRunIds(asyncRoot, requestedId),
-		...prefixedRunIds(resultRoot, requestedId, ".json"),
-	])].sort();
-	if (matchingIds.length === 0) return { asyncDir: null, resultPath: null, resolvedId: requestedId };
-	if (matchingIds.length > 1) {
-		throw new Error(`Ambiguous async run id prefix '${requestedId}' matched: ${matchingIds.join(", ")}. Provide a longer id.`);
+	const matching = findAsyncRunPrefixMatches(requestedId, asyncRoot, resultRoot);
+	if (matching.length === 0) return { asyncDir: null, resultPath: null, resolvedId: requestedId };
+	if (matching.length > 1) {
+		throw new Error(`Ambiguous async run id prefix '${requestedId}' matched: ${matching.map((match) => match.id).join(", ")}. Provide a longer id.`);
 	}
-	const resolvedId = matchingIds[0]!;
-	const asyncDir = path.join(asyncRoot, resolvedId);
-	assertInsideRoot(asyncRoot, asyncDir, "Async run directory");
-	return {
-		asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
-		resultPath: exactResultPath(resultRoot, resolvedId),
-		resolvedId,
-	};
+	return matching[0]!.location;
 }
 
 function resultState(result: AsyncResultFile): AsyncStatus["state"] {

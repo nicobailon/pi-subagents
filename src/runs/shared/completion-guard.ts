@@ -54,11 +54,24 @@ const GENERAL_IMPLEMENTATION_PATTERNS = [
 	/\b(?:update|add|remove|replace|delete|create)\s+(?:the\s+)?(?:file|files|code|source|implementation|test|tests|component|function|module|class|method|logic|import|imports|readme|docs?|changelog|package\.json|config|manifest|extension|prompt|command)\b/i,
 ];
 
+const READ_ONLY_BUILTIN_TOOLS = new Set([
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"web_search",
+	"fetch_content",
+	"get_search_content",
+	"intercom",
+	"contact_supervisor",
+]);
 
 interface CompletionMutationGuardInput {
 	agent: string;
 	task: string;
 	messages: Message[];
+	tools?: string[];
+	mcpDirectTools?: string[];
 }
 
 interface CompletionMutationGuardResult {
@@ -81,6 +94,13 @@ function stripScopedNoEditConstraints(task: string): string {
 		stripped = stripped.replace(pattern, " ");
 	}
 	return stripped;
+}
+
+function declaresOnlyReadOnlyTools(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {
+	return tools !== undefined
+		&& tools.length > 0
+		&& (mcpDirectTools?.length ?? 0) === 0
+		&& tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
 }
 
 export function expectsImplementationMutation(agent: string, task: string): boolean {
@@ -115,7 +135,9 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = expectsImplementationMutation(input.agent, input.task);
+	const expectedMutation = declaresOnlyReadOnlyTools(input.tools, input.mcpDirectTools)
+		? false
+		: expectsImplementationMutation(input.agent, input.task);
 	const attemptedMutation = hasMutationToolCall(input.messages);
 	return {
 		expectedMutation,

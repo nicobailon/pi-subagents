@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { getAgentDir } from "../../shared/utils.ts";
 
 export interface RunEntry {
 	agent: string;
@@ -11,9 +11,12 @@ export interface RunEntry {
 	exit?: number;
 }
 
-const HISTORY_PATH = path.join(os.homedir(), ".pi", "agent", "run-history.jsonl");
 const ROTATE_READ_THRESHOLD = 1200;
 const ROTATE_KEEP = 1000;
+
+function getHistoryPath(): string {
+	return path.join(getAgentDir(), "run-history.jsonl");
+}
 
 export function recordRun(agent: string, task: string, exitCode: number, durationMs: number): void {
 	try {
@@ -25,18 +28,20 @@ export function recordRun(agent: string, task: string, exitCode: number, duratio
 			duration: durationMs,
 			...(exitCode !== 0 ? { exit: exitCode } : {}),
 		};
-		fs.mkdirSync(path.dirname(HISTORY_PATH), { recursive: true });
-		fs.appendFileSync(HISTORY_PATH, `${JSON.stringify(entry)}\n`);
+		const historyPath = getHistoryPath();
+		fs.mkdirSync(path.dirname(historyPath), { recursive: true });
+		fs.appendFileSync(historyPath, `${JSON.stringify(entry)}\n`);
 	} catch {
 		// Best-effort — never crash the execution flow for history recording
 	}
 }
 
 export function loadRunsForAgent(agent: string): RunEntry[] {
-	if (!fs.existsSync(HISTORY_PATH)) return [];
+	const historyPath = getHistoryPath();
+	if (!fs.existsSync(historyPath)) return [];
 	let raw: string;
 	try {
-		raw = fs.readFileSync(HISTORY_PATH, "utf-8");
+		raw = fs.readFileSync(historyPath, "utf-8");
 	} catch {
 		return [];
 	}
@@ -45,7 +50,7 @@ export function loadRunsForAgent(agent: string): RunEntry[] {
 
 	if (lines.length > ROTATE_READ_THRESHOLD) {
 		lines = lines.slice(-ROTATE_KEEP);
-		try { fs.writeFileSync(HISTORY_PATH, `${lines.join("\n")}\n`, "utf-8"); } catch {}
+		try { fs.writeFileSync(historyPath, `${lines.join("\n")}\n`, "utf-8"); } catch {}
 	}
 
 	return lines

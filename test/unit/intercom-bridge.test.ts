@@ -202,6 +202,22 @@ describe("resolveIntercomBridge", () => {
 		});
 	});
 
+	it("finds user npm-installed pi-intercom packages without cwd", () => {
+		withPackagedIntercom(({ agentDir, globalNpmRoot, packageDir, legacyDir, configPath }) => {
+			const bridge = resolveIntercomBridge({
+				config: { mode: "always" },
+				context: "fresh",
+				orchestratorTarget: "main",
+				agentDir,
+				globalNpmRoot,
+				extensionDir: legacyDir,
+				configPath,
+			});
+			assert.equal(bridge.active, true);
+			assert.equal(bridge.extensionDir, path.resolve(packageDir));
+		});
+	});
+
 	it("stays inactive when intercom config is disabled", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-intercom-bridge-test-"));
 		const extensionDir = path.join(tempDir, "pi-intercom");

@@ -14,6 +14,7 @@ import {
 	type AsyncParallelGroupStatus,
 	type AsyncStatus,
 	type ModelAttempt,
+	type NestedRouteInfo,
 	type ResolvedControlConfig,
 	type SubagentRunMode,
 	type Usage,
@@ -40,6 +41,7 @@ import {
 	MAX_PARALLEL_CONCURRENCY,
 } from "../shared/parallel-utils.ts";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
+import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput } from "../../shared/utils.ts";
@@ -66,6 +68,7 @@ import {
 	formatWorktreeTaskCwdConflict,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
+import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 
 interface SubagentRunConfig {
@@ -91,6 +94,8 @@ interface SubagentRunConfig {
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
 	resultMode?: SubagentRunMode;
+	nestedRoute?: NestedRouteInfo;
+	nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> };
 }
 
 interface StepResult {
@@ -221,7 +226,12 @@ function runPiStreaming(
 			...(piPackageRoot ? { piPackageRoot } : {}),
 			...(piArgv1 ? { argv1: piArgv1 } : {}),
 		});
-		const child = spawn(spawnSpec.command, spawnSpec.args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: spawnEnv });
+		const child = spawn(spawnSpec.command, spawnSpec.args, {
+			cwd,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: spawnEnv,
+			windowsHide: true,
+		});
 		let stderr = "";
 		let stdoutBuf = "";
 		let stderrBuf = "";
@@ -229,6 +239,7 @@ function runPiStreaming(
 		const usage = emptyUsage();
 		let model: string | undefined;
 		let error: string | undefined;
+		let assistantError: string | undefined;
 		let interrupted = false;
 		let observedMutationAttempt = false;
 		const rawStdoutLines: string[] = [];
@@ -289,7 +300,7 @@ function runPiStreaming(
 
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
 				if (event.message.model) model = event.message.model;
-				if (event.message.errorMessage) error = event.message.errorMessage;
+				if (event.message.errorMessage) assistantError = event.message.errorMessage;
 				const eventUsage = event.message.usage;
 				if (eventUsage) {
 					usage.turns++;
@@ -303,6 +314,7 @@ function runPiStreaming(
 				const hasToolCall = Array.isArray(event.message.content)
 					&& event.message.content.some((part) => (part as { type?: string }).type === "toolCall");
 				if (stopReason === "stop" && !hasToolCall) {
+					if (!event.message.errorMessage && extractTextFromContent(event.message.content).trim()) assistantError = undefined;
 					cleanTerminalAssistantStopReceived ||= !event.message.errorMessage;
 					startFinalDrain();
 				}
@@ -370,7 +382,7 @@ function runPiStreaming(
 				const termSent = trySignalChild(child, "SIGTERM");
 				if (!termSent) return;
 				forcedTerminationSignal = true;
-				if (!cleanTerminalAssistantStopReceived && !error) {
+				if (!cleanTerminalAssistantStopReceived && !error && !assistantError) {
 					error = `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
 				}
 				finalHardKillTimer = setTimeout(() => {
@@ -394,14 +406,15 @@ function runPiStreaming(
 			if (stderrBuf.trim()) appendChildLine("subagent.child.stderr", stderrBuf);
 			outputStream.end();
 			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !error;
+			const finalError = error ?? assistantError;
+			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !finalError;
 			resolve({
 				stderr,
 				exitCode: interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
 				model,
-				error: interrupted || forcedDrainAfterFinalSuccess ? undefined : error,
+				error: interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError,
 				finalOutput,
 				interrupted,
 				observedMutationAttempt,
@@ -416,7 +429,7 @@ function runPiStreaming(
 			outputStream.end();
 			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: error ?? spawnErrorMessage, finalOutput, observedMutationAttempt });
+			resolve({ stderr, exitCode: 1, messages, usage, model, error: error ?? assistantError ?? spawnErrorMessage, finalOutput, observedMutationAttempt });
 		});
 	});
 }
@@ -545,6 +558,8 @@ interface SingleStepContext {
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
+	nestedRoute?: NestedRouteInfo;
+	onAttemptStart?: (attempt: { model?: string; thinking?: string }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
 }
 
@@ -596,6 +611,7 @@ async function runSingleStep(
 
 	for (let index = 0; index < candidates.length; index++) {
 		const candidate = candidates[index];
+		ctx.onAttemptStart?.({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		const { args, env, tempDir } = buildPiArgs({
 			baseArgs: ["--mode", "json", "-p"],
@@ -611,12 +627,17 @@ async function runSingleStep(
 			systemPrompt: step.systemPrompt,
 			systemPromptMode: step.systemPromptMode,
 			mcpDirectTools: step.mcpDirectTools,
+			cwd: step.cwd ?? ctx.cwd,
 			promptFileStem: step.agent,
 			intercomSessionName: ctx.childIntercomTarget,
 			orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
 			runId: ctx.id,
 			childAgentName: step.agent,
 			childIndex: ctx.flatIndex,
+			parentEventSink: ctx.nestedRoute?.eventSink,
+			parentControlInbox: ctx.nestedRoute?.controlInbox,
+			parentRootRunId: ctx.nestedRoute?.rootRunId,
+			parentCapabilityToken: ctx.nestedRoute?.capabilityToken,
 		});
 		const run = await runPiStreaming(
 			args,
@@ -633,11 +654,13 @@ async function runSingleStep(
 		cleanupTempDir(tempDir);
 
 		const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
-		const completionGuard = run.exitCode === 0 && !run.error && !hiddenError?.hasError
+		const completionGuard = run.exitCode === 0 && !run.error && !hiddenError?.hasError && step.completionGuard !== false
 			? evaluateCompletionMutationGuard({
 				agent: step.agent,
 				task,
 				messages: run.messages,
+				tools: step.tools,
+				mcpDirectTools: step.mcpDirectTools,
 			})
 			: undefined;
 		const completionGuardTriggered = completionGuard?.triggered === true && !run.observedMutationAttempt;
@@ -912,6 +935,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			skills: step.skills,
 			model: step.model,
+			thinking: step.thinking,
 			attemptedModels: step.modelCandidates && step.modelCandidates.length > 0 ? step.modelCandidates : step.model ? [step.model] : undefined,
 			recentTools: [],
 			recentOutput: [],
@@ -923,6 +947,32 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 	fs.mkdirSync(asyncDir, { recursive: true });
 	writeAtomicJson(statusPath, statusPayload);
+	const emitNestedSelfEvent = (type: "subagent.nested.updated" | "subagent.nested.completed"): void => {
+		if (!config.nestedRoute || !config.nestedSelf) return;
+		try {
+			writeNestedEvent(config.nestedRoute, {
+				type,
+				ts: Date.now(),
+				parentRunId: config.nestedSelf.parentRunId,
+				parentStepIndex: config.nestedSelf.parentStepIndex,
+				child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
+					id,
+					parentRunId: config.nestedSelf.parentRunId,
+					parentStepIndex: config.nestedSelf.parentStepIndex,
+					depth: config.nestedSelf.depth,
+					path: config.nestedSelf.path,
+					mode: statusPayload.mode,
+					ts: Date.now(),
+				}),
+			});
+		} catch (error) {
+			console.error("Failed to emit nested async status event:", error);
+		}
+	};
+	const writeStatusPayload = (): void => {
+		writeAtomicJson(statusPath, statusPayload);
+		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
+	};
 
 	const stepOutputActivityAt = (index: number): number => {
 		const step = statusPayload.steps[index];
@@ -1006,6 +1056,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		});
 		appendControlEvent(event);
 		return true;
+	};
+	const updateStepModel = (flatIndex: number, model: string | undefined, thinking: string | undefined, now = Date.now()): void => {
+		const step = statusPayload.steps[flatIndex];
+		if (!step) return;
+		step.model = model;
+		step.thinking = thinking;
+		statusPayload.lastUpdate = now;
+		writeStatusPayload();
 	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
@@ -1093,7 +1151,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
-		writeAtomicJson(statusPath, statusPayload);
+		writeStatusPayload();
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
 		if (!controlConfig.enabled) return false;
@@ -1148,7 +1206,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			changed = true;
 		}
 		statusPayload.lastUpdate = now;
-		if (changed) writeAtomicJson(statusPath, statusPayload);
+		if (changed) writeStatusPayload();
 		return changed;
 	};
 	if (controlConfig.enabled) {
@@ -1177,7 +1235,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				step.lastActivityAt = now;
 			}
 		}
-		writeAtomicJson(statusPath, statusPayload);
+		writeStatusPayload();
 		appendJsonl(eventsPath, JSON.stringify({
 			type: "subagent.run.paused",
 			ts: now,
@@ -1288,7 +1346,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							statusPayload.steps[fi].exitCode = -1;
 							statusPayload.steps[fi].activityState = undefined;
 							statusPayload.lastUpdate = skippedAt;
-							writeAtomicJson(statusPath, statusPayload);
+							writeStatusPayload();
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: -1, durationMs: 0,
 							}));
@@ -1308,7 +1366,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
 						statusPayload.lastActivityAt = taskStartTime;
 						statusPayload.lastUpdate = taskStartTime;
-						writeAtomicJson(statusPath, statusPayload);
+						writeStatusPayload();
 
 						appendJsonl(eventsPath, JSON.stringify({
 							type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent,
@@ -1329,9 +1387,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							piArgv1: config.piArgv1,
 							childIntercomTarget: config.childIntercomTargets?.[fi],
 							orchestratorIntercomTarget: config.controlIntercomTarget,
+							nestedRoute: config.nestedRoute,
 							registerInterrupt: (interrupt) => {
 								activeChildInterrupt = interrupt;
 							},
+							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 						});
 						if (task.sessionFile) {
@@ -1346,11 +1406,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].durationMs = taskDuration;
 						statusPayload.steps[fi].exitCode = singleResult.exitCode;
 						statusPayload.steps[fi].model = singleResult.model;
+						statusPayload.steps[fi].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[fi].thinking);
 						statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 						statusPayload.steps[fi].error = singleResult.error;
 						statusPayload.lastUpdate = taskEndTime;
-						writeAtomicJson(statusPath, statusPayload);
+						writeStatusPayload();
 
 						appendJsonl(eventsPath, JSON.stringify({
 							type: singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
@@ -1394,7 +1455,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				}
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
 				statusPayload.lastUpdate = Date.now();
-				writeAtomicJson(statusPath, statusPayload);
+				writeStatusPayload();
 
 				for (const pr of parallelResults) {
 					results.push({
@@ -1452,7 +1513,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.lastActivityAt = stepStartTime;
 			statusPayload.lastUpdate = stepStartTime;
 			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
-			writeAtomicJson(statusPath, statusPayload);
+			writeStatusPayload();
 
 			appendJsonl(eventsPath, JSON.stringify({
 				type: "subagent.step.started",
@@ -1472,9 +1533,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				piArgv1: config.piArgv1,
 				childIntercomTarget: config.childIntercomTargets?.[flatIndex],
 				orchestratorIntercomTarget: config.controlIntercomTarget,
+				nestedRoute: config.nestedRoute,
 				registerInterrupt: (interrupt) => {
 					activeChildInterrupt = interrupt;
 				},
+				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 			});
 			if (seqStep.sessionFile) {
@@ -1522,6 +1585,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
 			statusPayload.steps[flatIndex].exitCode = singleResult.exitCode;
 			statusPayload.steps[flatIndex].model = singleResult.model;
+			statusPayload.steps[flatIndex].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[flatIndex].thinking);
 			statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
 			statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
 			statusPayload.steps[flatIndex].error = singleResult.error;
@@ -1530,7 +1594,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
 			}
 			statusPayload.lastUpdate = stepEndTime;
-			writeAtomicJson(statusPath, statusPayload);
+			writeStatusPayload();
 
 			appendJsonl(eventsPath, JSON.stringify({
 				type: singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
@@ -1632,7 +1696,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.error = `Step failed: ${failedStep.agent}`;
 		}
 	}
-	writeAtomicJson(statusPath, statusPayload);
+	writeStatusPayload();
 	appendJsonl(
 		eventsPath,
 		JSON.stringify({

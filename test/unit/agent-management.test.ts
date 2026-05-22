@@ -129,6 +129,33 @@ Inspect
 		assert.doesNotMatch(content, /^package:/m);
 	});
 
+	it("creates agents with completion guard disabled", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const result = handleCreate(
+			{ config: { name: "test-runner", description: "Run tests", scope: "project", tools: "read, grep, bash, ls", completionGuard: false } },
+			ctx,
+		);
+
+		assert.equal(result.isError, false);
+		const filePath = path.join(tempDir, ".pi", "agents", "test-runner.md");
+		const content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^completionGuard: false$/m);
+
+		const got = handleManagementAction("get", { agent: "test-runner" }, ctx);
+		assert.equal(got.isError, false);
+		assert.match(readText(got), /Completion guard: false/);
+	});
+
+	it("rejects non-boolean completion guard config", () => {
+		const result = handleCreate(
+			{ config: { name: "test-runner", description: "Run tests", scope: "project", completionGuard: "false" } },
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /config\.completionGuard must be a boolean/);
+	});
+
 	it("creates delegate with its builtin prompt defaults", () => {
 		const result = handleCreate(
 			{ config: { name: "delegate", description: "Delegate helper", scope: "project" } },

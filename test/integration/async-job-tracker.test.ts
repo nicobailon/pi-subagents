@@ -197,6 +197,60 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("rerenders changed polled status but not unchanged bookkeeping", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		try {
+			const runDir = path.join(asyncRoot, "run-unchanged");
+			fs.mkdirSync(runDir, { recursive: true });
+			const writeStatus = (lastUpdate: number, toolCount?: number) => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-unchanged",
+				mode: "single",
+				state: "running",
+				startedAt: 1000,
+				lastUpdate,
+				...(toolCount !== undefined ? { toolCount } : {}),
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			}), "utf-8");
+			writeStatus(2000);
+
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-unchanged", asyncDir: runDir, agent: "worker" });
+
+			const requestsAfterStart = ui.renderRequests;
+			await new Promise((resolve) => setTimeout(resolve, 35));
+			assert.ok(ui.renderRequests > requestsAfterStart, "first status load should redraw the widget");
+
+			const requestsAfterStatusLoaded = ui.renderRequests;
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 123,
+					runId: "run-unchanged",
+					agent: "worker",
+					message: "worker needs attention",
+				},
+			})}\n`, "utf-8");
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
+			assert.equal(ui.renderRequests, requestsAfterStatusLoaded, "unchanged status and control cursors should not request widget redraws");
+
+			writeStatus(3000, 1);
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "changed non-terminal status should redraw the widget");
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("schedules cleanup when polling observes a completed status without a completion event", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
@@ -343,6 +397,129 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.asyncJobs.size, 0);
 			assert.ok(ui.renderRequests > 0, "expected malformed status cleanup to request a rerender");
 		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("does not clean up a status-read failure while nested descendants are live", async () => {
+		const asyncRoot = createTempDir("pi-async-job-bad-status-nested-");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		const originalError = console.error;
+		console.error = () => {};
+		try {
+			const runDir = path.join(asyncRoot, "run-bad-status-nested");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), "{", "utf-8");
+			const state = createState();
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				completionRetentionMs: 5,
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-bad-status-nested", asyncDir: runDir, agent: "worker" });
+			const job = state.asyncJobs.get("run-bad-status-nested");
+			assert.ok(job);
+			job.nestedChildren = [{
+				id: "nested-live",
+				parentRunId: "run-bad-status-nested",
+				depth: 1,
+				path: [{ runId: "run-bad-status-nested" }],
+				state: "running",
+				agent: "nested-worker",
+			}];
+
+			await new Promise((resolve) => setTimeout(resolve, 80));
+
+			assert.equal(state.asyncJobs.has("run-bad-status-nested"), true);
+			assert.equal(state.asyncJobs.get("run-bad-status-nested")?.status, "failed");
+			assert.equal(state.cleanupTimers.has("run-bad-status-nested"), false);
+		} finally {
+			console.error = originalError;
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("keeps root jobs running when nested refresh fails during polling", async () => {
+		const asyncRoot = createTempDir("pi-async-job-nested-refresh-um");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		const originalError = console.error;
+		console.error = () => {};
+		try {
+			const runDir = path.join(asyncRoot, "run-nested-refresh");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-nested-refresh",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				completionRetentionMs: 5,
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({
+				id: "run-nested-refresh",
+				asyncDir: runDir,
+				agent: "worker",
+				nestedRoute: {
+					rootRunId: "run-nested-refresh",
+					eventSink: path.join(asyncRoot, "not-contained-events"),
+					controlInbox: path.join(asyncRoot, "not-contained-controls"),
+					capabilityToken: "bad-token",
+				},
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			assert.equal(state.asyncJobs.get("run-nested-refresh")?.status, "running");
+			assert.equal(state.cleanupTimers.has("run-nested-refresh"), false);
+		} finally {
+			console.error = originalError;
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("cancels cleanup timers when polling observes a non-terminal status", async () => {
+		const asyncRoot = createTempDir("pi-async-job-cleanup-cancel-");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "run-recovered");
+			fs.mkdirSync(runDir, { recursive: true });
+			const state = createState();
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				completionRetentionMs: 1_000,
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-recovered", asyncDir: runDir, agent: "worker" });
+			tracker.handleComplete({ id: "run-recovered", success: true });
+			assert.equal(state.cleanupTimers.has("run-recovered"), true);
+
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-recovered",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+
+			const deadline = Date.now() + 200;
+			while (Date.now() < deadline && state.cleanupTimers.has("run-recovered")) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+
+			assert.equal(state.cleanupTimers.has("run-recovered"), false);
+			assert.equal(state.asyncJobs.get("run-recovered")?.status, "running");
+		} finally {
+			tracker?.resetJobs();
 			removeTempDir(asyncRoot);
 		}
 	});

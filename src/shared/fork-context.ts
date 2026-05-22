@@ -1,13 +1,17 @@
-type SubagentExecutionContext = "fresh" | "fork";
+import * as fs from "node:fs";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-interface ForkableSessionManagerStatic {
-	open(path: string): { createBranchedSession(leafId: string): string | undefined };
-}
+type SubagentExecutionContext = "fresh" | "fork";
 
 interface ForkableSessionManager {
 	getSessionFile(): string | undefined;
 	getLeafId(): string | null;
-	constructor: ForkableSessionManagerStatic;
+	getSessionDir?(): string;
+	openSession?: (path: string, sessionDir?: string) => { createBranchedSession(leafId: string): string | undefined };
+}
+
+interface ForkContextResolverOptions {
+	openSession?: (path: string, sessionDir?: string) => { createBranchedSession(leafId: string): string | undefined };
 }
 
 interface ForkContextResolver {
@@ -21,6 +25,7 @@ export function resolveSubagentContext(value: unknown): SubagentExecutionContext
 export function createForkContextResolver(
 	sessionManager: ForkableSessionManager,
 	requestedContext: unknown,
+	options: ForkContextResolverOptions = {},
 ): ForkContextResolver {
 	if (resolveSubagentContext(requestedContext) !== "fork") {
 		return {
@@ -38,6 +43,10 @@ export function createForkContextResolver(
 		throw new Error("Forked subagent context requires a current leaf to fork from.");
 	}
 
+	const openSession = options.openSession
+		?? sessionManager.openSession
+		?? ((file: string, dir?: string) => SessionManager.open(file, dir));
+	const sessionDir = sessionManager.getSessionDir?.();
 	const cachedSessionFiles = new Map<number, string>();
 
 	return {
@@ -45,10 +54,16 @@ export function createForkContextResolver(
 			const cached = cachedSessionFiles.get(index);
 			if (cached) return cached;
 			try {
-				const sourceManager = sessionManager.constructor.open(parentSessionFile);
+				if (!fs.existsSync(parentSessionFile)) {
+					throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
+				}
+				const sourceManager = openSession(parentSessionFile, sessionDir);
 				const sessionFile = sourceManager.createBranchedSession(leafId);
 				if (!sessionFile) {
-					throw new Error("Session manager did not return a session file.");
+					throw new Error("Session manager did not return a forked session file.");
+				}
+				if (!fs.existsSync(sessionFile)) {
+					throw new Error(`Session manager returned a forked session file that does not exist: ${sessionFile}`);
 				}
 				cachedSessionFiles.set(index, sessionFile);
 				return sessionFile;

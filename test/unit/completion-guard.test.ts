@@ -37,6 +37,51 @@ test("implementation task with no mutation triggers the completion guard", () =>
 	});
 });
 
+test("declared read-only builtin tools suppress implementation-word false positives", () => {
+	const result = evaluateCompletionMutationGuard({
+		agent: "architect",
+		task: "Produce a proposal that implements the approved fix",
+		messages: [assistantText("Proposal only")],
+		tools: ["read", "grep", "find", "ls"],
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+	});
+});
+
+test("omitted, empty, bash, unknown, write, and MCP tool capabilities stay conservative", () => {
+	const base = {
+		agent: "architect",
+		task: "Implement the approved source fix",
+		messages: [assistantText("Validation only")],
+	};
+
+	assert.equal(evaluateCompletionMutationGuard(base).triggered, true);
+	assert.equal(evaluateCompletionMutationGuard({ ...base, tools: [] }).triggered, true);
+	assert.equal(evaluateCompletionMutationGuard({ ...base, tools: ["read", "bash", "ls"] }).triggered, true);
+	assert.equal(evaluateCompletionMutationGuard({ ...base, tools: ["read", "custom_lookup"] }).triggered, true);
+	assert.equal(evaluateCompletionMutationGuard({ ...base, tools: ["read", "write"] }).triggered, true);
+	assert.equal(evaluateCompletionMutationGuard({ ...base, tools: ["read", "grep"], mcpDirectTools: ["github/search"] }).triggered, true);
+});
+
+test("worker with mutating-capable tools still triggers when no mutation is observed", () => {
+	const result = evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Fix the test implementation",
+		messages: [assistantText("I will edit it next")],
+		tools: ["read", "edit"],
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: true,
+		attemptedMutation: false,
+		triggered: true,
+	});
+});
+
 test("review-only, research, and framework output instructions do not expect mutation", () => {
 	assert.equal(expectsImplementationMutation("worker", "Review only: return findings, do not edit"), false);
 	assert.equal(expectsImplementationMutation("worker", "Do not edit files. Tell me how to fix the bug."), false);

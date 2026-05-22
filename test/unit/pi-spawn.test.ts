@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { getPiSpawnCommand, resolveWindowsPiCliScript, type PiSpawnDeps } from "../../src/runs/shared/pi-spawn.ts";
@@ -10,6 +12,7 @@ function makeDeps(input: {
 	existing?: string[];
 	packageJsonPath?: string;
 	packageJsonContent?: string;
+	packageEntry?: string;
 }): PiSpawnDeps {
 	const existing = new Set(input.existing ?? []);
 	const packageJsonPath = input.packageJsonPath;
@@ -25,10 +28,8 @@ function makeDeps(input: {
 			}
 			return packageJsonContent;
 		},
-		resolvePackageJson: () => {
-			if (!packageJsonPath) throw new Error("package json path missing");
-			return packageJsonPath;
-		},
+		resolvePackageJson: packageJsonPath ? () => packageJsonPath : undefined,
+		resolvePackageEntry: input.packageEntry ? () => input.packageEntry! : undefined,
 	};
 }
 
@@ -108,10 +109,35 @@ describe("getPiSpawnCommand", () => {
 			argv1: "/opt/pi/subagent-runner.ts",
 			existing: [],
 		});
-		const args = ["-p", "Task: hello"]; 
+		const args = ["-p", "Task: hello"];
 		const result = getPiSpawnCommand(args, deps);
 		assert.deepEqual(result, { command: "pi", args });
 	});
+
+	it("walks from package main entry to resolve package bin", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-spawn-package-root-"));
+		try {
+			const packageRoot = path.join(tempDir, "node_modules", "@earendil-works", "pi-coding-agent");
+			const entry = path.join(packageRoot, "dist", "index.js");
+			const cliPath = path.join(packageRoot, "dist", "cli", "index.js");
+			fs.mkdirSync(path.dirname(entry), { recursive: true });
+			fs.mkdirSync(path.dirname(cliPath), { recursive: true });
+			fs.writeFileSync(entry, "export {};\n");
+			fs.writeFileSync(cliPath, "#!/usr/bin/env node\n");
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli/index.js" } }));
+			const result = getPiSpawnCommand(["-p", "Task: hello"], {
+				platform: "win32",
+				execPath: "/usr/local/bin/node",
+				argv1: "/opt/pi/subagent-runner.ts",
+				resolvePackageEntry: () => entry,
+			});
+			assert.equal(result.command, "/usr/local/bin/node");
+			assert.equal(result.args[0], cliPath);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 });
 
 describe("getPiSpawnCommand with piPackageRoot", () => {

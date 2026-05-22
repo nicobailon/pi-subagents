@@ -13,6 +13,13 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Singl
 // File System Utilities
 // ============================================================================
 
+export function getAgentDir(): string {
+	const configured = process.env.PI_CODING_AGENT_DIR;
+	if (configured === "~") return os.homedir();
+	if (configured?.startsWith("~/")) return path.join(os.homedir(), configured.slice(2));
+	return configured || path.join(os.homedir(), ".pi", "agent");
+}
+
 const statusCache = new Map<string, { mtime: number; status: AsyncStatus }>();
 
 function getErrorMessage(error: unknown): string {
@@ -182,8 +189,11 @@ export function getFinalOutput(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") {
+			const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
+				|| ("stopReason" in msg && msg.stopReason === "error");
+			if (hasAssistantError) continue;
 			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
+				if (part.type === "text" && part.text.trim().length > 0) return part.text;
 			}
 		}
 	}

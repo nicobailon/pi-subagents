@@ -83,6 +83,8 @@ export interface ControlEvent {
 	agent: string;
 	index?: number;
 	runId: string;
+	nestedRunId?: string;
+	nestingPath?: NestedRunAddress["path"];
 	message: string;
 	reason?: "idle" | "completion_guard" | "active_long_running" | "tool_failures" | "time_threshold" | "turn_threshold" | "token_threshold";
 	turns?: number;
@@ -98,6 +100,21 @@ export interface ControlEvent {
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached";
 export type SubagentRunMode = "single" | "parallel" | "chain";
 
+export type PublicNestedStepSummary = Pick<
+	NestedStepSummary,
+	"agent" | "status" | "sessionFile" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "startedAt" | "endedAt" | "error"
+> & {
+	children?: PublicNestedRunSummary[];
+};
+
+export type PublicNestedRunSummary = Pick<
+	NestedRunSummary,
+	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "totalTokens" | "startedAt" | "endedAt" | "lastUpdate" | "error"
+> & {
+	steps?: PublicNestedStepSummary[];
+	children?: PublicNestedRunSummary[];
+};
+
 export interface SubagentResultIntercomChild {
 	agent: string;
 	status: SubagentResultStatus;
@@ -106,6 +123,7 @@ export interface SubagentResultIntercomChild {
 	artifactPath?: string;
 	sessionPath?: string;
 	intercomTarget?: string;
+	children?: PublicNestedRunSummary[];
 }
 
 export interface SubagentResultIntercomPayload {
@@ -261,6 +279,76 @@ export interface AsyncParallelGroupStatus {
 	stepIndex: number;
 }
 
+export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused";
+export type NestedOwnerState = "live" | "gone" | "unknown";
+
+export interface NestedRunAddress {
+	id: string;
+	parentRunId: string;
+	parentStepIndex?: number;
+	parentAgent?: string;
+	depth: number;
+	path: Array<{ runId: string; stepIndex?: number; agent?: string }>;
+}
+
+export interface NestedStepSummary {
+	agent: string;
+	status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
+	sessionFile?: string;
+	activityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	currentPath?: string;
+	turnCount?: number;
+	toolCount?: number;
+	startedAt?: number;
+	endedAt?: number;
+	error?: string;
+	children?: NestedRunSummary[];
+}
+
+export interface NestedRunSummary extends NestedRunAddress {
+	asyncDir?: string;
+	pid?: number;
+	sessionId?: string;
+	sessionFile?: string;
+	intercomTarget?: string;
+	ownerIntercomTarget?: string;
+	leafIntercomTarget?: string;
+	ownerState?: NestedOwnerState;
+	controlInbox?: string;
+	capabilityToken?: string;
+	mode?: SubagentRunMode;
+	state: NestedRunState;
+	agent?: string;
+	agents?: string[];
+	currentStep?: number;
+	chainStepCount?: number;
+	parallelGroups?: AsyncParallelGroupStatus[];
+	steps?: NestedStepSummary[];
+	children?: NestedRunSummary[];
+	activityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	currentPath?: string;
+	turnCount?: number;
+	toolCount?: number;
+	totalTokens?: TokenUsage;
+	startedAt?: number;
+	endedAt?: number;
+	lastUpdate?: number;
+	error?: string;
+}
+
+export interface NestedRouteInfo {
+	rootRunId: string;
+	eventSink: string;
+	controlInbox: string;
+	capabilityToken: string;
+}
+
 export interface AsyncStartedEvent {
 	id?: string;
 	asyncDir?: string;
@@ -272,6 +360,7 @@ export interface AsyncStartedEvent {
 	chain?: string[];
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
+	nestedRoute?: NestedRouteInfo;
 }
 
 export interface AsyncStatus {
@@ -297,6 +386,7 @@ export interface AsyncStatus {
 	steps?: Array<{
 		agent: string;
 		status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
+		children?: NestedRunSummary[];
 		sessionFile?: string;
 		activityState?: ActivityState;
 		lastActivityAt?: number;
@@ -315,6 +405,7 @@ export interface AsyncStatus {
 		tokens?: TokenUsage;
 		skills?: string[];
 		model?: string;
+		thinking?: string;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		error?: string;
@@ -360,6 +451,8 @@ export interface AsyncJobState {
 	totalTokens?: TokenUsage;
 	sessionFile?: string;
 	controlEventCursor?: number;
+	nestedRoute?: NestedRouteInfo;
+	nestedChildren?: NestedRunSummary[];
 }
 
 export interface ForegroundResumeChild {
@@ -397,6 +490,8 @@ export interface SubagentState {
 		turnCount?: number;
 		tokens?: number;
 		toolCount?: number;
+		nestedRoute?: NestedRouteInfo;
+		nestedChildren?: NestedRunSummary[];
 		interrupt?: () => boolean;
 	}>;
 	lastForegroundControlId: string | null;
@@ -472,6 +567,7 @@ export interface RunSyncOptions {
 	outputPath?: string;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
+	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
 	/** Registry models available for heuristic bare-model resolution */
@@ -498,7 +594,6 @@ export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
-	managerCommand?: string | false;
 	maxSubagentDepth?: number;
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;

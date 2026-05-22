@@ -3,10 +3,12 @@ export interface RunnerSubagentStep {
 	task: string;
 	cwd?: string;
 	model?: string;
+	thinking?: string;
 	modelCandidates?: string[];
 	tools?: string[];
 	extensions?: string[];
 	mcpDirectTools?: string[];
+	completionGuard?: boolean;
 	systemPrompt?: string | null;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext: boolean;

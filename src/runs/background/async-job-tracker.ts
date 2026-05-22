@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { renderWidget } from "../../tui/render.ts";
+import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
 import { formatControlNoticeMessage } from "../shared/subagent-control.ts";
 import {
 	type AsyncJobState,
@@ -15,7 +15,8 @@ import {
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
-import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
+import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -38,9 +39,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		renderWidget(ctx, jobs);
 		ctx.ui.requestRender?.();
 	};
-	const scheduleCleanup = (asyncId: string) => {
+	const cancelCleanup = (asyncId: string) => {
 		const existingTimer = state.cleanupTimers.get(asyncId);
-		if (existingTimer) clearTimeout(existingTimer);
+		if (!existingTimer) return;
+		clearTimeout(existingTimer);
+		state.cleanupTimers.delete(asyncId);
+	};
+	const scheduleCleanup = (asyncId: string) => {
+		cancelCleanup(asyncId);
 		const timer = setTimeout(() => {
 			state.cleanupTimers.delete(asyncId);
 			state.asyncJobs.delete(asyncId);
@@ -118,9 +124,30 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				return;
 			}
 
+			let widgetChanged = false;
 			for (const job of state.asyncJobs.values()) {
+				const widgetStateBefore = widgetRenderKey(job);
+				let nestedRefreshFailed = false;
+				const refreshNestedProjection = () => {
+					try {
+						updateAsyncJobNestedProjection(job);
+					} catch (error) {
+						nestedRefreshFailed = true;
+						console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
+					}
+				};
+				const reconcileNestedDescendants = () => {
+					try {
+						if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
+					} catch (error) {
+						nestedRefreshFailed = true;
+						console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
+					}
+					refreshNestedProjection();
+				};
 				try {
 					emitNewControlEvents(job);
+					reconcileNestedDescendants();
 					const reconciliation = reconcileAsyncRun(job.asyncDir, {
 						resultsDir,
 						kill: options.kill,
@@ -141,6 +168,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					if (status) {
 						const previousStatus = job.status;
 						job.status = status.state;
+						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused") cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
 						job.activityState = status.activityState;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
@@ -153,7 +181,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.currentStep = status.currentStep ?? job.currentStep;
 						job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
 						job.startedAt = status.startedAt ?? job.startedAt;
-						job.updatedAt = status.lastUpdate ?? Date.now();
+						if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
 						if (status.steps?.length) {
 							const groups = normalizeParallelGroups(status.parallelGroups, status.steps.length, status.chainStepCount ?? status.steps.length);
 							job.parallelGroups = groups.length ? groups : job.parallelGroups;
@@ -167,6 +195,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							job.activeParallelGroup = Boolean(activeGroup);
 							job.agents = visibleSteps.map((step) => step.agent);
 							job.steps = visibleSteps;
+							refreshNestedProjection();
 							job.stepsTotal = visibleSteps.length;
 							job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
 							job.completedSteps = visibleSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
@@ -176,24 +205,30 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.outputFile = status.outputFile ?? job.outputFile;
 						job.totalTokens = status.totalTokens ?? job.totalTokens;
 						job.sessionFile = status.sessionFile ?? job.sessionFile;
-						if ((job.status === "complete" || job.status === "failed" || job.status === "paused") && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
+						if ((job.status === "complete" || job.status === "failed" || job.status === "paused") && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 							scheduleCleanup(job.asyncId);
 						}
+						if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
 						continue;
 					}
-					job.status = job.status === "queued" ? "running" : job.status;
-					job.updatedAt = Date.now();
+					if (job.status === "queued") {
+						job.status = "running";
+						job.updatedAt = Date.now();
+					}
 				} catch (error) {
-					console.error(`Failed to read async status for '${job.asyncDir}':`, error);
-					job.status = "failed";
-					job.updatedAt = Date.now();
-					if (!state.cleanupTimers.has(job.asyncId)) {
+					if (job.status !== "failed") {
+						console.error(`Failed to read async status for '${job.asyncDir}':`, error);
+						job.status = "failed";
+						job.updatedAt = Date.now();
+					}
+					if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) {
 						scheduleCleanup(job.asyncId);
 					}
 				}
+				if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
 			}
 
-			if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);
+			if (widgetChanged && state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);
 		}, pollIntervalMs);
 		state.poller.unref?.();
 	};
@@ -220,6 +255,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			agents,
 			chainStepCount: info.chainStepCount,
 			parallelGroups: validParallelGroups,
+			nestedRoute: info.nestedRoute,
 			stepsTotal: firstGroupCount ?? agents?.length,
 			hasParallelGroups: validParallelGroups.length > 0,
 			activeParallelGroup: Boolean(firstGroupCount && firstGroupCount > 0),
@@ -237,15 +273,22 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const asyncId = result.id;
 		if (!asyncId) return;
 		const job = state.asyncJobs.get(asyncId);
+		let nestedRefreshFailed = false;
 		if (job) {
 			job.status = result.success ? "complete" : "failed";
 			job.updatedAt = Date.now();
 			if (result.asyncDir) job.asyncDir = result.asyncDir;
+			try {
+				updateAsyncJobNestedProjection(job);
+			} catch (error) {
+				nestedRefreshFailed = true;
+				console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
+			}
 		}
 		if (state.lastUiContext) {
 			rerenderWidget(state.lastUiContext);
 		}
-		scheduleCleanup(asyncId);
+		if (!nestedRefreshFailed && !hasLiveNestedDescendants(job?.nestedChildren)) scheduleCleanup(asyncId);
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {

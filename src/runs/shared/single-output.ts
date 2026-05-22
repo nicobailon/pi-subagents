@@ -8,12 +8,22 @@ export interface SingleOutputSnapshot {
 	size?: number;
 }
 
+export function normalizeSingleOutputOverride(
+	output: string | boolean | undefined,
+	defaultOutput: string | undefined,
+): string | false | undefined {
+	if (output === false || output === "false") return false;
+	if (output === true || output === "true") return defaultOutput;
+	if (typeof output === "string" && output.length > 0) return output;
+	return undefined;
+}
+
 export function resolveSingleOutputPath(
-	output: string | false | undefined,
+	output: string | boolean | undefined,
 	runtimeCwd: string,
 	requestedCwd?: string,
 ): string | undefined {
-	if (typeof output !== "string" || !output) return undefined;
+	if (typeof output !== "string" || !output || output === "false" || output === "true") return undefined;
 	if (path.isAbsolute(output)) return output;
 	const baseCwd = requestedCwd
 		? (path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd))

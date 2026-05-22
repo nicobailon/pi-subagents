@@ -51,6 +51,7 @@ import {
 	type ControlEvent,
 	type Details,
 	type IntercomEventBus,
+	type NestedRouteInfo,
 	type ResolvedControlConfig,
 	type SingleResult,
 	MAX_CONCURRENCY,
@@ -112,6 +113,7 @@ interface ParallelChainRunInput {
 	totalSteps: number;
 	worktreeSetup?: WorktreeSetup;
 	maxSubagentDepth: number;
+	nestedRoute?: NestedRouteInfo;
 }
 
 function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details {
@@ -244,6 +246,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				onControlEvent: input.onControlEvent,
 				intercomSessionName: input.childIntercomTarget?.(task.agent, input.globalTaskIndex + taskIndex),
 				orchestratorIntercomTarget: input.orchestratorIntercomTarget,
+				nestedRoute: input.nestedRoute,
 				modelOverride: effectiveModel,
 				availableModels: input.availableModels,
 				preferredModelProvider: input.ctx.model?.provider,
@@ -331,6 +334,7 @@ interface ChainExecutionParams {
 	chainSkills?: string[];
 	chainDir?: string;
 	maxSubagentDepth: number;
+	nestedRoute?: NestedRouteInfo;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 }
@@ -591,6 +595,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					childIntercomTarget,
 					orchestratorIntercomTarget,
 					foregroundControl,
+					nestedRoute: params.nestedRoute,
 					worktreeSetup,
 					maxSubagentDepth: params.maxSubagentDepth,
 				});
@@ -793,6 +798,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				onControlEvent,
 				intercomSessionName: childIntercomTarget?.(seqStep.agent, globalTaskIndex),
 				orchestratorIntercomTarget,
+				nestedRoute: params.nestedRoute,
 				modelOverride: effectiveModel,
 				availableModels,
 				preferredModelProvider: ctx.model?.provider,

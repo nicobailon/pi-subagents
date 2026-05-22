@@ -4,12 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agents.ts";
 import type { ExtensionConfig, IntercomBridgeConfig, IntercomBridgeMode } from "../shared/types.ts";
+import { getAgentDir } from "../shared/utils.ts";
 
 const PI_INTERCOM_PACKAGE_NAME = "pi-intercom";
 const CONFIG_DIR = ".pi";
 
 function defaultAgentDir(): string {
-	return path.join(os.homedir(), ".pi", "agent");
+	return getAgentDir();
 }
 
 function defaultIntercomExtensionDir(agentDir = defaultAgentDir()): string {
@@ -190,8 +191,7 @@ function getGlobalNpmRoot(): string | null {
 }
 
 function configuredPiIntercomPackageDir(input: ResolveIntercomBridgeInput, agentDir: string): string | undefined {
-	const cwd = path.resolve(input.cwd ?? process.cwd());
-	const projectConfigDir = findNearestProjectConfigDir(cwd);
+	const projectConfigDir = input.cwd ? findNearestProjectConfigDir(path.resolve(input.cwd)) : undefined;
 	const settingsFiles = [
 		...(projectConfigDir ? [{ file: path.join(projectConfigDir, "settings.json"), configDir: projectConfigDir, scope: "project" as const }] : []),
 		{ file: path.join(agentDir, "settings.json"), configDir: agentDir, scope: "user" as const },

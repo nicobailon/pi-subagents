@@ -297,6 +297,10 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.maxSubagentDepth = cfg.maxSubagentDepth;
 		} else return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
 	}
+	if (hasKey(cfg, "completionGuard")) {
+		if (typeof cfg.completionGuard !== "boolean") return "config.completionGuard must be a boolean when provided.";
+		target.completionGuard = cfg.completionGuard;
+	}
 	return undefined;
 }
 
@@ -366,6 +370,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
 	if (agent.defaultProgress) lines.push("Progress: true");
 	if (agent.maxSubagentDepth !== undefined) lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
+	if (agent.completionGuard === false) lines.push("Completion guard: false");
 	if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);
 	return lines.join("\n");
 }

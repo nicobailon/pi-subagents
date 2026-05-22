@@ -87,6 +87,7 @@ const extractExecutionFlags = (rawArgs: string): { args: string; bg: boolean; fo
 };
 
 const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (prefix: string) => {
+	if (!state.baseCwd) return null;
 	const agents = discoverAgents(state.baseCwd, "both").agents;
 	if (!multiAgent) {
 		if (prefix.includes(" ")) return null;
@@ -116,7 +117,7 @@ const discoverSavedChains = (cwd: string): ChainConfig[] => {
 };
 
 const makeChainCompletions = (state: SubagentState) => (prefix: string) => {
-	if (prefix.includes(" ")) return null;
+	if (prefix.includes(" ") || !state.baseCwd) return null;
 	return discoverSavedChains(state.baseCwd)
 		.filter((chain) => chain.name.startsWith(prefix))
 		.map((chain) => ({ value: chain.name, label: chain.name }));
@@ -382,6 +383,10 @@ const parseAgentArgs = (
 		ctx.ui.notify(usage, "error");
 		return null;
 	}
+	if (!state.baseCwd) {
+		ctx.ui.notify("Subagent session cwd is not initialized yet", "error");
+		return null;
+	}
 	const agents = discoverAgents(state.baseCwd, "both").agents;
 	for (const step of steps) {
 		if (!agents.find((a) => a.name === step.name)) {
@@ -415,6 +420,7 @@ export function registerSlashCommands(
 			const { name: agentName, config: inline } = parseAgentToken(firstSpace === -1 ? input : input.slice(0, firstSpace));
 			const task = firstSpace === -1 ? "" : input.slice(firstSpace + 1).trim();
 
+			if (!state.baseCwd) { ctx.ui.notify("Subagent session cwd is not initialized yet", "error"); return; }
 			const agents = discoverAgents(state.baseCwd, "both").agents;
 			if (!agents.find((a) => a.name === agentName)) { ctx.ui.notify(`Unknown agent: ${agentName}`, "error"); return; }
 
@@ -474,6 +480,7 @@ export function registerSlashCommands(
 				ctx.ui.notify(usage, "error");
 				return;
 			}
+			if (!state.baseCwd) { ctx.ui.notify("Subagent session cwd is not initialized yet", "error"); return; }
 			const chain = discoverSavedChains(state.baseCwd).find((candidate) => candidate.name === chainName);
 			if (!chain) {
 				ctx.ui.notify(`Unknown chain: ${chainName}`, "error");

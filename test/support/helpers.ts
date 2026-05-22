@@ -60,6 +60,7 @@ interface AgentConfig {
 	progress?: boolean;
 	mcpDirectTools?: string[];
 	maxSubagentDepth?: number;
+	completionGuard?: boolean;
 }
 
 export function makeAgentConfigs(names: string[]): AgentConfig[] {

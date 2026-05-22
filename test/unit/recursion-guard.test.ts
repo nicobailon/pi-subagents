@@ -87,6 +87,7 @@ describe("resolveChildMaxSubagentDepth", () => {
 
 	it("tightens to the lower per-agent max", () => {
 		assert.equal(resolveChildMaxSubagentDepth(3, 1), 1);
+		assert.equal(resolveChildMaxSubagentDepth(2, 0), 0);
 	});
 
 	it("does not relax an already stricter inherited max", () => {
@@ -116,6 +117,12 @@ describe("checkSubagentDepth", () => {
 		process.env.PI_SUBAGENT_DEPTH = "1";
 		process.env.PI_SUBAGENT_MAX_DEPTH = "2";
 		assert.equal(checkSubagentDepth().blocked, false);
+	});
+
+	it("blocks at depth=1, max=1 after one nested level", () => {
+		process.env.PI_SUBAGENT_DEPTH = "1";
+		process.env.PI_SUBAGENT_MAX_DEPTH = "1";
+		assert.equal(checkSubagentDepth().blocked, true);
 	});
 
 	it("blocked at depth=2, max=2", () => {

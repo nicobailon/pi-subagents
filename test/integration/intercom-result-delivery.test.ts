@@ -639,7 +639,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			);
 
 			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /Ambiguous async run id prefix/);
+			assert.match(result.content[0]?.text ?? "", /Ambiguous subagent run id prefix/);
 		} finally {
 			fs.rmSync(firstAsyncDir, { recursive: true, force: true });
 			fs.rmSync(secondAsyncDir, { recursive: true, force: true });

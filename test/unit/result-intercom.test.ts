@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+	attachNestedChildrenToResultChildren,
 	buildSubagentResultIntercomPayload,
 	formatSubagentResultReceipt,
 	resolveSubagentResultStatus,
@@ -112,6 +113,52 @@ describe("result intercom formatter", () => {
 
 		assert.match(payload.message, /Resume: unavailable; no child session file was persisted/);
 		assert.doesNotMatch(payload.message, /Revive:/);
+	});
+
+	it("attaches compact nested children under their parent result child without route secrets", () => {
+		const payload = buildSubagentResultIntercomPayload({
+			to: "chat",
+			runId: "root-run",
+			mode: "parallel",
+			source: "foreground",
+			children: attachNestedChildrenToResultChildren("root-run", [
+				{ agent: "owner-a", status: "completed", summary: "done", index: 0 },
+				{ agent: "owner-b", status: "completed", summary: "done", index: 1 },
+			], [{
+				id: "nested-a",
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				depth: 1,
+				path: [{ runId: "root-run", stepIndex: 1 }],
+				state: "complete",
+				agent: "reviewer",
+				sessionFile: path.join(os.tmpdir(), "nested-a.jsonl"),
+				controlInbox: "/tmp/should-not-leak",
+				capabilityToken: "secret-token",
+				children: [{
+					id: "nested-grandchild",
+					parentRunId: "nested-a",
+					depth: 2,
+					path: [{ runId: "root-run", stepIndex: 1 }, { runId: "nested-a" }],
+					state: "complete",
+					agent: "auditor",
+					controlInbox: "/tmp/grandchild-should-not-leak",
+					capabilityToken: "grandchild-secret",
+				}],
+			}]),
+		});
+
+		const nested = payload.children[1]?.children?.[0];
+		const grandchild = nested?.children?.[0];
+		assert.equal(payload.children[0]?.children, undefined);
+		assert.equal(nested?.id, "nested-a");
+		assert.equal(Object.hasOwn(nested ?? {}, "controlInbox"), false);
+		assert.equal(Object.hasOwn(nested ?? {}, "capabilityToken"), false);
+		assert.equal(grandchild?.id, "nested-grandchild");
+		assert.equal(Object.hasOwn(grandchild ?? {}, "controlInbox"), false);
+		assert.equal(Object.hasOwn(grandchild ?? {}, "capabilityToken"), false);
+		assert.match(payload.message, /Nested subagents:/);
+		assert.match(payload.message, /↳ reviewer — complete \[nested-a\]/);
 	});
 
 	it("keeps full child summaries inside grouped payloads", () => {

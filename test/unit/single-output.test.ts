@@ -8,6 +8,7 @@ import {
 	finalizeSingleOutput,
 	formatSavedOutputReference,
 	injectSingleOutputInstruction,
+	normalizeSingleOutputOverride,
 	resolveSingleOutput,
 	resolveSingleOutputPath,
 	validateFileOnlyOutputMode,
@@ -23,7 +24,33 @@ afterEach(() => {
 	}
 });
 
+describe("normalizeSingleOutputOverride", () => {
+	it("treats boolean and string false as disabled output", () => {
+		assert.equal(normalizeSingleOutputOverride(false, "default.md"), false);
+		assert.equal(normalizeSingleOutputOverride("false", "default.md"), false);
+	});
+
+	it("treats boolean and string true as the configured default output", () => {
+		assert.equal(normalizeSingleOutputOverride(true, "default.md"), "default.md");
+		assert.equal(normalizeSingleOutputOverride("true", "default.md"), "default.md");
+		assert.equal(normalizeSingleOutputOverride("true", undefined), undefined);
+	});
+
+	it("passes explicit non-empty output paths through", () => {
+		assert.equal(normalizeSingleOutputOverride("reports/out.md", "default.md"), "reports/out.md");
+		assert.equal(normalizeSingleOutputOverride("", "default.md"), undefined);
+		assert.equal(normalizeSingleOutputOverride(undefined, "default.md"), undefined);
+	});
+});
+
 describe("resolveSingleOutputPath", () => {
+	it("does not resolve disabled or boolean-like output values", () => {
+		assert.equal(resolveSingleOutputPath(false, "/repo"), undefined);
+		assert.equal(resolveSingleOutputPath("false", "/repo"), undefined);
+		assert.equal(resolveSingleOutputPath(true, "/repo"), undefined);
+		assert.equal(resolveSingleOutputPath("true", "/repo"), undefined);
+	});
+
 	it("keeps absolute paths unchanged", () => {
 		const absolutePath = path.join(os.tmpdir(), "pi-subagents-abs", "report.md");
 		const resolved = resolveSingleOutputPath(absolutePath, "/repo", "/override");
