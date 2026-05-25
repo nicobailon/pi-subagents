@@ -209,7 +209,6 @@ class SubagentControlNoticeComponent implements Component {
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
-		if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") registerFanoutChildSubagentExtension(pi);
 		return;
 	}
 	const globalStore = globalThis as Record<string, unknown>;
