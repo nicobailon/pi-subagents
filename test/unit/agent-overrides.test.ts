@@ -21,6 +21,12 @@ function writeProjectAgent(cwd: string, name: string, body: string): void {
 	fs.writeFileSync(filePath, body, "utf-8");
 }
 
+function writeUserAgent(home: string, name: string, body: string): void {
+	const filePath = path.join(home, ".pi", "agent", "agents", `${name}.md`);
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, body, "utf-8");
+}
+
 describe("builtin agent overrides", () => {
 	beforeEach(() => {
 		tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-home-"));
@@ -136,7 +142,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.override?.scope, "project");
 	});
 
-	it("does not apply builtin settings overrides when a full project agent overrides the builtin", () => {
+	it("frontmatter wins per-field over agentOverrides for a shadowing project agent", () => {
 		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
 		writeJson(path.join(tempProject, ".pi", "settings.json"), {
 			subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
@@ -148,6 +154,86 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.source, "project");
 		assert.equal(reviewer.model, "google/gemini-3-pro");
 		assert.equal(reviewer.override, undefined);
+	});
+
+	it("fills in unset fields on a custom project agent from project agentOverrides", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6", thinking: "high" } } },
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
+		assert.ok(implementer);
+		assert.equal(implementer.source, "project");
+		assert.equal(implementer.model, "anthropic/claude-sonnet-4-6");
+		assert.equal(implementer.thinking, "high");
+		assert.equal(implementer.override?.scope, "project");
+	});
+
+	it("fills in unset fields on a custom user agent from user agentOverrides", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
+		});
+		writeUserAgent(tempHome, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
+		assert.ok(implementer);
+		assert.equal(implementer.source, "user");
+		assert.equal(implementer.model, "anthropic/claude-sonnet-4-6");
+		assert.equal(implementer.override?.scope, "user");
+	});
+
+	it("applies user agentOverrides to a custom project agent when project settings have no entry", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
+		assert.ok(implementer);
+		assert.equal(implementer.source, "project");
+		assert.equal(implementer.model, "anthropic/claude-sonnet-4-6");
+		assert.equal(implementer.override?.scope, "user");
+	});
+
+	it("prefers project agentOverrides over user agentOverrides on a custom project agent", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { implementer: { model: "openai/gpt-5.4" } } },
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
+		assert.ok(implementer);
+		assert.equal(implementer.model, "openai/gpt-5.4");
+		assert.equal(implementer.override?.scope, "project");
+	});
+
+	it("leaves a custom agent untouched when no agentOverrides entry matches its name", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
+		assert.ok(implementer);
+		assert.equal(implementer.model, undefined);
+		assert.equal(implementer.override, undefined);
+	});
+
+	it("disableBuiltins does not disable custom agents", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { disableBuiltins: true },
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
+		assert.ok(implementer);
+		assert.notEqual(implementer.disabled, true);
 	});
 
 	it("does not create a settings file when removing a non-existent override", () => {

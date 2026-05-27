@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Apply `subagents.agentOverrides[name]` to user-scope and project-scope custom agents in addition to builtins. Frontmatter wins per-field — overrides only fill fields the agent's frontmatter left unset, so existing custom agents that pin their own model/thinking/etc. are unaffected. Lets shared persona files (`.pi/agents/<name>.md`) stay version-controlled while per-harness `settings.json` supplies the local model. `disableBuiltins` continues to apply only to builtins.
+
 ## [0.25.0] - 2026-05-21
 
 ### Added
