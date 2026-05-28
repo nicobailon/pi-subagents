@@ -31,9 +31,23 @@ export function resolveSingleOutputPath(
 	return path.resolve(baseCwd, output);
 }
 
+function formatOutputPathInstruction(outputPath: string): string {
+	return [
+		`Write your findings to exactly this path: ${outputPath}`,
+		"This path is authoritative for this run.",
+		"Ignore any other filename mentioned elsewhere, including filenames in the base agent prompt, system prompt, or task instructions.",
+	].join("\n");
+}
+
 export function injectSingleOutputInstruction(task: string, outputPath: string | undefined): string {
 	if (!outputPath) return task;
-	return `${task}\n\n---\n**Output:** Write your findings to: ${outputPath}`;
+	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath)}`;
+}
+
+export function injectOutputPathSystemPrompt(systemPrompt: string, outputPath: string | undefined): string {
+	if (!outputPath) return systemPrompt;
+	const instruction = `Runtime output path override:\n${formatOutputPathInstruction(outputPath)}`;
+	return systemPrompt ? `${systemPrompt}\n\n${instruction}` : instruction;
 }
 
 function countLines(text: string): number {
