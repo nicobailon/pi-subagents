@@ -58,7 +58,7 @@ import {
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import { resolveModelCandidate } from "../shared/model-fallback.ts";
-import { validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { buildUniqueOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -544,6 +544,12 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				const agentNames = step.parallel.map((task) => task.agent);
 				const parallelBehaviors = resolveParallelBehaviors(step.parallel, agents, stepIndex, chainSkills)
 					.map((behavior, taskIndex) => suppressProgressForReadOnlyTask(behavior, parallelTemplates[taskIndex] ?? step.parallel[taskIndex]?.task, originalTask));
+				for (let taskIndex = 0; taskIndex < parallelBehaviors.length; taskIndex++) {
+					const behavior = parallelBehaviors[taskIndex]!;
+					if (behavior.output && step.parallel[taskIndex]?.output === undefined) {
+						behavior.output = buildUniqueOutputPath(behavior.output, runId, globalTaskIndex + taskIndex);
+					}
+				}
 				for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
 					const behavior = parallelBehaviors[taskIndex]!;
 					const outputPath = typeof behavior.output === "string"
@@ -720,6 +726,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						: normalizeSkillInput(seqStep.skill),
 			};
 			const behavior = suppressProgressForReadOnlyTask(resolveStepBehavior(agentConfig, stepOverride, chainSkills), stepTemplate, originalTask);
+			if (behavior.output && stepOverride.output === undefined) {
+				behavior.output = buildUniqueOutputPath(behavior.output, runId, globalTaskIndex);
+			}
 
 			const isFirstProgress = behavior.progress && !progressCreated;
 			if (isFirstProgress) {

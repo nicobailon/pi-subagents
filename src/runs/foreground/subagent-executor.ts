@@ -1078,7 +1078,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			cwd: task.cwd,
 			...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
 			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
-			...(task.output === true ? (agentConfigs[index]?.output ? { output: agentConfigs[index]!.output } : {}) : task.output !== undefined ? { output: task.output } : {}),
+			...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
 			...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
 			...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
 			...(task.progress !== undefined ? { progress: task.progress } : {}),
@@ -1148,6 +1148,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 				details: { mode: "single" as const, results: [] },
 			};
 		}
+		const outputFromAgentDefault = params.output === undefined || params.output === true;
 		const rawOutput = params.output !== undefined ? params.output : a.output;
 		const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
 		const effectiveOutputMode = params.outputMode ?? "inline";
@@ -1170,6 +1171,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			sessionFile: sessionFileForIndex(0),
 			skills,
 			output: effectiveOutput,
+			outputFromAgentDefault,
 			outputMode: effectiveOutputMode,
 			modelOverride,
 			maxSubagentDepth,
