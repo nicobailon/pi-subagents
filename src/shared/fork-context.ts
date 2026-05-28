@@ -10,7 +10,7 @@ interface ForkableSessionManager {
 	openSession?: (path: string, sessionDir?: string) => { createBranchedSession(leafId: string): string | undefined };
 }
 
-interface ForkContextResolverOptions {
+export interface ForkContextResolverOptions {
 	openSession?: (path: string, sessionDir?: string) => { createBranchedSession(leafId: string): string | undefined };
 }
 

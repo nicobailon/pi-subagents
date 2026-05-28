@@ -188,6 +188,16 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			.filter((sessionFile): sessionFile is string => Boolean(sessionFile));
 	}
 
+	function forkedSessionFile(index: number): string {
+		return path.join(tempDir, `fork-${index}.jsonl`);
+	}
+
+	function countForkedSessionFiles(sessionArgs: string[]): number {
+		return sessionArgs.filter((sessionFile) =>
+			path.dirname(sessionFile) === tempDir && /^fork-\d+\.jsonl$/.test(path.basename(sessionFile)),
+		).length;
+	}
+
 	function makeForkingSessionManagerRecorder(options: { sessionFile: string; leafId: string }) {
 		const openedPaths: string[] = [];
 		const branchedLeafIds: string[] = [];
@@ -371,7 +381,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.notEqual(readSessionArgsFromCalls()[0], path.join(tempDir, "fork-1.jsonl"));
 	});
 
-	it("uses agent defaultContext fork for top-level parallel when launch context is omitted", async () => {
+	it("forks only fork-default agents in top-level parallel when launch context is omitted", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
@@ -392,7 +402,37 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details?.context, "fork");
-		assert.deepEqual(readSessionArgsFromCalls().sort(), [path.join(tempDir, "fork-1.jsonl"), path.join(tempDir, "fork-2.jsonl")]);
+		const sessionArgs = readSessionArgsFromCalls();
+		assert.equal(sessionArgs.length, 2);
+		assert.equal(countForkedSessionFiles(sessionArgs), 1);
+		assert.ok(sessionArgs.includes(forkedSessionFile(1)));
+	});
+
+	it("keeps fresh-default agents on fresh context when mixed with fork-default agents in parallel", async () => {
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "scout", description: "Scout", defaultContext: "fresh" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ tasks: [{ agent: "scout", task: "find files" }, { agent: "worker", task: "implement fix" }] },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.context, "fork");
+		const sessionArgs = readSessionArgsFromCalls();
+		assert.equal(sessionArgs.length, 2);
+		assert.equal(countForkedSessionFiles(sessionArgs), 1);
+		assert.ok(sessionArgs.includes(forkedSessionFile(1)));
 	});
 
 	it("keeps explicit fresh context over top-level parallel agent defaultContext fork", async () => {
@@ -419,7 +459,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.deepEqual(openedPaths, []);
 	});
 
-	it("uses agent defaultContext fork for chain runs when launch context is omitted", async () => {
+	it("forks only fork-default chain steps when launch context is omitted", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
@@ -440,7 +480,10 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details?.context, "fork");
-		assert.deepEqual(readSessionArgsFromCalls(), [path.join(tempDir, "fork-1.jsonl"), path.join(tempDir, "fork-2.jsonl")]);
+		const sessionArgs = readSessionArgsFromCalls();
+		assert.equal(sessionArgs.length, 2);
+		assert.equal(countForkedSessionFiles(sessionArgs), 1);
+		assert.ok(sessionArgs.includes(forkedSessionFile(1)));
 	});
 
 	it("reports unknown top-level parallel agents before default-fork preconditions", async () => {

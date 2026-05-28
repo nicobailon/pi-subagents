@@ -114,7 +114,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const description = String(contextSchema.description ?? "");
 		assert.match(description, /fresh/);
 		assert.match(description, /fork/);
-		assert.match(description, /whole invocation/);
+		assert.match(description, /defaultContext/);
 	});
 
 	it("includes count and concurrency on top-level parallel mode", () => {

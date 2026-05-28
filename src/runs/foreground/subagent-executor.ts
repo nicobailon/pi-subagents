@@ -31,7 +31,15 @@ import {
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.ts";
-import { createForkContextResolver } from "../../shared/fork-context.ts";
+import {
+	buildFlatAgentNameResolver,
+	collectInvocationAgentNames,
+	createPerAgentForkContextResolver,
+	invocationUsesForkContext,
+	resolveAgentContext,
+	wrapChainTasksForAgentContext,
+	wrapTaskForAgentContext,
+} from "../../shared/agent-context-policy.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
@@ -855,17 +863,6 @@ function getRequestedModeLabel(params: SubagentParamsLike): Details["mode"] {
 	return "single";
 }
 
-function applyAgentDefaultContext(params: SubagentParamsLike, agents: AgentConfig[]): SubagentParamsLike {
-	if (params.context !== undefined) return params;
-	const byName = new Map(agents.map((agent) => [agent.name, agent]));
-	const names: string[] = [];
-	if (params.agent) names.push(params.agent);
-	for (const task of params.tasks ?? []) names.push(task.agent);
-	for (const step of params.chain ?? []) names.push(...getStepAgents(step));
-	return names.some((name) => byName.get(name)?.defaultContext === "fork")
-		? { ...params, context: "fork" }
-		: params;
-}
 
 function buildRequestedModeError(params: SubagentParamsLike, message: string): AgentToolResult<Details> {
 	return withForkContext(
@@ -951,7 +948,11 @@ function withForkContext(
 	};
 }
 
-function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): AgentToolResult<Details> {
+function toExecutionErrorResult(
+	params: SubagentParamsLike,
+	error: unknown,
+	context: SubagentParamsLike["context"] = params.context,
+): AgentToolResult<Details> {
 	const message = error instanceof Error ? error.message : String(error);
 	return withForkContext(
 		{
@@ -959,7 +960,7 @@ function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): Age
 			isError: true,
 			details: { mode: getRequestedModeLabel(params), results: [] },
 		},
-		params.context,
+		context,
 	);
 }
 
@@ -983,25 +984,6 @@ function collectChainSessionFiles(
 	return sessionFiles;
 }
 
-function wrapChainTasksForFork(chain: ChainStep[], context: SubagentParamsLike["context"]): ChainStep[] {
-	if (context !== "fork") return chain;
-	return chain.map((step, stepIndex) => {
-		if (isParallelStep(step)) {
-			return {
-				...step,
-				parallel: step.parallel.map((task) => ({
-					...task,
-					task: wrapForkTask(task.task ?? "{previous}"),
-				})),
-			};
-		}
-		const sequential = step as SequentialStep;
-		return {
-			...sequential,
-			task: wrapForkTask(sequential.task ?? (stepIndex === 0 ? "{task}" : "{previous}")),
-		};
-	});
-}
 
 function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentToolResult<Details> | null {
 	const {
@@ -1074,7 +1056,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const skillOverrides = params.tasks.map((task) => normalizeSkillInput(task.skill));
 		const parallelTasks = params.tasks.map((task, index) => ({
 			agent: task.agent,
-			task: params.context === "fork" ? wrapForkTask(task.task) : task.task,
+			task: wrapTaskForAgentContext(task.task, params.context, task.agent, agents),
 			cwd: task.cwd,
 			...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
 			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
@@ -1114,7 +1096,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	if (hasChain && params.chain) {
 		const normalized = normalizeSkillInput(params.skill);
 		const chainSkills = normalized === false ? [] : (normalized ?? []);
-		const chain = wrapChainTasksForFork(params.chain as ChainStep[], params.context);
+		const chain = wrapChainTasksForAgentContext(params.chain as ChainStep[], params.context, agents);
 		return executeAsyncChain(id, {
 			chain,
 			task: params.task,
@@ -1157,7 +1139,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const modelOverride = resolveModelCandidate((params.model as string | undefined) ?? a.model, availableModels, currentProvider);
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
-			task: params.context === "fork" ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
+			task: wrapTaskForAgentContext(params.task ?? "", params.context, params.agent, agents),
 			agentConfig: a,
 			ctx: asyncCtx,
 			availableModels,
@@ -1207,7 +1189,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	const foregroundControl = deps.state.foregroundControls.get(runId);
 	const normalized = normalizeSkillInput(params.skill);
 	const chainSkills = normalized === false ? [] : (normalized ?? []);
-	const chain = wrapChainTasksForFork(params.chain as ChainStep[], params.context);
+	const chain = wrapChainTasksForAgentContext(params.chain as ChainStep[], params.context, agents);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const chainResult = await executeChain({
 		chain,
@@ -1254,7 +1236,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			currentSessionId: deps.state.currentSessionId!,
 			currentModelProvider: ctx.model?.provider,
 		};
-		const asyncChain = wrapChainTasksForFork(chainResult.requestedAsync.chain, params.context);
+		const asyncChain = wrapChainTasksForAgentContext(chainResult.requestedAsync.chain, params.context, agents);
 		return executeAsyncChain(id, {
 			chain: asyncChain,
 			task: params.task,
@@ -1668,7 +1650,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				currentModelProvider: ctx.model?.provider,
 			};
 			const parallelTasks = tasks.map((t, i) => {
-				const taskText = params.context === "fork" ? wrapForkTask(taskTexts[i]!) : taskTexts[i]!;
+				const taskText = wrapTaskForAgentContext(taskTexts[i]!, params.context, t.agent, agents);
 				const progress = taskDisallowsFileUpdates(taskText) ? false : behaviorOverrides[i]?.progress;
 				return {
 					agent: t.agent,
@@ -1740,10 +1722,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const parallelProgressPrecreated = firstProgressIndex !== -1;
 		if (parallelProgressPrecreated) writeInitialProgressFile(effectiveCwd);
 
-		if (params.context === "fork") {
-			for (let i = 0; i < taskTexts.length; i++) {
-				taskTexts[i] = wrapForkTask(taskTexts[i]!);
-			}
+		for (let i = 0; i < taskTexts.length; i++) {
+			taskTexts[i] = wrapTaskForAgentContext(taskTexts[i]!, params.context, tasks[i]!.agent, agents);
 		}
 
 		const results = await runForegroundParallelTasks({
@@ -1948,7 +1928,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			};
 			return executeAsyncSingle(id, {
 				agent: params.agent!,
-				task: params.context === "fork" ? wrapForkTask(task) : task,
+				task: wrapTaskForAgentContext(task, params.context, params.agent, agents),
 				agentConfig,
 				ctx: asyncCtx,
 				availableModels,
@@ -1973,9 +1953,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 	}
 
-	if (params.context === "fork") {
-		task = wrapForkTask(task);
-	}
+	task = wrapTaskForAgentContext(task, params.context, params.agent, agents);
 	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd);
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
@@ -2302,17 +2280,27 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 		deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		const discoveredAgents = deps.discoverAgents(effectiveCwd, scope).agents;
-		effectiveParams = applyAgentDefaultContext(effectiveParams, discoveredAgents);
+		const invocationAgentNames = collectInvocationAgentNames(effectiveParams);
+		const invocationContext: SubagentParamsLike["context"] = invocationUsesForkContext(
+			effectiveParams.context,
+			invocationAgentNames,
+			discoveredAgents,
+		)
+			? "fork"
+			: undefined;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
-			context: effectiveParams.context,
+			context: invocationContext,
 			orchestratorTarget: sessionName,
 			cwd: effectiveCwd,
 		});
 		const agents = intercomBridge.active
 			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 			: discoveredAgents;
+		const agentNameAtIndex = buildFlatAgentNameResolver(effectiveParams);
+		const resolveContextForIndex = (index?: number) =>
+			resolveAgentContext(effectiveParams.context, agentNameAtIndex(index ?? 0), agents);
 		const runId = randomUUID().slice(0, 8);
 		const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
 		const nestedParentAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
@@ -2338,9 +2326,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let sessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		try {
-			sessionFileForIndex = createForkContextResolver(ctx.sessionManager, effectiveParams.context).sessionFileForIndex;
+			sessionFileForIndex = createPerAgentForkContextResolver(ctx.sessionManager, resolveContextForIndex).sessionFileForIndex;
 		} catch (error) {
-			return toExecutionErrorResult(effectiveParams, error);
+			return toExecutionErrorResult(effectiveParams, error, invocationContext);
 		}
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
@@ -2369,6 +2357,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return toExecutionErrorResult(
 				effectiveParams,
 				new Error(`Failed to create session directory '${sessionRoot}': ${message}`),
+				invocationContext,
 			);
 		}
 		const sessionDirForIndex = (idx?: number) =>
@@ -2377,7 +2366,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			sessionFileForIndex(idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 
 		const onUpdateWithContext = onUpdate
-			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context))
+			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, invocationContext))
 			: undefined;
 
 		const execData: ExecutionContextData = {
@@ -2482,7 +2471,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let nestedForegroundStarted = false;
 		try {
 			const asyncResult = runAsyncPath(execData, deps);
-			if (asyncResult) return withForkContext(asyncResult, effectiveParams.context);
+			if (asyncResult) return withForkContext(asyncResult, invocationContext);
 			if (foregroundControl) {
 				writeNestedForegroundEvent("subagent.nested.started");
 				nestedForegroundStarted = true;
@@ -2490,20 +2479,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (hasChain && effectiveParams.chain) {
 				const result = await runChainPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(result, effectiveParams.context);
+				return withForkContext(result, invocationContext);
 			}
 			if (hasTasks && effectiveParams.tasks) {
 				const result = await runParallelPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(result, effectiveParams.context);
+				return withForkContext(result, invocationContext);
 			}
 			if (hasSingle) {
 				const result = await runSinglePath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(result, effectiveParams.context);
+				return withForkContext(result, invocationContext);
 			}
 		} catch (error) {
-			const errorResult = toExecutionErrorResult(effectiveParams, error);
+			const errorResult = toExecutionErrorResult(effectiveParams, error, invocationContext);
 			if (nestedForegroundStarted) writeNestedForegroundEvent("subagent.nested.completed", errorResult);
 			return errorResult;
 		} finally {
@@ -2520,7 +2509,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			content: [{ type: "text", text: "Invalid params" }],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
-		}, effectiveParams.context);
+		}, invocationContext);
 	};
 
 	return { execute };
