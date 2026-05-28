@@ -54,6 +54,13 @@ function formatByteSize(bytes: number): string {
 	return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
+export function buildUniqueOutputPath(outputPath: string, runId: string, index: number): string {
+	const dir = path.dirname(outputPath);
+	const ext = path.extname(outputPath);
+	const base = path.basename(outputPath, ext);
+	return path.join(dir, `${base}_${runId}_${index}${ext}`);
+}
+
 export function formatSavedOutputReference(savedPath: string, fullOutput: string): SavedOutputReference {
 	const absolutePath = path.resolve(savedPath);
 	const bytes = Buffer.byteLength(fullOutput, "utf-8");
