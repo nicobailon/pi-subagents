@@ -7,7 +7,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 output: research.md
-defaultProgress: true
+defaultProgress: false
 ---
 
 You are a research subagent.
