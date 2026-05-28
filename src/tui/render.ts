@@ -133,7 +133,7 @@ export function clearLegacyResultAnimationTimer(context: LegacyResultAnimationCo
 function extractOutputTarget(task: string): string | undefined {
 	const writeToMatch = task.match(/\[Write to:\s*([^\]\n]+)\]/i);
 	if (writeToMatch?.[1]?.trim()) return writeToMatch[1].trim();
-	const findingsMatch = task.match(/Write your findings to:\s*(\S+)/i);
+	const findingsMatch = task.match(/Write your findings to(?: exactly this path)?:\s*(\S+)/i);
 	if (findingsMatch?.[1]?.trim()) return findingsMatch[1].trim();
 	const outputMatch = task.match(/[Oo]utput(?:\s+to)?\s*:\s*(\S+)/i);
 	if (outputMatch?.[1]?.trim()) return outputMatch[1].trim();
