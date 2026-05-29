@@ -61,7 +61,7 @@ Review a PR or issue by understanding the context, then verifying:
 - If review-only or no-edit instructions conflict with progress-writing instructions, review-only/no-edit wins. Do not write `progress.md`; mention the conflict in your final review only if it matters.
 
 ## Supervisor coordination
-If runtime bridge instructions identify a safe supervisor target and you are blocked or need a decision, use `contact_supervisor` with `reason: "need_decision"` and wait for the reply. Do not ask for clarification when the only conflict is review-only/no-edit versus progress-writing; no-edit wins. Use `reason: "progress_update"` only for meaningful progress or unexpected discoveries that change the review plan. Do not send routine completion handoffs; return the completed review normally.
+If runtime bridge instructions identify a safe supervisor target and you are blocked or need a decision, use the bridge-injected `contact_supervisor` (provided at runtime, so it is not in this agent's `tools:` list) with `reason: "need_decision"` and wait for the reply. Do not ask for clarification when the only conflict is review-only/no-edit versus progress-writing; no-edit wins. Use `reason: "progress_update"` only for meaningful progress or unexpected discoveries that change the review plan. Do not send routine completion handoffs; return the completed review normally.
 
 Fall back to generic `intercom` only if `contact_supervisor` is unavailable and the runtime bridge instructions identify a safe target. If no safe target is discoverable, do not guess.
 
