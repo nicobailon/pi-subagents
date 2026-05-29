@@ -45,6 +45,9 @@ export interface BuiltinAgentOverrideBase {
 	systemPrompt: string;
 	skills?: string[];
 	tools?: string[];
+	output?: string;
+	defaultReads?: string[];
+	defaultProgress?: boolean;
 	mcpDirectTools?: string[];
 	completionGuard?: boolean;
 }
@@ -61,6 +64,9 @@ interface BuiltinAgentOverrideConfig {
 	systemPrompt?: string;
 	skills?: string[] | false;
 	tools?: string[] | false;
+	output?: string | false;
+	defaultReads?: string[] | false;
+	defaultProgress?: boolean;
 	completionGuard?: boolean;
 }
 
@@ -185,6 +191,9 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		systemPrompt: agent.systemPrompt,
 		skills: agent.skills ? [...agent.skills] : undefined,
 		tools: agent.tools ? [...agent.tools] : undefined,
+		output: agent.output,
+		defaultReads: agent.defaultReads ? [...agent.defaultReads] : undefined,
+		defaultProgress: agent.defaultProgress,
 		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
 		completionGuard: agent.completionGuard,
 	};
@@ -205,6 +214,9 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
 		...(override.tools !== undefined ? { tools: override.tools === false ? false : [...override.tools] } : {}),
+		...(override.output !== undefined ? { output: override.output } : {}),
+		...(override.defaultReads !== undefined ? { defaultReads: override.defaultReads === false ? false : [...override.defaultReads] } : {}),
+		...(override.defaultProgress !== undefined ? { defaultProgress: override.defaultProgress } : {}),
 		...(override.completionGuard !== undefined ? { completionGuard: override.completionGuard } : {}),
 	};
 }
@@ -364,6 +376,19 @@ function parseBuiltinOverrideEntry(
 	const tools = parseOverrideStringArrayOrFalse(input.tools, { filePath, name, field: "tools" });
 	if (tools !== undefined) override.tools = tools;
 
+	if ("output" in input) {
+		if (typeof input.output === "string" || input.output === false) override.output = input.output;
+		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'output'; expected a string or false.`);
+	}
+
+	const defaultReads = parseOverrideStringArrayOrFalse(input.defaultReads, { filePath, name, field: "defaultReads" });
+	if (defaultReads !== undefined) override.defaultReads = defaultReads;
+
+	if ("defaultProgress" in input) {
+		if (typeof input.defaultProgress === "boolean") override.defaultProgress = input.defaultProgress;
+		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'defaultProgress'; expected a boolean.`);
+	}
+
 	return Object.keys(override).length > 0 ? override : undefined;
 }
 
@@ -422,6 +447,9 @@ function applyBuiltinOverride(
 		next.tools = tools;
 		next.mcpDirectTools = mcpDirectTools;
 	}
+	if (override.output !== undefined) next.output = override.output === false ? undefined : override.output;
+	if (override.defaultReads !== undefined) next.defaultReads = override.defaultReads === false ? undefined : [...override.defaultReads];
+	if (override.defaultProgress !== undefined) next.defaultProgress = override.defaultProgress;
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
 
 	return next;
@@ -462,7 +490,7 @@ function applyBuiltinOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "completionGuard">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "output" | "defaultReads" | "defaultProgress" | "mcpDirectTools" | "completionGuard">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -480,6 +508,9 @@ export function buildBuiltinOverrideConfig(
 	const baseTools = joinToolList(base);
 	const draftTools = joinToolList(draft);
 	if (!arraysEqual(draftTools, baseTools)) override.tools = draftTools ? [...draftTools] : false;
+	if (draft.output !== base.output) override.output = draft.output ?? false;
+	if (!arraysEqual(draft.defaultReads, base.defaultReads)) override.defaultReads = draft.defaultReads ? [...draft.defaultReads] : false;
+	if ((draft.defaultProgress ?? false) !== (base.defaultProgress ?? false)) override.defaultProgress = draft.defaultProgress ?? false;
 	if ((draft.completionGuard !== false) !== (base.completionGuard !== false)) {
 		override.completionGuard = draft.completionGuard !== false;
 	}
