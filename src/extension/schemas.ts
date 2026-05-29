@@ -19,7 +19,7 @@ const OutputOverride = Type.Unsafe({
 		{ type: "string" },
 		{ type: "boolean" },
 	],
-	description: "Output filename/path (string), or false to disable file output",
+	description: "Output filename/path (string), or false to disable file output. If explicitly setting a path, prefer an absolute /tmp/... path; omit output to use the agent default auto-unique output path.",
 });
 
 const OutputModeOverride = Type.String({
@@ -160,7 +160,7 @@ export const SubagentParams = Type.Object({
 			{ type: "string" },
 			{ type: "boolean" },
 		],
-		description: "Output file for single agent (string), or false to disable. Relative paths resolve against cwd.",
+		description: "Output file for single agent (string), or false to disable. If explicitly setting a path, prefer an absolute /tmp/... path; relative paths resolve against cwd and may write into the current/home directory. Omit output to use the agent default auto-unique output path.",
 	})),
 	outputMode: Type.Optional(OutputModeOverride),
 	skill: Type.Optional(SkillOverride),
