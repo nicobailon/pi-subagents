@@ -110,8 +110,26 @@ const { recordRun } = await import(srcUrl);
 for (let i = 0; i < Number(n); i++) recordRun("storm", tag + ":" + i, 0, 1, { tool_calls: 0 });
 `);
 
+		// Run children with the same TS-execution mechanism as the test runner.
+		// Whitelist the TS-loader flags from the parent's execArgv (handling both
+		// --flag=value and space-form --flag value) instead of hardcoding one flag
+		// that drifts on rename, or inheriting all of execArgv (which would leak
+		// --test*/--inspect*/profiler flags into 16 children).
+		const TS_BOOL_FLAGS = new Set(["--experimental-strip-types", "--experimental-transform-types"]);
+		const TS_VALUE_FLAGS = new Set(["--import", "--loader", "--experimental-loader", "--require", "-r"]);
+		const childExecArgv: string[] = [];
+		for (let i = 0; i < process.execArgv.length; i++) {
+			const arg = process.execArgv[i]!;
+			const name = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : arg;
+			if (TS_BOOL_FLAGS.has(name)) {
+				childExecArgv.push(arg);
+			} else if (TS_VALUE_FLAGS.has(name)) {
+				childExecArgv.push(arg);
+				if (!arg.includes("=") && i + 1 < process.execArgv.length) childExecArgv.push(process.execArgv[++i]!);
+			}
+		}
 		const procs = Array.from({ length: PROCS }, (_, k) => new Promise<void>((resolve, reject) => {
-			const p = spawn(process.execPath, ["--experimental-strip-types", childFile, pathToFileURL(SRC).href, dir, `p${k}`, String(PER_PROC)], { stdio: "ignore" });
+			const p = spawn(process.execPath, [...childExecArgv, childFile, pathToFileURL(SRC).href, dir, `p${k}`, String(PER_PROC)], { stdio: "ignore" });
 			p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`child p${k} exited ${code}`))));
 			p.on("error", reject);
 		}));
