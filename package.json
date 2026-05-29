@@ -1,6 +1,6 @@
 {
   "name": "pi-subagents",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "description": "Pi extension for delegating tasks to subagents with chains, parallel execution, and TUI clarification",
   "author": "Nico Bailon",
   "license": "MIT",
@@ -36,8 +36,8 @@
   ],
   "scripts": {
     "test": "npm run test:unit",
-    "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
-    "test:integration": "node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
+    "test:unit": "node --import jiti/register --test test/unit/*.test.ts",
+    "test:integration": "node --import jiti/register --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
     "test:all": "npm run test:unit && npm run test:integration"
   },
   "pi": {
@@ -54,7 +54,9 @@
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-agent-core": {
@@ -65,16 +67,23 @@
     },
     "@earendil-works/pi-coding-agent": {
       "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
     }
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "^0.74.0",
-    "jiti": "^2.7.0",
-    "typebox": "^1.1.24"
+    "jiti": "^2.7.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "^0.74.0",
-    "@earendil-works/pi-ai": "^0.74.0",
-    "@earendil-works/pi-coding-agent": "^0.74.0"
-  }
+    "@earendil-works/pi-agent-core": "^0.77.0",
+    "@earendil-works/pi-ai": "^0.77.0",
+    "@earendil-works/pi-coding-agent": "^0.77.0",
+    "@earendil-works/pi-tui": "^0.77.0",
+    "typebox": "^1.1.39"
+  },
+  "packageManager": "npm@11.16.0"
 }

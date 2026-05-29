@@ -159,6 +159,12 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 			"Allowed management/control actions: list, get, status, interrupt, resume, doctor.",
 			"Agent config mutation actions create, update, and delete are blocked in this mode.",
 		].join("\n"),
+		promptSnippet: "Delegate nested child-safe subagent work from an explicitly allowed fanout child.",
+		promptGuidelines: [
+			"Use subagent in child-safe fanout mode only for explicitly assigned nested delegation or control inspection.",
+			"Use subagent action:list before nested execution unless the executable nested agent is already known from the task context.",
+			"Do not use subagent child-safe mode for agent config mutation actions; create, update, and delete are blocked here.",
+		],
 		parameters: SubagentParams,
 		execute(id, params, signal, onUpdate, ctx) {
 			return executor.execute(id, params as SubagentParamsLike, signal, onUpdate, ctx);

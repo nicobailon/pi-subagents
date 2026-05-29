@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-
 function parentToolEnv(): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
@@ -14,10 +13,24 @@ function parentToolEnv(): NodeJS.ProcessEnv {
 	return env;
 }
 
+function runProbe(script: string, options: { env?: NodeJS.ProcessEnv } = {}): void {
+	execFileSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			String.raw`import { createJiti } from "jiti";
+const jiti = createJiti(import.meta.url);
+${script}`,
+		],
+		{ cwd: projectRoot, stdio: "pipe", ...options },
+	);
+}
+
 describe("subagent extension child mode", () => {
 	it("collapses tool detail before direct subagent tool execution", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			const { default: registerSubagentExtension } = await jiti.import("./src/extension/index.ts");
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
 			const fakePi = new Proxy({
@@ -36,6 +49,10 @@ describe("subagent extension child mode", () => {
 			});
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
+			if (!registeredTool.promptSnippet?.includes("Delegate bounded work")) throw new Error("missing parent promptSnippet");
+			const parentGuidelines = registeredTool.promptGuidelines ?? [];
+			if (!parentGuidelines.some((line) => line.includes("action: \"list\""))) throw new Error("missing list-before-execute guideline");
+			if (!parentGuidelines.some((line) => line.includes("parent session responsible"))) throw new Error("missing parent-owns-final-decision guideline");
 			const calls = [];
 			const ctx = {
 				cwd: process.cwd(),
@@ -53,23 +70,12 @@ describe("subagent extension child mode", () => {
 			if (calls[0] !== false) throw new Error("expected setToolsExpanded(false), got " + JSON.stringify(calls));
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-transform-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
+		runProbe(script, { env: parentToolEnv() });
 	});
 
 	it("does not show async badge for explicit foreground clarify chain calls", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			const { default: registerSubagentExtension } = await jiti.import("./src/extension/index.ts");
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
 			const fakePi = new Proxy({
@@ -95,24 +101,13 @@ describe("subagent extension child mode", () => {
 			if (clarifyChain.includes("[async]")) throw new Error("unexpected clarify async badge: " + clarifyChain);
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-transform-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
+		runProbe(script, { env: parentToolEnv() });
 	});
 
 	it("returns before registering anything for non-fanout children", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			const { default: registerSubagentExtension } = await jiti.import("./src/extension/index.ts");
+			const { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } = await jiti.import("./src/runs/shared/pi-args.ts");
 			process.env[SUBAGENT_CHILD_ENV] = "1";
 			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "0";
 			const calls = [];
@@ -130,24 +125,13 @@ describe("subagent extension child mode", () => {
 			}
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-transform-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, stdio: "pipe" },
-		);
+		runProbe(script);
 	});
 
 	it("registers only the child-safe subagent tool for fanout children", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			const { default: registerSubagentExtension } = await jiti.import("./src/extension/index.ts");
+			const { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } = await jiti.import("./src/runs/shared/pi-args.ts");
 			process.env[SUBAGENT_CHILD_ENV] = "1";
 			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 			const calls = [];
@@ -167,28 +151,21 @@ describe("subagent extension child mode", () => {
 			});
 			registerSubagentExtension(fakePi);
 			if (!registeredTool || registeredTool.name !== "subagent") throw new Error("child-safe subagent tool not registered");
+			if (!registeredTool.promptSnippet?.includes("child-safe")) throw new Error("missing child-safe promptSnippet");
+			const childGuidelines = registeredTool.promptGuidelines ?? [];
+			if (!childGuidelines.some((line) => line.includes("child-safe fanout mode"))) throw new Error("missing child-safe fanout guideline");
+			if (!childGuidelines.some((line) => line.includes("create, update, and delete are blocked"))) throw new Error("missing child-safe mutation-block guideline");
 			const unexpected = calls.filter((call) => call !== "registerTool");
 			if (unexpected.length > 0) throw new Error("Unexpected parent-surface registrations: " + unexpected.join(", "));
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-transform-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, stdio: "pipe" },
-		);
+		runProbe(script);
 	});
 
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {
 		const script = String.raw`
-			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
-			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			const { default: registerFanoutChildSubagentExtension } = await jiti.import("./src/extension/fanout-child.ts");
+			const { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } = await jiti.import("./src/runs/shared/pi-args.ts");
 			process.env[SUBAGENT_CHILD_ENV] = "1";
 			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
 			let registeredTool;
@@ -213,17 +190,6 @@ describe("subagent extension child mode", () => {
 			if (!text.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected create error: " + text);
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-transform-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, stdio: "pipe" },
-		);
+		runProbe(script);
 	});
 });
