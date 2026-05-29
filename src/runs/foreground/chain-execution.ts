@@ -292,7 +292,12 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			if (result.exitCode !== 0 && failFast) {
 				aborted = true;
 			}
-			recordRun(task.agent, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
+			recordRun(task.agent, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0, {
+				model: result.model,
+				cwd: taskCwd,
+				tool_calls: result.progressSummary?.toolCount,
+				error_excerpt: result.error,
+			});
 			return result;
 		},
 	);
@@ -778,8 +783,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				};
 			}
 
+			const stepCwd = resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd);
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
-				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
+				cwd: stepCwd,
 				signal,
 				interruptSignal: interruptController.signal,
 				allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
@@ -840,7 +846,12 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				foregroundControl.interrupt = undefined;
 				foregroundControl.updatedAt = Date.now();
 			}
-			recordRun(seqStep.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
+			recordRun(seqStep.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, {
+				model: r.model,
+				cwd: stepCwd,
+				tool_calls: r.progressSummary?.toolCount,
+				error_excerpt: r.error,
+			});
 
 			globalTaskIndex++;
 			results.push(r);

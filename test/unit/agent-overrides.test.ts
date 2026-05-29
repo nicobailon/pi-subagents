@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { buildBuiltinOverrideConfig, discoverAgents, discoverAgentsAll, removeBuiltinAgentOverride } from "../../src/agents/agents.ts";
+import { buildBuiltinOverrideConfig, discoverAgents, discoverAgentsAll, removeBuiltinAgentOverride, saveBuiltinAgentOverride } from "../../src/agents/agents.ts";
 
 let tempHome = "";
 let tempProject = "";
@@ -267,5 +267,113 @@ describe("builtin agent overrides", () => {
 			tools: false,
 			completionGuard: true,
 		});
+	});
+
+	it("applies output / defaultReads / defaultProgress overrides to builtin agents", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					scout: { output: "custom.md", defaultReads: ["a.md", "b.md"], defaultProgress: false },
+				},
+			},
+		});
+
+		const scout = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "scout");
+		assert.ok(scout);
+		assert.equal(scout.output, "custom.md");
+		assert.deepEqual(scout.defaultReads, ["a.md", "b.md"]);
+		assert.equal(scout.defaultProgress, false);
+	});
+
+	it("clears a builtin's output / defaultReads via the false sentinel", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					scout: { output: false },
+					planner: { defaultReads: false },
+				},
+			},
+		});
+
+		const agents = discoverAgents(tempProject, "both").agents;
+		const scout = agents.find((agent) => agent.name === "scout");
+		const planner = agents.find((agent) => agent.name === "planner");
+		assert.ok(scout);
+		assert.ok(planner);
+		// scout ships `output: context.md`; planner ships `defaultReads: context.md`.
+		assert.equal(scout.output, undefined);
+		assert.equal(planner.defaultReads, undefined);
+	});
+
+	it("surfaces malformed output override values", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, { subagents: { agentOverrides: { scout: { output: 123 } } } });
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error && error.message.includes("scout") && error.message.includes("output"),
+		);
+	});
+
+	it("surfaces malformed defaultReads override values", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, { subagents: { agentOverrides: { scout: { defaultReads: "context.md" } } } });
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error && error.message.includes("scout") && error.message.includes("defaultReads"),
+		);
+	});
+
+	it("surfaces malformed defaultProgress override values", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, { subagents: { agentOverrides: { scout: { defaultProgress: "true" } } } });
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error && error.message.includes("scout") && error.message.includes("defaultProgress"),
+		);
+	});
+
+	it("round-trips output / defaultReads / defaultProgress through the override builder", () => {
+		const base = {
+			model: undefined,
+			fallbackModels: undefined,
+			thinking: undefined,
+			systemPromptMode: "append" as const,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			defaultContext: undefined,
+			disabled: undefined,
+			systemPrompt: "P",
+			skills: undefined,
+			tools: undefined,
+			mcpDirectTools: undefined,
+			output: "context.md",
+			defaultReads: ["context.md"],
+			defaultProgress: true,
+			completionGuard: undefined,
+		};
+
+		// Clearing the builtin defaults emits the false sentinels.
+		const cleared = buildBuiltinOverrideConfig(base, { ...base, output: undefined, defaultReads: undefined, defaultProgress: false });
+		assert.deepEqual(cleared, { output: false, defaultReads: false, defaultProgress: false });
+
+		// Changing to new values emits those; an unchanged field (defaultProgress) is omitted.
+		const changed = buildBuiltinOverrideConfig(base, { ...base, output: "custom.md", defaultReads: ["a.md"] });
+		assert.deepEqual(changed, { output: "custom.md", defaultReads: ["a.md"] });
+	});
+
+	it("persists output / defaultReads / defaultProgress through save and reload", () => {
+		// Crosses the save seam (cloneOverrideValue) that previously dropped these fields.
+		saveBuiltinAgentOverride(tempProject, "scout", "user", { output: "custom.md", defaultReads: ["a.md"], defaultProgress: false });
+		saveBuiltinAgentOverride(tempProject, "planner", "user", { defaultReads: false });
+
+		const agents = discoverAgents(tempProject, "both").agents;
+		const scout = agents.find((agent) => agent.name === "scout");
+		const planner = agents.find((agent) => agent.name === "planner");
+		assert.ok(scout);
+		assert.ok(planner);
+		assert.equal(scout.output, "custom.md");
+		assert.deepEqual(scout.defaultReads, ["a.md"]);
+		assert.equal(scout.defaultProgress, false);
+		assert.equal(planner.defaultReads, undefined); // false sentinel survives save+reload
 	});
 });
