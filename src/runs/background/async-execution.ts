@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { applyThinkingSuffix } from "../shared/pi-args.ts";
-import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, buildUniqueOutputPath } from "../shared/single-output.ts";
 import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
@@ -130,6 +130,7 @@ interface AsyncSingleParams {
 	sessionFile?: string;
 	skills?: string[];
 	output?: string | boolean;
+	outputFromAgentDefault?: boolean;
 	outputMode?: "inline" | "file-only";
 	modelOverride?: string;
 	availableModels?: AvailableModelInfo[];
@@ -294,7 +295,7 @@ export function executeAsyncChain(
 			...(s.model ? { model: s.model } : {}),
 		};
 	};
-	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior) => {
+	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, outputIndex = 0) => {
 		const a = agents.find((x) => x.name === s.agent)!;
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
@@ -312,8 +313,15 @@ export function executeAsyncChain(
 		const readInstructions = buildChainInstructions({ ...behavior, output: false, progress: false }, instructionCwd, false);
 		const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
 		if (behavior.progress) progressInstructionCreated = true;
-		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, runnerCwd, isFirstProgressAgent);
+		// Progress uses output dir when output comes from agent default
+		const progressCwd = (behavior.output && s.output === undefined) ? path.dirname(behavior.output) : runnerCwd;
+		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressCwd, isFirstProgressAgent);
+		// Add unique suffix when output comes from agent default, not step override
+		if (behavior.output && s.output === undefined) {
+			behavior.output = buildUniqueOutputPath(behavior.output, id, outputIndex);
+		}
 		const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, instructionCwd);
+		systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath);
 		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
 		const task = injectSingleOutputInstruction(`${readInstructions.prefix}${s.task ?? "{previous}"}${progressInstructions.suffix}`, outputPath);
@@ -375,14 +383,16 @@ export function executeAsyncChain(
 								behaviorCwd = undefined;
 							}
 						}
-						return buildSeqStep(t, nextSessionFile(), behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex]);
+						const outputIndex = flatStepIndex;
+						return buildSeqStep(t, nextSessionFile(), behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], outputIndex);
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
 					worktree: s.worktree,
 				};
 			}
-			return buildSeqStep(s as SequentialStep, nextSessionFile());
+			const outputIndex = flatStepIndex;
+			return buildSeqStep(s as SequentialStep, nextSessionFile(), undefined, false, undefined, outputIndex);
 		});
 	} catch (error) {
 		if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError) return formatAsyncStartError(resultMode, error.message);
@@ -580,8 +590,12 @@ export function executeAsyncSingle(
 		};
 	}
 
-	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
+	let effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
+	if (effectiveOutput && params.outputFromAgentDefault) {
+		effectiveOutput = buildUniqueOutputPath(effectiveOutput, id, 0);
+	}
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd);
+	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath);
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);

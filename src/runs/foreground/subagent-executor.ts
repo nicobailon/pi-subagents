@@ -35,7 +35,7 @@ import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, buildUniqueOutputPath } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -1078,7 +1078,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			cwd: task.cwd,
 			...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
 			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
-			...(task.output === true ? (agentConfigs[index]?.output ? { output: agentConfigs[index]!.output } : {}) : task.output !== undefined ? { output: task.output } : {}),
+			...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
 			...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
 			...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
 			...(task.progress !== undefined ? { progress: task.progress } : {}),
@@ -1148,6 +1148,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 				details: { mode: "single" as const, results: [] },
 			};
 		}
+		const outputFromAgentDefault = params.output === undefined || params.output === true;
 		const rawOutput = params.output !== undefined ? params.output : a.output;
 		const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
 		const effectiveOutputMode = params.outputMode ?? "inline";
@@ -1170,6 +1171,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			sessionFile: sessionFileForIndex(0),
 			skills,
 			output: effectiveOutput,
+			outputFromAgentDefault,
 			outputMode: effectiveOutputMode,
 			modelOverride,
 			maxSubagentDepth,
@@ -1318,6 +1320,7 @@ interface ForegroundParallelRunInput {
 	artifactsDir: string;
 	maxOutput?: MaxOutputConfig;
 	paramsCwd: string;
+	progressDir?: string;
 	maxSubagentDepths: number[];
 	availableModels: ModelInfo[];
 	modelOverrides: (string | undefined)[];
@@ -1442,8 +1445,9 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		const readInstructions = behavior
 			? buildChainInstructions({ ...behavior, output: false, progress: false }, taskCwd, false)
 			: { prefix: "", suffix: "" };
+		const progressCwd = input.progressDir ?? input.paramsCwd;
 		const progressInstructions = behavior
-			? buildChainInstructions({ ...behavior, output: false, reads: false }, input.paramsCwd, index === input.firstProgressIndex)
+			? buildChainInstructions({ ...behavior, output: false, reads: false }, progressCwd, index === input.firstProgressIndex)
 			: { prefix: "", suffix: "" };
 		const outputPath = resolveSingleOutputPath(behavior?.output, input.ctx.cwd, taskCwd);
 		const taskText = injectSingleOutputInstruction(
@@ -1707,6 +1711,13 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	}
 
 	const behaviors = agentConfigs.map((config, index) => suppressProgressForReadOnlyTask(resolveStepBehavior(config, behaviorOverrides[index]!), taskTexts[index]));
+	// Add unique suffix to agent-default outputs (not task-level overrides) to prevent parallel collisions
+	for (let i = 0; i < behaviors.length; i++) {
+		const b = behaviors[i];
+		if (b.output && (tasks[i]!.output === undefined || tasks[i]!.output === true)) {
+			b.output = buildUniqueOutputPath(b.output, runId, i);
+		}
+	}
 	const firstProgressIndex = behaviors.findIndex((behavior) => behavior.progress);
 	const liveResults: (SingleResult | undefined)[] = new Array(tasks.length).fill(undefined);
 	const liveProgress: (AgentProgress | undefined)[] = new Array(tasks.length).fill(undefined);
@@ -1738,7 +1749,13 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		}
 
 		const parallelProgressPrecreated = firstProgressIndex !== -1;
-		if (parallelProgressPrecreated) writeInitialProgressFile(effectiveCwd);
+		const progressAgent = behaviors.find((b) => b.progress);
+		const progressOutputDir = progressAgent?.output ? path.dirname(progressAgent.output) : effectiveCwd;
+		const parallelProgressDir = progressOutputDir === effectiveCwd ? effectiveCwd : path.join(progressOutputDir, `.progress_${runId}`);
+		if (parallelProgressPrecreated) {
+			if (parallelProgressDir !== effectiveCwd) fs.mkdirSync(parallelProgressDir, { recursive: true });
+			writeInitialProgressFile(parallelProgressDir);
+		}
 
 		if (params.context === "fork") {
 			for (let i = 0; i < taskTexts.length; i++) {
@@ -1761,6 +1778,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			artifactsDir,
 			maxOutput: params.maxOutput,
 			paramsCwd: effectiveCwd,
+			progressDir: parallelProgressDir,
 			availableModels,
 			modelOverrides,
 			behaviors,
@@ -1895,6 +1913,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
 	let effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
+	// When output comes from agent default (not task override), add unique suffix
+	if (effectiveOutput && params.output === undefined) {
+		effectiveOutput = buildUniqueOutputPath(effectiveOutput, runId, 0);
+	}
 	const effectiveOutputMode = params.outputMode ?? "inline";
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
 	const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);

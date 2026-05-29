@@ -133,7 +133,7 @@ export function clearLegacyResultAnimationTimer(context: LegacyResultAnimationCo
 function extractOutputTarget(task: string): string | undefined {
 	const writeToMatch = task.match(/\[Write to:\s*([^\]\n]+)\]/i);
 	if (writeToMatch?.[1]?.trim()) return writeToMatch[1].trim();
-	const findingsMatch = task.match(/Write your findings to:\s*(\S+)/i);
+	const findingsMatch = task.match(/Write your findings to(?: exactly this path)?:\s*(\S+)/i);
 	if (findingsMatch?.[1]?.trim()) return findingsMatch[1].trim();
 	const outputMatch = task.match(/[Oo]utput(?:\s+to)?\s*:\s*(\S+)/i);
 	if (outputMatch?.[1]?.trim()) return outputMatch[1].trim();
@@ -1024,7 +1024,8 @@ function renderMultiCompact(d: Details, theme: Theme): Component {
 		const glyph = rPending ? theme.fg("dim", "◦") : resultGlyph(r, output, theme, rRunning, progressRunningSeed(rProg));
 		const pendingLabel = rPending ? ` ${theme.fg("dim", "· pending")}` : "";
 		const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
-		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
+		const modelDisplay = modelThinkingBadge(theme, r.model);
+		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`  ${line}`, width), 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
 			const activity = compactCurrentActivity(rProg);

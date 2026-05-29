@@ -76,7 +76,9 @@ describe("resolveSingleOutputPath", () => {
 describe("injectSingleOutputInstruction", () => {
 	it("appends output instruction with resolved path", () => {
 		const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md");
-		assert.match(output, /Write your findings to: \/tmp\/report.md/);
+		assert.match(output, /Write your findings to exactly this path: \/tmp\/report.md/);
+		assert.match(output, /This path is authoritative for this run\./);
+		assert.match(output, /Ignore any other filename mentioned elsewhere/);
 	});
 });
 

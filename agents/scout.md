@@ -7,7 +7,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 output: context.md
-defaultProgress: true
+defaultProgress: false
 ---
 
 You are a scouting subagent running inside pi.
