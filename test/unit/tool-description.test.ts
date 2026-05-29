@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 function readRegisteredSubagentDescription(): string {
 	const testDir = path.dirname(fileURLToPath(import.meta.url));
 	const indexSource = fs.readFileSync(path.resolve(testDir, "..", "..", "src/extension/index.ts"), "utf-8");
-	const match = indexSource.match(/name:\s*"subagent",[\s\S]*?description:\s*`([\s\S]*?)`,\r?\n\s*parameters: SubagentParams,/);
+	const match = indexSource.match(/name:\s*"subagent",[\s\S]*?description:\s*`([\s\S]*?)`,\r?\n\s*(?:promptSnippet|parameters):/);
 	assert.ok(match, "expected to find the registered subagent tool description");
 	return match[1]!;
 }

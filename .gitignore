@@ -4,4 +4,5 @@ AGENTS.md
 node_modules/
 .fallow/
 
+context.md
 package-lock.json

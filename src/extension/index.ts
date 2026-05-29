@@ -418,6 +418,13 @@ CONTROL:
 
 DIAGNOSTICS:
 • { action: "doctor" } - read-only report for runtime paths, discovery, sessions, and intercom`,
+		promptSnippet: "Delegate bounded work to configured subagents, chains, or parallel reviewers while the parent session stays in control.",
+		promptGuidelines: [
+			"Use subagent for materially parallelizable scouting, review, or implementation work where another focused agent adds value.",
+			"Before executing subagent runs, call subagent with { action: \"list\" } unless the requested executable agent or chain is already known from this conversation.",
+			"Keep the parent session responsible for final decisions, verification, and user-facing status; treat subagent output as evidence to review, not automatic truth.",
+			"Do not use subagent when a direct local tool call or small edit is cheaper than delegation.",
+		],
 		parameters: SubagentParams,
 
 		execute(id, params, signal, onUpdate, ctx) {
