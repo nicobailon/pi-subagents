@@ -8,6 +8,7 @@ import {
 	type AsyncStartedEvent,
 	type ControlEvent,
 	type SubagentState,
+	DIRS,
 	POLL_INTERVAL_MS,
 	RESULTS_DIR,
 	SUBAGENT_CONTROL_EVENT,
@@ -34,7 +35,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 } {
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
-	const resultsDir = options.resultsDir ?? RESULTS_DIR;
+	const resultsDir = options.resultsDir ?? DIRS.results;
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		renderWidget(ctx, jobs);
 		ctx.ui.requestRender?.();

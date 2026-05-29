@@ -680,6 +680,21 @@ export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
 export const TEMP_ARTIFACTS_DIR = path.join(TEMP_ROOT_DIR, "artifacts");
+
+/**
+ * Mutable container for directory paths. Properties can be reassigned at runtime
+ * (e.g., by ensureAccessibleDir when a primary path is blocked by EPERM/EACCES),
+ * while the const binding itself remains read-only (ES module compatible).
+ */
+export const DIRS = {
+	results: RESULTS_DIR,
+	async: ASYNC_DIR,
+	chain: CHAIN_RUNS_DIR,
+	artifacts: TEMP_ARTIFACTS_DIR,
+};
+// Backward-compatible static aliases — evaluated once at import time.
+// These will NOT track DIRS mutations; prefer DIRS.* for live values.
+// Kept for any undiscovered consumers that import RESULTS_DIR/ASYNC_DIR directly.
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_RESULT_TYPE = "subagent-slash-result";
 export const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";

@@ -27,8 +27,7 @@ import {
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
 	type SubagentRunMode,
-	ASYNC_DIR,
-	RESULTS_DIR,
+	DIRS,
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	TEMP_ROOT_DIR,
 	getAsyncConfigPath,
@@ -270,7 +269,7 @@ export function executeAsyncChain(
 	const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
-		: path.join(ASYNC_DIR, id);
+		: path.join(DIRS.async, id);
 	try {
 		fs.mkdirSync(asyncDir, { recursive: true });
 	} catch (error) {
@@ -402,7 +401,7 @@ export function executeAsyncChain(
 			{
 				id,
 				steps,
-				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
+				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
@@ -568,7 +567,7 @@ export function executeAsyncSingle(
 	const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
-		: path.join(ASYNC_DIR, id);
+		: path.join(DIRS.async, id);
 	try {
 		fs.mkdirSync(asyncDir, { recursive: true });
 	} catch (error) {
@@ -620,7 +619,7 @@ export function executeAsyncSingle(
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 					},
 				],
-				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
+				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
