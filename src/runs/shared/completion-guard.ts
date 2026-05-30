@@ -66,6 +66,17 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 	"contact_supervisor",
 ]);
 
+export type CompletionPolicy = "none" | "mutation-guard" | "acceptance-contract";
+
+interface CompletionPolicyInput {
+	agent: string;
+	task: string;
+	completionGuardEnabled: boolean;
+	usesAcceptanceContract: boolean;
+	tools?: string[];
+	mcpDirectTools?: string[];
+}
+
 interface CompletionMutationGuardInput {
 	agent: string;
 	task: string;
@@ -134,10 +145,22 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 	return false;
 }
 
+export function resolveCompletionPolicy(input: CompletionPolicyInput): CompletionPolicy {
+	if (input.usesAcceptanceContract) return "acceptance-contract";
+	if (!input.completionGuardEnabled) return "none";
+	if (declaresOnlyReadOnlyTools(input.tools, input.mcpDirectTools)) return "none";
+	return expectsImplementationMutation(input.agent, input.task) ? "mutation-guard" : "none";
+}
+
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = declaresOnlyReadOnlyTools(input.tools, input.mcpDirectTools)
-		? false
-		: expectsImplementationMutation(input.agent, input.task);
+	const expectedMutation = resolveCompletionPolicy({
+		agent: input.agent,
+		task: input.task,
+		completionGuardEnabled: true,
+		usesAcceptanceContract: false,
+		tools: input.tools,
+		mcpDirectTools: input.mcpDirectTools,
+	}) === "mutation-guard";
 	const attemptedMutation = hasMutationToolCall(input.messages);
 	return {
 		expectedMutation,

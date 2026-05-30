@@ -222,11 +222,19 @@ function firstOutputLine(text: string): string {
 	return text.split("\n").find((line) => line.trim())?.trim() ?? "";
 }
 
+function formatAcceptanceStatus(result: Details["results"][number]): string | undefined {
+	const acceptance = result.acceptance;
+	if (!acceptance?.status || acceptance.status === "not-required") return undefined;
+	const finalization = acceptance.finalization ? ` · finalization: ${acceptance.finalization.status}` : "";
+	return `acceptance: ${acceptance.status}${finalization}`;
+}
+
 function resultStatusLine(result: Details["results"][number], output: string): string {
 	if (result.detached) return result.detachedReason ? `Detached: ${result.detachedReason}` : "Detached";
 	if (result.interrupted) return "Paused";
 	if (result.exitCode !== 0) return `Error: ${result.error ?? (firstOutputLine(output) || `exit ${result.exitCode}`)}`;
-	if (result.acceptance?.status && result.acceptance.status !== "not-required") return `Done · acceptance: ${result.acceptance.status}`;
+	const acceptance = formatAcceptanceStatus(result);
+	if (acceptance) return `Done · ${acceptance}`;
 	if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return "Done (no text output)";
 	return "Done";
 }

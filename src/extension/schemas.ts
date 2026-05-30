@@ -78,42 +78,39 @@ const AcceptanceReviewGateSchema = Type.Object({
 }, { additionalProperties: false });
 
 const AcceptanceOverride = Type.Unsafe({
-	anyOf: [
-		{ type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
-		{ const: false },
-		{
-			type: "object",
-			properties: {
-				level: { type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
-				criteria: {
-					type: "array",
-					items: {
-						anyOf: [
-							{ type: "string" },
-							AcceptanceGateSchema,
-						],
-					},
-				},
-				evidence: { type: "array", items: AcceptanceEvidenceKind },
-				verify: { type: "array", items: AcceptanceVerifyCommandSchema },
-				review: {
-					anyOf: [
-						{ const: false },
-						AcceptanceReviewGateSchema,
-					],
-				},
-				stopRules: { type: "array", items: { type: "string" } },
-				reason: { type: "string" },
+	type: "object",
+	properties: {
+		criteria: {
+			type: "array",
+			items: {
+				anyOf: [
+					{ type: "string" },
+					AcceptanceGateSchema,
+				],
 			},
-			additionalProperties: false,
 		},
-	],
-	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands.",
+		evidence: { type: "array", items: AcceptanceEvidenceKind },
+		verify: { type: "array", items: AcceptanceVerifyCommandSchema },
+		review: AcceptanceReviewGateSchema,
+		stopRules: { type: "array", items: { type: "string" } },
+		maxFinalizationTurns: { type: "integer", minimum: 1, maximum: 10 },
+	},
+	additionalProperties: false,
+	allOf: [{
+		anyOf: [
+			{ required: ["criteria"] },
+			{ required: ["evidence"] },
+			{ required: ["verify"] },
+			{ required: ["review"] },
+			{ required: ["stopRules"] },
+		],
+	}],
+	description: "Optional acceptance contract. When present, the child must complete a same-session self-review/repair loop before acceptance is evaluated.",
 });
 
 const TaskItem = Type.Object({
-	agent: Type.String(), 
-	task: Type.String(), 
+	agent: Type.String(),
+	task: Type.String(),
 	cwd: Type.Optional(Type.String()),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
 	output: Type.Optional(OutputOverride),

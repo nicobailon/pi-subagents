@@ -65,7 +65,6 @@ import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 
 interface ChainExecutionDetailsInput {
@@ -751,6 +750,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				if (worktreeSetup) cleanupWorktrees(worktreeSetup);
 			}
 		} else if (isDynamicParallelStep(step)) {
+			if (Object.hasOwn(step, "acceptance")) {
+				const message = `Dynamic fanout step ${stepIndex + 1} does not support group-level acceptance; set acceptance on the child template instead.`;
+				dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };
+				return buildChainExecutionErrorResult(message, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
+			}
 			let materialized: ReturnType<typeof materializeDynamicParallelStep>;
 			try {
 				materialized = materializeDynamicParallelStep(step, outputs, stepIndex, { maxItems: params.dynamicFanoutMaxItems });
@@ -784,30 +788,6 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					stepIndex,
 				};
 				dynamicGroupStatuses[stepIndex] = { status: "completed" };
-				if (step.acceptance !== undefined) {
-					const effectiveGroupAcceptance = resolveEffectiveAcceptance({
-						explicit: step.acceptance,
-						agentName: step.parallel.agent,
-						task: step.parallel.task ?? originalTask,
-						mode: "chain",
-						dynamicGroup: true,
-					});
-					const groupAcceptance = await evaluateAcceptance({
-						acceptance: effectiveGroupAcceptance,
-						output: "",
-						report: aggregateAcceptanceReport({
-							results: [],
-							notes: "Dynamic fanout produced 0 results.",
-						}),
-						cwd: cwd ?? ctx.cwd,
-					});
-					dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-					const groupAcceptanceFailure = acceptanceFailureMessage(groupAcceptance);
-					if (groupAcceptanceFailure) {
-						dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
-						return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
-					}
-				}
 				prev = "Dynamic fanout produced 0 results.";
 				continue;
 			}
@@ -939,28 +919,6 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				stepIndex,
 			};
 			dynamicGroupStatuses[stepIndex] = { status: "completed" };
-			const effectiveGroupAcceptance = resolveEffectiveAcceptance({
-				explicit: step.acceptance,
-				agentName: step.parallel.agent,
-				task: step.parallel.task ?? originalTask,
-				mode: "chain",
-				dynamicGroup: true,
-			});
-			const groupAcceptance = await evaluateAcceptance({
-				acceptance: effectiveGroupAcceptance,
-				output: "",
-				report: aggregateAcceptanceReport({
-					results: parallelResults,
-					notes: `Dynamic fanout collected ${collected.length} result(s) into ${step.collect.as}.`,
-				}),
-				cwd: cwd ?? ctx.cwd,
-			});
-			dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-			const groupAcceptanceFailure = acceptanceFailureMessage(groupAcceptance);
-			if (groupAcceptanceFailure) {
-				dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
-				return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - dynamicParallelStep.parallel.length }));
-			}
 			const taskResults: ParallelTaskResult[] = parallelResults.map((result, i) => ({
 				agent: result.agent,
 				taskIndex: i,

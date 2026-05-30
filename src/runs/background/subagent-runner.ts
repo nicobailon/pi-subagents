@@ -8,6 +8,8 @@ import { appendJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
+	type AcceptanceFinalizationTurn,
+	type AcceptanceLedger,
 	type ActivityState,
 	type ArtifactConfig,
 	type ArtifactPaths,
@@ -18,6 +20,7 @@ import {
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
 	type SubagentRunMode,
+	type TokenUsage,
 	type Usage,
 	type WorkflowGraphSnapshot,
 	DEFAULT_MAX_OUTPUT,
@@ -51,7 +54,7 @@ import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput } from "../../shared/utils.ts";
-import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, resolveCompletionPolicy } from "../shared/completion-guard.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -64,7 +67,6 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { parseSessionTokens } from "../../shared/session-tokens.ts";
-import type { TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -77,7 +79,19 @@ import {
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, formatAcceptancePrompt, stripAcceptanceReport } from "../shared/acceptance.ts";
+import {
+	acceptanceFailureMessage,
+	acceptanceSelfReviewConfig,
+	attachFinalizationToLedger,
+	buildFinalizationProcessFailureLedger,
+	createFinalizationProcessFailureTurn,
+	createFinalizationTurn,
+	evaluateAcceptance,
+	formatAcceptanceFinalizationPrompt,
+	formatAcceptancePrompt,
+	shouldRunAcceptanceFinalization,
+	stripAcceptanceReport,
+} from "../shared/acceptance.ts";
 
 interface SubagentRunConfig {
 	id: string;
@@ -125,7 +139,7 @@ interface StepResult {
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
-	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	acceptance?: AcceptanceLedger;
 }
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -599,7 +613,7 @@ async function runSingleStep(
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
-	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	acceptance?: AcceptanceLedger;
 }> {
 	const effectiveStructuredOutput = step.structuredOutput ?? (step.structuredOutputSchema
 		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"))
@@ -702,7 +716,15 @@ async function runSingleStep(
 			if (structured.error) structuredError = structured.error;
 			else structuredOutput = structured.value;
 		}
-		const completionGuard = run.exitCode === 0 && !run.error && !hiddenError?.hasError && step.completionGuard !== false
+		const completionPolicy = resolveCompletionPolicy({
+			agent: step.agent,
+			task: taskForCompletionGuard,
+			completionGuardEnabled: step.completionGuard !== false,
+			usesAcceptanceContract: step.effectiveAcceptance?.explicit === true,
+			tools: step.tools,
+			mcpDirectTools: step.mcpDirectTools,
+		});
+		const completionGuard = run.exitCode === 0 && !run.error && !hiddenError?.hasError && completionPolicy === "mutation-guard"
 			? evaluateCompletionMutationGuard({
 				agent: step.agent,
 				task: taskForCompletionGuard,
@@ -715,7 +737,7 @@ async function runSingleStep(
 		const completionGuardError = completionGuardTriggered
 			? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
 			: undefined;
-		const effectiveExitCode = completionGuardTriggered
+		const effectiveExitCode = completionGuardError
 			? 1
 			: structuredError
 				? 1
@@ -743,7 +765,7 @@ async function runSingleStep(
 		completionGuardTriggeredFinal = completionGuardTriggered;
 		finalOutputSnapshot = outputSnapshot;
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput } as RunPiStreamingResult & { structuredOutput?: unknown };
-		if (attempt.success || completionGuardTriggered) break;
+		if (attempt.success || completionGuardError) break;
 		if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
 	}
@@ -756,12 +778,12 @@ async function runSingleStep(
 	const output = resolvedOutput.fullOutput;
 	const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, output) : undefined;
 	let outputForSummary = output;
-		if (attemptNotes.length > 0) {
-			outputForSummary = `${attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
-		}
+	if (attemptNotes.length > 0) {
+		outputForSummary = `${attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
+	}
 	const outputForAcceptance = rawOutput;
-		const finalizedOutput = finalizeSingleOutput({
-			fullOutput: outputForSummary,
+	const finalizedOutput = finalizeSingleOutput({
+		fullOutput: outputForSummary,
 		outputPath: step.outputPath,
 		outputMode: step.outputMode,
 		exitCode: finalResult?.exitCode ?? 1,
@@ -770,13 +792,115 @@ async function runSingleStep(
 		saveError: resolvedOutput.saveError,
 	});
 	outputForSummary = finalizedOutput.displayOutput;
-	const acceptance = step.effectiveAcceptance
-			? await evaluateAcceptance({
-				acceptance: step.effectiveAcceptance,
-				output: outputForAcceptance,
-				cwd: step.cwd ?? ctx.cwd,
-			})
+	const acceptanceForInitialReport = step.effectiveAcceptance && shouldRunAcceptanceFinalization(step.effectiveAcceptance)
+		? acceptanceSelfReviewConfig(step.effectiveAcceptance)
+		: step.effectiveAcceptance;
+	let acceptance = acceptanceForInitialReport
+		? await evaluateAcceptance({
+			acceptance: acceptanceForInitialReport,
+			output: outputForAcceptance,
+			cwd: step.cwd ?? ctx.cwd,
+		})
 		: undefined;
+	if (acceptance && step.effectiveAcceptance && shouldRunAcceptanceFinalization(step.effectiveAcceptance) && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted) {
+		const sessionFile = step.sessionFile ?? (sessionDir ? findLatestSessionFile(sessionDir) ?? undefined : undefined);
+		const maxTurns = step.effectiveAcceptance.finalization.maxTurns;
+		const turns: AcceptanceFinalizationTurn[] = [];
+		if (!sessionFile) {
+			const message = "Acceptance finalization requires a session file for same-session continuation.";
+			turns.push(createFinalizationProcessFailureTurn({ turn: 1, prompt: "", message }));
+			acceptance = buildFinalizationProcessFailureLedger({ initialLedger: acceptance, turns, maxTurns, message });
+		} else {
+			const selfReviewAcceptance = acceptanceSelfReviewConfig(step.effectiveAcceptance);
+			let previousFailure = acceptanceFailureMessage(acceptance);
+			let authoritativeLedger = acceptance;
+			for (let turn = 1; turn <= maxTurns; turn++) {
+				const prompt = formatAcceptanceFinalizationPrompt({
+					acceptance: step.effectiveAcceptance,
+					initialOutput: outputForAcceptance,
+					initialLedger: acceptance,
+					turn,
+					maxTurns,
+					...(previousFailure ? { previousFailure } : {}),
+				});
+				const { args, env, tempDir } = buildPiArgs({
+					baseArgs: ["--mode", "json", "-p"],
+					task: prompt,
+					sessionEnabled: true,
+					sessionFile,
+					model: finalResult?.model ?? step.model,
+					thinking: step.thinking,
+					inheritProjectContext: step.inheritProjectContext,
+					inheritSkills: step.inheritSkills,
+					tools: step.tools,
+					extensions: step.extensions,
+					systemPrompt: step.systemPrompt,
+					systemPromptMode: step.systemPromptMode,
+					mcpDirectTools: step.mcpDirectTools,
+					cwd: step.cwd ?? ctx.cwd,
+					promptFileStem: `${step.agent}-acceptance-finalization`,
+					intercomSessionName: ctx.childIntercomTarget,
+					orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
+					runId: ctx.id,
+					childAgentName: step.agent,
+					childIndex: ctx.flatIndex,
+					parentEventSink: ctx.nestedRoute?.eventSink,
+					parentControlInbox: ctx.nestedRoute?.controlInbox,
+					parentRootRunId: ctx.nestedRoute?.rootRunId,
+					parentCapabilityToken: ctx.nestedRoute?.capabilityToken,
+				});
+				ctx.onAttemptStart?.({ model: finalResult?.model ?? step.model, thinking: resolveEffectiveThinking(finalResult?.model ?? step.model, step.thinking) });
+				const finalizationRun = await runPiStreaming(
+					args,
+					step.cwd ?? ctx.cwd,
+					`${ctx.outputFile}.finalization-${turn}.log`,
+					env,
+					ctx.piPackageRoot,
+					ctx.piArgv1,
+					step.maxSubagentDepth,
+					{ eventsPath, runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
+					ctx.registerInterrupt,
+					ctx.onChildEvent,
+				);
+				cleanupTempDir(tempDir);
+				modelAttempts.push({
+					model: finalResult?.model ?? finalizationRun.model ?? step.model ?? "default",
+					success: finalizationRun.exitCode === 0 && !finalizationRun.error,
+					exitCode: finalizationRun.exitCode,
+					error: finalizationRun.error,
+					usage: finalizationRun.usage,
+				});
+				const finalizationOutput = finalizationRun.finalOutput;
+				if (finalizationRun.exitCode !== 0 || finalizationRun.error || finalizationRun.interrupted) {
+					const message = finalizationRun.error ?? "Acceptance finalization turn did not complete successfully.";
+					turns.push(createFinalizationProcessFailureTurn({ turn, prompt, rawOutput: finalizationOutput, message }));
+					acceptance = buildFinalizationProcessFailureLedger({ initialLedger: acceptance, turns, maxTurns, message });
+					break;
+				}
+				const selfReviewLedger = await evaluateAcceptance({
+					acceptance: selfReviewAcceptance,
+					output: finalizationOutput,
+					cwd: step.cwd ?? ctx.cwd,
+				});
+				authoritativeLedger = selfReviewLedger;
+				turns.push(createFinalizationTurn({ turn, prompt, rawOutput: finalizationOutput, ledger: selfReviewLedger }));
+				const failure = acceptanceFailureMessage(selfReviewLedger);
+				if (!failure) {
+					authoritativeLedger = step.effectiveAcceptance === selfReviewAcceptance
+						? selfReviewLedger
+						: await evaluateAcceptance({
+							acceptance: step.effectiveAcceptance,
+							output: finalizationOutput,
+							cwd: step.cwd ?? ctx.cwd,
+						});
+					acceptance = attachFinalizationToLedger({ initialLedger: acceptance, authoritativeLedger, turns, status: "completed", maxTurns });
+					break;
+				}
+				previousFailure = failure;
+				if (turn === maxTurns) acceptance = attachFinalizationToLedger({ initialLedger: acceptance, authoritativeLedger, turns, status: "failed", maxTurns });
+			}
+		}
+	}
 	const acceptanceFailure = acceptance ? acceptanceFailureMessage(acceptance) : undefined;
 	const acceptanceCanFailRun = acceptanceFailure && acceptance?.explicit && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted;
 	const effectiveFinalExitCode = acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
@@ -1112,7 +1236,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		writeAtomicJson(statusPath, statusPayload);
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
 	};
-	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running", error?: string, acceptance?: import("../../shared/types.ts").AcceptanceLedger): void => {
+	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running", error?: string, acceptance?: AcceptanceLedger): void => {
 		const groupNode = statusPayload.workflowGraph?.nodes.find((node) => node.id === `step-${stepIndex}`);
 		if (!groupNode) return;
 		groupNode.status = status;
@@ -1454,36 +1578,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					placeholder.durationMs = 0;
 				}
 				previousOutput = "Dynamic fanout produced 0 results.";
-				const groupAcceptance = step.effectiveAcceptance?.explicit
-					? await evaluateAcceptance({
-						acceptance: step.effectiveAcceptance,
-						output: "",
-						report: aggregateAcceptanceReport({
-							results: [],
-							notes: "Dynamic fanout produced 0 results.",
-						}),
-						cwd,
-					})
-					: undefined;
-				if (placeholder && groupAcceptance) placeholder.acceptance = groupAcceptance;
-				const groupAcceptanceFailure = groupAcceptance ? acceptanceFailureMessage(groupAcceptance) : undefined;
-				if (groupAcceptanceFailure) {
-					statusPayload.state = "failed";
-					statusPayload.error = groupAcceptanceFailure;
-					if (placeholder) {
-						placeholder.status = "failed";
-						placeholder.error = groupAcceptanceFailure;
-						placeholder.exitCode = 1;
-					}
-					markDynamicGraphGroup(stepIndex, "failed", groupAcceptanceFailure, groupAcceptance);
-					statusPayload.lastUpdate = now;
-					writeStatusPayload();
-					results.push({ agent: step.parallel.agent, output: groupAcceptanceFailure, error: groupAcceptanceFailure, success: false, exitCode: 1, acceptance: groupAcceptance });
-					break;
-				}
 				flatIndex++;
 				statusPayload.lastUpdate = now;
-				markDynamicGraphGroup(stepIndex, "completed", undefined, groupAcceptance);
+				markDynamicGraphGroup(stepIndex, "completed");
 				writeStatusPayload();
 				continue;
 			}
@@ -1659,31 +1756,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						stepIndex,
 					};
 					statusPayload.outputs = outputs;
-					const groupAcceptance = step.effectiveAcceptance
-						? await evaluateAcceptance({
-							acceptance: step.effectiveAcceptance,
-							output: "",
-							report: aggregateAcceptanceReport({
-								results: parallelResults,
-								notes: `Dynamic fanout collected ${collection.length} result(s) into ${step.collect.as}.`,
-							}),
-							cwd,
-						})
-						: undefined;
-					const groupAcceptanceFailure = groupAcceptance ? acceptanceFailureMessage(groupAcceptance) : undefined;
-					markDynamicGraphGroup(stepIndex, groupAcceptanceFailure ? "failed" : "completed", groupAcceptanceFailure, groupAcceptance);
-					if (groupAcceptanceFailure) {
-						results.push({
-							agent: step.parallel.agent,
-							output: groupAcceptanceFailure,
-							error: groupAcceptanceFailure,
-							success: false,
-							exitCode: 1,
-							structuredOutput: collection,
-							acceptance: groupAcceptance,
-						});
-						statusPayload.error = groupAcceptanceFailure;
-					}
+					markDynamicGraphGroup(stepIndex, "completed");
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
 					results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection });

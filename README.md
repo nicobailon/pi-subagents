@@ -794,7 +794,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, and `acceptance`. |
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
-| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. |
+| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Sequential steps and parallel child tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`; group-level acceptance is not supported because there is no child session to finalize. |
 | `context` | `fresh \| fork` | agent default or `fresh` | `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, and `oracle` default to `fork`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. |
 | `clarify` | boolean | true for chains | Show TUI preview/edit flow. |
@@ -806,7 +806,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Override the run's inferred acceptance gates. Use `"auto"`, `"attested"`, `"checked"`, `"verified"`, `"reviewed"`, or `{ level: "none", reason: "..." }`. |
+| `acceptance` | object | omitted | Explicit acceptance contract. When present, the child gets a structured contract, then the runtime continues the same session for a bounded self-review/repair loop before evaluating acceptance. |
 
 `context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. It never silently downgrades to `fresh`. In multi-agent runs, if any requested agent has `defaultContext: fork` and the launch omits `context`, the whole invocation uses forked context; pass `context: "fresh"` when you intentionally want a fresh run.
 
@@ -989,33 +989,32 @@ Async runs write:
 
 ## Acceptance Gates
 
-Every run resolves an effective acceptance policy. Callers may omit `acceptance` for the inferred default, or set it on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
+`acceptance` is an explicit contract. Omit it for lightweight runs. Set it on single runs, top-level parallel task items, sequential chain steps, static parallel task items, and dynamic fanout child templates when the child must prove the work meets concrete criteria. Do not set it on static parallel groups or dynamic fanout aggregate groups; those groups do not own a same-session child turn.
 
 ```ts
 {
   agent: "worker",
   task: "Implement the fix",
   acceptance: {
-    level: "verified",
     criteria: ["Patch the bug without widening scope"],
     evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }],
+    maxFinalizationTurns: 3
   }
 }
 ```
 
-Accepted levels are `auto`, `none`, `attested`, `checked`, `verified`, and `reviewed`. `acceptance: "auto"` is the default. Read-only reviewer/scout tasks infer lightweight attestation, normal writer tasks infer checked evidence, and async/risky/dynamic writer contexts infer a reviewed gate. To disable gates, prefer `{ level: "none", reason: "..." }`.
+When `acceptance` is present, the initial child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. After the child’s initial completion, the runtime continues the same persisted child session with an acceptance finalization prompt. The child can repair omissions in that same session, then must return the final `acceptance-report`. Missing or malformed finalization reports reject the run when the loop limit is reached.
 
-Acceptance provenance is stored separately from child prose:
+Public acceptance config is evidence-driven. There is no public `level` field and no `acceptance: "checked"` shorthand. Runtime provenance is derived from what actually happened:
 
-- `claimed`: child finished but did not provide structured evidence.
-- `attested`: child returned a structured acceptance report.
-- `checked`: runtime structural checks passed, such as required evidence and no staged files.
+- `attested`: the child returned a structured acceptance report.
+- `checked`: runtime structural checks passed, such as required criteria, required evidence, and no staged files.
 - `verified`: configured runtime verification commands passed. Child-reported command success does not count.
 - `reviewed`: an independent reviewer result is present.
-- `rejected`: attestation, structural checks, verification, or review failed.
+- `rejected`: attestation, structural checks, verification, review, or finalization failed.
 
-For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. Explicit failed gates fail the run. Inferred gates are persisted for observability without breaking older calls that omit `acceptance`.
+Self-review finalization never counts as `reviewed`, and it never counts as `verified` unless configured runtime verification commands actually pass. The visible child output remains the initial answer; finalization reports and residual risks are stored in the acceptance ledger and async/status details.
 
 ## Live progress
 

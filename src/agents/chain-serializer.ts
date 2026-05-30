@@ -151,11 +151,17 @@ export function parseJsonChain(content: string, source: "user" | "project", file
 			throw new Error(`JSON chain '${filePath}' step ${i + 1} must be an object.`);
 		}
 		const stepRecord = step as Record<string, unknown>;
+		const parallel = stepRecord.parallel;
+		if (Array.isArray(parallel) && Object.hasOwn(stepRecord, "acceptance")) {
+			throw new Error(`Invalid JSON chain '${filePath}': step ${i + 1} acceptance is not supported on static parallel groups; set acceptance on each parallel task.`);
+		}
+		if (parallel && typeof parallel === "object" && !Array.isArray(parallel) && Object.hasOwn(stepRecord, "acceptance")) {
+			throw new Error(`Invalid JSON chain '${filePath}': step ${i + 1} acceptance is not supported on dynamic fanout groups; set acceptance on the dynamic template.`);
+		}
 		const acceptanceErrors = validateAcceptanceInput(stepRecord.acceptance, `step ${i + 1} acceptance`);
 		if (acceptanceErrors.length > 0) {
 			throw new Error(`Invalid JSON chain '${filePath}': ${acceptanceErrors.join(" ")}`);
 		}
-		const parallel = stepRecord.parallel;
 		if (Array.isArray(parallel)) {
 			for (let taskIndex = 0; taskIndex < parallel.length; taskIndex++) {
 				const task = parallel[taskIndex];

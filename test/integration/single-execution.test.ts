@@ -83,6 +83,14 @@ interface RunSyncResult {
 	outputReference?: { path: string; bytes: number; lines: number; message: string };
 	outputSaveError?: string;
 	sessionFile?: string;
+	acceptance?: {
+		status?: string;
+		finalization?: {
+			status?: string;
+			maxTurns?: number;
+			turns?: Array<{ turn?: number; status?: string; failureMessage?: string }>;
+		};
+	};
 }
 
 interface ExecutionModule {
@@ -113,6 +121,26 @@ const available = !!(execution && utils);
 const runSync = execution?.runSync;
 const getFinalOutput = utils?.getFinalOutput;
 const createSubagentExecutor = executorMod?.createSubagentExecutor;
+
+function acceptanceReport(): string {
+	return formatAcceptanceReport([
+		{ id: "criterion-1", status: "satisfied", evidence: "file exists with exact content" },
+		{ id: "criterion-2", status: "satisfied", evidence: "verification command passed" },
+	]);
+}
+
+function formatAcceptanceReport(criteriaSatisfied: Array<{ id: string; status: "satisfied" | "not-satisfied" | "not-applicable"; evidence: string }>): string {
+	return [
+		"```acceptance-report",
+		JSON.stringify({
+			criteriaSatisfied,
+			changedFiles: ["guard-acceptance.txt"],
+			commandsRun: [{ command: "test file content", result: "passed", summary: "passed" }],
+			residualRisks: [],
+		}),
+		"```",
+	].join("\n");
+}
 
 function writePackageSkill(packageRoot: string, skillName: string): void {
 	const skillDir = path.join(packageRoot, "skills", skillName);
@@ -257,6 +285,53 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 		assert.equal(withOptOut.exitCode, 0);
 		assert.equal(withOptOut.progress.status, "completed");
+	});
+
+	it("lets explicit acceptance own completion for report-only output", async () => {
+		mockPi.onCall({ output: acceptanceReport() });
+		mockPi.onCall({ output: acceptanceReport() });
+		const agents = [makeAgent("worker")];
+
+		const result = await runSync(tempDir, agents, "worker", "Create guard-acceptance.txt with verified content", {
+			runId: "guard-acceptance-explicit",
+			acceptance: {
+				criteria: ["Create guard-acceptance.txt with verified content", "Verify the file content"],
+				maxFinalizationTurns: 3,
+			},
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(result.finalOutput, "");
+		assert.equal(result.acceptance?.status, "checked");
+		assert.equal(result.acceptance?.finalization?.status, "completed");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("stops acceptance finalization at max turns when self-review never satisfies criteria", async () => {
+		mockPi.onCall({ output: "```acceptance-report\n{bad-json\n```" });
+		mockPi.onCall({ output: formatAcceptanceReport([{ id: "criterion-1", status: "not-satisfied", evidence: "still missing after first self-review" }]) });
+		mockPi.onCall({ output: formatAcceptanceReport([{ id: "criterion-1", status: "not-satisfied", evidence: "still missing after second self-review" }]) });
+		const agents = [makeAgent("worker")];
+
+		const result = await runSync(tempDir, agents, "worker", "Create guard-acceptance.txt with verified content", {
+			runId: "guard-acceptance-max-finalization",
+			acceptance: {
+				criteria: ["Create guard-acceptance.txt with verified content"],
+				maxFinalizationTurns: 2,
+			},
+		});
+
+		assert.equal(mockPi.callCount(), 3);
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Acceptance rejected/);
+		assert.equal(result.finalOutput, "");
+		assert.equal(result.acceptance?.status, "rejected");
+		assert.equal(result.acceptance?.finalization?.status, "failed");
+		assert.equal(result.acceptance?.finalization?.maxTurns, 2);
+		assert.equal(result.acceptance?.finalization?.turns?.length, 2);
+		assert.deepEqual(result.acceptance?.finalization?.turns?.map((turn) => turn.turn), [1, 2]);
+		assert.deepEqual(result.acceptance?.finalization?.turns?.map((turn) => turn.status), ["rejected", "rejected"]);
 	});
 
 	it("allows implementation runs when parsed messages include a real edit tool call", async () => {

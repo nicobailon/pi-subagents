@@ -273,7 +273,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.ok((args.at(-1) ?? "").startsWith("Task: \n\n## Acceptance Contract"));
+		assert.equal(args.at(-1) ?? "", "Task: ");
 	});
 
 	it("does not treat top-level agent as single mode when tasks are present", async () => {
@@ -290,7 +290,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.ok((args.at(-1) ?? "").startsWith("Task: parallel task\n\n## Acceptance Contract"));
+		assert.equal(args.at(-1) ?? "", "Task: parallel task");
 	});
 
 	it("uses agent defaultContext fork when launch context is omitted", async () => {
@@ -824,6 +824,34 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Async chain:/);
 	});
 
+	it("rejects group-level chain acceptance during executor preflight", async () => {
+		const executor = makeExecutor();
+
+		for (const testCase of [
+			{
+				name: "static parallel group",
+				params: { chain: [{ parallel: [{ agent: "echo", task: "review" }], acceptance: { criteria: ["Group done"] } }] },
+				pattern: /static parallel groups/,
+			},
+			{
+				name: "dynamic fanout group",
+				params: { chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 2 }, parallel: { agent: "echo", task: "review" }, collect: { as: "reviews" }, acceptance: { criteria: ["Group done"] } }] },
+				pattern: /dynamic fanout groups/,
+			},
+		]) {
+			const result = await executor.execute(
+				"id",
+				testCase.params,
+				new AbortController().signal,
+				undefined,
+				makeCtx(makeSessionManagerRecorder().manager),
+			);
+
+			assert.equal(result.isError, true, testCase.name);
+			assert.match(result.content[0]?.text ?? "", testCase.pattern, testCase.name);
+		}
+	});
+
 	it("rejects invalid background top-level parallel requests during executor preflight", async () => {
 		const executor = makeExecutor();
 		for (const testCase of [
@@ -959,7 +987,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readAllCallArgs().find((callArgs) => (callArgs.at(-1) ?? "").startsWith(`Task: ${task}\n\n## Acceptance Contract`));
+		const args = readAllCallArgs().find((callArgs) => (callArgs.at(-1) ?? "") === `Task: ${task}`);
 		assert.ok(args, "expected a recorded mock pi call for this test task");
 		const modelIndex = args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);

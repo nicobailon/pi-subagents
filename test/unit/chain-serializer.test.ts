@@ -134,24 +134,56 @@ Review the diff
 			name: "accepted-chain",
 			description: "Chain with acceptance gates",
 			chain: [
-				{ agent: "worker", task: "Fix bug", acceptance: { level: "checked", evidence: ["changed-files", "commands-run"] } },
+				{ agent: "worker", task: "Fix bug", acceptance: { criteria: ["Patch bug"], evidence: ["changed-files", "commands-run"] } },
 				{
 					parallel: [
-						{ agent: "reviewer", task: "Review", acceptance: "attested" },
+						{ agent: "reviewer", task: "Review", acceptance: { criteria: ["Return concrete findings"] } },
 					],
 				},
 			],
 		}), "project", "/tmp/accepted-chain.chain.json");
 
-		assert.deepEqual((parsed.steps[0] as { acceptance?: unknown }).acceptance, { level: "checked", evidence: ["changed-files", "commands-run"] });
-		assert.equal(((parsed.steps[1] as { parallel?: Array<{ acceptance?: unknown }> }).parallel?.[0]?.acceptance), "attested");
+		assert.deepEqual((parsed.steps[0] as { acceptance?: unknown }).acceptance, { criteria: ["Patch bug"], evidence: ["changed-files", "commands-run"] });
+		assert.deepEqual(((parsed.steps[1] as { parallel?: Array<{ acceptance?: unknown }> }).parallel?.[0]?.acceptance), { criteria: ["Return concrete findings"] });
 		assert.throws(
 			() => parseJsonChain(JSON.stringify({
 				name: "bad-acceptance",
 				description: "Bad acceptance",
 				chain: [{ agent: "worker", acceptance: { level: "none" } }],
 			}), "project", "/tmp/bad-acceptance.chain.json"),
-			/step 1 acceptance\.reason is required/,
+			/step 1 acceptance\.level is no longer supported/,
+		);
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({
+				name: "bad-criterion",
+				description: "Bad criterion",
+				chain: [{ agent: "worker", acceptance: { criteria: [{ must: "Patch" }] } }],
+			}), "project", "/tmp/bad-criterion.chain.json"),
+			/step 1 acceptance\.criteria\[0\]\.id is required/,
+		);
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({
+				name: "bad-key",
+				description: "Bad key",
+				chain: [{ agent: "worker", acceptance: { criteria: ["Patch"], maxFinalizationTurn: 2 } }],
+			}), "project", "/tmp/bad-key.chain.json"),
+			/step 1 acceptance\.maxFinalizationTurn is not supported/,
+		);
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({
+				name: "group-acceptance",
+				description: "Group acceptance",
+				chain: [{ parallel: [{ agent: "worker" }], acceptance: { criteria: ["Group done"] } }],
+			}), "project", "/tmp/group-acceptance.chain.json"),
+			/static parallel groups/,
+		);
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({
+				name: "dynamic-group-acceptance",
+				description: "Dynamic group acceptance",
+				chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 2 }, parallel: { agent: "worker" }, collect: { as: "done" }, acceptance: { criteria: ["Group done"] } }],
+			}), "project", "/tmp/dynamic-group-acceptance.chain.json"),
+			/dynamic fanout groups/,
 		);
 	});
 });

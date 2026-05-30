@@ -239,7 +239,7 @@ export interface ModelAttempt {
 	usage?: Usage;
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
+export type AcceptanceProvenanceLevel = "none" | "attested" | "checked" | "verified" | "reviewed";
 
 export type AcceptanceEvidenceKind =
 	| "changed-files"
@@ -275,16 +275,15 @@ export interface AcceptanceReviewGate {
 }
 
 export interface AcceptanceConfig {
-	level?: AcceptanceLevel;
 	criteria?: Array<string | AcceptanceGate>;
 	evidence?: AcceptanceEvidenceKind[];
 	verify?: AcceptanceVerifyCommand[];
-	review?: AcceptanceReviewGate | false;
+	review?: AcceptanceReviewGate;
 	stopRules?: string[];
-	reason?: string;
+	maxFinalizationTurns?: number;
 }
 
-export type AcceptanceInput = AcceptanceLevel | false | AcceptanceConfig;
+export type AcceptanceInput = AcceptanceConfig;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;
@@ -294,15 +293,18 @@ export interface ResolvedAcceptanceGate extends AcceptanceGate {
 }
 
 export interface ResolvedAcceptanceConfig {
-	level: Exclude<AcceptanceLevel, "auto">;
+	level: AcceptanceProvenanceLevel;
 	explicit: boolean;
 	inferredReason: string[];
 	criteria: ResolvedAcceptanceGate[];
 	evidence: AcceptanceEvidenceKind[];
 	verify: AcceptanceVerifyCommand[];
-	review?: AcceptanceReviewGate | false;
+	review?: AcceptanceReviewGate;
 	stopRules: string[];
-	reason?: string;
+	finalization: {
+		mode: "none" | "self-review-loop";
+		maxTurns: number;
+	};
 }
 
 export interface AcceptanceReport {
@@ -366,6 +368,25 @@ export type AcceptanceLedgerStatus =
 	| "accepted"
 	| "rejected";
 
+export interface AcceptanceFinalizationTurn {
+	turn: number;
+	prompt: string;
+	status: AcceptanceLedgerStatus;
+	rawOutput?: string;
+	report?: AcceptanceReport;
+	parseError?: string;
+	runtimeChecks: AcceptanceRuntimeCheck[];
+	verifyRuns: AcceptanceVerifyResult[];
+	failureMessage?: string;
+}
+
+export interface AcceptanceFinalizationLedger {
+	mode: "self-review-loop";
+	status: "not-run" | "completed" | "failed";
+	maxTurns: number;
+	turns: AcceptanceFinalizationTurn[];
+}
+
 export interface AcceptanceLedger {
 	status: AcceptanceLedgerStatus;
 	explicit: boolean;
@@ -374,9 +395,12 @@ export interface AcceptanceLedger {
 	criteria: ResolvedAcceptanceGate[];
 	childReport?: AcceptanceReport;
 	childReportParseError?: string;
+	initialChildReport?: AcceptanceReport;
+	initialChildReportParseError?: string;
 	runtimeChecks: AcceptanceRuntimeCheck[];
 	verifyRuns: AcceptanceVerifyResult[];
 	reviewResult?: AcceptanceReviewResult;
+	finalization?: AcceptanceFinalizationLedger;
 	parentDecision?: {
 		status: "accepted" | "rejected";
 		at: string;

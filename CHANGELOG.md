@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- Reworked public acceptance config to be object-only and evidence-driven, removing public `level`/disable shorthands. Explicit acceptance now triggers a same-session self-review/repair finalization loop, with `maxFinalizationTurns` controlling the cap.
+
+### Fixed
+- Treat explicit acceptance as the completion contract for acceptance-enabled runs, avoiding implementation completion-guard false positives when the visible output is only an `acceptance-report` or a finalization self-review turn does not need a repair edit.
+
 ## [0.26.0] - 2026-05-29
 
 ### Added

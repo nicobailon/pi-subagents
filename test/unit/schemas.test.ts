@@ -351,8 +351,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ parallel: [{ agent: "reviewer", phase: "Review", label: "Security", as: "security", outputSchema: { type: "object" } }] }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", output: "review.md", reads: ["input.md"], skill: "review" }] }] },
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 }, parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } }, collect: { as: "reviews" } }] },
-			{ agent: "worker", task: "Fix", acceptance: false },
-			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
+			{ agent: "worker", task: "Fix", acceptance: { criteria: ["Patch the bug"], evidence: ["changed-files"], maxFinalizationTurns: 2 } },
+			{ agent: "worker", task: "Fix", acceptance: { verify: [{ id: "unit", command: "npm test" }] } },
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
 		];
@@ -372,7 +372,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "reviewer", as: "child" }, collect: { as: "reviews" } }] },
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "reviewer" }, collect: { as: "reviews" }, when: "later" }] },
 			{ agent: "worker", task: "Fix", acceptance: true },
-			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: true } },
+			{ agent: "worker", task: "Fix", acceptance: "checked" },
+			{ agent: "worker", task: "Fix", acceptance: false },
+			{ agent: "worker", task: "Fix", acceptance: {} },
+			{ agent: "worker", task: "Fix", acceptance: { level: "checked" } },
+			{ agent: "worker", task: "Fix", acceptance: { criteria: ["Patch"], review: true } },
 			{ config: [] },
 			{ config: null },
 		];

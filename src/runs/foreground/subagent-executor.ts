@@ -53,6 +53,7 @@ import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
+import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -760,6 +761,36 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	};
 }
 
+function validationErrorResult(mode: Details["mode"], text: string): AgentToolResult<Details> {
+	return { content: [{ type: "text", text }], isError: true, details: { mode, results: [] } };
+}
+
+function validateAcceptanceForExecution(params: SubagentParamsLike): AgentToolResult<Details> | null {
+	const topLevelErrors = validateAcceptanceInput(params.acceptance);
+	if (topLevelErrors.length > 0) return validationErrorResult("single", topLevelErrors.join(" "));
+	for (const [index, task] of (params.tasks ?? []).entries()) {
+		const errors = validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`);
+		if (errors.length > 0) return validationErrorResult("parallel", errors.join(" "));
+	}
+	for (const [stepIndex, step] of (params.chain ?? []).entries()) {
+		if (isParallelStep(step)) {
+			if (Object.hasOwn(step, "acceptance")) return validationErrorResult("chain", `chain[${stepIndex}].acceptance is not supported on static parallel groups; set acceptance on each parallel task.`);
+			for (const [taskIndex, task] of step.parallel.entries()) {
+				const errors = validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`);
+				if (errors.length > 0) return validationErrorResult("chain", errors.join(" "));
+			}
+		} else if (isDynamicParallelStep(step)) {
+			if (Object.hasOwn(step, "acceptance")) return validationErrorResult("chain", `chain[${stepIndex}].acceptance is not supported on dynamic fanout groups; set acceptance on chain[${stepIndex}].parallel.acceptance for each materialized child.`);
+			const errors = validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`);
+			if (errors.length > 0) return validationErrorResult("chain", errors.join(" "));
+		} else {
+			const stepErrors = validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`);
+			if (stepErrors.length > 0) return validationErrorResult("chain", stepErrors.join(" "));
+		}
+	}
+	return null;
+}
+
 function validateExecutionInput(
 	params: SubagentParamsLike,
 	agents: AgentConfig[],
@@ -768,6 +799,9 @@ function validateExecutionInput(
 	hasSingle: boolean,
 	allowClarifyTaskPrompt: boolean,
 ): AgentToolResult<Details> | null {
+	const acceptanceError = validateAcceptanceForExecution(params);
+	if (acceptanceError) return acceptanceError;
+
 	if (Number(hasChain) + Number(hasTasks) + Number(hasSingle) !== 1) {
 		return {
 			content: [

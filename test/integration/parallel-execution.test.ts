@@ -287,9 +287,8 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		const taskArg = args.at(-1) ?? "";
 		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
 
-Inspect
-
-## Acceptance Contract`));
+Inspect`));
+		assert.doesNotMatch(taskArg, /## Acceptance Contract/);
 	});
 
 	it("top-level parallel progress emits the existing progress instruction style", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

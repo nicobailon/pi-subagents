@@ -103,7 +103,6 @@ export interface DynamicParallelStep {
 	failFast?: boolean;
 	phase?: string;
 	label?: string;
-	acceptance?: AcceptanceInput;
 }
 
 /** Parallel step: multiple agents running concurrently */

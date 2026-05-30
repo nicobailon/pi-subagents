@@ -692,7 +692,7 @@ clarify → validation contract → planner → async worker → parallel async 
 
 The validation contract defines acceptance before code is written: expected behavior, acceptance checks, commands or user flows to exercise, and evidence the worker should return. Keep it lightweight for small tasks, but make it explicit enough that reviewers and validators are checking the intended outcome rather than the worker’s own assumptions.
 
-Use the structured `acceptance` field when the run should carry an explicit acceptance contract. If omitted, subagents infer an effective acceptance policy from role, mode, and risk. Use `level: "checked"` for ordinary writer evidence gates, `level: "verified"` when the runtime should run explicit validation commands, and `level: "reviewed"` only when an independent reviewer result is expected. Do not call a run reviewed just because the worker says it is done; reviewed means a reviewer gate returned a result. Child-reported command success is evidence, not runtime verification.
+Use the structured `acceptance` field when the run should carry an explicit acceptance contract. If omitted, the run stays lightweight. When present, acceptance is object-only: define concrete `criteria`, required `evidence`, optional runtime `verify` commands, optional independent `review`, and optionally `maxFinalizationTurns`. The runtime continues the same child session for a bounded self-review/repair loop before evaluating the final report, so set `acceptance` on single runs, sequential chain steps, parallel task items, and dynamic fanout child templates, not on static parallel or dynamic fanout groups. Do not call a run reviewed just because the worker says it is done; reviewed means a reviewer gate returned a result. Child-reported command success is evidence, not runtime verification.
 
 The first `worker` implements the approved plan. The parent continues with independent inspection or validation prep while it runs, not parallel edits to the same worktree. When the async worker completes, treat its handoff as the transition into review, not as final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Parallel reviewers inspect the resulting diff from fresh context. Validators check behavior with the best available evidence: commands, tests, browser/CLI interaction, screenshots, logs, or manual reproduction notes. The final `worker` applies synthesized review fixes in forked context, then the parent looks over the final diff before completing. The parent may launch these steps as an initial async chain when the workflow is already clear, or as follow-up subagent runs after each async completion. Initial chains should pass `async: true` so the main chat is unblocked; avoid `clarify: true` unless the user asked for foreground clarification. Do not stop after parallel review unless the user explicitly asked for review-only output or the review surfaced a decision that needs approval first.
 
@@ -721,8 +721,9 @@ subagent({
   agent: "worker",
   task: "Implement the approved feature.\n\nClarified requirements:\n- ...\n\nPlan: see ~/Documents/docs/...-plan.md\n\nValidation contract:\n- ...\n\nReturn a handoff with changed files, what was implemented, what was left undone, commands run with exit codes, validation evidence, surprises/new risks, and decisions needing parent approval.",
   acceptance: {
-    level: "checked",
-    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"]
+    criteria: ["Implement the approved feature without widening scope"],
+    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
+    maxFinalizationTurns: 3
   },
   async: true
 })

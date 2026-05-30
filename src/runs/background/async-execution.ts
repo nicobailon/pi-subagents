@@ -436,14 +436,6 @@ export function executeAsyncChain(
 					failFast: s.failFast,
 					phase: s.phase,
 					label: s.label,
-					effectiveAcceptance: resolveEffectiveAcceptance({
-						explicit: s.acceptance,
-						agentName: s.parallel.agent,
-						task: s.parallel.task,
-						mode: resultMode,
-						async: true,
-						dynamicGroup: true,
-					}),
 				};
 			}
 			return buildSeqStep(s as SequentialStep, nextSessionFile());

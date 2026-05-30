@@ -217,7 +217,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const modelThinking = formatModelThinking(step.model, step.thinking);
 				const modelText = modelThinking ? ` (${modelThinking})` : "";
 				const errorText = step.error ? `, error: ${step.error}` : "";
-				const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
+				const finalizationText = step.acceptance?.finalization ? `, finalization: ${step.acceptance.finalization.status}` : "";
+				const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}${finalizationText}` : "";
 				const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${acceptanceText}${errorText}`);

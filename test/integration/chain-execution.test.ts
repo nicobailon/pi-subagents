@@ -265,7 +265,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "worker", task: "Implement fix", output: "accepted.md", outputMode: "file-only", acceptance: { level: "checked", criteria: ["Patch bug"] } }],
+				[{ agent: "worker", task: "Implement fix", output: "accepted.md", outputMode: "file-only", acceptance: { criteria: ["Patch bug"] } }],
 				agents,
 				{ chainDir: tempDir },
 			),
@@ -275,6 +275,10 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.match(result.details.results[0]?.finalOutput ?? "", /Output saved to:/);
 		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
 		assert.ok(result.details.results[0]?.acceptance?.childReport);
+		assert.equal(result.details.results[0]?.acceptance?.finalization?.status, "completed");
+		assert.ok(result.details.results[0]?.acceptance?.initialChildReport);
+		assert.equal(mockPi.callCount(), 2);
+		assert.match(readCallArgs(1).at(-1) ?? "", /## Acceptance Finalization/);
 
 		mockPi.onCall({
 			output: [
@@ -294,7 +298,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		const failed = await executeChain(
 			makeChainParams(
-				[{ agent: "worker", task: "Implement fix", acceptance: { level: "checked" } }],
+				[{ agent: "worker", task: "Implement fix", acceptance: { criteria: ["Patch bug"], evidence: ["tests-added"] } }],
 				agents,
 			),
 		);
@@ -318,23 +322,29 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			}),
 			"```",
 		].join("\n");
+		const verifyLog = path.join(tempDir, "verify-count.txt");
+		const verifyCommand = `node -e 'require("node:fs").appendFileSync(${JSON.stringify(verifyLog)}, "x")'`;
+		mockPi.onCall({ output: acceptanceReport });
 		mockPi.onCall({ output: acceptanceReport });
 		const agents = [makeAgent("worker", { completionGuard: false })];
 
 		const result = await executeChain(
 			makeChainParams(
-				[{ agent: "worker", task: "Implement fix", acceptance: { level: "verified", verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] } }],
+				[{ agent: "worker", task: "Implement fix", acceptance: { criteria: ["Patch bug"], verify: [{ id: "runtime-pass", command: verifyCommand }] } }],
 				agents,
 			),
 		);
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		assert.equal(result.details.results[0]?.acceptance?.status, "verified");
 		assert.equal(result.details.results[0]?.acceptance?.verifyRuns?.[0]?.status, "passed");
+		assert.equal(fs.readFileSync(verifyLog, "utf-8"), "x");
+		assert.equal(mockPi.callCount(), 2);
 
+		mockPi.onCall({ output: acceptanceReport });
 		mockPi.onCall({ output: acceptanceReport });
 		const failed = await executeChain(
 			makeChainParams(
-				[{ agent: "worker", task: "Implement fix", acceptance: { level: "verified", verify: [{ id: "runtime-fail", command: "node -e \"process.exit(5)\"" }] } }],
+				[{ agent: "worker", task: "Implement fix", acceptance: { criteria: ["Patch bug"], verify: [{ id: "runtime-fail", command: "node -e \"process.exit(5)\"" }] } }],
 				agents,
 			),
 		);
@@ -507,13 +517,15 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.itemKey), ["src/a.ts", "src/b.ts"]);
 	});
 
-	it("persists checked acceptance status for dynamic fanout materialized children and aggregate group", async () => {
+	it("persists checked acceptance status for dynamic fanout materialized children", async () => {
 		mockPi.onCall({
 			output: "targets",
 			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
 		});
 		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/a.ts"] }), structuredOutput: { ok: "a" } });
+		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/a.ts"] }) });
 		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/b.ts"] }), structuredOutput: { ok: "b" } });
+		mockPi.onCall({ output: acceptanceReport({ changedFiles: ["src/b.ts"] }) });
 		const agents = [makeAgent("scout"), makeAgent("reviewer", { completionGuard: false })];
 
 		const result = await executeChain(
@@ -522,9 +534,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: { level: "checked" } },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: { criteria: ["Review item"] } },
 						collect: { as: "reviews" },
-						acceptance: { level: "checked" },
 						concurrency: 1,
 					},
 				],
@@ -534,8 +545,35 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "checked");
+		assert.equal(dynamicNode?.acceptanceStatus, undefined);
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["checked", "checked"]);
+	});
+
+	it("rejects group-level acceptance on dynamic fanout steps", async () => {
+		mockPi.onCall({
+			output: "targets",
+			structuredOutput: { items: [{ path: "src/a.ts" }] },
+		});
+		const agents = [makeAgent("scout"), makeAgent("reviewer", { completionGuard: false })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{
+						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
+						collect: { as: "reviews" },
+						acceptance: { criteria: ["Aggregate child reviews"] },
+					},
+				],
+				agents,
+			),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /does not support group-level acceptance/);
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("does not expose collected dynamic output when a child fails", async () => {
