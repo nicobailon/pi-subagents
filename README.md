@@ -1,5 +1,5 @@
 <p>
-  <img src="https://raw.githubusercontent.com/nicobailon/pi-subagents/main/banner.png" alt="pi-subagents" width="1100">
+  <img src="https://raw.githubusercontent.com/p-sahils/pi-subagents/main/banner.png" alt="pi-subagents" width="1100">
 </p>
 
 # pi-subagents
@@ -11,10 +11,10 @@ https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1
 ## Installation
 
 ```bash
-pi install npm:pi-subagents
+pi install git:git@github.com:p-sahils/pi-subagents.git
 ```
 
-That is the only required step. You can add optional pieces later.
+That installs this fork globally for Pi. You can add optional pieces later.
 
 ## Try this first
 
