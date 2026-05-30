@@ -49,6 +49,7 @@ import {
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	WIDGET_KEY,
+	updateDirsForSession,
 } from "../shared/types.ts";
 import {
 	clearPendingForegroundControlNotices,
@@ -551,8 +552,17 @@ DIAGNOSTICS:
 
 	const resetSessionState = (ctx: ExtensionContext) => {
 		state.baseCwd = ctx.cwd;
-		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
+		state.currentSessionId = sessionId;
 		state.lastUiContext = ctx;
+
+		// Update DIRS to session-scoped paths to prevent cross-process conflicts
+		updateDirsForSession(sessionId);
+
+		// Re-create dirs with EPERM-tolerant fallback for session-scoped paths
+		DIRS.results = ensureAccessibleDir(DIRS.results);
+		DIRS.async = ensureAccessibleDir(DIRS.async);
+
 		cleanupSessionArtifacts(ctx);
 		clearPendingForegroundControlNotices(state);
 		resetJobs(ctx);
