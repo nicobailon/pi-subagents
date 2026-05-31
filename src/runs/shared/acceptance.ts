@@ -466,10 +466,24 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string):
 		let stdout = "";
 		let stderr = "";
 		let timedOut = false;
-		const child = spawn(command.command, {
+
+		// Resolve command + args: support both explicit args array and command strings with embedded args.
+		// When command contains whitespace and args is empty, auto-split the command string.
+		// This preserves backward compatibility with verify definitions like "node --version".
+		// On Windows, a bare command string like "node --version" would otherwise fail with shell=false
+		// because Node's spawn treats the whole string as the executable path.
+		let resolvedCommand = command.command;
+		let resolvedArgs = command.args ?? [];
+		if (resolvedArgs.length === 0 && /\s/.test(resolvedCommand)) {
+			const parts = resolvedCommand.trim().split(/\s+/);
+			resolvedCommand = parts[0];
+			resolvedArgs = parts.slice(1);
+		}
+
+		const child = spawn(resolvedCommand, resolvedArgs, {
 			cwd,
 			env: { ...process.env, ...(command.env ?? {}) },
-			shell: true,
+			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
 		});
