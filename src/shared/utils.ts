@@ -192,7 +192,8 @@ export function getFinalOutput(messages: Message[]): string {
 			const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
 				|| ("stopReason" in msg && msg.stopReason === "error");
 			if (hasAssistantError) continue;
-			for (const part of msg.content) {
+			for (let j = msg.content.length - 1; j >= 0; j--) {
+				const part = msg.content[j];
 				if (part.type === "text" && part.text.trim().length > 0) return part.text;
 			}
 		}
