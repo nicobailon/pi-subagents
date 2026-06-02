@@ -103,7 +103,8 @@ function runningSeed(...values: Array<number | undefined>): number | undefined {
 
 function runningGlyph(seed?: number): string {
 	if (seed === undefined) return STATIC_RUNNING_GLYPH;
-	return RUNNING_FRAMES[Math.abs(seed) % RUNNING_FRAMES.length]!;
+	const timeSeed = Math.floor(Date.now() / 120);
+	return RUNNING_FRAMES[Math.abs(seed + timeSeed) % RUNNING_FRAMES.length]!;
 }
 
 function progressRunningSeed(progress: ProgressSeedSource | undefined): number | undefined {
@@ -838,15 +839,17 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 
 function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: unknown, theme: Theme) => Component {
 	return (_tui, theme) => {
-		const width = getTermWidth();
-		const lines = expanded
-			? buildWidgetLines(jobs, theme, width, true)
-			: jobs.length === 1
-				? compactSingleWidgetLines(jobs[0]!, theme, width)
-				: buildWidgetLines(jobs, theme, width, false);
-		const container = new Container();
-		for (const line of fitWidgetLineBudget(lines, theme, width, expanded)) container.addChild(new Text(line, 1, 0));
-		return container;
+		return {
+			render: (width: number) => {
+				const lines = expanded
+					? buildWidgetLines(jobs, theme, width, true)
+					: jobs.length === 1
+						? compactSingleWidgetLines(jobs[0]!, theme, width)
+						: buildWidgetLines(jobs, theme, width, false);
+				return fitWidgetLineBudget(lines, theme, width, expanded);
+			},
+			invalidate: () => {},
+		};
 	};
 }
 
@@ -920,10 +923,38 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	return lines;
 }
 
+let widgetAnimationTimer: ReturnType<typeof setInterval> | undefined;
+let widgetAnimationCtx: ExtensionContext | undefined;
+
+function clearWidgetAnimationTimer(): void {
+	if (widgetAnimationTimer) {
+		clearInterval(widgetAnimationTimer);
+		widgetAnimationTimer = undefined;
+		widgetAnimationCtx = undefined;
+	}
+}
+
+function ensureWidgetAnimationTimer(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
+	const hasRunning = jobs.some((job) => job.status === "running");
+	if (!hasRunning) {
+		clearWidgetAnimationTimer();
+		return;
+	}
+	if (widgetAnimationTimer) return;
+	widgetAnimationCtx = ctx;
+	widgetAnimationTimer = setInterval(() => {
+		if (widgetAnimationCtx?.hasUI) {
+			widgetAnimationCtx.ui.requestRender?.();
+		}
+	}, 120);
+	widgetAnimationTimer.unref?.();
+}
+
 /**
  * Render the async jobs widget
  */
 export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
+	ensureWidgetAnimationTimer(ctx, jobs);
 	if (jobs.length === 0) {
 		if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);
 		return;

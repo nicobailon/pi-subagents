@@ -210,6 +210,11 @@ function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | un
 	};
 }
 
+interface ResultRenderContext {
+	state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> };
+	invalidate?: () => void;
+}
+
 class SubagentControlNoticeComponent implements Component {
 	constructor(
 		private readonly details: SubagentControlMessageDetails,
@@ -487,7 +492,23 @@ DIAGNOSTICS:
 
 		renderResult(result, options, theme, context) {
 			clearLegacyResultAnimationTimer(context);
-			return renderSubagentResult(result, options, theme);
+			const component = renderSubagentResult(result, options, theme);
+			const hasRunning = result.details?.progress?.some((p: { status?: string }) => p.status === "running")
+				|| result.details?.results.some((r: { progress?: { status?: string } }) => r.progress?.status === "running");
+			const renderCtx = context as ResultRenderContext;
+			if (hasRunning && renderCtx.invalidate) {
+				const timer = setInterval(() => {
+					renderCtx.invalidate?.();
+				}, 120);
+				timer.unref?.();
+				renderCtx.state.subagentResultAnimationTimer = timer;
+				const originalDispose = (component as { dispose?: () => void }).dispose;
+				(component as { dispose?: () => void }).dispose = () => {
+					clearInterval(timer);
+					originalDispose?.();
+				};
+			}
+			return component;
 		},
 
 	};

@@ -454,7 +454,7 @@ describe("subagent async widget rendering", () => {
 		);
 	});
 
-	it("keeps running widget output stable when progress seed is unchanged", async () => {
+	it("animates running widget glyph when progress seed is unchanged", () => {
 		const job = {
 			asyncId: "run-stable",
 			asyncDir: "/tmp/run",
@@ -466,12 +466,18 @@ describe("subagent async widget rendering", () => {
 			currentToolStartedAt: 2_000,
 			lastActivityAt: 2_500,
 		};
-		const first = buildWidgetLines([job], theme, 120);
-		await new Promise((resolve) => setTimeout(resolve, 120));
-		const second = buildWidgetLines([job], theme, 120);
+		const realNow = Date.now;
+		try {
+			Date.now = () => 0;
+			const first = buildWidgetLines([job], theme, 120);
+			Date.now = () => 120;
+			const second = buildWidgetLines([job], theme, 120);
 
-		assert.deepEqual(second, first);
-		assert.equal(firstGrapheme(first[1] ?? ""), firstGrapheme(second[1] ?? ""));
+			assert.notDeepEqual(second, first);
+			assert.notEqual(firstGrapheme(first[1] ?? ""), firstGrapheme(second[1] ?? ""));
+		} finally {
+			Date.now = realNow;
+		}
 	});
 
 	it("does not animate queued-only widgets", async () => {
@@ -498,18 +504,21 @@ describe("subagent async widget rendering", () => {
 		}
 	});
 
-	it("does not refresh running widgets at animation cadence", async () => {
+	it("refreshes running widgets at animation cadence", async () => {
 		const ui = createUiContext();
 		renderWidget(ui.ctx as never, [{ asyncId: "run-static", asyncDir: "/tmp/run", status: "running", agents: ["scout"] }]);
 		const initialWidgetCount = ui.widgets.length;
 		await new Promise((resolve) => setTimeout(resolve, 190));
-		assert.equal(ui.widgets.length, initialWidgetCount, "running widget should wait for status updates instead of animation ticks");
-		assert.equal(ui.renderRequests, 0);
+		assert.equal(ui.widgets.length, initialWidgetCount, "animation should request rerender without reinstalling the widget");
+		assert.ok(ui.renderRequests > 0, "running widget should be driven by animation ticks");
 
 		renderWidget(ui.ctx as never, []);
 		const afterClearCount = ui.widgets.length;
+		const requestsAfterClear = ui.renderRequests;
 		await new Promise((resolve) => setTimeout(resolve, 190));
 		assert.equal(ui.widgets.length, afterClearCount, "cleared widget should stay quiet");
+		assert.equal(ui.renderRequests, requestsAfterClear, "cleared widget should stop animation ticks");
 		assert.equal(ui.widgets.at(-1), undefined);
 	});
+
 });
