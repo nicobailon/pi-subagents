@@ -262,6 +262,7 @@ export interface AcceptanceGate {
 export interface AcceptanceVerifyCommand {
 	id: string;
 	command: string;
+	args?: string[];
 	timeoutMs?: number;
 	cwd?: string;
 	env?: Record<string, string>;
