@@ -42,6 +42,7 @@ import {
 	type SubagentState,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
+	DIRS,
 	RESULTS_DIR,
 	SLASH_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -58,6 +59,7 @@ import {
 } from "./control-notices.ts";
 
 export { loadConfig } from "./config.ts";
+export { ensureAccessibleDir };
 
 /**
  * Derive subagent session base directory from parent session file.
@@ -86,19 +88,47 @@ function expandTilde(p: string): string {
  * cloud SID cannot be resolved without network connectivity. This leaves
  * the directory completely inaccessible to the creating user.
  */
-function ensureAccessibleDir(dirPath: string): void {
-	fs.mkdirSync(dirPath, { recursive: true });
+function ensureAccessibleDir(dirPath: string): string {
+	try {
+		fs.mkdirSync(dirPath, { recursive: true });
+	} catch (err: any) {
+		if (err?.code !== 'EPERM' && err?.code !== 'EACCES') throw err;
+		// ACL corruption: try delete + recreate
+		try {
+			fs.rmSync(dirPath, { recursive: true, force: true });
+		} catch {
+			// Deletion also blocked — fall through to retry
+		}
+		try {
+			fs.mkdirSync(dirPath, { recursive: true });
+		} catch {
+			// Still blocked — use pid-scoped fallback
+			const fallback = `${dirPath}-${process.pid}`;
+			fs.mkdirSync(fallback, { recursive: true });
+			fs.accessSync(fallback, fs.constants.R_OK | fs.constants.W_OK);
+			return fallback;
+		}
+	}
 	try {
 		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
 	} catch {
 		try {
 			fs.rmSync(dirPath, { recursive: true, force: true });
 		} catch {
-			// Best effort: retry mkdir/access even if cleanup fails.
+			// Best effort
 		}
-		fs.mkdirSync(dirPath, { recursive: true });
-		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+		try {
+			fs.mkdirSync(dirPath, { recursive: true });
+			fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+		} catch {
+			// Access still fails — use pid-scoped fallback
+			const fallback = `${dirPath}-${process.pid}`;
+			fs.mkdirSync(fallback, { recursive: true });
+			fs.accessSync(fallback, fs.constants.R_OK | fs.constants.W_OK);
+			return fallback;
+		}
 	}
+	return dirPath;
 }
 
 function isSlashResultRunning(result: { details?: Details }): boolean {
@@ -223,8 +253,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	ensureAccessibleDir(RESULTS_DIR);
-	ensureAccessibleDir(ASYNC_DIR);
+	DIRS.results = ensureAccessibleDir(DIRS.results);
+	DIRS.async = ensureAccessibleDir(DIRS.async);
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
@@ -255,7 +285,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
-		RESULTS_DIR,
+		DIRS.results,
 		10 * 60 * 1000,
 	);
 	startResultWatcher();
@@ -271,7 +301,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
-	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
+	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, DIRS.async);
 	const executor = createSubagentExecutor({
 		pi,
 		state,

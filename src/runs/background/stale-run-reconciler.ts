@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
+import { DIRS, RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
 
@@ -254,7 +254,7 @@ export function reconcileNestedAsyncDescendants(route: NestedRoute, options: Rec
 		if (!asyncDir) continue;
 		const result = reconcileAsyncRun(asyncDir, {
 			...options,
-			resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
+			resultsDir: path.join(options.resultsDir ?? DIRS.results, "nested", route.rootRunId),
 		});
 		const status = result.status;
 		if (!status) continue;
@@ -300,7 +300,7 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	if (!effectiveStatus) return { status: null, repaired: false };
 
 	const runId = effectiveStatus.runId || path.basename(asyncDir);
-	const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
+	const resultPath = path.join(options.resultsDir ?? DIRS.results, `${runId}.json`);
 	if (fs.existsSync(resultPath)) {
 		const terminalStatus = effectiveStatus.state === "running" || effectiveStatus.state === "queued"
 			? terminalStatusFromResult(effectiveStatus, resultPath, now)
