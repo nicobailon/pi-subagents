@@ -846,7 +846,7 @@ export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	cleanupDays: 7,
 };
 
-function sanitizeTempScopeSegment(value: string): string {
+export function sanitizeTempScopeSegment(value: string): string {
 	const sanitized = value
 		.trim()
 		.replace(/[^A-Za-z0-9._-]+/g, "-")
@@ -906,6 +906,45 @@ export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
 export const TEMP_ARTIFACTS_DIR = path.join(TEMP_ROOT_DIR, "artifacts");
+
+/**
+ * Mutable container for directory paths. Properties can be reassigned at runtime
+ * (e.g., by ensureAccessibleDir when a primary path is blocked by EPERM/EACCES),
+ * while the const binding itself remains read-only (ES module compatible).
+ */
+export const DIRS = {
+	results: RESULTS_DIR,
+	async: ASYNC_DIR,
+	chain: CHAIN_RUNS_DIR,
+	artifacts: TEMP_ARTIFACTS_DIR,
+};
+// Backward-compatible static aliases — evaluated once at import time.
+// These will NOT track DIRS mutations; prefer DIRS.* for live values.
+// Kept for any undiscovered consumers that import RESULTS_DIR/ASYNC_DIR directly.
+/**
+ * Update DIRS paths to be session-scoped. Called when the session ID becomes
+ * available (in session_start handler) to ensure each Pi process uses its own
+ * temp directory tree, preventing cross-process file conflicts.
+ *
+ * @param sessionId - The current session's ID (from resolveCurrentSessionId)
+ * @returns The new TEMP_ROOT_DIR path
+ */
+export function updateDirsForSession(sessionId: string): string {
+	// Use first 8 chars of sessionId for a short, unique suffix
+	const sessionSuffix = sanitizeTempScopeSegment(sessionId.substring(0, 8));
+	const baseScopeId = resolveTempScopeId();
+	const newScopeId = sessionSuffix ? `${baseScopeId}-${sessionSuffix}` : baseScopeId;
+	const newTempRoot = path.join(os.tmpdir(), `pi-subagents-${newScopeId}`);
+
+	// Update the mutable DIRS container
+	DIRS.results = path.join(newTempRoot, "async-subagent-results");
+	DIRS.async = path.join(newTempRoot, "async-subagent-runs");
+	DIRS.chain = path.join(newTempRoot, "chain-runs");
+	DIRS.artifacts = path.join(newTempRoot, "artifacts");
+
+	return newTempRoot;
+}
+
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_RESULT_TYPE = "subagent-slash-result";
 export const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";

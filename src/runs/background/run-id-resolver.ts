@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../shared/types.ts";
+import { ASYNC_DIR, DIRS, RESULTS_DIR, type SubagentState } from "../../shared/types.ts";
 import { findAsyncRunPrefixMatches, type AsyncRunLocation } from "./async-resume.ts";
 import { assertSafeNestedId, findNestedRunMatchesById, type NestedRoute, type NestedRunMatch, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 
@@ -53,8 +53,8 @@ function asyncPrefixMatches(prefix: string, asyncDirRoot: string, resultsDir: st
 
 export function resolveSubagentRunId(id: string, deps: ResolveSubagentRunIdDeps = {}): ResolvedSubagentRunId | undefined {
 	assertSafeNestedId("id", id);
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 
 	const nestedScope = deps.nested ?? nestedScopeFromState(deps.state);
 	if (deps.state?.foregroundControls.has(id)) return { kind: "foreground", id };

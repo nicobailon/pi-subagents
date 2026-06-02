@@ -42,12 +42,14 @@ import {
 	type SubagentState,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
+	DIRS,
 	RESULTS_DIR,
 	SLASH_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	WIDGET_KEY,
+	updateDirsForSession,
 } from "../shared/types.ts";
 import {
 	clearPendingForegroundControlNotices,
@@ -58,6 +60,7 @@ import {
 } from "./control-notices.ts";
 
 export { loadConfig } from "./config.ts";
+export { ensureAccessibleDir };
 
 /**
  * Derive subagent session base directory from parent session file.
@@ -86,19 +89,47 @@ function expandTilde(p: string): string {
  * cloud SID cannot be resolved without network connectivity. This leaves
  * the directory completely inaccessible to the creating user.
  */
-function ensureAccessibleDir(dirPath: string): void {
-	fs.mkdirSync(dirPath, { recursive: true });
+function ensureAccessibleDir(dirPath: string): string {
+	try {
+		fs.mkdirSync(dirPath, { recursive: true });
+	} catch (err: any) {
+		if (err?.code !== 'EPERM' && err?.code !== 'EACCES') throw err;
+		// ACL corruption: try delete + recreate
+		try {
+			fs.rmSync(dirPath, { recursive: true, force: true });
+		} catch {
+			// Deletion also blocked — fall through to retry
+		}
+		try {
+			fs.mkdirSync(dirPath, { recursive: true });
+		} catch {
+			// Still blocked — use pid-scoped fallback
+			const fallback = `${dirPath}-${process.pid}`;
+			fs.mkdirSync(fallback, { recursive: true });
+			fs.accessSync(fallback, fs.constants.R_OK | fs.constants.W_OK);
+			return fallback;
+		}
+	}
 	try {
 		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
 	} catch {
 		try {
 			fs.rmSync(dirPath, { recursive: true, force: true });
 		} catch {
-			// Best effort: retry mkdir/access even if cleanup fails.
+			// Best effort
 		}
-		fs.mkdirSync(dirPath, { recursive: true });
-		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+		try {
+			fs.mkdirSync(dirPath, { recursive: true });
+			fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+		} catch {
+			// Access still fails — use pid-scoped fallback
+			const fallback = `${dirPath}-${process.pid}`;
+			fs.mkdirSync(fallback, { recursive: true });
+			fs.accessSync(fallback, fs.constants.R_OK | fs.constants.W_OK);
+			return fallback;
+		}
 	}
+	return dirPath;
 }
 
 function isSlashResultRunning(result: { details?: Details }): boolean {
@@ -179,6 +210,11 @@ function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | un
 	};
 }
 
+interface ResultRenderContext {
+	state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> };
+	invalidate?: () => void;
+}
+
 class SubagentControlNoticeComponent implements Component {
 	constructor(
 		private readonly details: SubagentControlMessageDetails,
@@ -223,8 +259,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	ensureAccessibleDir(RESULTS_DIR);
-	ensureAccessibleDir(ASYNC_DIR);
+	DIRS.results = ensureAccessibleDir(DIRS.results);
+	DIRS.async = ensureAccessibleDir(DIRS.async);
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
@@ -255,7 +291,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
-		RESULTS_DIR,
+		DIRS.results,
 		10 * 60 * 1000,
 	);
 	startResultWatcher();
@@ -271,7 +307,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
-	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
+	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, DIRS.async);
 	const executor = createSubagentExecutor({
 		pi,
 		state,
@@ -456,7 +492,23 @@ DIAGNOSTICS:
 
 		renderResult(result, options, theme, context) {
 			clearLegacyResultAnimationTimer(context);
-			return renderSubagentResult(result, options, theme);
+			const component = renderSubagentResult(result, options, theme);
+			const hasRunning = result.details?.progress?.some((p: { status?: string }) => p.status === "running")
+				|| result.details?.results.some((r: { progress?: { status?: string } }) => r.progress?.status === "running");
+			const renderCtx = context as ResultRenderContext;
+			if (hasRunning && renderCtx.invalidate) {
+				const timer = setInterval(() => {
+					renderCtx.invalidate?.();
+				}, 120);
+				timer.unref?.();
+				renderCtx.state.subagentResultAnimationTimer = timer;
+				const originalDispose = (component as { dispose?: () => void }).dispose;
+				(component as { dispose?: () => void }).dispose = () => {
+					clearInterval(timer);
+					originalDispose?.();
+				};
+			}
+			return component;
 		},
 
 	};
@@ -521,8 +573,17 @@ DIAGNOSTICS:
 
 	const resetSessionState = (ctx: ExtensionContext) => {
 		state.baseCwd = ctx.cwd;
-		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
+		state.currentSessionId = sessionId;
 		state.lastUiContext = ctx;
+
+		// Update DIRS to session-scoped paths to prevent cross-process conflicts
+		updateDirsForSession(sessionId);
+
+		// Re-create dirs with EPERM-tolerant fallback for session-scoped paths
+		DIRS.results = ensureAccessibleDir(DIRS.results);
+		DIRS.async = ensureAccessibleDir(DIRS.async);
+
 		cleanupSessionArtifacts(ctx);
 		clearPendingForegroundControlNotices(state);
 		resetJobs(ctx);
