@@ -124,6 +124,41 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
+	it("writes branched file via fallback when branched path has no assistant messages (real SessionManager)", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-no-assistant-"));
+		try {
+			const sessionDir = path.join(tempDir, "sessions");
+			// Create parent with user + assistant (so parent file is flushed)
+			const parent = SessionManager.create(tempDir, sessionDir);
+			const userMsgId = parent.appendMessage({ role: "user", content: "parent prompt" });
+			parent.appendMessage({ role: "assistant", content: "parent response" });
+			const parentSessionFile = parent.getSessionFile();
+			assert.ok(parentSessionFile);
+			assert.equal(fs.existsSync(parentSessionFile), true);
+
+			// Fork from the user message (before assistant) - branched path has no assistant
+			const resolver = createForkContextResolver({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => userMsgId,  // fork from user message, not assistant
+				getSessionDir: () => sessionDir,
+			}, "fork");
+
+			const childSessionFile = resolver.sessionFileForIndex(0);
+			assert.ok(childSessionFile);
+			assert.notEqual(childSessionFile, parentSessionFile);
+			// File should exist thanks to the fallback writer
+			assert.equal(fs.existsSync(childSessionFile), true);
+			// Verify content: header + user message only (no assistant)
+			const content = fs.readFileSync(childSessionFile, "utf-8");
+			const lines = content.trim().split("\n");
+			assert.equal(lines.length, 2); // header + 1 message
+			assert.equal(JSON.parse(lines[0]).type, "session");
+			assert.equal(JSON.parse(lines[1]).message.role, "user");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("fails clearly for an unflushed user-only parent", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-user-only-"));
 		try {
@@ -212,7 +247,38 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
-	it("fails clearly when branch extraction returns a missing child file", () => {
+	it("writes branched session file when createBranchedSession defers writing (no assistant messages)", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-deferred-write-"));
+		try {
+			const parentSessionFile = path.join(tempDir, "parent.jsonl");
+			const deferredChildSessionFile = path.join(tempDir, "deferred-child.jsonl");
+			writeMinimalSessionFile(parentSessionFile, "parent");
+			const resolver = createForkContextResolver({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-abc",
+			}, "fork", {
+				openSession: () => ({
+					createBranchedSession: () => deferredChildSessionFile,
+					getBranch: () => [],
+					getSessionId: () => "branched-session-id",
+					getCwd: () => "/tmp",
+				}),
+			});
+
+			const result = resolver.sessionFileForIndex(0);
+			assert.equal(result, deferredChildSessionFile);
+			assert.equal(fs.existsSync(deferredChildSessionFile), true);
+			// Verify the written file has a valid session header
+			const content = fs.readFileSync(deferredChildSessionFile, "utf-8");
+			const header = JSON.parse(content.split("\n")[0]);
+			assert.equal(header.type, "session");
+			assert.equal(header.parentSession, parentSessionFile);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("fails clearly when branched file is missing and getBranch is unavailable", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-missing-child-"));
 		try {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -224,12 +290,13 @@ describe("createForkContextResolver", () => {
 			}, "fork", {
 				openSession: () => ({
 					createBranchedSession: () => missingChildSessionFile,
+					// No getBranch — simulates a mock/old SessionManager without the method
 				}),
 			});
 
 			assert.throws(
 				() => resolver.sessionFileForIndex(0),
-				/Failed to create forked subagent session: Session manager returned a forked session file that does not exist: .*missing-child\.jsonl/,
+				/Failed to create forked subagent session: sourceManager\.getBranch is not a function/,
 			);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
