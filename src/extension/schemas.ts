@@ -77,37 +77,59 @@ const AcceptanceReviewGateSchema = Type.Object({
 	required: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false });
 
+// Uses type unions (type:[...]) instead of anyOf/allOf/const to avoid
+// JSON Schema keywords that some provider APIs (kimi/Moonshot,
+// Antigravity proxy) do not support in tool function.parameters.
+// Validation for malformed inputs is handled at runtime by
+// validateAcceptanceInput() / normalizeAcceptanceInput().
 const AcceptanceOverride = Type.Unsafe({
-	anyOf: [
-		{ type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
-		{ const: false },
-		{
-			type: "object",
+	type: ["string", "boolean", "object"],
+	properties: {
+		level: { type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
+		criteria: {
+			type: "array",
+			items: {
+				type: ["string", "object"],
+				properties: {
+					id: { type: "string" },
+					must: { type: "string" },
+					evidence: { type: "array", items: { type: "string", enum: ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files", "diff-summary", "review-findings", "manual-notes"] } },
+					severity: { type: "string", enum: ["required", "recommended"] },
+				},
+				required: ["id", "must"],
+				additionalProperties: false,
+			},
+		},
+		evidence: { type: "array", items: { type: "string", enum: ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files", "diff-summary", "review-findings", "manual-notes"] } },
+		verify: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					id: { type: "string" },
+					command: { type: "string" },
+					timeoutMs: { type: "integer", minimum: 1 },
+					cwd: { type: "string" },
+					env: { type: "object", additionalProperties: { type: "string" } },
+					allowFailure: { type: "boolean" },
+				},
+				required: ["id", "command"],
+				additionalProperties: false,
+			},
+		},
+		review: {
+			type: ["boolean", "object"],
 			properties: {
-				level: { type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
-				criteria: {
-					type: "array",
-					items: {
-						anyOf: [
-							{ type: "string" },
-							AcceptanceGateSchema,
-						],
-					},
-				},
-				evidence: { type: "array", items: AcceptanceEvidenceKind },
-				verify: { type: "array", items: AcceptanceVerifyCommandSchema },
-				review: {
-					anyOf: [
-						{ const: false },
-						AcceptanceReviewGateSchema,
-					],
-				},
-				stopRules: { type: "array", items: { type: "string" } },
-				reason: { type: "string" },
+				agent: { type: "string" },
+				focus: { type: "string" },
+				required: { type: "boolean" },
 			},
 			additionalProperties: false,
 		},
-	],
+		stopRules: { type: "array", items: { type: "string" } },
+		reason: { type: "string" },
+	},
+	additionalProperties: false,
 	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands.",
 });
 
@@ -210,12 +232,7 @@ const ChainItem = Type.Object({
 	})),
 }, {
 	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
-	additionalProperties: false,
-	allOf: [
-		{ if: { required: ["expand"] }, then: { required: ["parallel", "collect"], properties: { parallel: { type: "object" } } } },
-		{ if: { required: ["collect"] }, then: { required: ["expand", "parallel"], properties: { parallel: { type: "object" } } } },
-		{ not: { required: ["expand"], properties: { parallel: { type: "array", items: {} } } } },
-	],
+	additionalProperties: true,
 });
 
 const ControlOverrides = Type.Object({
