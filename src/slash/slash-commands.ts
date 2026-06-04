@@ -362,7 +362,148 @@ async function runSlashSubagent(
 }
 
 
-interface ParsedStep { name: string; config: InlineConfig; task?: string }
+export interface ParsedStep { kind: "step"; name: string; config: InlineConfig; task?: string }
+export interface ParsedGroup { kind: "group"; tasks: ParsedStep[] }
+export type ParsedGroupStep = ParsedStep | ParsedGroup;
+
+export const PARALLEL_GROUP_USAGE =
+	'Usage: /chain agent "task" -> (agent2 "task" | agent3 "task") -> agent4';
+
+export class SlashParseError extends Error {}
+
+// Walk `input` tracking quote/paren state; returns true if parens are unbalanced.
+function findUnmatchedCloseParen(input: string): boolean {
+	let depth = 0, inSingle = false, inDouble = false;
+	for (let i = 0; i < input.length; i++) {
+		const ch = input[i]!;
+		if (inSingle) { if (ch === "'") inSingle = false; continue; }
+		if (inDouble) { if (ch === '"') inDouble = false; continue; }
+		if (ch === "'") { inSingle = true; continue; }
+		if (ch === '"') { inDouble = true; continue; }
+		if (ch === "(") depth++;
+		else if (ch === ")") { depth--; if (depth < 0) return true; }
+	}
+	return depth !== 0;
+}
+
+// Split on top-level " -> ", ignoring arrows inside quotes or parentheses.
+function splitOnArrow(input: string): string[] {
+	const segments: string[] = [];
+	let depth = 0, inSingle = false, inDouble = false, start = 0;
+	for (let i = 0; i < input.length; i++) {
+		const ch = input[i]!;
+		if (inSingle) { if (ch === "'") inSingle = false; continue; }
+		if (inDouble) { if (ch === '"') inDouble = false; continue; }
+		if (ch === "'") { inSingle = true; continue; }
+		if (ch === '"') { inDouble = true; continue; }
+		if (ch === "(") depth++;
+		else if (ch === ")") depth--;
+		else if (depth === 0 && ch === "-" && input[i + 1] === ">" && input[i + 2] === " ") {
+			segments.push(input.slice(start, i));
+			i += 2;
+			start = i + 1;
+		}
+	}
+	segments.push(input.slice(start));
+	return segments;
+}
+
+// Split a group's inner text on top-level " | ", ignoring pipes inside quotes/parens.
+function splitGroupTasks(inner: string): string[] {
+	const parts: string[] = [];
+	let depth = 0, inSingle = false, inDouble = false, start = 0;
+	for (let i = 0; i < inner.length; i++) {
+		const ch = inner[i]!;
+		if (inSingle) { if (ch === "'") inSingle = false; continue; }
+		if (inDouble) { if (ch === '"') inDouble = false; continue; }
+		if (ch === "'") { inSingle = true; continue; }
+		if (ch === '"') { inDouble = true; continue; }
+		if (ch === "(") depth++;
+		else if (ch === ")") depth--;
+		else if (ch === "|" && depth === 0) {
+			parts.push(inner.slice(start, i));
+			start = i + 1;
+		}
+	}
+	parts.push(inner.slice(start));
+	return parts;
+}
+
+export function parseSingleTaskToken(token: string): ParsedStep {
+	let agentPart: string;
+	let task: string | undefined;
+	const qMatch = token.match(/^(\S+(?:\[[^\]]*\])?)\s+(?:"([^"]*)"|'([^']*)')$/);
+	if (qMatch) {
+		agentPart = qMatch[1]!;
+		task = (qMatch[2] ?? qMatch[3]) || undefined;
+	} else {
+		const dashIdx = token.indexOf(" -- ");
+		if (dashIdx !== -1) {
+			agentPart = token.slice(0, dashIdx).trim();
+			task = token.slice(dashIdx + 4).trim() || undefined;
+		} else {
+			agentPart = token;
+		}
+	}
+	return { kind: "step", ...parseAgentToken(agentPart), task };
+}
+
+export function parseGroupSegment(segment: string): ParsedGroup {
+	const trimmed = segment.trim();
+	if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) {
+		throw new SlashParseError(`Parallel group must be wrapped in parentheses: '${trimmed}'`);
+	}
+	const inner = trimmed.slice(1, -1);
+	if (findUnmatchedCloseParen(inner)) {
+		throw new SlashParseError(`Unmatched parentheses in group: '${trimmed}'`);
+	}
+	const rawParts = splitGroupTasks(inner).map((p) => p.trim()).filter((p) => p.length > 0);
+	if (rawParts.length < 2) {
+		throw new SlashParseError("Parallel group must contain at least two tasks separated by ' | '");
+	}
+	return { kind: "group", tasks: rawParts.map((part) => parseSingleTaskToken(part)) };
+}
+
+// True if `input` uses inline parallel-group syntax (parens or pipe) outside quotes.
+export function hasGroupSyntax(input: string): boolean {
+	let inSingle = false, inDouble = false;
+	for (let i = 0; i < input.length; i++) {
+		const ch = input[i]!;
+		if (inSingle) { if (ch === "'") inSingle = false; continue; }
+		if (inDouble) { if (ch === '"') inDouble = false; continue; }
+		if (ch === "'") { inSingle = true; continue; }
+		if (ch === '"') { inDouble = true; continue; }
+		if (ch === "(" || ch === ")" || ch === "|") return true;
+	}
+	return false;
+}
+
+export function parseChainExpression(input: string): { steps: ParsedGroupStep[] } {
+	const trimmed = input.trim();
+	if (!trimmed.includes(" -> ")) {
+		throw new SlashParseError('Parallel groups in /chain require " -> " between steps');
+	}
+	if (findUnmatchedCloseParen(trimmed)) {
+		throw new SlashParseError("Unmatched parentheses in /chain expression");
+	}
+	const steps: ParsedGroupStep[] = [];
+	for (const seg of splitOnArrow(trimmed)) {
+		const t = seg.trim();
+		if (!t) continue;
+		if (t.startsWith("(")) {
+			steps.push(parseGroupSegment(t));
+			continue;
+		}
+		if (t.includes("(") || t.includes(")")) {
+			throw new SlashParseError(`Unmatched parentheses in chain segment: '${t}'`);
+		}
+		steps.push(parseSingleTaskToken(t));
+	}
+	if (steps.length === 0) {
+		throw new SlashParseError("/chain expression must include at least one step");
+	}
+	return { steps };
+}
 
 const parseAgentArgs = (
 	state: SubagentState,
@@ -383,23 +524,7 @@ const parseAgentArgs = (
 		for (const seg of segments) {
 			const trimmed = seg.trim();
 			if (!trimmed) continue;
-			let agentPart: string;
-			let task: string | undefined;
-			const qMatch = trimmed.match(/^(\S+(?:\[[^\]]*\])?)\s+(?:"([^"]*)"|'([^']*)')$/);
-			if (qMatch) {
-				agentPart = qMatch[1]!;
-				task = (qMatch[2] ?? qMatch[3]) || undefined;
-			} else {
-				const dashIdx = trimmed.indexOf(" -- ");
-				if (dashIdx !== -1) {
-					agentPart = trimmed.slice(0, dashIdx).trim();
-					task = trimmed.slice(dashIdx + 4).trim() || undefined;
-				} else {
-					agentPart = trimmed;
-				}
-			}
-			const parsed = parseAgentToken(agentPart);
-			steps.push({ ...parsed, task });
+			steps.push(parseSingleTaskToken(trimmed));
 		}
 		sharedTask = steps.find((s) => s.task)?.task ?? "";
 	} else {
@@ -414,7 +539,7 @@ const parseAgentArgs = (
 			ctx.ui.notify(usage, "error");
 			return null;
 		}
-		steps = agentsPart.split(/\s+/).filter(Boolean).map((t) => parseAgentToken(t));
+		steps = agentsPart.split(/\s+/).filter(Boolean).map((t) => parseSingleTaskToken(t));
 	}
 
 	if (steps.length === 0) {
@@ -442,6 +567,100 @@ const parseAgentArgs = (
 	}
 	return { steps, task: sharedTask };
 };
+
+type ChainStepObject = {
+	agent: string;
+	task?: string;
+	output?: string | false;
+	outputMode?: "inline" | "file-only";
+	reads?: string[] | false;
+	model?: string;
+	skill?: string[] | false;
+	progress?: boolean;
+};
+
+const mapParsedTaskToStepObject = (
+	step: ParsedStep,
+	fallbackTask: string | undefined,
+	isFirst: boolean,
+): ChainStepObject => {
+	const { name, config, task: stepTask } = step;
+	return {
+		agent: name,
+		...(stepTask ? { task: stepTask } : isFirst && fallbackTask ? { task: fallbackTask } : {}),
+		...(config.output !== undefined ? { output: config.output } : {}),
+		...(config.outputMode !== undefined ? { outputMode: config.outputMode } : {}),
+		...(config.reads !== undefined ? { reads: config.reads } : {}),
+		...(config.model ? { model: config.model } : {}),
+		...(config.skill !== undefined ? { skill: config.skill } : {}),
+		...(config.progress !== undefined ? { progress: config.progress } : {}),
+	};
+};
+
+export function buildChainExpressionSteps(
+	state: SubagentState,
+	input: string,
+	ctx: ExtensionContext,
+): { chain: ChainStep[]; task: string } | null {
+	const notify = (message: string) => ctx.ui.notify(message, "error");
+	if (!hasGroupSyntax(input)) {
+		const parsed = parseAgentArgs(state, input, "chain", ctx);
+		if (!parsed) return null;
+		const chain: ChainStep[] = parsed.steps.map((step, i) =>
+			mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0),
+		);
+		return { chain, task: parsed.task };
+	}
+
+	let expression: { steps: ParsedGroupStep[] };
+	try {
+		expression = parseChainExpression(input);
+	} catch (error) {
+		notify(error instanceof Error ? error.message : String(error));
+		return null;
+	}
+	if (!state.baseCwd) {
+		notify("Subagent session cwd is not initialized yet");
+		return null;
+	}
+	const agents = discoverAgents(state.baseCwd, "both").agents;
+	const stepAgentNames = expression.steps.flatMap((step) =>
+		step.kind === "group" ? step.tasks.map((t) => t.name) : [step.name],
+	);
+	for (const name of stepAgentNames) {
+		if (!agents.find((a) => a.name === name)) {
+			notify(`Unknown agent: ${name}`);
+			return null;
+		}
+	}
+	// Every task inside a parallel group needs its own task; there is no shared-task fallback.
+	for (const step of expression.steps) {
+		if (step.kind === "group" && step.tasks.some((t) => !t.task)) {
+			notify('Each task in a parallel group needs a task: (agent "a" | agent "b")');
+			return null;
+		}
+	}
+	const firstStep = expression.steps[0]!;
+	const firstHasTask =
+		firstStep.kind === "group"
+			? firstStep.tasks.some((t) => Boolean(t.task))
+			: Boolean(firstStep.task);
+	if (!firstHasTask) {
+		notify('First step must have a task: /chain agent "task" -> agent2');
+		return null;
+	}
+	const sharedTask =
+		firstStep.kind === "group"
+			? (firstStep.tasks.find((t) => t.task)?.task ?? "")
+			: (firstStep.task ?? "");
+	const chain: ChainStep[] = expression.steps.map((step) => {
+		if (step.kind === "group") {
+			return { parallel: step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false)) };
+		}
+		return mapParsedTaskToStepObject(step, sharedTask || undefined, false);
+	});
+	return { chain, task: sharedTask };
+}
 
 export function registerSlashCommands(
 	pi: ExtensionAPI,
@@ -482,19 +701,9 @@ export function registerSlashCommands(
 		getArgumentCompletions: makeAgentCompletions(state, true),
 		handler: async (args, ctx) => {
 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
-			const parsed = parseAgentArgs(state, cleanedArgs, "chain", ctx);
-			if (!parsed) return;
-			const chain = parsed.steps.map(({ name, config, task: stepTask }, i) => ({
-				agent: name,
-				...(stepTask ? { task: stepTask } : i === 0 && parsed.task ? { task: parsed.task } : {}),
-				...(config.output !== undefined ? { output: config.output } : {}),
-				...(config.outputMode !== undefined ? { outputMode: config.outputMode } : {}),
-				...(config.reads !== undefined ? { reads: config.reads } : {}),
-				...(config.model ? { model: config.model } : {}),
-				...(config.skill !== undefined ? { skill: config.skill } : {}),
-				...(config.progress !== undefined ? { progress: config.progress } : {}),
-			}));
-			const params: SubagentParamsLike = { chain, task: parsed.task, clarify: false, agentScope: "both" };
+			const built = buildChainExpressionSteps(state, cleanedArgs, ctx);
+			if (!built) return;
+			const params: SubagentParamsLike = { chain: built.chain, task: built.task, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
 			await runSlashSubagent(pi, ctx, params);

@@ -245,6 +245,7 @@ Skip this section until you want exact syntax.
 |---------|-------------|
 | `/run <agent> [task]` | Run one agent; omit the task for self-contained agents |
 | `/chain agent1 "task1" -> agent2 "task2"` | Run agents in sequence |
+| `/chain scout "scan" -> (reviewer "A" \| reviewer "B") -> writer "fix"` | Run a chain with a static parallel group inline |
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel |
 | `/run-chain <chainName> -- <task>` | Launch a saved `.chain.md` or `.chain.json` workflow |
 | `/subagents-doctor` | Show read-only setup diagnostics |
@@ -267,6 +268,21 @@ Both double and single quotes work. You can also use `--` as a delimiter:
 ```
 
 Steps without a task inherit behavior from the execution mode. Chain steps get `{previous}`, the prior step’s output. Parallel steps use the first available task as a fallback.
+
+### Inline parallel groups in `/chain`
+
+Wrap a group of agents in parentheses and separate them with `|` to fan them out within a single chain step. The group runs all of its tasks concurrently, then the next `->` step continues once they finish:
+
+```text
+/chain scout "scan" -> (reviewer "review A" | reviewer "review B") -> writer "fix"
+```
+
+Notes:
+
+- Groups must contain at least two tasks separated by ` | `.
+- Group syntax is only valid between ` -> ` separators, and the group must appear as a complete step.
+- A group is treated as the prior step’s output for the next sequential step.
+- Dynamic fanout (`expand` / `collect`) and chain metadata fields are not yet available inline; use the `subagent({ chain: [...] })` tool API or a saved `.chain.json` for those.
 
 ```text
 /chain scout "analyze auth" -> planner -> worker

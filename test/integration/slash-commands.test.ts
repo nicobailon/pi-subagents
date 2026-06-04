@@ -816,6 +816,41 @@ Gather context
 			});
 		});
 	});
+
+	it("/chain parses a parenthesized parallel group into a { parallel: [...] } step", async () => {
+		await withTempProject("pi-chain-group-slash-", async (root) => {
+			for (const name of ["scout", "reviewer", "writer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+
+			const { params, notifications } = await captureSlashCommandParams("chain", 'scout "scan" -> (reviewer "A" | reviewer "B") -> writer "fix"', root);
+			assert.deepEqual(notifications, []);
+			const built = params as { chain?: Array<Record<string, unknown>>; task?: string };
+			assert.equal(built.task, "scan");
+			assert.equal(built.chain?.length, 3);
+			assert.equal(built.chain?.[0]?.agent, "scout");
+			const parallel = built.chain?.[1]?.parallel as Array<{ agent: string; task: string }>;
+			assert.ok(Array.isArray(parallel), "second step should be a parallel group");
+			assert.deepEqual(parallel.map(({ agent, task }) => ({ agent, task })), [
+				{ agent: "reviewer", task: "A" },
+				{ agent: "reviewer", task: "B" },
+			]);
+			assert.equal(built.chain?.[2]?.agent, "writer");
+		});
+	});
+
+	it("/chain reports parallel-group errors as notifications and does not launch", async () => {
+		await withTempProject("pi-chain-group-error-", async (root) => {
+			for (const name of ["scout", "reviewer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+
+			const { params, notifications } = await captureSlashCommandParams("chain", 'scout "scan" -> (reviewer "A")', root);
+			assert.equal(params, undefined);
+			assert.equal(notifications.length, 1);
+			assert.match(notifications[0] ?? "", /at least two/i);
+		});
+	});
 });
 
 
