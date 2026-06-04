@@ -873,6 +873,38 @@ Gather context
 			assert.equal(group.failFast, true);
 		});
 	});
+
+	it("/chain tab-completion works inside parallel groups", async () => {
+		await withTempProject("pi-chain-group-complete-", async (root) => {
+			for (const name of ["scout", "reviewer", "writer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+			await withIsolatedHome(async () => {
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(_message: unknown) {},
+				};
+				registerSlashCommands!(pi, createState(root));
+				const complete = (prefix: string) =>
+					(commands.get("chain")!.getArgumentCompletions!(prefix) as Array<{ value: string }> | null)?.map((c) => c.value) ?? null;
+
+				// after `(`
+				assert.deepEqual(complete('scout "scan" -> (rev'), ['scout "scan" -> (reviewer']);
+				// after `|`
+				assert.deepEqual(complete('scout "scan" -> (reviewer "A" | wr'), ['scout "scan" -> (reviewer "A" | writer']);
+				// after a bare `|` a space is inserted before every suggested agent
+				const barePipe = complete('scout "scan" -> (reviewer "A" |');
+				assert.ok(barePipe && barePipe.length > 0);
+				assert.ok(barePipe.every((v) => v.startsWith('scout "scan" -> (reviewer "A" | ')));
+				assert.ok(barePipe.includes('scout "scan" -> (reviewer "A" | writer'));
+				// inside an open quote: no agent completion
+				assert.equal(complete('scout "scan'), null);
+			});
+		});
+	});
 });
 
 

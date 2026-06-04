@@ -111,16 +111,29 @@ const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (pre
 		return agents.filter((a) => a.name.startsWith(prefix)).map((a) => ({ value: a.name, label: a.name }));
 	}
 
-	const lastArrow = prefix.lastIndexOf(" -> ");
-	const segment = lastArrow !== -1 ? prefix.slice(lastArrow + 4) : prefix;
+	// Find the start of the current chain step: after the last top-level `->`, `(` or `|`
+	// (group boundaries), tracking quotes so separators inside a task are ignored.
+	let inSingle = false, inDouble = false, segStart = 0;
+	for (let i = 0; i < prefix.length; i++) {
+		const ch = prefix[i]!;
+		if (inSingle) { if (ch === "'") inSingle = false; continue; }
+		if (inDouble) { if (ch === '"') inDouble = false; continue; }
+		if (ch === "'") { inSingle = true; continue; }
+		if (ch === '"') { inDouble = true; continue; }
+		if (ch === "(" || ch === "|") segStart = i + 1;
+		else if (ch === ">" && prefix[i - 1] === "-") segStart = i + 1;
+	}
+	// Inside an open quote, or once the task has started (`--` / a quote), we are no
+	// longer typing an agent name.
+	if (inSingle || inDouble) return null;
+	const segment = prefix.slice(segStart);
 	if (segment.includes(" -- ") || segment.includes('"') || segment.includes("'")) return null;
 
-	const lastWord = (prefix.match(/(\S*)$/) || ["", ""])[1];
-	const beforeLastWord = prefix.slice(0, prefix.length - lastWord.length);
-
-	if (lastWord === "->") {
-		return agents.map((a) => ({ value: `${prefix} ${a.name}`, label: a.name }));
-	}
+	const lastWord = (segment.match(/(\S*)$/) || ["", ""])[1];
+	let beforeLastWord = prefix.slice(0, prefix.length - lastWord.length);
+	// A bare `->` or `|` just typed (no trailing space) needs a separating space;
+	// `(` glues naturally to the agent name.
+	if (lastWord === "" && /[>|]$/.test(beforeLastWord)) beforeLastWord = `${beforeLastWord} `;
 
 	return agents.filter((a) => a.name.startsWith(lastWord)).map((a) => ({ value: `${beforeLastWord}${a.name}`, label: a.name }));
 };
