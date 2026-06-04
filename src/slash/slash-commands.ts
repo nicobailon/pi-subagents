@@ -7,6 +7,7 @@ import { discoverAgents, discoverAgentsAll, type ChainConfig } from "../agents/a
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { isDynamicParallelStep, isParallelStep, type ChainStep } from "../shared/settings.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
+import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import {
 	applySlashUpdate,
@@ -33,6 +34,13 @@ interface InlineConfig {
 	model?: string;
 	skill?: string[] | false;
 	progress?: boolean;
+	as?: string;
+	label?: string;
+	phase?: string;
+	cwd?: string;
+	count?: number;
+	outputSchema?: string;
+	acceptance?: string;
 }
 
 const parseInlineConfig = (raw: string): InlineConfig => {
@@ -54,6 +62,13 @@ const parseInlineConfig = (raw: string): InlineConfig => {
 			case "model": config.model = val || undefined; break;
 			case "skill": case "skills": config.skill = val === "false" ? false : val.split("+").filter(Boolean); break;
 			case "progress": config.progress = val !== "false"; break;
+			case "as": config.as = val || undefined; break;
+			case "label": config.label = val || undefined; break;
+			case "phase": config.phase = val || undefined; break;
+			case "cwd": config.cwd = val || undefined; break;
+			case "count": { const n = Number(val); if (Number.isInteger(n) && n > 0) config.count = n; break; }
+			case "outputSchema": config.outputSchema = val || undefined; break;
+			case "acceptance": config.acceptance = val || undefined; break;
 		}
 	}
 	return config;
@@ -579,14 +594,43 @@ type ChainStepObject = {
 	model?: string;
 	skill?: string[] | false;
 	progress?: boolean;
+	as?: string;
+	label?: string;
+	phase?: string;
+	cwd?: string;
+	count?: number;
+	outputSchema?: JsonSchemaObject;
+	acceptance?: string;
 };
 
+// Load an inline `outputSchema=<path>` JSON file, resolved against the session cwd.
+// Throws (SlashParseError / fs / JSON) on a missing or malformed schema.
+function loadInlineOutputSchema(baseCwd: string, agent: string, value: string): JsonSchemaObject {
+	const schemaPath = path.isAbsolute(value) ? value : path.join(baseCwd, value);
+	const label = `outputSchema for step '${agent}' (${schemaPath})`;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(fs.readFileSync(schemaPath, "utf-8"));
+	} catch (error) {
+		throw new SlashParseError(`Cannot read ${label}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	assertJsonSchemaObject(parsed, label);
+	return parsed;
+}
+
+// Build a ChainStep object from a parsed token. `inGroup` enables `count` (parallel-only).
+// May throw SlashParseError for an invalid acceptance level or outputSchema path.
 const mapParsedTaskToStepObject = (
 	step: ParsedStep,
 	fallbackTask: string | undefined,
 	isFirst: boolean,
+	opts: { baseCwd: string; inGroup: boolean },
 ): ChainStepObject => {
 	const { name, config, task: stepTask } = step;
+	if (config.acceptance !== undefined) {
+		const errors = validateAcceptanceInput(config.acceptance, `acceptance for step '${name}'`);
+		if (errors.length > 0) throw new SlashParseError(errors[0]!);
+	}
 	return {
 		agent: name,
 		...(stepTask ? { task: stepTask } : isFirst && fallbackTask ? { task: fallbackTask } : {}),
@@ -596,6 +640,13 @@ const mapParsedTaskToStepObject = (
 		...(config.model ? { model: config.model } : {}),
 		...(config.skill !== undefined ? { skill: config.skill } : {}),
 		...(config.progress !== undefined ? { progress: config.progress } : {}),
+		...(config.as ? { as: config.as } : {}),
+		...(config.label ? { label: config.label } : {}),
+		...(config.phase ? { phase: config.phase } : {}),
+		...(config.cwd ? { cwd: config.cwd } : {}),
+		...(opts.inGroup && config.count !== undefined ? { count: config.count } : {}),
+		...(config.outputSchema ? { outputSchema: loadInlineOutputSchema(opts.baseCwd, name, config.outputSchema) } : {}),
+		...(config.acceptance ? { acceptance: config.acceptance } : {}),
 	};
 };
 
@@ -608,10 +659,16 @@ export function buildChainExpressionSteps(
 	if (!hasGroupSyntax(input)) {
 		const parsed = parseAgentArgs(state, input, "chain", ctx);
 		if (!parsed) return null;
-		const chain: ChainStep[] = parsed.steps.map((step, i) =>
-			mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0),
-		);
-		return { chain, task: parsed.task };
+		const baseCwd = state.baseCwd!; // parseAgentArgs already verified baseCwd is set
+		try {
+			const chain: ChainStep[] = parsed.steps.map((step, i) =>
+				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }),
+			);
+			return { chain, task: parsed.task };
+		} catch (error) {
+			notify(error instanceof Error ? error.message : String(error));
+			return null;
+		}
 	}
 
 	let expression: { steps: ParsedGroupStep[] };
@@ -655,12 +712,19 @@ export function buildChainExpressionSteps(
 		firstStep.kind === "group"
 			? (firstStep.tasks.find((t) => t.task)?.task ?? "")
 			: (firstStep.task ?? "");
-	const chain: ChainStep[] = expression.steps.map((step) => {
-		if (step.kind === "group") {
-			return { parallel: step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false)) };
-		}
-		return mapParsedTaskToStepObject(step, sharedTask || undefined, false);
-	});
+	const baseCwd = state.baseCwd;
+	let chain: ChainStep[];
+	try {
+		chain = expression.steps.map((step) => {
+			if (step.kind === "group") {
+				return { parallel: step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false, { baseCwd, inGroup: true })) };
+			}
+			return mapParsedTaskToStepObject(step, sharedTask || undefined, false, { baseCwd, inGroup: false });
+		});
+	} catch (error) {
+		notify(error instanceof Error ? error.message : String(error));
+		return null;
+	}
 	return { chain, task: sharedTask };
 }
 

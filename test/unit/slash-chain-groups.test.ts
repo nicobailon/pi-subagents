@@ -78,6 +78,24 @@ describe("parseSingleTaskToken", () => {
 		assert.equal(parsed.name, "reviewer");
 		assert.equal(parsed.task, "Review {previous}");
 	});
+
+	it("parses extended metadata in inline config", () => {
+		const parsed = parseSingleTaskToken(
+			'reviewer[as=rev,label=Review,phase=p1,cwd=sub,count=3,acceptance=verified] "task"',
+		);
+		assert.equal(parsed.config.as, "rev");
+		assert.equal(parsed.config.label, "Review");
+		assert.equal(parsed.config.phase, "p1");
+		assert.equal(parsed.config.cwd, "sub");
+		assert.equal(parsed.config.count, 3);
+		assert.equal(parsed.config.acceptance, "verified");
+		assert.equal(parsed.task, "task");
+	});
+
+	it("ignores a non-positive count", () => {
+		assert.equal(parseSingleTaskToken("scout[count=0]").config.count, undefined);
+		assert.equal(parseSingleTaskToken("scout[count=x]").config.count, undefined);
+	});
 });
 
 describe("parseGroupSegment", () => {
@@ -237,6 +255,79 @@ describe("buildChainExpressionSteps", () => {
 		assert.equal(built, null);
 		assert.equal(notifications.length, 1);
 		assert.match(notifications[0] ?? "", /at least two/i);
+	});
+
+	it("propagates inline metadata onto chain steps", () => {
+		const notifications: string[] = [];
+		const built = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			'scout[as=ctx,label=Scan,phase=recon] "scan" -> reviewer "review"',
+			makeCtx(notifications) as never,
+		);
+		assert.ok(built);
+		if (!built) return;
+		assert.deepEqual(notifications, []);
+		const first = built.chain[0] as Record<string, unknown>;
+		assert.equal(first.as, "ctx");
+		assert.equal(first.label, "Scan");
+		assert.equal(first.phase, "recon");
+	});
+
+	it("applies count only inside a parallel group", () => {
+		const notifications: string[] = [];
+		const built = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			'scout[count=2] "scan" -> (reviewer[count=3] "A" | writer "B")',
+			makeCtx(notifications) as never,
+		);
+		assert.ok(built);
+		if (!built) return;
+		assert.deepEqual(notifications, []);
+		// sequential first step: count ignored
+		assert.equal((built.chain[0] as Record<string, unknown>).count, undefined);
+		const parallel = (built.chain[1] as { parallel: Array<Record<string, unknown>> }).parallel;
+		assert.equal(parallel[0]?.count, 3);
+		assert.equal(parallel[1]?.count, undefined);
+	});
+
+	it("rejects an invalid acceptance level", () => {
+		const notifications: string[] = [];
+		const built = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			'scout[acceptance=bogus] "scan" -> reviewer "review"',
+			makeCtx(notifications) as never,
+		);
+		assert.equal(built, null);
+		assert.equal(notifications.length, 1);
+		assert.match(notifications[0] ?? "", /acceptance/i);
+	});
+
+	it("loads an inline outputSchema path and rejects a missing one", () => {
+		fs.writeFileSync(
+			path.join(tempRoot, "schema.json"),
+			JSON.stringify({ type: "object" }),
+			"utf-8",
+		);
+		const ok: string[] = [];
+		const built = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			'scout[outputSchema=schema.json] "scan" -> reviewer "review"',
+			makeCtx(ok) as never,
+		);
+		assert.ok(built);
+		if (built) {
+			assert.deepEqual((built.chain[0] as Record<string, unknown>).outputSchema, { type: "object" });
+		}
+
+		const missing: string[] = [];
+		const bad = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			'scout[outputSchema=nope.json] "scan" -> reviewer "review"',
+			makeCtx(missing) as never,
+		);
+		assert.equal(bad, null);
+		assert.equal(missing.length, 1);
+		assert.match(missing[0] ?? "", /outputSchema/i);
 	});
 
 	it("keeps a bare pipe in a -- task on the legacy single-agent path", () => {
