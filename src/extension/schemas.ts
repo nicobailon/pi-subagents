@@ -5,6 +5,31 @@
 import { Type } from "typebox";
 import { SUBAGENT_ACTIONS } from "../shared/types.ts";
 
+function keepTopLevelParameterDescriptions<T>(schema: T): T {
+	return pruneNestedDescriptions(schema, []) as T;
+}
+
+function pruneNestedDescriptions(value: unknown, path: string[]): unknown {
+	if (!value || typeof value !== "object") return value;
+
+	const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
+	for (const key of Reflect.ownKeys(value)) {
+		const descriptor = Object.getOwnPropertyDescriptor(value, key);
+		if (!descriptor) continue;
+		if (key === "description" && !isTopLevelParameterDescription(path)) continue;
+		if ("value" in descriptor) {
+			const nextPath = typeof key === "string" ? [...path, key] : path;
+			descriptor.value = pruneNestedDescriptions(descriptor.value, nextPath);
+		}
+		Object.defineProperty(result, key, descriptor);
+	}
+	return result;
+}
+
+function isTopLevelParameterDescription(path: string[]): boolean {
+	return path.length === 2 && path[0] === "properties";
+}
+
 const SkillOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "array", items: { type: "string" } },
@@ -221,7 +246,7 @@ const ControlOverrides = Type.Object({
 	})),
 });
 
-export const SubagentParams = Type.Object({
+const SubagentParamsSchema = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Agent name (SINGLE mode) or target for management get/update/delete" })),
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
 	// Management action (when present, tool operates in management mode)
@@ -292,3 +317,5 @@ export const SubagentParams = Type.Object({
 	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
 	acceptance: Type.Optional(AcceptanceOverride),
 });
+
+export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
