@@ -279,10 +279,25 @@ Wrap a group of agents in parentheses and separate them with `|` to fan them out
 
 Notes:
 
-- Groups must contain at least two tasks separated by ` | `.
+- Groups must contain at least two tasks separated by ` | `, each with its own task.
 - Group syntax is only valid between ` -> ` separators, and the group must appear as a complete step.
 - A group is treated as the prior step’s output for the next sequential step.
-- Dynamic fanout (`expand` / `collect`) and chain metadata fields are not yet available inline; use the `subagent({ chain: [...] })` tool API or a saved `.chain.json` for those.
+- Tab completion suggests agents inside groups — after `(`, after `|`, and on each new `->` step.
+
+Add a `[...]` suffix right after the closing `)` to set step-level options on the group:
+
+```text
+/chain scout "scan" -> (reviewer "A" | reviewer "B")[concurrency=2,failFast,worktree] -> writer "fix"
+```
+
+| Group option | Description |
+|--------------|-------------|
+| `concurrency=N` | Max tasks running at once within the group. |
+| `failFast` | Stop the group as soon as one task fails. |
+| `worktree` | Run each group task in its own git worktree. |
+
+Dynamic fanout (`expand` / `collect`) is intentionally not available inline — use the
+`subagent({ chain: [...] })` tool API or a saved `.chain.json` for data-driven fan-out.
 
 ```text
 /chain scout "analyze auth" -> planner -> worker
@@ -314,8 +329,17 @@ Append `[key=value,...]` to an agent name to override defaults for that step:
 | `model` | `model=anthropic/claude-sonnet-4` | Override model for this step. |
 | `skills` | `skills=planning+review` | Override injected skills. `+` separates multiple skills. |
 | `progress` | `progress` | Enable progress tracking. |
+| `as` | `as=context` | Name this step’s output so later steps can reference it. |
+| `label` | `label=Recon` | Human-readable label for the step. |
+| `phase` | `phase=analysis` | Group steps into a named phase. |
+| `cwd` | `cwd=packages/api` | Run the step in a subdirectory. |
+| `count` | `count=3` | Fan a group task into N copies (only inside a `( ... )` group). |
+| `outputSchema` | `outputSchema=schema.json` | Validate structured output against a JSON Schema file (path resolved against cwd). |
+| `acceptance` | `acceptance=verified` | Acceptance level: `none`, `attested`, `checked`, `verified`, or `reviewed`. |
 
 Set `output=false`, `reads=false`, or `skills=false` to disable that behavior explicitly. Do not use `output=false` for file-only returns; use `outputMode=file-only` with an `output` path.
+
+Inline `[...]` values must not contain spaces or commas — keep `label`/`phase` to single tokens.
 
 ### Background and forked runs
 
