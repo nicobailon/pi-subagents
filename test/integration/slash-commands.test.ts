@@ -851,6 +851,28 @@ Gather context
 			assert.match(notifications[0] ?? "", /at least two/i);
 		});
 	});
+
+	it("/chain carries inline metadata and group options through to params", async () => {
+		await withTempProject("pi-chain-group-meta-", async (root) => {
+			for (const name of ["scout", "reviewer", "writer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+
+			const { params, notifications } = await captureSlashCommandParams(
+				"chain",
+				'scout[as=ctx,phase=recon] "scan" -> (reviewer "A" | writer "B")[concurrency=2,failFast]',
+				root,
+			);
+			assert.deepEqual(notifications, []);
+			const built = params as { chain?: Array<Record<string, unknown>> };
+			assert.equal(built.chain?.[0]?.as, "ctx");
+			assert.equal(built.chain?.[0]?.phase, "recon");
+			const group = built.chain?.[1] as Record<string, unknown>;
+			assert.equal((group.parallel as unknown[]).length, 2);
+			assert.equal(group.concurrency, 2);
+			assert.equal(group.failFast, true);
+		});
+	});
 });
 
 

@@ -121,6 +121,25 @@ describe("parseGroupSegment", () => {
 			(error: unknown) => error instanceof SlashParseError,
 		);
 	});
+
+	it("parses a trailing group-options suffix", () => {
+		const parsed = parseGroupSegment('(reviewer "A" | reviewer "B")[concurrency=2,failFast,worktree]');
+		assert.equal(parsed.tasks.length, 2);
+		assert.equal(parsed.config.concurrency, 2);
+		assert.equal(parsed.config.failFast, true);
+		assert.equal(parsed.config.worktree, true);
+	});
+
+	it("defaults to an empty group config without a suffix", () => {
+		assert.deepEqual(parseGroupSegment('(a "x" | b "y")').config, {});
+	});
+
+	it("rejects a non-bracketed group suffix", () => {
+		assert.throws(
+			() => parseGroupSegment('(a "x" | b "y") concurrency=2'),
+			(error: unknown) => error instanceof SlashParseError,
+		);
+	});
 });
 
 describe("hasGroupSyntax", () => {
@@ -288,6 +307,22 @@ describe("buildChainExpressionSteps", () => {
 		const parallel = (built.chain[1] as { parallel: Array<Record<string, unknown>> }).parallel;
 		assert.equal(parallel[0]?.count, 3);
 		assert.equal(parallel[1]?.count, undefined);
+	});
+
+	it("propagates group-level options onto the parallel step", () => {
+		const notifications: string[] = [];
+		const built = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			'scout "scan" -> (reviewer "A" | writer "B")[concurrency=2,failFast]',
+			makeCtx(notifications) as never,
+		);
+		assert.ok(built);
+		if (!built) return;
+		assert.deepEqual(notifications, []);
+		const group = built.chain[1] as Record<string, unknown>;
+		assert.equal(group.concurrency, 2);
+		assert.equal(group.failFast, true);
+		assert.equal(group.worktree, undefined);
 	});
 
 	it("rejects an invalid acceptance level", () => {

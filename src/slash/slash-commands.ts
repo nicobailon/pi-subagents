@@ -377,8 +377,9 @@ async function runSlashSubagent(
 }
 
 
+export interface GroupConfig { concurrency?: number; failFast?: boolean; worktree?: boolean }
 export interface ParsedStep { kind: "step"; name: string; config: InlineConfig; task?: string }
-export interface ParsedGroup { kind: "group"; tasks: ParsedStep[] }
+export interface ParsedGroup { kind: "group"; tasks: ParsedStep[]; config: GroupConfig }
 export type ParsedGroupStep = ParsedStep | ParsedGroup;
 
 export const PARALLEL_GROUP_USAGE =
@@ -463,20 +464,57 @@ export function parseSingleTaskToken(token: string): ParsedStep {
 	return { kind: "step", ...parseAgentToken(agentPart), task };
 }
 
+const parseGroupConfig = (raw: string): GroupConfig => {
+	const config: GroupConfig = {};
+	for (const part of raw.split(",")) {
+		const trimmed = part.trim();
+		if (!trimmed) continue;
+		const eq = trimmed.indexOf("=");
+		const key = eq === -1 ? trimmed : trimmed.slice(0, eq).trim();
+		const val = eq === -1 ? "" : trimmed.slice(eq + 1).trim();
+		switch (key) {
+			case "concurrency": { const n = Number(val); if (Number.isInteger(n) && n > 0) config.concurrency = n; break; }
+			case "failFast": config.failFast = eq === -1 ? true : val !== "false"; break;
+			case "worktree": config.worktree = eq === -1 ? true : val !== "false"; break;
+		}
+	}
+	return config;
+};
+
+// Split `(...)` from an optional trailing `[...]` group-config suffix, respecting
+// quotes and nested parens. Returns the inner group text and the parsed config.
+const splitGroupBody = (trimmed: string): { inner: string; config: GroupConfig } => {
+	let depth = 0, inSingle = false, inDouble = false, closeIdx = -1;
+	for (let i = 0; i < trimmed.length; i++) {
+		const ch = trimmed[i]!;
+		if (inSingle) { if (ch === "'") inSingle = false; continue; }
+		if (inDouble) { if (ch === '"') inDouble = false; continue; }
+		if (ch === "'") { inSingle = true; continue; }
+		if (ch === '"') { inDouble = true; continue; }
+		if (ch === "(") depth++;
+		else if (ch === ")") { depth--; if (depth === 0) { closeIdx = i; break; } }
+	}
+	if (closeIdx === -1) throw new SlashParseError(`Unmatched parentheses in group: '${trimmed}'`);
+	const inner = trimmed.slice(1, closeIdx);
+	const suffix = trimmed.slice(closeIdx + 1).trim();
+	if (!suffix) return { inner, config: {} };
+	if (!suffix.startsWith("[") || !suffix.endsWith("]")) {
+		throw new SlashParseError(`Group options must be wrapped in [...]: '${suffix}'`);
+	}
+	return { inner, config: parseGroupConfig(suffix.slice(1, -1)) };
+};
+
 export function parseGroupSegment(segment: string): ParsedGroup {
 	const trimmed = segment.trim();
-	if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) {
+	if (!trimmed.startsWith("(")) {
 		throw new SlashParseError(`Parallel group must be wrapped in parentheses: '${trimmed}'`);
 	}
-	const inner = trimmed.slice(1, -1);
-	if (findUnmatchedCloseParen(inner)) {
-		throw new SlashParseError(`Unmatched parentheses in group: '${trimmed}'`);
-	}
+	const { inner, config } = splitGroupBody(trimmed);
 	const rawParts = splitGroupTasks(inner).map((p) => p.trim()).filter((p) => p.length > 0);
 	if (rawParts.length < 2) {
 		throw new SlashParseError("Parallel group must contain at least two tasks separated by ' | '");
 	}
-	return { kind: "group", tasks: rawParts.map((part) => parseSingleTaskToken(part)) };
+	return { kind: "group", tasks: rawParts.map((part) => parseSingleTaskToken(part)), config };
 }
 
 // True if `input` uses inline parallel-group syntax outside quotes. Only parentheses
@@ -717,7 +755,13 @@ export function buildChainExpressionSteps(
 	try {
 		chain = expression.steps.map((step) => {
 			if (step.kind === "group") {
-				return { parallel: step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false, { baseCwd, inGroup: true })) };
+				const parallel = step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false, { baseCwd, inGroup: true }));
+				return {
+					parallel,
+					...(step.config.concurrency !== undefined ? { concurrency: step.config.concurrency } : {}),
+					...(step.config.failFast !== undefined ? { failFast: step.config.failFast } : {}),
+					...(step.config.worktree !== undefined ? { worktree: step.config.worktree } : {}),
+				};
 			}
 			return mapParsedTaskToStepObject(step, sharedTask || undefined, false, { baseCwd, inGroup: false });
 		});
