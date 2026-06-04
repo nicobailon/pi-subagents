@@ -110,12 +110,12 @@ describe("hasGroupSyntax", () => {
 		assert.equal(hasGroupSyntax("a -> (b | c)"), true);
 	});
 
-	it("detects pipe", () => {
-		assert.equal(hasGroupSyntax("a -> b | c"), true);
+	it("does not treat a bare pipe as group syntax", () => {
+		assert.equal(hasGroupSyntax("a -> b | c"), false);
 	});
 
-	it("ignores delimiters inside quotes", () => {
-		assert.equal(hasGroupSyntax('a -> b "with | inside"'), false);
+	it("ignores parens inside quotes", () => {
+		assert.equal(hasGroupSyntax('a -> b "with (paren) inside"'), false);
 	});
 
 	it("returns false for plain chain input", () => {
@@ -237,6 +237,24 @@ describe("buildChainExpressionSteps", () => {
 		assert.equal(built, null);
 		assert.equal(notifications.length, 1);
 		assert.match(notifications[0] ?? "", /at least two/i);
+	});
+
+	it("keeps a bare pipe in a -- task on the legacy single-agent path", () => {
+		const notifications: string[] = [];
+		const built = buildChainExpressionSteps(
+			makeState(tempRoot) as never,
+			"scout -- do x | y",
+			makeCtx(notifications) as never,
+		);
+		assert.ok(built);
+		if (!built) return;
+		assert.deepEqual(notifications, []);
+		assert.equal(built.chain.length, 1);
+		assert.equal(built.task, "do x | y");
+		assert.equal(
+			built.chain[0] && "task" in built.chain[0] ? built.chain[0].task : undefined,
+			"do x | y",
+		);
 	});
 
 	it("exports a stable parallel group usage hint", () => {

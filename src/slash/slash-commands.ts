@@ -464,7 +464,9 @@ export function parseGroupSegment(segment: string): ParsedGroup {
 	return { kind: "group", tasks: rawParts.map((part) => parseSingleTaskToken(part)) };
 }
 
-// True if `input` uses inline parallel-group syntax (parens or pipe) outside quotes.
+// True if `input` uses inline parallel-group syntax outside quotes. Only parentheses
+// mark a group — a bare `|` is meaningful only inside `( ... )`, so leaving it out keeps
+// legacy `-- task | with pipe` working as a plain single-agent chain.
 export function hasGroupSyntax(input: string): boolean {
 	let inSingle = false, inDouble = false;
 	for (let i = 0; i < input.length; i++) {
@@ -473,7 +475,7 @@ export function hasGroupSyntax(input: string): boolean {
 		if (inDouble) { if (ch === '"') inDouble = false; continue; }
 		if (ch === "'") { inSingle = true; continue; }
 		if (ch === '"') { inDouble = true; continue; }
-		if (ch === "(" || ch === ")" || ch === "|") return true;
+		if (ch === "(" || ch === ")") return true;
 	}
 	return false;
 }
