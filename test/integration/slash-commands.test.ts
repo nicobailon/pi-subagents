@@ -816,6 +816,95 @@ Gather context
 			});
 		});
 	});
+
+	it("/chain parses a parenthesized parallel group into a { parallel: [...] } step", async () => {
+		await withTempProject("pi-chain-group-slash-", async (root) => {
+			for (const name of ["scout", "reviewer", "writer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+
+			const { params, notifications } = await captureSlashCommandParams("chain", 'scout "scan" -> (reviewer "A" | reviewer "B") -> writer "fix"', root);
+			assert.deepEqual(notifications, []);
+			const built = params as { chain?: Array<Record<string, unknown>>; task?: string };
+			assert.equal(built.task, "scan");
+			assert.equal(built.chain?.length, 3);
+			assert.equal(built.chain?.[0]?.agent, "scout");
+			const parallel = built.chain?.[1]?.parallel as Array<{ agent: string; task: string }>;
+			assert.ok(Array.isArray(parallel), "second step should be a parallel group");
+			assert.deepEqual(parallel.map(({ agent, task }) => ({ agent, task })), [
+				{ agent: "reviewer", task: "A" },
+				{ agent: "reviewer", task: "B" },
+			]);
+			assert.equal(built.chain?.[2]?.agent, "writer");
+		});
+	});
+
+	it("/chain reports parallel-group errors as notifications and does not launch", async () => {
+		await withTempProject("pi-chain-group-error-", async (root) => {
+			for (const name of ["scout", "reviewer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+
+			const { params, notifications } = await captureSlashCommandParams("chain", 'scout "scan" -> (reviewer "A")', root);
+			assert.equal(params, undefined);
+			assert.equal(notifications.length, 1);
+			assert.match(notifications[0] ?? "", /at least two/i);
+		});
+	});
+
+	it("/chain carries inline metadata and group options through to params", async () => {
+		await withTempProject("pi-chain-group-meta-", async (root) => {
+			for (const name of ["scout", "reviewer", "writer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+
+			const { params, notifications } = await captureSlashCommandParams(
+				"chain",
+				'scout[as=ctx,phase=recon] "scan" -> (reviewer "A" | writer "B")[concurrency=2,failFast]',
+				root,
+			);
+			assert.deepEqual(notifications, []);
+			const built = params as { chain?: Array<Record<string, unknown>> };
+			assert.equal(built.chain?.[0]?.as, "ctx");
+			assert.equal(built.chain?.[0]?.phase, "recon");
+			const group = built.chain?.[1] as Record<string, unknown>;
+			assert.equal((group.parallel as unknown[]).length, 2);
+			assert.equal(group.concurrency, 2);
+			assert.equal(group.failFast, true);
+		});
+	});
+
+	it("/chain tab-completion works inside parallel groups", async () => {
+		await withTempProject("pi-chain-group-complete-", async (root) => {
+			for (const name of ["scout", "reviewer", "writer"]) {
+				fs.writeFileSync(path.join(root, ".pi", "agents", `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\n\nBody\n`, "utf-8");
+			}
+			await withIsolatedHome(async () => {
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(_message: unknown) {},
+				};
+				registerSlashCommands!(pi, createState(root));
+				const complete = (prefix: string) =>
+					(commands.get("chain")!.getArgumentCompletions!(prefix) as Array<{ value: string }> | null)?.map((c) => c.value) ?? null;
+
+				// after `(`
+				assert.deepEqual(complete('scout "scan" -> (rev'), ['scout "scan" -> (reviewer']);
+				// after `|`
+				assert.deepEqual(complete('scout "scan" -> (reviewer "A" | wr'), ['scout "scan" -> (reviewer "A" | writer']);
+				// after a bare `|` a space is inserted before every suggested agent
+				const barePipe = complete('scout "scan" -> (reviewer "A" |');
+				assert.ok(barePipe && barePipe.length > 0);
+				assert.ok(barePipe.every((v) => v.startsWith('scout "scan" -> (reviewer "A" | ')));
+				assert.ok(barePipe.includes('scout "scan" -> (reviewer "A" | writer'));
+				// inside an open quote: no agent completion
+				assert.equal(complete('scout "scan'), null);
+			});
+		});
+	});
 });
 
 
