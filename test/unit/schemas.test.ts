@@ -100,6 +100,17 @@ function isRequiredOnlySchema(value: unknown): boolean {
 	return keys.length === 1 && keys[0] === "required";
 }
 
+function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): JsonSchemaNode | undefined {
+	let current: unknown = schema;
+	for (const key of path) {
+		if (!current || typeof current !== "object") return undefined;
+		current = (current as JsonSchemaNode).properties;
+		if (!current || typeof current !== "object") return undefined;
+		current = (current as Record<string, unknown>)[key];
+	}
+	return current && typeof current === "object" ? current as JsonSchemaNode : undefined;
+}
+
 let schemas: Record<string, JsonSchemaNode> = {};
 let SubagentParams: SubagentParamsSchema | undefined;
 let schemasAvailable = true;
@@ -262,22 +273,27 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 
 	it("does not encode acceptance contract presence with required-only schema nodes", () => {
 		const rejectedPaths: string[] = [];
+		const acceptanceRootPaths: string[] = [];
 
 		for (const [name, schema] of Object.entries(schemas)) {
 			const stack: Array<{ path: string; value: unknown; insideAcceptance: boolean }> = [{ path: name, value: schema, insideAcceptance: false }];
 			while (stack.length > 0) {
 				const current = stack.pop()!;
-				const insideAcceptance = current.insideAcceptance
-					|| (current.value && typeof current.value === "object" && !Array.isArray(current.value) && String((current.value as JsonSchemaNode).description ?? "").startsWith("Optional acceptance contract."));
-				if (insideAcceptance && isRequiredOnlySchema(current.value)) rejectedPaths.push(current.path);
+				if (current.insideAcceptance && isRequiredOnlySchema(current.value)) rejectedPaths.push(current.path);
 				if (Array.isArray(current.value)) {
-					current.value.forEach((value, index) => stack.push({ path: `${current.path}[${index}]`, value, insideAcceptance }));
+					current.value.forEach((value, index) => stack.push({ path: `${current.path}[${index}]`, value, insideAcceptance: current.insideAcceptance }));
 				} else if (current.value && typeof current.value === "object") {
-					for (const [key, value] of Object.entries(current.value)) stack.push({ path: `${current.path}.${key}`, value, insideAcceptance });
+					for (const [key, value] of Object.entries(current.value)) {
+						const startsAcceptance = key === "acceptance";
+						const nextPath = `${current.path}.${key}`;
+						if (startsAcceptance) acceptanceRootPaths.push(nextPath);
+						stack.push({ path: nextPath, value, insideAcceptance: current.insideAcceptance || startsAcceptance });
+					}
 				}
 			}
 		}
 
+		assert.ok(acceptanceRootPaths.length >= 5, `expected to inspect nested acceptance schemas, got ${acceptanceRootPaths.join(", ")}`);
 		assert.deepEqual(rejectedPaths, []);
 	});
 
@@ -308,6 +324,26 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			}
 		}
 		assert.deepEqual(nestedDescriptionPaths, []);
+	});
+
+	it("preserves TypeBox metadata while pruning provider-visible descriptions", () => {
+		assert.ok(SubagentParams, "SubagentParams schema should exist");
+		const schema = SubagentParams as unknown as JsonSchemaNode;
+		const rootKind = Object.getOwnPropertyDescriptor(schema, "~kind");
+		assert.equal(rootKind?.value, "Object");
+		assert.equal(rootKind?.enumerable, false);
+
+		const agentSchema = getPropertySchema(schema, ["agent"]);
+		assert.equal(Object.getOwnPropertyDescriptor(agentSchema, "~kind")?.enumerable, false);
+		assert.equal(Object.getOwnPropertyDescriptor(agentSchema, "~optional")?.value, true);
+		assert.equal(Object.getOwnPropertyDescriptor(agentSchema, "~optional")?.enumerable, false);
+
+		const tasksSchema = getPropertySchema(schema, ["tasks"]);
+		const taskItemsSchema = tasksSchema?.items as JsonSchemaNode | undefined;
+		const taskCountSchema = getPropertySchema(taskItemsSchema, ["count"]);
+		assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~kind")?.enumerable, false);
+		assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.value, true);
+		assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.enumerable, false);
 	});
 
 	it("does not emit provider-rejected union schema shapes", () => {
