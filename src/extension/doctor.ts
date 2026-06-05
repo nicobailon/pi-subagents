@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
@@ -167,6 +168,27 @@ function formatIntercomDiagnostic(diagnostic: IntercomBridgeDiagnostic, context:
 	return lines;
 }
 
+function formatPermissionSystemSection(): string[] {
+	const lines: string[] = [];
+	const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
+	const trimmed = parentSession.trim();
+	if (trimmed) {
+		lines.push(`- parent session: set (${trimmed})`);
+	} else {
+		lines.push("- parent session: not set — ask forwarding from subprocess children will not reach a parent UI");
+	}
+	const isChild = process.env["PI_SUBAGENT_CHILD"] === "1";
+	lines.push(`- subagent process: ${isChild ? "yes (PI_SUBAGENT_CHILD=1)" : "no"}`);
+	// Check for pi-permission-system extension config
+	const configPath = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-permission-system", "config.json");
+	if (fs.existsSync(configPath)) {
+		lines.push(`- pi-permission-system config: found (${configPath})`);
+	} else {
+		lines.push("- pi-permission-system config: not found — extension may not be installed");
+	}
+	return lines;
+}
+
 export function buildDoctorReport(input: DoctorReportInput): string {
 	const paths = input.paths ?? DEFAULT_PATHS;
 	const deps = { ...DEFAULT_DEPS, ...input.deps };
@@ -186,6 +208,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"",
 		"Discovery",
 		...formatDiscovery(input, deps),
+		"",
+		"Permission system",
+		...formatPermissionSystemSection(),
 		"",
 		"Intercom bridge",
 		...lineFromCheck("intercom bridge", () => formatIntercomDiagnostic(deps.diagnoseIntercomBridge({

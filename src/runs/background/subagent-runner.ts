@@ -650,6 +650,7 @@ async function runSingleStep(
 			}
 		}
 		const { args, env, tempDir } = buildPiArgs({
+			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
 			task,
 			sessionEnabled,

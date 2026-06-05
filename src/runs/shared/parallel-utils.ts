@@ -1,4 +1,6 @@
 export interface RunnerSubagentStep {
+	/** Session id of the direct parent session for permission-system ask forwarding. */
+	parentSessionId?: string;
 	agent: string;
 	task: string;
 	phase?: string;

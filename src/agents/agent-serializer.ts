@@ -76,7 +76,15 @@ export function serializeAgent(config: AgentConfig): string {
 	if (config.extraFields) {
 		for (const [key, value] of Object.entries(config.extraFields)) {
 			if (KNOWN_FIELDS.has(key)) continue;
-			lines.push(`${key}: ${value}`);
+			if (typeof value === "string" && value.includes("\n")) {
+				// Multi-line block value (e.g. permission: nested YAML)
+				lines.push(`${key}:`);
+				for (const blockLine of value.split("\n")) {
+					lines.push(`  ${blockLine}`);
+				}
+			} else {
+				lines.push(`${key}: ${value}`);
+			}
 		}
 	}
 

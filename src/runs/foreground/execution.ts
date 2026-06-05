@@ -177,6 +177,7 @@ async function runSingleAttempt(
 		parentControlInbox: options.nestedRoute?.controlInbox,
 			parentRootRunId: options.nestedRoute?.rootRunId,
 			parentCapabilityToken: options.nestedRoute?.capabilityToken,
+			parentSessionId: options.parentSessionId,
 			structuredOutput: options.structuredOutput,
 		});
 

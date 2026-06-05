@@ -345,6 +345,7 @@ export function executeAsyncChain(
 		const primaryModel = resolveModelCandidate(behavior.model ?? a.model, availableModels, ctx.currentModelProvider);
 		const model = applyThinkingSuffix(primaryModel, a.thinking);
 		return {
+			parentSessionId: ctx.currentSessionId,
 			agent: s.agent,
 			task,
 			phase: s.phase,
