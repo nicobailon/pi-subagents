@@ -753,6 +753,8 @@ export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom
 // ============================================================================
 
 export interface RunSyncOptions {
+	/** Session id of the direct parent session for permission-system ask forwarding. */
+	parentSessionId?: string;
 	cwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;

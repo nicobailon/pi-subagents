@@ -263,6 +263,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				? createStructuredOutputRuntime(task.outputSchema, path.join(input.chainDir, "structured-output"))
 				: undefined;
 			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
+				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				cwd: taskCwd,
 				signal: input.signal,
 				interruptSignal: interruptController.signal,
@@ -1048,6 +1049,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
 				: undefined;
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
+				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
 				signal,
 				interruptSignal: interruptController.signal,

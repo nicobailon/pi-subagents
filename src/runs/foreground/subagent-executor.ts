@@ -1494,6 +1494,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		}
 		const agentConfig = input.agents.find((agent) => agent.name === task.agent);
 		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
+			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			cwd: taskCwd,
 			signal: input.signal,
 			interruptSignal: interruptController.signal,
@@ -2058,6 +2059,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: undefined;
 
 	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
+		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 		cwd: effectiveCwd,
 		signal,
 		interruptSignal: interruptController.signal,
@@ -2206,7 +2208,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				let orchestratorTarget: string | undefined;
 				try {
 					orchestratorTarget = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
-				} catch {}
+				} catch (error) {
+					if (!sessionError) sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+				}
 				return {
 					content: [{
 						type: "text",
