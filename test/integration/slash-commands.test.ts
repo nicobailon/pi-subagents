@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 
 import { ASYNC_DIR } from "../../src/shared/types.ts";
+import { registerSubagentWatchCommand } from "../../src/watch/slash-command.ts";
 
 const SLASH_RESULT_TYPE = "subagent-slash-result";
 const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
@@ -843,6 +844,21 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 
 			registerSlashCommands!(pi, createState(process.cwd()));
 			assert.equal(commands.has("subagents-status"), false);
+		});
+	});
+
+	it("registers /subagent-watch", async () => {
+		await withIsolatedHome(async () => {
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = {
+				events: createEventBus(),
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(_message: unknown) {},
+			};
+			registerSlashCommands!(pi, createState(process.cwd()));
+			registerSubagentWatchCommand(pi, createState(process.cwd()) as never);
+			assert.equal(commands.has("subagent-watch"), true);
 		});
 	});
 
