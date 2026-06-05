@@ -14,6 +14,7 @@ import {
 	SUBAGENT_PARENT_PATH_ENV,
 	SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
 	SUBAGENT_PARENT_RUN_ID_ENV,
+	SUBAGENT_PARENT_SESSION_ENV,
 	SUBAGENT_RUN_ID_ENV,
 	applyThinkingSuffix,
 	buildPiArgs,
@@ -32,6 +33,7 @@ const originalEnv = {
 	PI_SUBAGENT_PARENT_DEPTH: process.env.PI_SUBAGENT_PARENT_DEPTH,
 	PI_SUBAGENT_PARENT_PATH: process.env.PI_SUBAGENT_PARENT_PATH,
 	PI_SUBAGENT_PARENT_CAPABILITY_TOKEN: process.env.PI_SUBAGENT_PARENT_CAPABILITY_TOKEN,
+	PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
 	PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
 };
 const originalCwd = process.cwd();
@@ -151,6 +153,33 @@ describe("buildPiArgs session wiring", () => {
 		assert.ok(args.includes("--session-dir"));
 		assert.ok(args.includes("/tmp/subagent-sessions"));
 		assert.ok(!args.includes("--session"));
+	});
+
+	it("emits explicit parent session env for permission forwarding", () => {
+		process.env.PI_SUBAGENT_PARENT_SESSION = "inherited-parent";
+		const { env } = buildPiArgs({
+			parentSessionId: "direct-parent",
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "direct-parent");
+	});
+
+	it("falls back to inherited parent session env for permission forwarding", () => {
+		process.env.PI_SUBAGENT_PARENT_SESSION = "inherited-parent";
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "inherited-parent");
 	});
 });
 
