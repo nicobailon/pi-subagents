@@ -76,4 +76,60 @@ describe("subagent watch tree", () => {
 		assert.deepEqual(nested.ancestry, ["root", "orchestrator", "reviewer"]);
 		assert.equal(sections[0]!.rows.some((row) => row.text.includes("└─") || row.text.includes("├─")), true);
 	});
+
+	it("uses status.json steps and preserves original step indexes for logs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "watch-tree-status-"));
+		try {
+			const asyncDir = path.join(root, "run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-status",
+				mode: "parallel",
+				state: "running",
+				startedAt: 1,
+				steps: [
+					{ index: 2, agent: "late", status: "running", sessionFile: path.join(root, "late.jsonl") },
+				],
+			}));
+			const state = stateWithJobs([
+				["run-status", { asyncId: "run-status", asyncDir, status: "running", mode: "parallel", agents: ["late"], steps: [] }],
+			]);
+
+			const target = buildWatchSections(state, { now: () => 1_000 })[0]!.targets[0]!;
+			assert.equal(target.stepIndex, 2);
+			assert.equal(target.id, "run-status/3");
+			assert.equal(target.outputLog, path.join(asyncDir, "output-2.log"));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("creates placeholder targets for queued jobs before status steps exist", () => {
+		const state = stateWithJobs([
+			["queued", { asyncId: "queued", asyncDir: "/tmp/queued", status: "queued", mode: "parallel", agents: ["a", "b"], steps: [] }],
+		]);
+		const sections = buildWatchSections(state, { now: () => 1_000 });
+		assert.equal(sections[0]!.title, "Queued");
+		assert.deepEqual(sections[0]!.targets.map((target) => target.agent), ["a", "b"]);
+	});
+
+	it("renders nested run steps as selectable targets", () => {
+		const state = stateWithJobs([
+			["root", { asyncId: "root", asyncDir: "/tmp/root", status: "running", mode: "single", agents: ["orchestrator"], steps: [
+				{ agent: "orchestrator", status: "running", children: [
+					{ id: "nested-chain", parentRunId: "root", depth: 1, path: [{ runId: "root", stepIndex: 0, agent: "orchestrator" }], state: "running", agents: ["scout", "reviewer"], asyncDir: "/tmp/nested-chain", steps: [
+						{ agent: "scout", status: "complete", sessionFile: "/tmp/scout.jsonl" },
+						{ agent: "reviewer", status: "running", sessionFile: "/tmp/reviewer.jsonl", currentTool: "read" },
+					] },
+				] },
+			] }],
+		]);
+
+		const targets = buildWatchSections(state, { now: () => 1_000 })[0]!.targets;
+		const reviewer = targets.find((target) => target.id === "root/nested-chain/2");
+		assert.ok(reviewer);
+		assert.equal(reviewer.agent, "reviewer");
+		assert.equal(reviewer.sessionFile, "/tmp/reviewer.jsonl");
+		assert.equal(reviewer.outputLog, path.join("/tmp/nested-chain", "output-1.log"));
+	});
 });

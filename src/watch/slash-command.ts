@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import type { SubagentState } from "../shared/types.ts";
 import { WatchOverlay } from "./watch-overlay.ts";
 import { WatchSelector } from "./watch-selector.ts";
-import { buildWatchSections, flattenWatchTargets } from "./watch-tree.ts";
+import { buildWatchSections, findWatchTarget, flattenWatchTargets } from "./watch-tree.ts";
 import type { WatchTarget } from "./watch-types.ts";
 
 function resolveTarget(args: string, targets: WatchTarget[]): WatchTarget | undefined {
@@ -21,10 +21,12 @@ export function registerSubagentWatchCommand(pi: Pick<ExtensionAPI, "registerCom
 			}
 
 			const openOverlay = async (target: WatchTarget): Promise<void> => {
+				const targetId = target.id;
 				await ctx.ui.custom<void>((tui, theme, _keybindings, done) => new WatchOverlay({
 					tui,
 					theme,
 					target,
+					resolveTarget: () => findWatchTarget(buildWatchSections(state), targetId),
 					onClose: () => done(undefined),
 					onBack: () => {
 						done(undefined);

@@ -17,8 +17,8 @@ export type WatchOverlayAction = "handled" | "back" | "close" | "none";
 
 const TABS: WatchTab[] = ["transcript", "status", "log"];
 
-export function collectWatchFiles(target: Pick<WatchTarget, "sessionFile" | "outputLog" | "rootLog" | "eventsFile">): string[] {
-	return [...new Set([target.sessionFile, target.outputLog, target.rootLog, target.eventsFile].filter((file): file is string => Boolean(file)))];
+export function collectWatchFiles(target: Pick<WatchTarget, "sessionFile" | "outputLog" | "rootLog" | "eventsFile" | "statusFile">): string[] {
+	return [...new Set([target.sessionFile, target.outputLog, target.rootLog, target.eventsFile, target.statusFile].filter((file): file is string => Boolean(file)))];
 }
 
 export function createWatchOverlayState(): WatchOverlayState {
@@ -94,11 +94,11 @@ function statusLines(target: WatchTarget, theme: Theme): string[] {
 export class WatchOverlay implements Component {
 	private state = createWatchOverlayState();
 	private totalLines = 0;
-	private input: { tui: TUI; theme: Theme; target: WatchTarget; onBack: () => void; onClose: () => void };
+	private input: { tui: TUI; theme: Theme; target: WatchTarget; resolveTarget?: () => WatchTarget | undefined; onBack: () => void; onClose: () => void };
 	private watchers: Array<{ close: () => void }> = [];
 	private poller?: ReturnType<typeof setInterval>;
 
-	constructor(input: { tui: TUI; theme: Theme; target: WatchTarget; onBack: () => void; onClose: () => void }) {
+	constructor(input: { tui: TUI; theme: Theme; target: WatchTarget; resolveTarget?: () => WatchTarget | undefined; onBack: () => void; onClose: () => void }) {
 		this.input = input;
 		for (const file of collectWatchFiles(input.target)) {
 			try {
@@ -111,21 +111,28 @@ export class WatchOverlay implements Component {
 		this.poller.unref?.();
 	}
 
-	private contentLines(width: number): string[] {
+	private currentTarget(): WatchTarget {
+		const refreshed = this.input.resolveTarget?.();
+		if (refreshed) this.input.target = refreshed;
+		return this.input.target;
+	}
+
+	private contentLines(width: number, target: WatchTarget): string[] {
 		const inner = Math.max(1, width - 4);
-		if (this.state.tab === "status") return statusLines(this.input.target, this.input.theme);
-		if (this.state.tab === "log") return readTextFile(this.input.target.outputLog ?? this.input.target.rootLog);
-		const transcript = readTranscriptEntries(this.input.target.sessionFile);
-		return renderTranscriptLines(transcript.entries, { warnings: transcript.warnings }, inner);
+		if (this.state.tab === "status") return statusLines(target, this.input.theme);
+		if (this.state.tab === "log") return readTextFile(target.outputLog ?? target.rootLog).slice(-5000);
+		const transcript = readTranscriptEntries(target.sessionFile);
+		return renderTranscriptLines(transcript.entries.slice(-1000), { warnings: transcript.warnings }, inner).slice(-5000);
 	}
 
 	render(width: number): string[] {
-		const { theme, target } = this.input;
+		const { theme } = this.input;
+		const target = this.currentTarget();
 		if (width < 8) return [" ".repeat(Math.max(0, width))];
 		const inner = Math.max(1, width - 4);
 		const rows = this.input.tui.terminal.rows ?? process.stdout.rows ?? 24;
 		const visibleRows = Math.max(1, rows - 8);
-		const content = this.contentLines(width);
+		const content = this.contentLines(width, target);
 		this.totalLines = content.length;
 		const range = getVisibleRange(this.state.scroll, content.length, visibleRows);
 		const visible = content.slice(range.start, range.end);

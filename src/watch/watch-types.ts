@@ -21,6 +21,7 @@ export interface WatchTarget {
 	outputLog?: string;
 	rootLog?: string;
 	eventsFile?: string;
+	statusFile?: string;
 	currentTool?: string;
 	activityState?: string;
 	lastActivityAt?: number;
