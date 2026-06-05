@@ -17,6 +17,10 @@ export type WatchOverlayAction = "handled" | "back" | "close" | "none";
 
 const TABS: WatchTab[] = ["transcript", "status", "log"];
 
+export function collectWatchFiles(target: Pick<WatchTarget, "sessionFile" | "outputLog" | "rootLog" | "eventsFile">): string[] {
+	return [...new Set([target.sessionFile, target.outputLog, target.rootLog, target.eventsFile].filter((file): file is string => Boolean(file)))];
+}
+
 export function createWatchOverlayState(): WatchOverlayState {
 	return { tab: "transcript", scroll: createWatchScrollState() };
 }
@@ -91,9 +95,20 @@ export class WatchOverlay implements Component {
 	private state = createWatchOverlayState();
 	private totalLines = 0;
 	private input: { tui: TUI; theme: Theme; target: WatchTarget; onBack: () => void; onClose: () => void };
+	private watchers: Array<{ close: () => void }> = [];
+	private poller?: ReturnType<typeof setInterval>;
 
 	constructor(input: { tui: TUI; theme: Theme; target: WatchTarget; onBack: () => void; onClose: () => void }) {
 		this.input = input;
+		for (const file of collectWatchFiles(input.target)) {
+			try {
+				this.watchers.push(fs.watch(file, () => input.tui.requestRender()));
+			} catch {
+				// Missing files are common while a child starts. Polling covers them.
+			}
+		}
+		this.poller = setInterval(() => input.tui.requestRender(), 1000);
+		this.poller.unref?.();
 	}
 
 	private contentLines(width: number): string[] {
@@ -138,9 +153,20 @@ export class WatchOverlay implements Component {
 
 	handleInput(data: string): void {
 		const action = handleWatchOverlayKey(this.state, data, { totalLines: this.totalLines, visibleLines: Math.max(1, (this.input.tui.terminal.rows ?? 24) - 8) });
-		if (action === "close") this.input.onClose();
-		else if (action === "back") this.input.onBack();
-		else if (action === "handled") this.input.tui.requestRender();
+		if (action === "close") {
+			this.dispose();
+			this.input.onClose();
+		} else if (action === "back") {
+			this.dispose();
+			this.input.onBack();
+		} else if (action === "handled") this.input.tui.requestRender();
+	}
+
+	dispose(): void {
+		for (const watcher of this.watchers) watcher.close();
+		this.watchers = [];
+		if (this.poller) clearInterval(this.poller);
+		this.poller = undefined;
 	}
 
 	invalidate(): void {}
