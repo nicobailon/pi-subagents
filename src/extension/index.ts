@@ -33,7 +33,7 @@ import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import registerFanoutChildSubagentExtension from "./fanout-child.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
@@ -522,6 +522,17 @@ DIAGNOSTICS:
 	const resetSessionState = (ctx: ExtensionContext) => {
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		// Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
+		// Only set in the root session (the interactive UI session), not in
+		// child subagent processes — children inherit the parent's value
+		// through the process environment at spawn time and must not overwrite
+		// it with their own session identity.
+		if (!process.env[SUBAGENT_CHILD_ENV]) {
+			const sessionId = ctx.sessionManager.getSessionId();
+			if (sessionId) {
+				process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
+			}
+		}
 		state.lastUiContext = ctx;
 		cleanupSessionArtifacts(ctx);
 		clearPendingForegroundControlNotices(state);
@@ -535,6 +546,7 @@ DIAGNOSTICS:
 	});
 
 	pi.on("session_shutdown", () => {
+		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {
 			try {
 				unsubscribe();
