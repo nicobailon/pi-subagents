@@ -151,6 +151,18 @@ Background runs keep working after control returns to you. Inspect active runs w
 
 They also show a compact async widget and send completion notifications. Parallel background runs show per-agent progress instead of fake chain steps. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
+### Watch a running subagent
+
+Use `/subagent-watch` in interactive mode to inspect current-session async/background subagents without switching sessions. It opens a read-only tree selector grouped by Active, Queued, and Done. Select an agent instance to open a tabbed overlay:
+
+- **Transcript** tails the child Pi session JSONL using Pi's normal message styling.
+- **Status** shows run, agent, tool, session, log, and ancestry metadata.
+- **Log** tails the relevant async output log when available.
+
+Keys in the selector: `↑/↓` selects, `Enter` opens, `Esc` or `q` closes. Keys in the overlay: `Tab` / `Shift+Tab` switches tabs, `Backspace` or `b` returns to the selector, `PgUp/PgDn` page-scrolls, `Shift+↑/Shift+↓` scrolls by line, and `Esc` or `q` closes.
+
+The watch view is scoped to the current Pi session. It does not scan unrelated sessions or open child JSONL files as writable sessions.
+
 You can also ask naturally:
 
 ```text

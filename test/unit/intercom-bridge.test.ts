@@ -96,10 +96,17 @@ describe("diagnoseIntercomBridge", () => {
 	it("reports inactive and unavailable when pi-intercom is missing", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-intercom-diagnostic-test-"));
 		try {
+			const agentDir = path.join(tempDir, "agent");
+			const cwd = path.join(tempDir, "workspace");
+			fs.mkdirSync(agentDir, { recursive: true });
+			fs.mkdirSync(cwd, { recursive: true });
 			const diagnostic = diagnoseIntercomBridge({
 				config: { mode: "always" },
 				context: "fresh",
 				orchestratorTarget: "main",
+				agentDir,
+				cwd,
+				globalNpmRoot: null,
 				extensionDir: path.join(tempDir, "missing-pi-intercom"),
 				configPath: path.join(tempDir, "config.json"),
 			});
