@@ -593,6 +593,14 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			continue;
 		}
 
+		// Skip skill files that are masquerading as agent definitions.
+		// Skill files typically contain a `metadata` or `version` frontmatter
+		// key that agent definitions do not use. If either is present, treat
+		// the file as a skill and skip agent registration.
+		if ("metadata" in frontmatter || "version" in frontmatter) {
+			continue;
+		}
+
 		const localName = frontmatter.name;
 		const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
 		if (parsedPackage.error) continue;
