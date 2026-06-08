@@ -15,7 +15,7 @@ import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSi
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
-import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
+import { buildSkillInjection, buildLightSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveModelCandidate, type AvailableModelInfo } from "../shared/model-fallback.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -326,7 +326,9 @@ export function executeAsyncChain(
 
 		let systemPrompt = a.systemPrompt?.trim() ?? "";
 		if (resolvedSkills.length > 0) {
-			const injection = buildSkillInjection(resolvedSkills);
+			const injection = a.skillInjection === "light"
+				? buildLightSkillInjection(resolvedSkills)
+				: buildSkillInjection(resolvedSkills);
 			systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
 		}
 
@@ -639,7 +641,9 @@ export function executeAsyncSingle(
 	if (missingSkills.includes("pi-subagents")) return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
 	let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
 	if (resolvedSkills.length > 0) {
-		const injection = buildSkillInjection(resolvedSkills);
+		const injection = agentConfig.skillInjection === "light"
+			? buildLightSkillInjection(resolvedSkills)
+			: buildSkillInjection(resolvedSkills);
 		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
 	}
 

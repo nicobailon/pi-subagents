@@ -23,6 +23,7 @@ interface ResolvedSkill {
 	name: string;
 	path: string;
 	content: string;
+	description?: string;
 	source: SkillSource;
 }
 
@@ -410,6 +411,39 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 		});
 	};
 
+	// Recurse into a directory looking for SKILL.md. Mirrors pi-coding-agent's
+	// loadSkillsFromDirInternal: if the directory contains SKILL.md, treat the
+	// directory as a skill root and stop (do not recurse further). Otherwise
+	// recurse into subdirectories. node_modules and dotfiles are skipped.
+	const recurseForSkillFile = (dir: string, source: SkillSource | undefined) => {
+		const skillFile = path.join(dir, "SKILL.md");
+		if (fs.existsSync(skillFile)) {
+			pushEntry(path.basename(dir), skillFile, source);
+			return;
+		}
+		let children: fs.Dirent[];
+		try {
+			children = fs.readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const child of children) {
+			if (child.name.startsWith(".")) continue;
+			if (child.name === "node_modules") continue;
+			if (!(child.isDirectory() || child.isSymbolicLink())) continue;
+			const childPath = path.join(dir, child.name);
+			if (child.isSymbolicLink()) {
+				try {
+					const stats = fs.statSync(childPath);
+					if (!stats.isDirectory()) continue;
+				} catch {
+					continue;
+				}
+			}
+			recurseForSkillFile(childPath, source);
+		}
+	};
+
 	for (const skillPath of skillPaths) {
 		if (!fs.existsSync(skillPath.path)) continue;
 
@@ -446,12 +480,21 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 
 		for (const child of childEntries) {
 			if (child.name.startsWith(".")) continue;
+			if (child.name === "node_modules") continue;
 			const childPath = path.join(skillPath.path, child.name);
 			if (child.isDirectory() || child.isSymbolicLink()) {
-				const nestedSkillPath = path.join(childPath, "SKILL.md");
-				if (fs.existsSync(nestedSkillPath)) {
-					pushEntry(child.name, nestedSkillPath, skillPath.source);
+				if (child.isSymbolicLink()) {
+					try {
+						const stats = fs.statSync(childPath);
+						if (!stats.isDirectory()) continue;
+					} catch {
+						continue;
+					}
 				}
+				// Recursive descent: mirrors pi-coding-agent so layouts like
+				// `<root>/<group>/<skill-name>/SKILL.md` are discovered, not just
+				// `<root>/<skill-name>/SKILL.md`.
+				recurseForSkillFile(childPath, skillPath.source);
 				continue;
 			}
 			if (child.isFile() && child.name.toLowerCase().endsWith(".md")) {
@@ -508,10 +551,12 @@ function readSkill(
 
 		const raw = fs.readFileSync(skillPath, "utf-8");
 		const content = stripSkillFrontmatter(raw);
+		const description = maybeReadSkillDescription(skillPath);
 		const skill: ResolvedSkill = {
 			name: skillName,
 			path: skillPath,
 			content,
+			description,
 			source,
 		};
 
@@ -582,6 +627,44 @@ export function buildSkillInjection(skills: ResolvedSkill[]): string {
 	return skills
 		.map((s) => `<skill name="${s.name}">\n${s.content}\n</skill>`)
 		.join("\n\n");
+}
+
+/**
+ * Light-weight injection: emit only the skill name, description, and absolute
+ * path. The agent uses the read tool to load the full SKILL.md when the task
+ * matches. Intended for agents that declare many skills in `skills:` but want
+ * to keep their startup system prompt small. Mirrors the shape produced by
+ * `pi-coding-agent`'s `formatSkillsForPrompt`, so a model that knows how to
+ * use one knows how to use the other.
+ */
+export function buildLightSkillInjection(skills: ResolvedSkill[]): string {
+	if (skills.length === 0) return "";
+
+	const lines = [
+		"The following skills are available for this agent. Use the read tool to load a skill's file when the task matches its description.",
+		"",
+		"<available_skills>",
+	];
+	for (const skill of skills) {
+		lines.push("  <skill>");
+		lines.push(`    <name>${escapeXmlAttr(skill.name)}</name>`);
+		if (skill.description) {
+			lines.push(`    <description>${escapeXmlAttr(skill.description)}</description>`);
+		}
+		lines.push(`    <location>${escapeXmlAttr(skill.path)}</location>`);
+		lines.push("  </skill>");
+	}
+	lines.push("</available_skills>");
+	return lines.join("\n");
+}
+
+function escapeXmlAttr(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&apos;");
 }
 
 export function normalizeSkillInput(
