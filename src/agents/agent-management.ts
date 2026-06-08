@@ -8,6 +8,7 @@ import {
 	type AgentSource,
 	type ChainConfig,
 	type ChainStepConfig,
+	DEFAULT_SKILL_INJECTION,
 	defaultInheritProjectContext,
 	defaultInheritSkills,
 	defaultSystemPromptMode,
@@ -286,6 +287,11 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (typeof cfg.inheritSkills !== "boolean") return "config.inheritSkills must be a boolean when provided.";
 		target.inheritSkills = cfg.inheritSkills;
 	}
+	if (hasKey(cfg, "skillInjection")) {
+		if (cfg.skillInjection === "full" || cfg.skillInjection === "light") {
+			target.skillInjection = cfg.skillInjection;
+		} else return "config.skillInjection must be 'full' or 'light' when provided.";
+	}
 	if (hasKey(cfg, "defaultContext")) {
 		if (cfg.defaultContext === false || cfg.defaultContext === "") target.defaultContext = undefined;
 		else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork") target.defaultContext = cfg.defaultContext;
@@ -378,6 +384,9 @@ function formatAgentDetail(agent: AgentConfig): string {
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
+	if (agent.skillInjection && agent.skillInjection !== "full") {
+		lines.push(`Skill injection: ${agent.skillInjection}`);
+	}
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
@@ -536,6 +545,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 		systemPromptMode: defaultSystemPromptMode(name),
 		inheritProjectContext: defaultInheritProjectContext(name),
 		inheritSkills: defaultInheritSkills(),
+		skillInjection: DEFAULT_SKILL_INJECTION,
 	};
 	const applyError = applyAgentConfig(agent, cfg);
 	if (applyError) return result(applyError, true);

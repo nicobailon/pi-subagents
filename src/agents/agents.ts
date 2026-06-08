@@ -20,6 +20,9 @@ export type AgentScope = "user" | "project" | "both";
 export type AgentSource = "builtin" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
 export type AgentDefaultContext = "fresh" | "fork";
+export type SkillInjectionMode = "full" | "light";
+
+export const DEFAULT_SKILL_INJECTION: SkillInjectionMode = "full";
 
 export function defaultSystemPromptMode(name: string): SystemPromptMode {
 	return name === "delegate" ? "append" : "replace";
@@ -40,6 +43,7 @@ export interface BuiltinAgentOverrideBase {
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
+	skillInjection: SkillInjectionMode;
 	defaultContext?: AgentDefaultContext;
 	disabled?: boolean;
 	systemPrompt: string;
@@ -56,6 +60,7 @@ interface BuiltinAgentOverrideConfig {
 	systemPromptMode?: SystemPromptMode;
 	inheritProjectContext?: boolean;
 	inheritSkills?: boolean;
+	skillInjection?: SkillInjectionMode;
 	defaultContext?: AgentDefaultContext | false;
 	disabled?: boolean;
 	systemPrompt?: string;
@@ -83,6 +88,7 @@ export interface AgentConfig {
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
+	skillInjection: SkillInjectionMode;
 	defaultContext?: AgentDefaultContext;
 	systemPrompt: string;
 	source: AgentSource;
@@ -197,6 +203,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
+		skillInjection: agent.skillInjection,
 		defaultContext: agent.defaultContext,
 		disabled: agent.disabled,
 		systemPrompt: agent.systemPrompt,
@@ -217,6 +224,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.systemPromptMode !== undefined ? { systemPromptMode: override.systemPromptMode } : {}),
 		...(override.inheritProjectContext !== undefined ? { inheritProjectContext: override.inheritProjectContext } : {}),
 		...(override.inheritSkills !== undefined ? { inheritSkills: override.inheritSkills } : {}),
+		...(override.skillInjection !== undefined ? { skillInjection: override.skillInjection } : {}),
 		...(override.defaultContext !== undefined ? { defaultContext: override.defaultContext } : {}),
 		...(override.disabled !== undefined ? { disabled: override.disabled } : {}),
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
@@ -343,6 +351,14 @@ function parseBuiltinOverrideEntry(
 		}
 	}
 
+	if ("skillInjection" in input) {
+		if (input.skillInjection === "full" || input.skillInjection === "light") {
+			override.skillInjection = input.skillInjection;
+		} else {
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'skillInjection'; expected 'full' or 'light'.`);
+		}
+	}
+
 	if ("defaultContext" in input) {
 		if (input.defaultContext === "fresh" || input.defaultContext === "fork" || input.defaultContext === false) {
 			override.defaultContext = input.defaultContext;
@@ -430,6 +446,7 @@ function applyBuiltinOverride(
 	if (override.systemPromptMode !== undefined) next.systemPromptMode = override.systemPromptMode;
 	if (override.inheritProjectContext !== undefined) next.inheritProjectContext = override.inheritProjectContext;
 	if (override.inheritSkills !== undefined) next.inheritSkills = override.inheritSkills;
+	if (override.skillInjection !== undefined) next.skillInjection = override.skillInjection;
 	if (override.defaultContext !== undefined) next.defaultContext = override.defaultContext === false ? undefined : override.defaultContext;
 	if (override.disabled !== undefined) next.disabled = override.disabled;
 	if (override.systemPrompt !== undefined) next.systemPrompt = override.systemPrompt;
@@ -479,7 +496,7 @@ function applyBuiltinOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "completionGuard">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "skillInjection" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "completionGuard">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -489,6 +506,7 @@ export function buildBuiltinOverrideConfig(
 	if (draft.systemPromptMode !== base.systemPromptMode) override.systemPromptMode = draft.systemPromptMode;
 	if (draft.inheritProjectContext !== base.inheritProjectContext) override.inheritProjectContext = draft.inheritProjectContext;
 	if (draft.inheritSkills !== base.inheritSkills) override.inheritSkills = draft.inheritSkills;
+	if (draft.skillInjection !== base.skillInjection) override.skillInjection = draft.skillInjection;
 	if (draft.defaultContext !== base.defaultContext) override.defaultContext = draft.defaultContext ?? false;
 	if (draft.disabled !== base.disabled) override.disabled = draft.disabled ?? false;
 	if (draft.systemPrompt !== base.systemPrompt) override.systemPrompt = draft.systemPrompt;
@@ -645,6 +663,11 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			: frontmatter.inheritSkills === "false"
 				? false
 				: defaultInheritSkills();
+		const skillInjection: SkillInjectionMode = frontmatter.skillInjection === "light"
+			? "light"
+			: frontmatter.skillInjection === "full"
+				? "full"
+				: DEFAULT_SKILL_INJECTION;
 		const defaultContext = frontmatter.defaultContext === "fork"
 			? "fork" as const
 			: frontmatter.defaultContext === "fresh"
@@ -684,6 +707,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			systemPromptMode,
 			inheritProjectContext,
 			inheritSkills,
+			skillInjection,
 			defaultContext,
 			systemPrompt: body,
 			source,
