@@ -1091,9 +1091,15 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 
 	if (hasTasks && params.tasks) {
 		const agentConfigs = params.tasks.map((task) => agents.find((agent) => agent.name === task.agent));
-		const modelOverrides = params.tasks.map((task, index) =>
-			resolveModelCandidate(task.model ?? agentConfigs[index]?.model, availableModels, currentProvider),
-		);
+		const modelOverrides = params.tasks.map((task, index) => {
+			const rawModel = (task.model ?? agentConfigs[index]?.model) || undefined;
+			// "inherit" or no model specified → use parent session's actual model to avoid
+			// falling back to the global settings.json default (cross-session contamination).
+			if ((rawModel === "inherit" || rawModel === undefined) && ctx.model) {
+				return `${ctx.model.provider}/${ctx.model.id}`;
+			}
+			return resolveModelCandidate(rawModel, availableModels, currentProvider);
+		});
 		const skillOverrides = params.tasks.map((task) => normalizeSkillInput(task.skill));
 		const parallelTasks = params.tasks.map((task, index) => ({
 			agent: task.agent,
@@ -1179,7 +1185,12 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
 		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
-		const modelOverride = resolveModelCandidate((params.model as string | undefined) ?? a.model, availableModels, currentProvider);
+		const rawModelSingle = ((params.model as string | undefined) ?? (a.model || undefined));
+		// "inherit" or no model specified → use parent session's actual model to avoid
+		// falling back to the global settings.json default (cross-session contamination).
+		const modelOverride = (rawModelSingle === "inherit" || rawModelSingle === undefined) && ctx.model
+			? `${ctx.model.provider}/${ctx.model.id}`
+			: resolveModelCandidate(rawModelSingle, availableModels, currentProvider);
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
 			task: params.context === "fork" ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
