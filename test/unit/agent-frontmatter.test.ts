@@ -621,6 +621,72 @@ Canonical prompt
 		assert.equal(result.projectAgentsDir, path.join(dir, ".pi", "agents"));
 	});
 
+	it("does not treat legacy .agents/skills files as project agents", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-skill-agent-noise-"));
+		tempDirs.push(dir);
+		const legacyAgentPath = path.join(dir, ".agents", "legacy.md");
+		const legacySkillPath = path.join(dir, ".agents", "skills", "legacy-skill", "SKILL.md");
+		fs.mkdirSync(path.dirname(legacyAgentPath), { recursive: true });
+		fs.mkdirSync(path.dirname(legacySkillPath), { recursive: true });
+		fs.writeFileSync(legacyAgentPath, `---
+name: legacy-agent
+description: Legacy agent
+---
+
+Legacy prompt
+`, "utf-8");
+		fs.writeFileSync(legacySkillPath, `---
+name: legacy-skill-agent
+description: Legacy skill
+---
+
+Skill instructions
+`, "utf-8");
+
+		const agents = discoverAgents(dir, "project").agents;
+		assert.ok(agents.find((agent) => agent.name === "legacy-agent" && agent.filePath === legacyAgentPath));
+		assert.equal(agents.some((agent) => agent.name === "legacy-skill-agent" || agent.filePath === legacySkillPath), false);
+	});
+
+	it("does not treat ~/.agents/skills files as user agents", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-skill-agent-cwd-"));
+		const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-skill-agent-home-"));
+		tempDirs.push(dir, home);
+		const oldHome = process.env.HOME;
+		const oldUserProfile = process.env.USERPROFILE;
+		process.env.HOME = home;
+		process.env.USERPROFILE = home;
+		try {
+			const userAgentPath = path.join(home, ".agents", "user-agent.md");
+			const userSkillPath = path.join(home, ".agents", "skills", "user-skill", "SKILL.md");
+			fs.mkdirSync(path.dirname(userAgentPath), { recursive: true });
+			fs.mkdirSync(path.dirname(userSkillPath), { recursive: true });
+			fs.writeFileSync(userAgentPath, `---
+name: user-agent
+description: User agent
+---
+
+User prompt
+`, "utf-8");
+			fs.writeFileSync(userSkillPath, `---
+name: user-skill-agent
+description: User skill
+---
+
+Skill instructions
+`, "utf-8");
+
+			const agents = discoverAgents(dir, "user").agents;
+			assert.ok(agents.find((agent) => agent.name === "user-agent" && agent.filePath === userAgentPath));
+			assert.equal(agents.some((agent) => agent.name === "user-skill-agent" || agent.filePath === userSkillPath), false);
+		} finally {
+			if (oldHome === undefined) delete process.env.HOME;
+			else process.env.HOME = oldHome;
+			if (oldUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = oldUserProfile;
+		}
+	});
+
 	it("prefers .pi/agents over .agents on project agent name collisions", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-agent-collision-"));
 		tempDirs.push(dir);

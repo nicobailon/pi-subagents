@@ -111,6 +111,49 @@ describe("skills filesystem fallback", () => {
 		assert.match(resolved[0]?.content ?? "", /Project version/);
 	});
 
+	it("prefers project-package skills over legacy project .agents skills with the same name", () => {
+		makeProjectPackageSkill(tempDir, "test-skill-package", "legacy-shadowed-skill", "Package version");
+		const legacySkillDir = path.join(tempDir, ".agents", "skills", "legacy-shadowed-skill");
+		fs.mkdirSync(legacySkillDir, { recursive: true });
+		fs.writeFileSync(path.join(legacySkillDir, "SKILL.md"), "Legacy version\n", "utf-8");
+
+		const { resolved, missing } = resolveSkills(["legacy-shadowed-skill"], tempDir);
+		assert.deepEqual(missing, []);
+		assert.equal(resolved.length, 1);
+		assert.equal(resolved[0]?.source, "project-package");
+		assert.match(resolved[0]?.content ?? "", /Package version/);
+	});
+
+	it("prefers user-package skills over legacy user ~/.agents skills with the same name", async () => {
+		const fakeHome = path.join(tempDir, "fake-home");
+		const userAgentDir = path.join(fakeHome, ".pi", "agent");
+		const userPackageRoot = path.join(userAgentDir, "npm", "node_modules", "legacy-shadow-package");
+		const legacySkillDir = path.join(fakeHome, ".agents", "skills", "legacy-user-shadowed-skill");
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+
+		try {
+			process.env.HOME = fakeHome;
+			process.env.USERPROFILE = fakeHome;
+			makePackageSkill(userPackageRoot, "legacy-user-shadowed-skill", "User package version.", "legacy-shadow-package");
+			fs.mkdirSync(legacySkillDir, { recursive: true });
+			fs.writeFileSync(path.join(legacySkillDir, "SKILL.md"), "Legacy user version.\n", "utf-8");
+
+			const fresh = await importSkillsFresh();
+			fresh.clearSkillCache();
+			const { resolved, missing } = fresh.resolveSkills(["legacy-user-shadowed-skill"], tempDir);
+			assert.deepEqual(missing, []);
+			assert.equal(resolved.length, 1);
+			assert.equal(resolved[0]?.source, "user-package");
+			assert.match(resolved[0]?.content ?? "", /User package version/);
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
 	it("discovers skills from project settings packages", () => {
 		const packageRoot = path.join(tempDir, ".pi", "packages", "local-skill-pkg");
 		makePackageSkill(packageRoot, "settings-package-skill", "Settings package skill.");

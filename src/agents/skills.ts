@@ -37,11 +37,13 @@ interface CachedSkillEntry {
 	source: SkillSource;
 	description?: string;
 	order: number;
+	priority: number;
 }
 
 interface SkillSearchPath {
 	path: string;
 	source: SkillSource;
+	priority?: number;
 }
 
 const skillCache = new Map<string, SkillCacheEntry>();
@@ -64,6 +66,8 @@ const SOURCE_PRIORITY: Record<SkillSource, number> = {
 	builtin: 100,
 	unknown: 0,
 };
+const LEGACY_PROJECT_SKILL_PRIORITY = SOURCE_PRIORITY["project-package"] - 1;
+const LEGACY_USER_SKILL_PRIORITY = SOURCE_PRIORITY["user-package"] - 1;
 
 function stripSkillFrontmatter(content: string): string {
 	const normalized = content.replace(/\r\n/g, "\n");
@@ -89,9 +93,7 @@ function readOptionalJsonFile(filePath: string, label: string): unknown {
 			: undefined;
 		if (code === "ENOENT") return null;
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to read ${label} '${filePath}': ${message}`, {
-			cause: error instanceof Error ? error : undefined,
-		});
+		throw new Error(`Failed to read ${label} '${filePath}': ${message}`);
 	}
 }
 
@@ -316,11 +318,16 @@ function collectSettingsPackageSkillPaths(cwd: string, agentDir: string): SkillS
 }
 
 function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
+	const homeLegacySkills = path.resolve(os.homedir(), ".agents", "skills");
+	const projectLegacySkills = path.resolve(cwd, ".agents", "skills");
+	const legacyProjectSkillPaths: SkillSearchPath[] = projectLegacySkills === homeLegacySkills
+		? []
+		: [{ path: projectLegacySkills, source: "project", priority: LEGACY_PROJECT_SKILL_PRIORITY }];
 	const skillPaths: SkillSearchPath[] = [
 		{ path: path.join(cwd, CONFIG_DIR, "skills"), source: "project" },
-		{ path: path.join(cwd, ".agents", "skills"), source: "project" },
+		...legacyProjectSkillPaths,
 		{ path: path.join(agentDir, "skills"), source: "user" },
-		{ path: path.join(os.homedir(), ".agents", "skills"), source: "user" },
+		{ path: homeLegacySkills, source: "user", priority: LEGACY_USER_SKILL_PRIORITY },
 		...collectInstalledPackageSkillPaths(cwd, agentDir),
 		...collectSettingsPackageSkillPaths(cwd, agentDir),
 		...extractSkillPathsFromPackageRoot(cwd, "project-package"),
@@ -331,7 +338,7 @@ function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
 	for (const entry of skillPaths) {
 		const resolvedPath = path.resolve(entry.path);
 		if (!deduped.has(resolvedPath)) {
-			deduped.set(resolvedPath, { path: resolvedPath, source: entry.source });
+			deduped.set(resolvedPath, { path: resolvedPath, source: entry.source, priority: entry.priority });
 		}
 	}
 	return [...deduped.values()];
@@ -365,10 +372,8 @@ function inferSkillSource(filePath: string, cwd: string, agentDir: string, sourc
 
 function chooseHigherPrioritySkill(existing: CachedSkillEntry | undefined, candidate: CachedSkillEntry): CachedSkillEntry {
 	if (!existing) return candidate;
-	const existingPriority = SOURCE_PRIORITY[existing.source] ?? 0;
-	const candidatePriority = SOURCE_PRIORITY[candidate.source] ?? 0;
-	if (candidatePriority > existingPriority) return candidate;
-	if (candidatePriority < existingPriority) return existing;
+	if (candidate.priority > existing.priority) return candidate;
+	if (candidate.priority < existing.priority) return existing;
 	return candidate.order < existing.order ? candidate : existing;
 }
 
@@ -396,17 +401,19 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 	const seen = new Set<string>();
 	let order = 0;
 
-	const pushEntry = (name: string, filePath: string, sourceHint?: SkillSource) => {
+	const pushEntry = (name: string, filePath: string, sourceHint?: SkillSource, priorityHint?: number) => {
 		const resolvedFile = path.resolve(filePath);
 		if (seen.has(resolvedFile)) return;
 		if (!fs.existsSync(resolvedFile)) return;
 		seen.add(resolvedFile);
+		const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
 		entries.push({
 			name,
 			filePath: resolvedFile,
-			source: inferSkillSource(resolvedFile, cwd, agentDir, sourceHint),
+			source,
 			description: maybeReadSkillDescription(resolvedFile),
 			order: order++,
+			priority: priorityHint ?? SOURCE_PRIORITY[source] ?? SOURCE_PRIORITY.unknown,
 		});
 	};
 
@@ -426,7 +433,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 			const skillName = fileName.toLowerCase() === "skill.md"
 				? path.basename(path.dirname(skillPath.path))
 				: path.basename(fileName, path.extname(fileName));
-			pushEntry(skillName, skillPath.path, skillPath.source);
+			pushEntry(skillName, skillPath.path, skillPath.source, skillPath.priority);
 			continue;
 		}
 
@@ -434,7 +441,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 
 		const rootSkillFile = path.join(skillPath.path, "SKILL.md");
 		if (fs.existsSync(rootSkillFile)) {
-			pushEntry(path.basename(skillPath.path), rootSkillFile, skillPath.source);
+			pushEntry(path.basename(skillPath.path), rootSkillFile, skillPath.source, skillPath.priority);
 		}
 
 		let childEntries: fs.Dirent[];
@@ -450,12 +457,12 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 			if (child.isDirectory() || child.isSymbolicLink()) {
 				const nestedSkillPath = path.join(childPath, "SKILL.md");
 				if (fs.existsSync(nestedSkillPath)) {
-					pushEntry(child.name, nestedSkillPath, skillPath.source);
+					pushEntry(child.name, nestedSkillPath, skillPath.source, skillPath.priority);
 				}
 				continue;
 			}
 			if (child.isFile() && child.name.toLowerCase().endsWith(".md")) {
-				pushEntry(path.basename(child.name, path.extname(child.name)), childPath, skillPath.source);
+				pushEntry(path.basename(child.name, path.extname(child.name)), childPath, skillPath.source, skillPath.priority);
 			}
 		}
 	}

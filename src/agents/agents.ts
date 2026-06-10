@@ -238,7 +238,7 @@ function readSettingsFileStrict(filePath: string): Record<string, unknown> {
 		raw = fs.readFileSync(filePath, "utf-8");
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to read settings file '${filePath}': ${message}`, { cause: error });
+		throw new Error(`Failed to read settings file '${filePath}': ${message}`);
 	}
 
 	let parsed: unknown;
@@ -246,7 +246,7 @@ function readSettingsFileStrict(filePath: string): Record<string, unknown> {
 		parsed = JSON.parse(raw);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to parse settings file '${filePath}': ${message}`, { cause: error });
+		throw new Error(`Failed to parse settings file '${filePath}': ${message}`);
 	}
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 		throw new Error(`Settings file '${filePath}' must contain a JSON object.`);
@@ -559,10 +559,25 @@ function listMarkdownFilesRecursive(dir: string, predicate: (fileName: string) =
 	return files;
 }
 
+function isWithinDir(filePath: string, dir: string): boolean {
+	const relative = path.relative(dir, filePath);
+	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isLegacyAgentsRoot(dir: string): boolean {
+	return path.basename(path.resolve(dir)) === ".agents";
+}
+
+function isLegacySkillAgentFile(filePath: string, rootDir: string): boolean {
+	return isLegacyAgentsRoot(rootDir) && isWithinDir(filePath, path.join(rootDir, "skills"));
+}
+
 function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
 	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
+		if (isLegacySkillAgentFile(filePath, dir)) continue;
+
 		let content: string;
 		try {
 			content = fs.readFileSync(filePath, "utf-8");
@@ -689,7 +704,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 	return agents;
 }
 
-function loadChainsFromDir(dir: string, source: AgentSource): ChainConfig[] {
+function loadChainsFromDir(dir: string, source: Extract<AgentSource, "user" | "project">): ChainConfig[] {
 	const chains: ChainConfig[] = [];
 
 	for (const filePath of listMarkdownFilesRecursive(dir, (fileName) => fileName.endsWith(".chain.md"))) {
