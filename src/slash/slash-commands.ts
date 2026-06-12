@@ -245,7 +245,7 @@ async function requestSlashRun(
 			next();
 		};
 
-		pi.events.emit(SLASH_SUBAGENT_REQUEST_EVENT, { requestId, params });
+		pi.events.emit(SLASH_SUBAGENT_REQUEST_EVENT, { requestId, params, ctx });
 
 		// Bridge emits STARTED synchronously during REQUEST emit.
 		// If not started, no bridge received the request.

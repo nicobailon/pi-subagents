@@ -13,6 +13,8 @@ import {
 interface SlashSubagentRequest {
 	requestId: string;
 	params: SubagentParamsLike;
+	/** Optional requester context for in-process extension bridge calls. */
+	ctx?: ExtensionContext;
 }
 
 export interface SlashSubagentResponse {
@@ -77,7 +79,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 		if (typeof request.requestId !== "string" || !request.params) return;
 		const { requestId, params } = request as SlashSubagentRequest;
 
-		const ctx = options.getContext();
+		const ctx = request.ctx ?? options.getContext();
 		if (!ctx) {
 			const response: SlashSubagentResponse = {
 				requestId,
