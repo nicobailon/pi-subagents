@@ -3,7 +3,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, unlinkSync } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../../agents/agents.ts";
 import {
@@ -13,10 +15,13 @@ import {
 	writeMetadata,
 } from "../../shared/artifacts.ts";
 import {
+	type AcceptanceFinalizationTurn,
+	type AcceptanceLedger,
 	type AgentProgress,
 	type ArtifactPaths,
 	type ControlEvent,
 	type ModelAttempt,
+	type ResolvedAcceptanceConfig,
 	type RunSyncOptions,
 	type SingleResult,
 	type Usage,
@@ -39,9 +44,10 @@ import {
 	detectSubagentError,
 	extractToolArgsPreview,
 	extractTextFromContent,
+	formatResourceLimitExceeded,
 } from "../../shared/utils.ts";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
-import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+import { evaluateCompletionMutationGuard, resolveCompletionPolicy, type CompletionPolicy } from "../shared/completion-guard.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
@@ -64,7 +70,20 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceFailureMessage, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import {
+	acceptanceFailureMessage,
+	acceptanceSelfReviewConfig,
+	attachFinalizationToLedger,
+	buildFinalizationProcessFailureLedger,
+	createFinalizationProcessFailureTurn,
+	createFinalizationTurn,
+	evaluateAcceptance,
+	formatAcceptanceFinalizationPrompt,
+	formatAcceptancePrompt,
+	resolveEffectiveAcceptance,
+	shouldRunAcceptanceFinalization,
+	stripAcceptanceReport,
+} from "../shared/acceptance.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -88,6 +107,43 @@ function appendRecentOutput(progress: AgentProgress, lines: string[]): void {
 	if (progress.recentOutput.length > 50) {
 		progress.recentOutput.splice(0, progress.recentOutput.length - 50);
 	}
+}
+
+const FOREGROUND_TIMEOUT_EXIT_CODE = 124;
+
+function formatForegroundTimeoutMessage(timeoutMs: number | undefined): string {
+	return timeoutMs ? `Timed out after ${timeoutMs}ms.` : "Timed out.";
+}
+
+function createTimedOutResult(agent: string, task: string, options: RunSyncOptions): SingleResult {
+	const message = formatForegroundTimeoutMessage(options.timeoutMs);
+	return {
+		agent,
+		task,
+		exitCode: FOREGROUND_TIMEOUT_EXIT_CODE,
+		messages: [],
+		usage: emptyUsage(),
+		error: message,
+		finalOutput: message,
+		timedOut: true,
+		progress: {
+			index: options.index ?? 0,
+			agent,
+			status: "failed",
+			task,
+			recentTools: [],
+			recentOutput: [message],
+			toolCount: 0,
+			tokens: 0,
+			durationMs: 0,
+			lastActivityAt: Date.now(),
+		},
+		progressSummary: {
+			toolCount: 0,
+			tokens: 0,
+			durationMs: 0,
+		},
+	};
 }
 
 function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): void {
@@ -148,10 +204,11 @@ async function runSingleAttempt(
 		attemptNotes: string[];
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
+		completionPolicy: CompletionPolicy;
 	},
 ): Promise<SingleResult> {
 	const modelArg = applyThinkingSuffix(model, agent.thinking);
-		const { args, env: sharedEnv, tempDir } = buildPiArgs({
+	const { args, env: sharedEnv, tempDir } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
 		sessionEnabled: shared.sessionEnabled,
@@ -175,10 +232,10 @@ async function runSingleAttempt(
 		childIndex: options.index ?? 0,
 		parentEventSink: options.nestedRoute?.eventSink,
 		parentControlInbox: options.nestedRoute?.controlInbox,
-			parentRootRunId: options.nestedRoute?.rootRunId,
-			parentCapabilityToken: options.nestedRoute?.capabilityToken,
-			structuredOutput: options.structuredOutput,
-		});
+		parentRootRunId: options.nestedRoute?.rootRunId,
+		parentCapabilityToken: options.nestedRoute?.capabilityToken,
+		structuredOutput: options.structuredOutput,
+	});
 
 	const result: SingleResult = {
 		agent: agent.name,
@@ -244,6 +301,12 @@ async function runSingleAttempt(
 		let detached = false;
 		let intercomStarted = false;
 		let assistantError: string | undefined;
+		let timedOut = false;
+		let resourceLimited = false;
+		let timeoutTimer: NodeJS.Timeout | undefined;
+		let timeoutEscalationTimer: NodeJS.Timeout | undefined;
+		let resourceLimitTimer: NodeJS.Timeout | undefined;
+		let resourceLimitEscalationTimer: NodeJS.Timeout | undefined;
 		let removeAbortListener: (() => void) | undefined;
 		let removeInterruptListener: (() => void) | undefined;
 		let activityTimer: NodeJS.Timeout | undefined;
@@ -315,6 +378,22 @@ async function runSingleAttempt(
 			settled = true;
 			clearFinalDrainTimers();
 			clearStdioGuard();
+			if (timeoutTimer) {
+				clearTimeout(timeoutTimer);
+				timeoutTimer = undefined;
+			}
+			if (timeoutEscalationTimer) {
+				clearTimeout(timeoutEscalationTimer);
+				timeoutEscalationTimer = undefined;
+			}
+			if (resourceLimitTimer) {
+				clearTimeout(resourceLimitTimer);
+				resourceLimitTimer = undefined;
+			}
+			if (resourceLimitEscalationTimer) {
+				clearTimeout(resourceLimitEscalationTimer);
+				resourceLimitEscalationTimer = undefined;
+			}
 			if (activityTimer) {
 				clearInterval(activityTimer);
 				activityTimer = undefined;
@@ -409,6 +488,26 @@ async function runSingleAttempt(
 		};
 
 
+		const triggerResourceLimit = (kind: "maxExecutionTimeMs" | "maxTokens", limit: number, observed?: number) => {
+			if (processClosed || detached || settled || timedOut || resourceLimited) return;
+			resourceLimited = true;
+			const message = formatResourceLimitExceeded({ agent: agent.name, kind, limit, observed });
+			result.resourceLimitExceeded = { kind, limit, ...(observed !== undefined ? { observed } : {}), message };
+			result.error = message;
+			result.finalOutput = message;
+			progress.status = "failed";
+			progress.durationMs = Date.now() - startTime;
+			appendRecentOutput(progress, [message]);
+			progress.activityState = undefined;
+			fireUpdate();
+			trySignalChild(proc, "SIGINT");
+			resourceLimitEscalationTimer = setTimeout(() => {
+				if (settled || processClosed || detached) return;
+				trySignalChild(proc, "SIGTERM");
+			}, 1000);
+			resourceLimitEscalationTimer.unref?.();
+		};
+
 		const emitUpdateSnapshot = (text: string) => {
 			if (!options.onUpdate || processClosed) return;
 			const progressSnapshot = snapshotProgress(progress);
@@ -493,6 +592,9 @@ async function runSingleAttempt(
 						result.usage.cacheWrite += u.cacheWrite || 0;
 						result.usage.cost += u.cost?.total || 0;
 						progress.tokens = result.usage.input + result.usage.output;
+						if (options.maxTokens !== undefined && progress.tokens >= options.maxTokens) {
+							triggerResourceLimit("maxTokens", options.maxTokens, progress.tokens);
+						}
 					}
 					if (!result.model && evt.message.model) result.model = evt.message.model;
 					if (evt.message.errorMessage) assistantError = evt.message.errorMessage;
@@ -621,9 +723,45 @@ async function runSingleAttempt(
 			}
 		}
 
+		if (options.timeoutAt !== undefined) {
+			const triggerTimeout = () => {
+				if (processClosed || detached || settled || timedOut || resourceLimited) return;
+				timedOut = true;
+				const message = formatForegroundTimeoutMessage(options.timeoutMs);
+				result.timedOut = true;
+				result.error = message;
+				result.finalOutput = message;
+				progress.status = "failed";
+				progress.durationMs = Date.now() - startTime;
+				appendRecentOutput(progress, [message]);
+				progress.activityState = undefined;
+				fireUpdate();
+				trySignalChild(proc, "SIGINT");
+				timeoutEscalationTimer = setTimeout(() => {
+					if (settled || processClosed || detached) return;
+					trySignalChild(proc, "SIGTERM");
+				}, 1000);
+				timeoutEscalationTimer.unref?.();
+			};
+			const delay = options.timeoutAt - Date.now();
+			if (delay <= 0) triggerTimeout();
+			else {
+				timeoutTimer = setTimeout(triggerTimeout, delay);
+				timeoutTimer.unref?.();
+			}
+		}
+
+		if (options.maxExecutionTimeMs !== undefined) {
+			const maxExecutionTimeMs = options.maxExecutionTimeMs;
+			resourceLimitTimer = setTimeout(() => {
+				triggerResourceLimit("maxExecutionTimeMs", maxExecutionTimeMs);
+			}, maxExecutionTimeMs);
+			resourceLimitTimer.unref?.();
+		}
+
 		if (options.interruptSignal) {
 			const interrupt = () => {
-				if (processClosed || detached || settled) return;
+				if (processClosed || detached || settled || timedOut || resourceLimited) return;
 				interruptedByControl = true;
 				progress.status = "running";
 				progress.durationMs = Date.now() - startTime;
@@ -645,6 +783,40 @@ async function runSingleAttempt(
 		}
 	});
 	result.exitCode = exitCode;
+	if (result.resourceLimitExceeded) {
+		result.exitCode = 1;
+		result.error = result.error ?? result.resourceLimitExceeded.message;
+		result.finalOutput = result.finalOutput || result.error;
+		if (result.progress) {
+			result.progress.status = "failed";
+			result.progress.activityState = undefined;
+			result.progress.durationMs = Date.now() - startTime;
+		}
+		result.progressSummary = {
+			toolCount: progress.toolCount,
+			tokens: progress.tokens,
+			durationMs: result.progress?.durationMs ?? Date.now() - startTime,
+		};
+		result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+		return result;
+	}
+	if (result.timedOut) {
+		result.exitCode = FOREGROUND_TIMEOUT_EXIT_CODE;
+		result.error = result.error ?? formatForegroundTimeoutMessage(options.timeoutMs);
+		result.finalOutput = result.finalOutput || result.error;
+		if (result.progress) {
+			result.progress.status = "failed";
+			result.progress.activityState = undefined;
+			result.progress.durationMs = Date.now() - startTime;
+		}
+		result.progressSummary = {
+			toolCount: progress.toolCount,
+			tokens: progress.tokens,
+			durationMs: result.progress?.durationMs ?? Date.now() - startTime,
+		};
+		result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+		return result;
+	}
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -709,9 +881,9 @@ async function runSingleAttempt(
 		durationMs: progress.durationMs,
 	};
 
-		const acceptanceOutput = getFinalOutput(result.messages);
-		let fullOutput = stripAcceptanceReport(acceptanceOutput);
-	const completionGuard = result.exitCode === 0 && !result.error && agent.completionGuard !== false
+	const acceptanceOutput = getFinalOutput(result.messages);
+	let fullOutput = stripAcceptanceReport(acceptanceOutput);
+	const completionGuard = result.exitCode === 0 && !result.error && shared.completionPolicy === "mutation-guard"
 		? evaluateCompletionMutationGuard({
 			agent: agent.name,
 			task: shared.originalTask ?? task,
@@ -720,7 +892,8 @@ async function runSingleAttempt(
 			mcpDirectTools: agent.mcpDirectTools,
 		})
 		: undefined;
-	if (completionGuard?.triggered && !observedMutationAttempt) {
+	const completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	if (completionGuardTriggered) {
 		result.exitCode = 1;
 		result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
 		progress.status = "failed";
@@ -736,17 +909,17 @@ async function runSingleAttempt(
 			reason: "completion_guard",
 		}));
 	}
-		if (options.outputPath && result.exitCode === 0) {
-			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
-			fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
-			result.savedOutputPath = resolvedOutput.savedPath;
-			result.outputSaveError = resolvedOutput.saveError;
-			if (resolvedOutput.savedPath) {
-				result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
-			}
+	if (options.outputPath && result.exitCode === 0) {
+		const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
+		fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
+		result.savedOutputPath = resolvedOutput.savedPath;
+		result.outputSaveError = resolvedOutput.saveError;
+		if (resolvedOutput.savedPath) {
+			result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
+		}
 	}
-		artifactOutputByResult.set(result, fullOutput);
-		acceptanceOutputByResult.set(result, acceptanceOutput);
+	artifactOutputByResult.set(result, fullOutput);
+	acceptanceOutputByResult.set(result, acceptanceOutput);
 	result.outputMode = options.outputMode ?? "inline";
 	result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
 		? result.outputReference.message
@@ -767,6 +940,99 @@ async function runSingleAttempt(
 		});
 	}
 	return result;
+}
+
+async function runAcceptanceFinalizationLoop(input: {
+	runtimeCwd: string;
+	agent: AgentConfig;
+	result: SingleResult;
+	initialLedger: AcceptanceLedger;
+	initialOutput: string;
+	acceptance: ResolvedAcceptanceConfig;
+	options: RunSyncOptions;
+	systemPrompt: string;
+	resolvedSkillNames?: string[];
+	skillsWarning?: string;
+}): Promise<AcceptanceLedger> {
+	const sessionFile = input.result.sessionFile ?? input.options.sessionFile;
+	const maxTurns = input.acceptance.finalization.maxTurns;
+	const turns: AcceptanceFinalizationTurn[] = [];
+	if (!sessionFile) {
+		const message = "Acceptance finalization requires a session file for same-session continuation.";
+		turns.push(createFinalizationProcessFailureTurn({ turn: 1, prompt: "", message }));
+		return buildFinalizationProcessFailureLedger({ initialLedger: input.initialLedger, turns, maxTurns, message });
+	}
+
+	const selfReviewAcceptance = acceptanceSelfReviewConfig(input.acceptance);
+	let previousFailure = acceptanceFailureMessage(input.initialLedger);
+	let authoritativeLedger = input.initialLedger;
+	for (let turn = 1; turn <= maxTurns; turn++) {
+		const prompt = formatAcceptanceFinalizationPrompt({
+			acceptance: input.acceptance,
+			initialOutput: input.initialOutput,
+			initialLedger: input.initialLedger,
+			turn,
+			maxTurns,
+			...(previousFailure ? { previousFailure } : {}),
+		});
+		const finalizationOptions: RunSyncOptions = { ...input.options, sessionFile, outputMode: "inline" };
+		delete finalizationOptions.sessionDir;
+		delete finalizationOptions.outputPath;
+		delete finalizationOptions.structuredOutput;
+		delete finalizationOptions.onUpdate;
+		finalizationOptions.allowIntercomDetach = false;
+		const finalizationResult = await runSingleAttempt(
+			input.runtimeCwd,
+			input.agent,
+			prompt,
+			input.result.model,
+			finalizationOptions,
+			{
+				sessionEnabled: true,
+				systemPrompt: input.systemPrompt,
+				resolvedSkillNames: input.resolvedSkillNames,
+				skillsWarning: input.skillsWarning,
+				attemptNotes: [],
+				originalTask: prompt,
+				completionPolicy: "acceptance-contract",
+			},
+		);
+		sumUsage(input.result.usage, finalizationResult.usage);
+		input.result.progressSummary = {
+			toolCount: (input.result.progressSummary?.toolCount ?? 0) + (finalizationResult.progressSummary?.toolCount ?? 0),
+			tokens: input.result.usage.input + input.result.usage.output,
+			durationMs: (input.result.progressSummary?.durationMs ?? 0) + (finalizationResult.progressSummary?.durationMs ?? 0),
+		};
+		if (finalizationResult.controlEvents?.length) {
+			input.result.controlEvents = [...(input.result.controlEvents ?? []), ...finalizationResult.controlEvents];
+		}
+		const rawOutput = acceptanceOutputByResult.get(finalizationResult) ?? getFinalOutput(finalizationResult.messages) ?? finalizationResult.finalOutput ?? "";
+		if (finalizationResult.exitCode !== 0 || finalizationResult.error || finalizationResult.detached || finalizationResult.interrupted) {
+			const message = finalizationResult.error ?? "Acceptance finalization turn did not complete successfully.";
+			turns.push(createFinalizationProcessFailureTurn({ turn, prompt, rawOutput, message }));
+			return buildFinalizationProcessFailureLedger({ initialLedger: input.initialLedger, turns, maxTurns, message });
+		}
+		const selfReviewLedger = await evaluateAcceptance({
+			acceptance: selfReviewAcceptance,
+			output: rawOutput,
+			cwd: input.options.cwd ?? input.runtimeCwd,
+		});
+		authoritativeLedger = selfReviewLedger;
+		turns.push(createFinalizationTurn({ turn, prompt, rawOutput, ledger: selfReviewLedger }));
+		const failure = acceptanceFailureMessage(selfReviewLedger);
+		if (!failure) {
+			authoritativeLedger = input.acceptance === selfReviewAcceptance
+				? selfReviewLedger
+				: await evaluateAcceptance({
+					acceptance: input.acceptance,
+					output: rawOutput,
+					cwd: input.options.cwd ?? input.runtimeCwd,
+				});
+			return attachFinalizationToLedger({ initialLedger: input.initialLedger, authoritativeLedger, turns, status: "completed", maxTurns });
+		}
+		previousFailure = failure;
+	}
+	return attachFinalizationToLedger({ initialLedger: input.initialLedger, authoritativeLedger, turns, status: "failed", maxTurns });
 }
 
 /**
@@ -802,8 +1068,16 @@ export async function runSync(
 			error: outputModeValidationError,
 		};
 	}
+	if (options.timeoutAt !== undefined && Date.now() >= options.timeoutAt) {
+		return createTimedOutResult(agentName, task, options);
+	}
+	const effectiveOptions: RunSyncOptions = {
+		...options,
+		maxExecutionTimeMs: options.maxExecutionTimeMs ?? agent.maxExecutionTimeMs,
+		maxTokens: options.maxTokens ?? agent.maxTokens,
+	};
 
-	const shareEnabled = options.share === true;
+	const shareEnabled = effectiveOptions.share === true;
 	const effectiveAcceptance = resolveEffectiveAcceptance({
 		explicit: options.acceptance,
 		agentName,
@@ -813,6 +1087,10 @@ export async function runSync(
 		dynamic: options.acceptanceContext?.dynamic,
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 	});
+	if (shouldRunAcceptanceFinalization(effectiveAcceptance) && !options.sessionFile) {
+		const sessionDir = options.sessionDir ?? mkdtempSync(path.join(os.tmpdir(), "pi-subagent-finalization-"));
+		options.sessionFile = path.join(sessionDir, "session.jsonl");
+	}
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
@@ -850,13 +1128,13 @@ export async function runSync(
 
 	let artifactPathsResult: ArtifactPaths | undefined;
 	let jsonlPath: string | undefined;
-	if (options.artifactsDir && options.artifactConfig?.enabled !== false) {
-		artifactPathsResult = getArtifactPaths(options.artifactsDir, options.runId, agentName, options.index);
-		ensureArtifactsDir(options.artifactsDir);
-		if (options.artifactConfig?.includeInput !== false) {
+	if (effectiveOptions.artifactsDir && effectiveOptions.artifactConfig?.enabled !== false) {
+		artifactPathsResult = getArtifactPaths(effectiveOptions.artifactsDir, effectiveOptions.runId, agentName, effectiveOptions.index);
+		ensureArtifactsDir(effectiveOptions.artifactsDir);
+		if (effectiveOptions.artifactConfig?.includeInput !== false) {
 				writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${taskWithAcceptance}`);
 		}
-		if (options.artifactConfig?.includeJsonl !== false) {
+		if (effectiveOptions.artifactConfig?.includeJsonl !== false) {
 			jsonlPath = artifactPathsResult.jsonlPath;
 		}
 	}
@@ -866,8 +1144,8 @@ export async function runSync(
 	for (let i = 0; i < modelsToTry.length; i++) {
 		const candidate = modelsToTry[i];
 		if (candidate) attemptedModels.push(candidate);
-		const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-		const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, options, {
+		const outputSnapshot = captureSingleOutputSnapshot(effectiveOptions.outputPath);
+		const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, effectiveOptions, {
 			sessionEnabled,
 			systemPrompt,
 			resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
@@ -877,6 +1155,14 @@ export async function runSync(
 			attemptNotes,
 			outputSnapshot,
 			originalTask: task,
+			completionPolicy: resolveCompletionPolicy({
+				agent: agent.name,
+				task,
+				completionGuardEnabled: agent.completionGuard !== false,
+				usesAcceptanceContract: effectiveAcceptance.explicit,
+				tools: agent.tools,
+				mcpDirectTools: agent.mcpDirectTools,
+			}),
 		});
 		lastResult = result;
 		sumUsage(aggregateUsage, result.usage);
@@ -894,7 +1180,7 @@ export async function runSync(
 		if (attemptSucceeded) {
 			break;
 		}
-		if (!isRetryableModelFailure(result.error) || i === modelsToTry.length - 1) {
+		if (result.timedOut || result.resourceLimitExceeded || !isRetryableModelFailure(result.error) || i === modelsToTry.length - 1) {
 			break;
 		}
 		attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[i + 1]));
@@ -966,14 +1252,33 @@ export async function runSync(
 		if (sessionFile) result.sessionFile = sessionFile;
 	}
 
-		result.acceptance = await evaluateAcceptance({
+	const initialAcceptanceOutput = acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "";
+	const acceptanceForInitialReport = shouldRunAcceptanceFinalization(effectiveAcceptance)
+		? acceptanceSelfReviewConfig(effectiveAcceptance)
+		: effectiveAcceptance;
+	const initialAcceptance = await evaluateAcceptance({
+		acceptance: acceptanceForInitialReport,
+		output: initialAcceptanceOutput,
+		cwd: options.cwd ?? runtimeCwd,
+	});
+	result.acceptance = initialAcceptance;
+	if (shouldRunAcceptanceFinalization(effectiveAcceptance) && result.exitCode === 0 && !result.detached && !result.interrupted) {
+		result.acceptance = await runAcceptanceFinalizationLoop({
+			runtimeCwd,
+			agent,
+			result,
+			initialLedger: initialAcceptance,
+			initialOutput: initialAcceptanceOutput,
 			acceptance: effectiveAcceptance,
-			output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
-			cwd: options.cwd ?? runtimeCwd,
+			options,
+			systemPrompt,
+			resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
+			...(missingSkills.length > 0 ? { skillsWarning: `Skills not found: ${missingSkills.join(", ")}` } : {}),
 		});
-		const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
-		stripAcceptanceReportsFromMessages(result.messages);
-		if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted) {
+	}
+	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
+	stripAcceptanceReportsFromMessages(result.messages);
+	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted) {
 		result.exitCode = 1;
 		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
 		if (result.progress) {

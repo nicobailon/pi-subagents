@@ -46,6 +46,8 @@ export interface BuiltinAgentOverrideBase {
 	skills?: string[];
 	tools?: string[];
 	mcpDirectTools?: string[];
+	maxExecutionTimeMs?: number;
+	maxTokens?: number;
 	completionGuard?: boolean;
 }
 
@@ -61,6 +63,8 @@ interface BuiltinAgentOverrideConfig {
 	systemPrompt?: string;
 	skills?: string[] | false;
 	tools?: string[] | false;
+	maxExecutionTimeMs?: number | false;
+	maxTokens?: number | false;
 	completionGuard?: boolean;
 }
 
@@ -94,6 +98,8 @@ export interface AgentConfig {
 	defaultProgress?: boolean;
 	interactive?: boolean;
 	maxSubagentDepth?: number;
+	maxExecutionTimeMs?: number;
+	maxTokens?: number;
 	completionGuard?: boolean;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
@@ -203,6 +209,8 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		skills: agent.skills ? [...agent.skills] : undefined,
 		tools: agent.tools ? [...agent.tools] : undefined,
 		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
+		maxExecutionTimeMs: agent.maxExecutionTimeMs,
+		maxTokens: agent.maxTokens,
 		completionGuard: agent.completionGuard,
 	};
 }
@@ -222,6 +230,8 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
 		...(override.tools !== undefined ? { tools: override.tools === false ? false : [...override.tools] } : {}),
+		...(override.maxExecutionTimeMs !== undefined ? { maxExecutionTimeMs: override.maxExecutionTimeMs } : {}),
+		...(override.maxTokens !== undefined ? { maxTokens: override.maxTokens } : {}),
 		...(override.completionGuard !== undefined ? { completionGuard: override.completionGuard } : {}),
 	};
 }
@@ -359,6 +369,22 @@ function parseBuiltinOverrideEntry(
 		}
 	}
 
+	if ("maxExecutionTimeMs" in input) {
+		if (input.maxExecutionTimeMs === false || (typeof input.maxExecutionTimeMs === "number" && Number.isInteger(input.maxExecutionTimeMs) && input.maxExecutionTimeMs >= 1)) {
+			override.maxExecutionTimeMs = input.maxExecutionTimeMs;
+		} else {
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected an integer >= 1 or false.`);
+		}
+	}
+
+	if ("maxTokens" in input) {
+		if (input.maxTokens === false || (typeof input.maxTokens === "number" && Number.isInteger(input.maxTokens) && input.maxTokens >= 1)) {
+			override.maxTokens = input.maxTokens;
+		} else {
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'maxTokens'; expected an integer >= 1 or false.`);
+		}
+	}
+
 	if ("completionGuard" in input) {
 		if (typeof input.completionGuard === "boolean") {
 			override.completionGuard = input.completionGuard;
@@ -439,6 +465,8 @@ function applyBuiltinOverride(
 		next.tools = tools;
 		next.mcpDirectTools = mcpDirectTools;
 	}
+	if (override.maxExecutionTimeMs !== undefined) next.maxExecutionTimeMs = override.maxExecutionTimeMs === false ? undefined : override.maxExecutionTimeMs;
+	if (override.maxTokens !== undefined) next.maxTokens = override.maxTokens === false ? undefined : override.maxTokens;
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
 
 	return next;
@@ -479,7 +507,7 @@ function applyBuiltinOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "completionGuard">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "maxExecutionTimeMs" | "maxTokens" | "completionGuard">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -497,6 +525,8 @@ export function buildBuiltinOverrideConfig(
 	const baseTools = joinToolList(base);
 	const draftTools = joinToolList(draft);
 	if (!arraysEqual(draftTools, baseTools)) override.tools = draftTools ? [...draftTools] : false;
+	if (draft.maxExecutionTimeMs !== base.maxExecutionTimeMs) override.maxExecutionTimeMs = draft.maxExecutionTimeMs ?? false;
+	if (draft.maxTokens !== base.maxTokens) override.maxTokens = draft.maxTokens ?? false;
 	if ((draft.completionGuard !== false) !== (base.completionGuard !== false)) {
 		override.completionGuard = draft.completionGuard !== false;
 	}
@@ -665,6 +695,8 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		}
 
 		const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+		const parsedMaxExecutionTimeMs = Number(frontmatter.maxExecutionTimeMs);
+		const parsedMaxTokens = Number(frontmatter.maxTokens);
 		const completionGuard = frontmatter.completionGuard === "false"
 			? false
 			: frontmatter.completionGuard === "true"
@@ -697,6 +729,14 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			maxSubagentDepth:
 				Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
 					? parsedMaxSubagentDepth
+					: undefined,
+			maxExecutionTimeMs:
+				Number.isInteger(parsedMaxExecutionTimeMs) && parsedMaxExecutionTimeMs >= 1
+					? parsedMaxExecutionTimeMs
+					: undefined,
+			maxTokens:
+				Number.isInteger(parsedMaxTokens) && parsedMaxTokens >= 1
+					? parsedMaxTokens
 					: undefined,
 			completionGuard,
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,

@@ -60,6 +60,8 @@ interface AgentConfig {
 	progress?: boolean;
 	mcpDirectTools?: string[];
 	maxSubagentDepth?: number;
+	maxExecutionTimeMs?: number;
+	maxTokens?: number;
 	completionGuard?: boolean;
 }
 

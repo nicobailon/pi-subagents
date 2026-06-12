@@ -313,6 +313,18 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.maxSubagentDepth = cfg.maxSubagentDepth;
 		} else return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
 	}
+	if (hasKey(cfg, "maxExecutionTimeMs")) {
+		if (cfg.maxExecutionTimeMs === false || cfg.maxExecutionTimeMs === "") target.maxExecutionTimeMs = undefined;
+		else if (typeof cfg.maxExecutionTimeMs === "number" && Number.isInteger(cfg.maxExecutionTimeMs) && cfg.maxExecutionTimeMs >= 1) {
+			target.maxExecutionTimeMs = cfg.maxExecutionTimeMs;
+		} else return "config.maxExecutionTimeMs must be an integer >= 1 or false when provided.";
+	}
+	if (hasKey(cfg, "maxTokens")) {
+		if (cfg.maxTokens === false || cfg.maxTokens === "") target.maxTokens = undefined;
+		else if (typeof cfg.maxTokens === "number" && Number.isInteger(cfg.maxTokens) && cfg.maxTokens >= 1) {
+			target.maxTokens = cfg.maxTokens;
+		} else return "config.maxTokens must be an integer >= 1 or false when provided.";
+	}
 	if (hasKey(cfg, "completionGuard")) {
 		if (typeof cfg.completionGuard !== "boolean") return "config.completionGuard must be a boolean when provided.";
 		target.completionGuard = cfg.completionGuard;
@@ -386,6 +398,8 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultReads?.length) lines.push(`Reads: ${agent.defaultReads.join(", ")}`);
 	if (agent.defaultProgress) lines.push("Progress: true");
 	if (agent.maxSubagentDepth !== undefined) lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
+	if (agent.maxExecutionTimeMs !== undefined) lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
+	if (agent.maxTokens !== undefined) lines.push(`Max tokens: ${agent.maxTokens}`);
 	if (agent.completionGuard === false) lines.push("Completion guard: false");
 	if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);
 	return lines.join("\n");

@@ -21,6 +21,8 @@ export const KNOWN_FIELDS = new Set([
 	"defaultProgress",
 	"interactive",
 	"maxSubagentDepth",
+	"maxExecutionTimeMs",
+	"maxTokens",
 	"completionGuard",
 ]);
 
@@ -70,6 +72,14 @@ export function serializeAgent(config: AgentConfig): string {
 	const maxSubagentDepth = config.maxSubagentDepth;
 	if (typeof maxSubagentDepth === "number" && Number.isInteger(maxSubagentDepth) && maxSubagentDepth >= 0) {
 		lines.push(`maxSubagentDepth: ${maxSubagentDepth}`);
+	}
+	const maxExecutionTimeMs = config.maxExecutionTimeMs;
+	if (typeof maxExecutionTimeMs === "number" && Number.isInteger(maxExecutionTimeMs) && maxExecutionTimeMs >= 1) {
+		lines.push(`maxExecutionTimeMs: ${maxExecutionTimeMs}`);
+	}
+	const maxTokens = config.maxTokens;
+	if (typeof maxTokens === "number" && Number.isInteger(maxTokens) && maxTokens >= 1) {
+		lines.push(`maxTokens: ${maxTokens}`);
 	}
 	if (config.completionGuard === false) lines.push("completionGuard: false");
 

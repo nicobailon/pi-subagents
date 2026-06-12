@@ -49,6 +49,11 @@ function formatResumeGuidance(runId: string | undefined, children: Array<{ agent
 	return "Resume: unavailable; no child session file was persisted.";
 }
 
+function formatAcceptanceFinalizationSummary(finalization: NonNullable<NonNullable<AsyncStatus["steps"]>[number]["acceptance"]>["finalization"] | undefined): string {
+	if (!finalization) return "";
+	return `, finalization: ${finalization.status} after ${finalization.turns.length}/${finalization.maxTurns} turns`;
+}
+
 function stepLineLabel(status: AsyncStatus, index: number): string {
 	const steps = status.steps ?? [];
 	if (status.mode === "parallel") return `Agent ${index + 1}/${steps.length || 1}`;
@@ -217,7 +222,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const modelThinking = formatModelThinking(step.model, step.thinking);
 				const modelText = modelThinking ? ` (${modelThinking})` : "";
 				const errorText = step.error ? `, error: ${step.error}` : "";
-				const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
+				const finalizationText = formatAcceptanceFinalizationSummary(step.acceptance?.finalization);
+				const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}${finalizationText}` : "";
 				const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${acceptanceText}${errorText}`);

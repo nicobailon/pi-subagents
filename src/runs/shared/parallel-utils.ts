@@ -1,3 +1,6 @@
+import type { DynamicCollectSpec, DynamicExpandSpec } from "../../shared/settings.ts";
+import type { JsonSchemaObject, ResolvedAcceptanceConfig } from "../../shared/types.ts";
+
 export interface RunnerSubagentStep {
 	agent: string;
 	task: string;
@@ -22,13 +25,15 @@ export interface RunnerSubagentStep {
 	outputMode?: "inline" | "file-only";
 	sessionFile?: string;
 	maxSubagentDepth?: number;
+	maxExecutionTimeMs?: number;
+	maxTokens?: number;
 	structuredOutput?: {
-		schema: import("../../shared/types.ts").JsonSchemaObject;
+		schema: JsonSchemaObject;
 		schemaPath: string;
 		outputPath: string;
 	};
-	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
-	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+	structuredOutputSchema?: JsonSchemaObject;
+	effectiveAcceptance?: ResolvedAcceptanceConfig;
 }
 
 export interface ParallelStepGroup {
@@ -39,14 +44,13 @@ export interface ParallelStepGroup {
 }
 
 export interface DynamicRunnerGroup {
-	expand: import("../../shared/settings.ts").DynamicExpandSpec;
+	expand: DynamicExpandSpec;
 	parallel: RunnerSubagentStep;
-	collect: import("../../shared/settings.ts").DynamicCollectSpec;
+	collect: DynamicCollectSpec;
 	concurrency?: number;
 	failFast?: boolean;
 	phase?: string;
 	label?: string;
-	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;

@@ -205,6 +205,13 @@ export function getSingleResultOutput(result: Pick<SingleResult, "finalOutput" |
 	return result.finalOutput ?? getFinalOutput(result.messages ?? []);
 }
 
+export function formatResourceLimitExceeded(input: { agent: string; kind: "maxExecutionTimeMs" | "maxTokens"; limit: number; observed?: number }): string {
+	if (input.kind === "maxExecutionTimeMs") {
+		return `Resource limit exceeded for ${input.agent}: maxExecutionTimeMs ${input.limit}ms.`;
+	}
+	return `Resource limit exceeded for ${input.agent}: maxTokens ${input.limit}${input.observed !== undefined ? ` (observed ${input.observed})` : ""}.`;
+}
+
 /**
  * Extract display items (text and tool calls) from messages
  */

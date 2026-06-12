@@ -114,6 +114,49 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows acceptance finalization turn counts in detailed async status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-acceptance-finalization-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-acceptance");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-acceptance",
+				mode: "single",
+				state: "failed",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					status: "failed",
+					acceptance: {
+						status: "rejected",
+						finalization: {
+							mode: "self-review-loop",
+							status: "failed",
+							maxTurns: 2,
+							turns: [
+								{ turn: 1, status: "rejected", prompt: "", rawOutput: "", runtimeChecks: [], verifyRuns: [] },
+								{ turn: 2, status: "rejected", prompt: "", rawOutput: "", runtimeChecks: [], verifyRuns: [] },
+							],
+						},
+					},
+				}],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-acceptance" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Step 1: worker failed, acceptance: rejected, finalization: failed after 2\/2 turns/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows nested runs under owning steps with exact status hints", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-nested-root-"));
 		const route = createNestedRoute("run-nested-root");

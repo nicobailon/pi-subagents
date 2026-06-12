@@ -222,11 +222,22 @@ function firstOutputLine(text: string): string {
 	return text.split("\n").find((line) => line.trim())?.trim() ?? "";
 }
 
+function formatAcceptanceStatus(result: Details["results"][number]): string | undefined {
+	const acceptance = result.acceptance;
+	if (!acceptance?.status || acceptance.status === "not-required") return undefined;
+	const finalization = acceptance.finalization
+		? ` · finalization: ${acceptance.finalization.status} after ${acceptance.finalization.turns.length}/${acceptance.finalization.maxTurns} turns`
+		: "";
+	return `acceptance: ${acceptance.status}${finalization}`;
+}
+
 function resultStatusLine(result: Details["results"][number], output: string): string {
 	if (result.detached) return result.detachedReason ? `Detached: ${result.detachedReason}` : "Detached";
+	if (result.timedOut) return `Timed out${result.error ? `: ${result.error}` : ""}`;
 	if (result.interrupted) return "Paused";
 	if (result.exitCode !== 0) return `Error: ${result.error ?? (firstOutputLine(output) || `exit ${result.exitCode}`)}`;
-	if (result.acceptance?.status && result.acceptance.status !== "not-required") return `Done · acceptance: ${result.acceptance.status}`;
+	const acceptance = formatAcceptanceStatus(result);
+	if (acceptance) return `Done · ${acceptance}`;
 	if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return "Done (no text output)";
 	return "Done";
 }
@@ -234,6 +245,7 @@ function resultStatusLine(result: Details["results"][number], output: string): s
 function resultGlyph(result: Details["results"][number], output: string, theme: Theme, running = result.progress?.status === "running", seed = progressRunningSeed(result.progress ?? result.progressSummary)): string {
 	if (running) return theme.fg("accent", runningGlyph(seed));
 	if (result.detached) return theme.fg("warning", "■");
+	if (result.timedOut) return theme.fg("error", "✗");
 	if (result.interrupted) return theme.fg("warning", "■");
 	if (result.exitCode !== 0) return theme.fg("error", "✗");
 	if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return theme.fg("warning", "✓");
@@ -353,18 +365,19 @@ function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
 	return theme.fg("error", "✗");
 }
 
-function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: number): string {
+function widgetStepGlyph(status: AsyncJobStep["status"] | WorkflowNodeStatus, theme: Theme, seed?: number): string {
 	if (status === "running") return theme.fg("accent", runningGlyph(seed));
 	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
-	if (status === "failed") return theme.fg("error", "✗");
+	if (status === "failed" || status === "timed-out") return theme.fg("error", "✗");
 	if (status === "paused") return theme.fg("warning", "■");
 	return theme.fg("muted", "◦");
 }
 
-function widgetStepStatus(status: AsyncJobStep["status"], theme: Theme): string {
+function widgetStepStatus(status: AsyncJobStep["status"] | WorkflowNodeStatus, theme: Theme): string {
 	if (status === "running") return theme.fg("accent", "running");
 	if (status === "complete" || status === "completed") return theme.fg("success", "complete");
 	if (status === "failed") return theme.fg("error", "failed");
+	if (status === "timed-out") return theme.fg("error", "timed out");
 	if (status === "paused") return theme.fg("warning", "paused");
 	return theme.fg("dim", status);
 }
@@ -501,7 +514,7 @@ function isDoneResult(result: Details["results"][number]): boolean {
 	const status = result.progress?.status;
 	if (status === "completed") return true;
 	if (status === "running" || status === "pending") return false;
-	if (result.interrupted || result.detached) return false;
+	if (result.interrupted || result.detached || result.timedOut) return false;
 	return result.exitCode === 0;
 }
 
@@ -573,7 +586,7 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 
 	if (details.mode === "parallel") {
 		const totalCount = details.totalSteps ?? details.results.length;
-		const statuses = new Array(totalCount).fill("pending") as Array<"pending" | "running" | "completed" | "failed" | "detached">;
+		const statuses = new Array(totalCount).fill("pending") as WorkflowNodeStatus[];
 		for (const progress of details.progress ?? []) {
 			if (progress.index >= 0 && progress.index < totalCount) statuses[progress.index] = progress.status;
 		}
@@ -584,11 +597,13 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 			const index = result.progress?.index ?? progressFromArray?.index ?? i;
 			if (index < 0 || index >= totalCount) continue;
 			const status = result.progress?.status
-				?? (result.interrupted || result.detached
-					? "detached"
-					: result.exitCode === 0
-						? "completed"
-						: "failed");
+				?? (result.timedOut
+					? "timed-out"
+					: result.interrupted || result.detached
+						? "detached"
+						: result.exitCode === 0
+							? "completed"
+							: "failed");
 			statuses[index] = status;
 		}
 		const running = statuses.filter((status) => status === "running").length;
@@ -748,6 +763,29 @@ function nestedRunSeed(run: NestedRunSummary): number | undefined {
 	return runningSeed(run.lastUpdate, run.lastActivityAt, run.currentStep, run.toolCount, run.turnCount, run.totalTokens?.total, run.currentToolStartedAt);
 }
 
+function formatClockTime(ms: number | undefined): string | undefined {
+	if (ms === undefined || !Number.isFinite(ms)) return undefined;
+	const date = new Date(ms);
+	const pad = (value: number) => value.toString().padStart(2, "0");
+	return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function nestedRunTimestamp(run: NestedRunSummary): string | undefined {
+	return formatClockTime(run.state === "running"
+		? (run.lastActivityAt ?? run.currentToolStartedAt ?? run.lastUpdate ?? run.startedAt)
+		: (run.endedAt ?? run.lastUpdate ?? run.lastActivityAt ?? run.startedAt));
+}
+
+function nestedStepTimestamp(step: NestedStepSummary, fallback?: number): string | undefined {
+	return formatClockTime(step.status === "running"
+		? (step.lastActivityAt ?? step.currentToolStartedAt ?? fallback ?? step.startedAt)
+		: (step.endedAt ?? step.lastActivityAt ?? fallback ?? step.startedAt));
+}
+
+function nestedTimestampPrefix(timestamp: string | undefined): string {
+	return timestamp ? `[${timestamp}] ` : "";
+}
+
 function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount">, state: NestedRunSummary["state"] | NestedStepSummary["status"], snapshotNow?: number): string {
 	const facts: string[] = [];
 	if (input.currentTool && input.currentToolStartedAt !== undefined && snapshotNow !== undefined) facts.push(`${input.currentTool} ${formatDuration(Math.max(0, snapshotNow - input.currentToolStartedAt))}`);
@@ -766,11 +804,17 @@ function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activ
 	return "Done";
 }
 
+function nestedChildrenForResult(details: Details, resultIndex: number): NestedRunSummary[] | undefined {
+	const children = details.nestedChildren?.filter((child) => child.parentStepIndex === resultIndex);
+	return children?.length ? children : undefined;
+}
+
 function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme: Theme, width: number, expanded: boolean, snapshotNow?: number, lineBudget = expanded ? 12 : 1): string[] {
 	if (!children?.length || lineBudget <= 0) return [];
 	if (!expanded) {
 		const aggregate = formatNestedAggregate(children);
-		return aggregate ? [theme.fg("dim", `↳ ${aggregate}`)] : [];
+		const latest = children.reduce((acc, child) => Math.max(acc, child.lastUpdate ?? child.lastActivityAt ?? child.startedAt ?? 0), 0);
+		return aggregate ? [theme.fg("dim", `↳ ${nestedTimestampPrefix(formatClockTime(latest || undefined))}${aggregate}`)] : [];
 	}
 	const lines: string[] = [];
 	const maxDepth = 2;
@@ -790,7 +834,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate);
 			const error = child.error ? ` · ${child.error}` : "";
-			lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${error}`));
+			lines.push(theme.fg("dim", `${prefix}↳ ${nestedTimestampPrefix(nestedRunTimestamp(child))}${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${error}`));
 			if (depth === maxDepth) {
 				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
 				if (aggregate && lines.length < lineBudget) lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
@@ -798,7 +842,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
-				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
+				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
 			append(child.children, depth + 1, `${prefix}  `);
@@ -1029,11 +1073,17 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 		c.addChild(new Text(truncLine(theme.fg("dim", `  ⎿  ${activity}`), width), 0, 0));
 		const liveStatus = buildLiveStatusLine(r.progress, progressSnapshotNow);
 		if (liveStatus && liveStatus !== activity) c.addChild(new Text(truncLine(theme.fg("dim", `     ${liveStatus}`), width), 0, 0));
+		for (const nestedLine of formatNestedWidgetLines(d.nestedChildren, theme, width, false, progressSnapshotNow)) {
+			c.addChild(new Text(truncLine(`  ${nestedLine}`, width), 0, 0));
+		}
 		c.addChild(new Text(truncLine(theme.fg("accent", "  Press Ctrl+O for live detail"), width), 0, 0));
 		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `  output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
 		return c;
 	}
 
+	for (const nestedLine of formatNestedWidgetLines(d.nestedChildren, theme, width, true, undefined, 4)) {
+		c.addChild(new Text(truncLine(`  ${nestedLine}`, width), 0, 0));
+	}
 	c.addChild(new Text(truncLine(theme.fg("dim", `  ⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
 	const preview = firstOutputLine(output);
 	if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
@@ -1050,7 +1100,7 @@ function renderMultiCompact(d: Details, theme: Theme): Component {
 		|| d.results.some((r) => r.progress?.status === "running")
 		|| workflowGraphHasStatus(d, ["running"]);
 	const failed = d.results.some((r) => r.exitCode !== 0 && r.progress?.status !== "running")
-		|| workflowGraphHasStatus(d, ["failed"]);
+		|| workflowGraphHasStatus(d, ["failed", "timed-out"]);
 	const paused = d.results.some((r) => (r.interrupted || r.detached) && r.progress?.status !== "running")
 		|| workflowGraphHasStatus(d, ["paused", "detached"]);
 	let totalSummary = d.progressSummary;
@@ -1125,8 +1175,11 @@ function renderMultiCompact(d: Details, theme: Theme): Component {
 		if (rRunning && rProg && "status" in rProg) {
 			const activity = compactCurrentActivity(rProg);
 			c.addChild(new Text(truncLine(theme.fg("dim", `    ⎿  ${activity}`), width), 0, 0));
+			for (const nestedLine of formatNestedWidgetLines(nestedChildrenForResult(d, i), theme, width, false, snapshotNowForProgress(rProg))) {
+				c.addChild(new Text(truncLine(`    ${nestedLine}`, width), 0, 0));
+			}
 			c.addChild(new Text(truncLine(theme.fg("accent", "    Press Ctrl+O for live detail"), width), 0, 0));
-		} else if (!rPending && (r.exitCode !== 0 || r.interrupted || r.detached || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
+		} else if (!rPending && (r.exitCode !== 0 || r.interrupted || r.detached || r.timedOut || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
 			c.addChild(new Text(truncLine(theme.fg(r.exitCode !== 0 ? "error" : "dim", `    ⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
 		}
 		const outputTarget = extractOutputTarget(r.task);
@@ -1193,6 +1246,9 @@ export function renderSubagentResult(
 
 		if (isRunning && r.progress) {
 			const progressSnapshotNow = snapshotNowForProgress(r.progress);
+			for (const nestedLine of formatNestedWidgetLines(d.nestedChildren, theme, w, expanded, progressSnapshotNow, expanded ? 12 : 1)) {
+				c.addChild(new Text(fit(`  ${nestedLine}`), 0, 0));
+			}
 			const toolLine = formatCurrentToolLine(r.progress, w, expanded, progressSnapshotNow);
 			if (toolLine) {
 				c.addChild(new Text(fit(theme.fg("warning", `> ${toolLine}`)), 0, 0));
@@ -1263,7 +1319,7 @@ export function renderSubagentResult(
 		&& r.progress?.status !== "running"
 		&& hasEmptyTextOutputWithoutOutputTarget(r.task, getSingleResultOutput(r)),
 	);
-	const hasWorkflowFailure = workflowGraphHasStatus(d, ["failed"]);
+	const hasWorkflowFailure = workflowGraphHasStatus(d, ["failed", "timed-out"]);
 	const hasWorkflowPause = workflowGraphHasStatus(d, ["paused", "detached"]);
 	const icon = hasRunning
 		? theme.fg("warning", "running")
@@ -1434,6 +1490,9 @@ export function renderSubagentResult(
 			const liveStatusLine = buildLiveStatusLine(rProg, progressSnapshotNow);
 			if (liveStatusLine) {
 				c.addChild(new Text(fit(theme.fg("accent", `    ${liveStatusLine}`)), 0, 0));
+			}
+			for (const nestedLine of formatNestedWidgetLines(nestedChildrenForResult(d, i), theme, w, expanded, progressSnapshotNow, expanded ? 8 : 1)) {
+				c.addChild(new Text(fit(`    ${nestedLine}`), 0, 0));
 			}
 			c.addChild(new Text(fit(theme.fg("accent", "    Press Ctrl+O for live detail")), 0, 0));
 			if (r.artifactPaths) {

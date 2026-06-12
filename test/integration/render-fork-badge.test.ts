@@ -8,6 +8,7 @@ type RenderSubagentResult = (
 			mode: "single" | "parallel" | "chain" | "management";
 			context?: "fresh" | "fork";
 			results: unknown[];
+			nestedChildren?: unknown[];
 		};
 	},
 	options: { expanded: boolean },
@@ -58,6 +59,37 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /\[fork\]/);
+	});
+
+	it("shows nested foreground children with timestamps on running single results", () => {
+		const widget = renderSubagentResult!({
+			content: [{ type: "text", text: "running" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "execute",
+					task: "run plan",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					progress: { status: "running", index: 0, agent: "execute", toolCount: 1, tokens: 10, durationMs: 1_000, lastActivityAt: 1_700_000_001_000 },
+				}],
+				nestedChildren: [{
+					id: "impl-1",
+					parentRunId: "root",
+					parentStepIndex: 0,
+					depth: 1,
+					path: [{ runId: "root", stepIndex: 0, agent: "execute" }],
+					state: "running",
+					agent: "implement",
+					lastUpdate: 1_700_000_002_000,
+					currentTool: "bash",
+				}],
+			},
+		}, { expanded: false }, theme);
+
+		const text = widget.render(120).join("\n");
+		assert.match(text, /↳ \[\d{2}:\d{2}:\d{2}\] \+1 nested run \(1 running\)/);
 	});
 
 	it("shows [fork] on single-result header", () => {
@@ -162,6 +194,34 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /1\.2k token/);
 		assert.match(text, /⎿  Done/);
 		assert.match(text, /session: \/tmp\/session\.jsonl/);
+	});
+
+	it("shows finalization turn counts in acceptance status", () => {
+		const widget = renderSubagentResult!({
+			content: [{ type: "text", text: "done" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "worker",
+					task: "implement",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					acceptance: {
+						status: "checked",
+						finalization: {
+							mode: "self-review-loop",
+							status: "completed",
+							maxTurns: 3,
+							turns: [{ turn: 1, status: "checked", prompt: "", rawOutput: "", runtimeChecks: [], verifyRuns: [] }],
+						},
+					},
+				}],
+			},
+		}, { expanded: false }, theme);
+
+		const text = widget.render(120).join("\n");
+		assert.match(text, /acceptance: checked · finalization: completed after 1\/3 turns/);
 	});
 
 	it("keeps failure reasons visible in compact rendering", () => {

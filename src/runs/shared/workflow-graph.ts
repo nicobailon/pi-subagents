@@ -5,7 +5,7 @@ export interface WorkflowGraphBuildInput {
 	runId: string;
 	mode?: SubagentRunMode;
 	steps: ChainStep[];
-	results?: Array<Pick<SingleResult, "exitCode" | "detached" | "interrupted" | "error" | "acceptance">>;
+	results?: Array<Pick<SingleResult, "exitCode" | "detached" | "interrupted" | "timedOut" | "error" | "acceptance">>;
 	currentFlatIndex?: number;
 	currentStepIndex?: number;
 	stepStatuses?: Array<{ status?: string; error?: string }>;
@@ -26,6 +26,8 @@ function normalizeStatus(status: string | undefined): WorkflowNodeStatus | undef
 			return "paused";
 		case "detached":
 			return "detached";
+		case "timed-out":
+			return "timed-out";
 		case "pending":
 			return "pending";
 		default:
@@ -33,9 +35,10 @@ function normalizeStatus(status: string | undefined): WorkflowNodeStatus | undef
 	}
 }
 
-function resultStatus(result: Pick<SingleResult, "exitCode" | "detached" | "interrupted"> | undefined): WorkflowNodeStatus | undefined {
+function resultStatus(result: Pick<SingleResult, "exitCode" | "detached" | "interrupted" | "timedOut"> | undefined): WorkflowNodeStatus | undefined {
 	if (!result) return undefined;
 	if (result.detached) return "detached";
+	if (result.timedOut) return "timed-out";
 	if (result.interrupted) return "paused";
 	return result.exitCode === 0 ? "completed" : "failed";
 }
@@ -63,6 +66,7 @@ function seqLabel(step: SequentialStep, stepIndex: number): string {
 function summarizeParallelStatuses(statuses: WorkflowNodeStatus[]): WorkflowNodeStatus {
 	if (statuses.some((status) => status === "running")) return "running";
 	if (statuses.some((status) => status === "failed")) return "failed";
+	if (statuses.some((status) => status === "timed-out")) return "timed-out";
 	if (statuses.some((status) => status === "paused")) return "paused";
 	if (statuses.some((status) => status === "detached")) return "detached";
 	if (statuses.length > 0 && statuses.every((status) => status === "completed")) return "completed";

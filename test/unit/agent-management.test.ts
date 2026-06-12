@@ -146,6 +146,35 @@ Inspect
 		assert.match(readText(got), /Completion guard: false/);
 	});
 
+	it("creates agents with resource limits", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const result = handleCreate(
+			{ config: { name: "budget-worker", description: "Bounded worker", scope: "project", maxExecutionTimeMs: 600000, maxTokens: 50000 } },
+			ctx,
+		);
+
+		assert.equal(result.isError, false);
+		const filePath = path.join(tempDir, ".pi", "agents", "budget-worker.md");
+		const content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^maxExecutionTimeMs: 600000$/m);
+		assert.match(content, /^maxTokens: 50000$/m);
+
+		const got = handleManagementAction("get", { agent: "budget-worker" }, ctx);
+		assert.equal(got.isError, false);
+		assert.match(readText(got), /Max execution time: 600000ms/);
+		assert.match(readText(got), /Max tokens: 50000/);
+	});
+
+	it("rejects invalid resource limit config", () => {
+		const result = handleCreate(
+			{ config: { name: "budget-worker", description: "Bounded worker", scope: "project", maxTokens: 0 } },
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /config\.maxTokens must be an integer >= 1/);
+	});
+
 	it("rejects non-boolean completion guard config", () => {
 		const result = handleCreate(
 			{ config: { name: "test-runner", description: "Run tests", scope: "project", completionGuard: "false" } },

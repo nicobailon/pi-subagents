@@ -5,11 +5,14 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	acceptanceFailureMessage,
-	aggregateAcceptanceReport,
+	attachFinalizationToLedger,
+	createFinalizationTurn,
 	evaluateAcceptance,
+	formatAcceptanceFinalizationPrompt,
 	formatAcceptancePrompt,
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
+	shouldRunAcceptanceFinalization,
 	validateAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
 
@@ -32,43 +35,91 @@ function report(overrides: Record<string, unknown> = {}): string {
 	].join("\n");
 }
 
-function tempRepo(): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-acceptance-"));
-	fs.writeFileSync(path.join(dir, "file.txt"), "hello\n", "utf-8");
-	return dir;
+async function withTempRepo<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-acceptance-"));
+	fs.writeFileSync(path.join(cwd, "file.txt"), "hello\n", "utf-8");
+	try {
+		return await fn(cwd);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
 }
 
 describe("acceptance gates", () => {
-	it("infers different policies for reviewer, writer, async writer, and dynamic contexts", () => {
-		assert.equal(resolveEffectiveAcceptance({ agentName: "reviewer", task: "Review-only. Do not edit.", mode: "single" }).level, "attested");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single" }).level, "checked");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single", async: true }).level, "reviewed");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }).level, "reviewed");
+	it("omitted acceptance resolves to no gates and no prompt", () => {
+		const resolved = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single" });
+
+		assert.equal(resolved.level, "none");
+		assert.equal(resolved.explicit, false);
+		assert.equal(shouldRunAcceptanceFinalization(resolved), false);
+		assert.equal(formatAcceptancePrompt(resolved), "");
 	});
 
-	it("explicit acceptance can strengthen inferred policy", () => {
-		const resolved = resolveEffectiveAcceptance({
-			agentName: "reviewer",
-			task: "Review-only.",
-			explicit: { level: "verified", verify: [{ id: "ok", command: "node --version" }] },
-		});
-
-		assert.equal(resolved.level, "verified");
-		assert.equal(resolved.verify[0]?.id, "ok");
-	});
-
-	it("formats a standardized child prompt section", () => {
+	it("explicit criteria derive checked acceptance and a required finalization loop", () => {
 		const resolved = resolveEffectiveAcceptance({
 			agentName: "worker",
 			task: "Implement a fix",
-			explicit: { level: "checked", criteria: ["Patch the bug"], stopRules: ["Do not stop after analysis"] },
+			explicit: {
+				criteria: ["Patch the bug"],
+				evidence: ["changed-files", "tests-added", "commands-run", "residual-risks"],
+				maxFinalizationTurns: 2,
+			},
+		});
+
+		assert.equal(resolved.level, "checked");
+		assert.equal(resolved.finalization.mode, "self-review-loop");
+		assert.equal(resolved.finalization.maxTurns, 2);
+		assert.equal(shouldRunAcceptanceFinalization(resolved), true);
+	});
+
+	it("formats child and finalization prompt sections without public levels", () => {
+		const resolved = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { criteria: ["Patch the bug"], evidence: ["diff-summary", "changed-files"], stopRules: ["Do not stop after analysis"] },
 		});
 		const prompt = formatAcceptancePrompt(resolved);
 
 		assert.match(prompt, /## Acceptance Contract/);
-		assert.match(prompt, /Acceptance level: checked/);
+		assert.doesNotMatch(prompt, /Acceptance level:/);
+		assert.match(prompt, /same session for a bounded self-review\/repair loop/);
 		assert.match(prompt, /Patch the bug/);
+		assert.match(prompt, /Markdown sections in your visible answer do not satisfy required evidence/);
+		assert.match(prompt, /diff-summary -> diffSummary: non-empty string/);
+		assert.match(prompt, /changed-files -> changedFiles: array of changed file paths/);
+		assert.match(prompt, /"diffSummary":/);
+		assert.match(prompt, /"reviewFindings": \[\]/);
 		assert.match(prompt, /```acceptance-report/);
+
+		const initialLedger = {
+			status: "rejected" as const,
+			explicit: true,
+			effectiveAcceptance: resolved,
+			inferredReason: [],
+			criteria: resolved.criteria,
+			runtimeChecks: [{ id: "attestation", status: "failed" as const, message: "missing" }],
+			verifyRuns: [],
+			childReportParseError: "missing",
+		};
+		const finalizationPrompt = formatAcceptanceFinalizationPrompt({
+			acceptance: resolved,
+			initialOutput: "initial answer",
+			initialLedger,
+			turn: 1,
+			maxTurns: 2,
+			previousFailure: "Acceptance rejected: missing",
+		});
+		assert.match(finalizationPrompt, /## Acceptance Finalization/);
+		assert.match(finalizationPrompt, /rejected if the contract is still not satisfied after turn 2/);
+		assert.match(finalizationPrompt, /explain the blocker in residualRisks/);
+		assert.match(finalizationPrompt, /concrete evidence from files, commands, validation output/);
+		assert.match(finalizationPrompt, /Markdown sections in the visible answer do not satisfy required evidence/);
+		assert.match(finalizationPrompt, /copy or summarize it into the matching JSON field/);
+		assert.match(finalizationPrompt, /diff-summary -> diffSummary: non-empty string/);
+		assert.match(finalizationPrompt, /"diffSummary":/);
+		assert.match(finalizationPrompt, /Stop rules are hard constraints/);
+		assert.match(finalizationPrompt, /Previous finalization failure/);
+		assert.match(finalizationPrompt, /exactly one fenced JSON block/);
 	});
 
 	it("parses only explicit acceptance-report fences", () => {
@@ -87,193 +138,147 @@ describe("acceptance gates", () => {
 		const malformed = parseAcceptanceReport("```acceptance-report\n{bad-json\n```");
 		assert.equal(malformed.report, undefined);
 		assert.match(malformed.error ?? "", /Failed to parse acceptance-report/);
+
+		const malformedCommands = parseAcceptanceReport("```acceptance-report\n{\"commandsRun\":[{}]}\n```");
+		assert.equal(malformedCommands.report, undefined);
+		assert.match(malformedCommands.error ?? "", /valid acceptance report/);
 	});
 
-	it("explicit none disables inferred gates when a reason is present", () => {
+	it("checked acceptance rejects missing required evidence", async () => withTempRepo(async (cwd) => {
 		const acceptance = resolveEffectiveAcceptance({
 			agentName: "worker",
 			task: "Implement a fix",
-			explicit: { level: "none", reason: "parent is doing manual acceptance" },
+			explicit: { criteria: ["Patch the bug"], evidence: ["changed-files", "tests-added", "commands-run", "residual-risks"] },
+		});
+		const ledger = await evaluateAcceptance({
+			acceptance,
+			output: report({ testsAddedOrUpdated: [] }),
+			cwd,
 		});
 
-		assert.equal(acceptance.level, "none");
-		assert.deepEqual(acceptance.evidence, []);
-	});
+		assert.equal(ledger.status, "rejected");
+		assert.match(acceptanceFailureMessage(ledger) ?? "", /tests-added evidence missing/);
+	}));
 
-	it("checked mode rejects missing required evidence", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a fix",
-				explicit: { level: "checked" },
-			});
-			const ledger = await evaluateAcceptance({
-				acceptance,
-				output: report({ testsAddedOrUpdated: [] }),
-				cwd,
-			});
+	it("requires diff-summary evidence in acceptance-report.diffSummary", async () => withTempRepo(async (cwd) => {
+		const acceptance = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { criteria: ["Patch the bug"], evidence: ["diff-summary"] },
+		});
+		const markdownOnly = await evaluateAcceptance({
+			acceptance,
+			output: `## Diff summary\n\n- Patched the bug\n${report()}`,
+			cwd,
+		});
+		assert.equal(markdownOnly.status, "rejected");
+		assert.match(acceptanceFailureMessage(markdownOnly) ?? "", /diff-summary evidence missing/);
 
-			assert.equal(ledger.status, "rejected");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /tests-added evidence missing/);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+		const structured = await evaluateAcceptance({
+			acceptance,
+			output: report({ diffSummary: "Patched the bug in src/file.ts." }),
+			cwd,
+		});
+		assert.equal(structured.status, "checked");
+	}));
 
-	it("checked mode rejects not-satisfied required criteria", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a fix",
-				explicit: { level: "checked", criteria: [{ id: "regression", must: "Regression is covered" }] },
-			});
-			const ledger = await evaluateAcceptance({
-				acceptance,
-				output: report({ criteriaSatisfied: [{ id: "regression", status: "not-satisfied", evidence: "test missing" }] }),
-				cwd,
-			});
+	it("checked acceptance rejects not-satisfied required criteria", async () => withTempRepo(async (cwd) => {
+		const acceptance = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { criteria: [{ id: "regression", must: "Regression is covered" }] },
+		});
+		const ledger = await evaluateAcceptance({
+			acceptance,
+			output: report({ criteriaSatisfied: [{ id: "regression", status: "not-satisfied", evidence: "test missing" }] }),
+			cwd,
+		});
 
-			assert.equal(ledger.status, "rejected");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /Required criterion 'regression' was reported as not-satisfied/);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+		assert.equal(ledger.status, "rejected");
+		assert.match(acceptanceFailureMessage(ledger) ?? "", /Required criterion 'regression' was reported as not-satisfied/);
+	}));
 
-	it("verified mode records runtime command success and failure separately from child command claims", async () => {
-		const cwd = tempRepo();
-		try {
-			const passing = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a fix",
-				explicit: { level: "verified", verify: [{ id: "pass", command: "node -e \"process.exit(0)\"", timeoutMs: 10_000 }] },
-			});
-			const passLedger = await evaluateAcceptance({ acceptance: passing, output: report(), cwd });
-			assert.equal(passLedger.status, "verified");
-			assert.equal(passLedger.verifyRuns[0]?.status, "passed");
+	it("verify commands derive verified status and stay separate from child command claims", async () => withTempRepo(async (cwd) => {
+		const passing = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { criteria: ["Patch bug"], verify: [{ id: "pass", command: "node -e \"process.exit(0)\"", timeoutMs: 10_000 }] },
+		});
+		const passLedger = await evaluateAcceptance({ acceptance: passing, output: report(), cwd });
+		assert.equal(passLedger.status, "verified");
+		assert.equal(passLedger.verifyRuns[0]?.status, "passed");
 
-			const failing = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a fix",
-				explicit: { level: "verified", verify: [{ id: "fail", command: "node -e \"process.exit(7)\"", timeoutMs: 10_000 }] },
-			});
-			const failLedger = await evaluateAcceptance({ acceptance: failing, output: report(), cwd });
-			assert.equal(failLedger.status, "rejected");
-			assert.equal(failLedger.childReport?.commandsRun?.[0]?.result, "passed");
-			assert.equal(failLedger.verifyRuns[0]?.status, "failed");
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+		const failing = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { criteria: ["Patch bug"], verify: [{ id: "fail", command: "node -e \"process.exit(7)\"", timeoutMs: 10_000 }] },
+		});
+		const failLedger = await evaluateAcceptance({ acceptance: failing, output: report(), cwd });
+		assert.equal(failLedger.status, "rejected");
+		assert.equal(failLedger.childReport?.commandsRun?.[0]?.result, "passed");
+		assert.equal(failLedger.verifyRuns[0]?.status, "failed");
+	}));
 
-	it("reviewed mode records no-blocker and blocker reviewer outcomes", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a risky fix",
-				explicit: { level: "reviewed", review: { agent: "reviewer", required: true } },
-			});
-			const noBlockers = await evaluateAcceptance({
-				acceptance,
-				output: report(),
-				cwd,
-				reviewResult: { status: "no-blockers", findings: [] },
-			});
-			assert.equal(noBlockers.status, "reviewed");
-			assert.equal(noBlockers.reviewResult?.status, "no-blockers");
+	it("review gates require independent reviewer provenance", async () => withTempRepo(async (cwd) => {
+		const acceptance = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a risky fix",
+			explicit: { criteria: ["Patch bug"], review: { agent: "reviewer", required: true } },
+		});
+		const noBlockers = await evaluateAcceptance({
+			acceptance,
+			output: report(),
+			cwd,
+			reviewResult: { status: "no-blockers", findings: [] },
+		});
+		assert.equal(noBlockers.status, "reviewed");
 
-			const blockers = await evaluateAcceptance({
-				acceptance,
-				output: report(),
-				cwd,
-				reviewResult: {
-					status: "blockers",
-					findings: [{ severity: "blocker", issue: "Missing test", rationale: "Acceptance requires test evidence." }],
-				},
-			});
-			assert.equal(blockers.status, "rejected");
-			assert.equal(blockers.reviewResult?.status, "blockers");
+		const blockers = await evaluateAcceptance({
+			acceptance,
+			output: report(),
+			cwd,
+			reviewResult: {
+				status: "blockers",
+				findings: [{ severity: "blocker", issue: "Missing test", rationale: "Acceptance requires test evidence." }],
+			},
+		});
+		assert.equal(blockers.status, "rejected");
+		assert.equal(blockers.reviewResult?.status, "blockers");
 
-			const unavailable = await evaluateAcceptance({ acceptance, output: report(), cwd });
-			assert.equal(unavailable.status, "rejected");
-			assert.equal(unavailable.reviewResult?.status, "needs-parent-decision");
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+		const unavailable = await evaluateAcceptance({ acceptance, output: report(), cwd });
+		assert.equal(unavailable.status, "rejected");
+		assert.equal(unavailable.reviewResult?.status, "needs-parent-decision");
+	}));
 
-	it("does not make explicit checked acceptance an explicit reviewed blocker when inference recommends review", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement each dynamic item",
-				dynamic: true,
-				explicit: { level: "checked" },
-			});
+	it("self-review finalization does not mark a run reviewed or verified by itself", async () => withTempRepo(async (cwd) => {
+		const acceptance = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a fix",
+			explicit: { criteria: ["Patch bug"] },
+		});
+		const initial = await evaluateAcceptance({ acceptance, output: report({ criteriaSatisfied: [{ id: "criterion-1", status: "not-satisfied", evidence: "missing" }] }), cwd });
+		const final = await evaluateAcceptance({ acceptance, output: report(), cwd });
+		const turn = createFinalizationTurn({ turn: 1, prompt: "finalize", rawOutput: report(), ledger: final });
+		const ledger = attachFinalizationToLedger({ initialLedger: initial, authoritativeLedger: final, turns: [turn], status: "completed", maxTurns: 3 });
 
-			assert.equal(acceptance.level, "reviewed");
-			assert.equal(acceptance.review && acceptance.review !== false ? acceptance.review.required : undefined, false);
-			const ledger = await evaluateAcceptance({ acceptance, output: report({ criteriaSatisfied: [
-				{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
-				{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
-			] }), cwd });
-			assert.equal(ledger.status, "checked");
-			assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+		assert.equal(ledger.status, "checked");
+		assert.equal(ledger.initialChildReport?.criteriaSatisfied?.[0]?.status, "not-satisfied");
+		assert.equal(ledger.childReport?.criteriaSatisfied?.[0]?.status, "satisfied");
+		assert.equal(ledger.finalization?.status, "completed");
+		assert.notEqual(ledger.status, "verified");
+		assert.notEqual(ledger.status, "reviewed");
+	}));
 
-	it("does not mark reviewed without an independent reviewer result", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a fix",
-				explicit: {
-					level: "reviewed",
-					review: false,
-				},
-			});
-			assert.equal(acceptance.level, "reviewed");
 
-			const ledger = await evaluateAcceptance({ acceptance, output: report(), cwd });
-			assert.equal(ledger.status, "rejected");
-			assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /review required/i);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
-
-	it("zero-child aggregate reports do not fabricate required evidence", async () => {
-		const cwd = tempRepo();
-		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement dynamic fanout fixes",
-				explicit: { level: "checked" },
-			});
-			const ledger = await evaluateAcceptance({
-				acceptance,
-				output: "",
-				report: aggregateAcceptanceReport({ results: [] }),
-				cwd,
-			});
-
-			assert.equal(ledger.status, "rejected");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /criterion|changed-files|tests-added|commands-run|validation-output|no-staged-files/);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
-
-	it("validates invalid disable and verify shapes", () => {
-		assert.deepEqual(validateAcceptanceInput({ level: "none" }), ["acceptance.reason is required when level is none."]);
+	it("validates removed level API, empty contracts, verify shapes, and loop bounds", () => {
+		assert.deepEqual(validateAcceptanceInput({ level: "none" }), [
+			"acceptance.level is no longer supported; configure criteria, evidence, verify, and review directly.",
+			"acceptance must include at least one of criteria, evidence, verify, review, or stopRules.",
+		]);
+		assert.deepEqual(validateAcceptanceInput({}), ["acceptance must include at least one of criteria, evidence, verify, review, or stopRules."]);
+		assert.deepEqual(validateAcceptanceInput({ criteria: [{ must: "Patch bug" }] }), ["acceptance.criteria[0].id is required."]);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "missing-command" }] }), ["acceptance.verify[0].command is required."]);
+		assert.deepEqual(validateAcceptanceInput({ criteria: ["Patch bug"], maxFinalizationTurns: 0 }), ["acceptance.maxFinalizationTurns must be an integer from 1 to 10."]);
+		assert.deepEqual(validateAcceptanceInput({ criteria: ["Patch bug"], maxFinalizationTurn: 2 }), ["acceptance.maxFinalizationTurn is not supported."]);
 	});
 });

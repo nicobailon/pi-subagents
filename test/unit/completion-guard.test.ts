@@ -7,6 +7,7 @@ import {
 	evaluateCompletionMutationGuard,
 	expectsImplementationMutation,
 	hasMutationToolCall,
+	resolveCompletionPolicy,
 } from "../../src/runs/shared/completion-guard.ts";
 
 function assistantToolCall(name: string, args: Record<string, unknown> = {}): Message {
@@ -22,6 +23,40 @@ function assistantText(text: string): Message {
 		content: [{ type: "text", text }],
 	} as unknown as Message;
 }
+
+test("completion policy selects exactly one completion authority", () => {
+	assert.equal(resolveCompletionPolicy({
+		agent: "worker",
+		task: "Implement the approved fix",
+		completionGuardEnabled: true,
+		usesAcceptanceContract: true,
+	}), "acceptance-contract");
+	assert.equal(resolveCompletionPolicy({
+		agent: "worker",
+		task: "Implement the approved fix",
+		completionGuardEnabled: true,
+		usesAcceptanceContract: false,
+	}), "mutation-guard");
+	assert.equal(resolveCompletionPolicy({
+		agent: "worker",
+		task: "Implement the approved fix",
+		completionGuardEnabled: false,
+		usesAcceptanceContract: false,
+	}), "none");
+	assert.equal(resolveCompletionPolicy({
+		agent: "worker",
+		task: "Investigate why this failed",
+		completionGuardEnabled: true,
+		usesAcceptanceContract: false,
+	}), "none");
+	assert.equal(resolveCompletionPolicy({
+		agent: "worker",
+		task: "Implement the approved fix",
+		completionGuardEnabled: true,
+		usesAcceptanceContract: false,
+		tools: ["read", "grep", "find", "ls"],
+	}), "none");
+});
 
 test("implementation task with no mutation triggers the completion guard", () => {
 	const result = evaluateCompletionMutationGuard({

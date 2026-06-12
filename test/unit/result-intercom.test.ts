@@ -220,6 +220,7 @@ describe("result intercom formatter", () => {
 	it("resolves paused and detached statuses", () => {
 		assert.equal(resolveSubagentResultStatus({ interrupted: true }), "paused");
 		assert.equal(resolveSubagentResultStatus({ detached: true }), "detached");
+		assert.equal(resolveSubagentResultStatus({ timedOut: true }), "timed-out");
 		assert.equal(resolveSubagentResultStatus({ success: true }), "completed");
 		assert.equal(resolveSubagentResultStatus({ exitCode: 1 }), "failed");
 	});

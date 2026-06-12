@@ -33,8 +33,7 @@ import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
-import registerFanoutChildSubagentExtension from "./fanout-child.ts";
+import { SUBAGENT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
 import {
@@ -209,7 +208,6 @@ class SubagentControlNoticeComponent implements Component {
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
-		if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") registerFanoutChildSubagentExtension(pi);
 		return;
 	}
 	const globalStore = globalThis as Record<string, unknown>;
@@ -394,7 +392,10 @@ EXECUTION (use exactly ONE mode):
 • SINGLE: { agent, task? } - one task; omit task for self-contained agents
 • CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
 • PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
+• Foreground timeout: { timeoutMs } or { maxRuntimeMs } - wall-clock limit for foreground single, parallel, and chain runs. Timed-out children return timedOut:true with completed sibling/prior results preserved. Not for async/background runs.
 • Optional context: { context: "fresh" | "fork" } (default: if any requested agent has defaultContext: "fork", the whole invocation uses fork; otherwise "fresh"; inspect agent defaults via { action: "list" })
+• Goal-style requests: when the user says “/goal”, “goal”, “active goal”, “work until evidence says done”, or “verify against a goal”, model that as explicit acceptance. Use acceptance.criteria for the target, acceptance.evidence/verify for proof, acceptance.stopRules for constraints, and acceptance.maxFinalizationTurns for the bounded loop.
+• Plan/spec implementation handoffs: when delegating a plan, PRD, spec, issue, or broad fix to an editing-capable child, prefer structured acceptance instead of burying validation requirements in task prose. Put the implementation instructions and plan paths in task; put the definition of done, evidence, verification commands, constraints, and loop cap in acceptance.
 
 CHAIN TEMPLATE VARIABLES (use in task strings):
 • {task} - The original task/request from the user
@@ -406,8 +407,8 @@ Example: { chain: [{agent:"agent-a", task:"Analyze {task}"}, {agent:"agent-b", t
 MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "list" } - discover executable agents/chains
 • { action: "get", agent: "name" } - full detail; packaged agents use dotted runtime names like "package.agent"
-• { action: "create", config: { name: "custom-agent", package: "code-analysis", systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, ... } }
-• { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", ... } } - merge
+• { action: "create", config: { name: "custom-agent", package: "code-analysis", systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, maxExecutionTimeMs, maxTokens, ... } }
+• { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", maxExecutionTimeMs, maxTokens, ... } } - merge
 • { action: "delete", agent: "code-analysis.custom-agent" }
 • Use chainName for chain operations; packaged chains also use dotted runtime names
 

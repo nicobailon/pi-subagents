@@ -134,7 +134,7 @@ subagent({
       { agent: "reviewer", phase: "Planning", label: "Scheduler contract", as: "schedulerPlan", task: "Plan fixes for scheduler contract. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/scheduler.md", outputMode: "file-only" },
       { agent: "reviewer", phase: "Planning", label: "Sandbox/security", as: "sandboxPlan", task: "Plan fixes for sandbox/security. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/sandbox.md", outputMode: "file-only" }
     ], concurrency: 3 },
-    { agent: "worker", phase: "Implementation", label: "Apply accepted fixes", as: "workerResult", task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\n\nDeploy plan:\n{outputs.deployPlan}\n\nScheduler plan:\n{outputs.schedulerPlan}\n\nSandbox plan:\n{outputs.sandboxPlan}", output: "worker/fixes.md", outputMode: "file-only", progress: true },
+    { agent: "worker", phase: "Implementation", label: "Apply accepted fixes", as: "workerResult", task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree.\n\nDeploy plan:\n{outputs.deployPlan}\n\nScheduler plan:\n{outputs.schedulerPlan}\n\nSandbox plan:\n{outputs.sandboxPlan}", acceptance: { criteria: ["Accepted fixes from each planning summary are applied", "Focused validation for changed behavior passes", "Changed files, validation commands, failures, and residual risks are reported"], evidence: ["changed-files", "commands-run", "validation-output", "residual-risks"], stopRules: ["Do not expand product scope beyond accepted fixes", "Stop and report if a fix requires an unapproved decision"], maxFinalizationTurns: 3 }, output: "worker/fixes.md", outputMode: "file-only", progress: true },
     { parallel: [
       { agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: {outputs.workerResult}. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
       { agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: {outputs.workerResult}. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
@@ -692,7 +692,37 @@ clarify → validation contract → planner → async worker → parallel async 
 
 The validation contract defines acceptance before code is written: expected behavior, acceptance checks, commands or user flows to exercise, and evidence the worker should return. Keep it lightweight for small tasks, but make it explicit enough that reviewers and validators are checking the intended outcome rather than the worker’s own assumptions.
 
-Use the structured `acceptance` field when the run should carry an explicit acceptance contract. If omitted, subagents infer an effective acceptance policy from role, mode, and risk. Use `level: "checked"` for ordinary writer evidence gates, `level: "verified"` when the runtime should run explicit validation commands, and `level: "reviewed"` only when an independent reviewer result is expected. Do not call a run reviewed just because the worker says it is done; reviewed means a reviewer gate returned a result. Child-reported command success is evidence, not runtime verification.
+Use the structured `acceptance` field when the run should carry an explicit acceptance contract. If omitted, the run stays lightweight. When present, acceptance is object-only: define concrete `criteria`, required `evidence`, optional runtime `verify` commands, optional independent `review`, and optionally `maxFinalizationTurns`. The runtime continues the same child session for a bounded self-review/repair loop before evaluating the final report, so set `acceptance` on single runs, sequential chain steps, parallel task items, and dynamic fanout child templates, not on static parallel or dynamic fanout groups. Do not call a run reviewed just because the worker says it is done; reviewed means a reviewer gate returned a result. Child-reported command success is evidence, not runtime verification.
+
+Goal-style requests map to `acceptance`. If the user says `/goal`, “goal”, “active goal”, “continue until evidence says done”, or “verify against a goal” for a subagent run, create an explicit run-scoped acceptance contract: `criteria` for the target, `evidence` and `verify` for proof, `stopRules` for constraints, and `maxFinalizationTurns` for the bounded loop budget.
+
+When launching a writer/worker from a plan, PRD, spec, issue, or broad fix, set structured `acceptance` proactively. Put implementation instructions, plan paths, and handoff artifacts in `task`; put the definition of done in `acceptance.criteria`, proof requirements in `acceptance.evidence` and `acceptance.verify`, constraints in `acceptance.stopRules`, and usually set `maxFinalizationTurns: 3`. Do not bury all validation requirements only in the task prompt.
+
+Example writer handoff:
+
+```typescript
+subagent({
+  agent: "worker",
+  async: true,
+  task: "Implement the plan at /Users/me/docs/mcp-alignment-plan.md. Use scout artifacts in ./handoff/ as context. Do not commit the scout artifacts.",
+  acceptance: {
+    criteria: [
+      "Implementation follows /Users/me/docs/mcp-alignment-plan.md",
+      "Plan acceptance checks are addressed",
+      "Scout handoff artifacts are not committed",
+      "Focused validation for changed behavior passes",
+      "Residual risks or skipped checks are reported"
+    ],
+    evidence: ["changed-files", "commands-run", "validation-output", "residual-risks"],
+    verify: [{ id: "focused", command: "npm test -- --runInBand" }],
+    stopRules: [
+      "Do not edit unrelated files",
+      "Stop and report if the plan requires an unapproved product decision"
+    ],
+    maxFinalizationTurns: 3
+  }
+})
+```
 
 The first `worker` implements the approved plan. The parent continues with independent inspection or validation prep while it runs, not parallel edits to the same worktree. When the async worker completes, treat its handoff as the transition into review, not as final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Parallel reviewers inspect the resulting diff from fresh context. Validators check behavior with the best available evidence: commands, tests, browser/CLI interaction, screenshots, logs, or manual reproduction notes. The final `worker` applies synthesized review fixes in forked context, then the parent looks over the final diff before completing. The parent may launch these steps as an initial async chain when the workflow is already clear, or as follow-up subagent runs after each async completion. Initial chains should pass `async: true` so the main chat is unblocked; avoid `clarify: true` unless the user asked for foreground clarification. Do not stop after parallel review unless the user explicitly asked for review-only output or the review surfaced a decision that needs approval first.
 
@@ -721,8 +751,9 @@ subagent({
   agent: "worker",
   task: "Implement the approved feature.\n\nClarified requirements:\n- ...\n\nPlan: see ~/Documents/docs/...-plan.md\n\nValidation contract:\n- ...\n\nReturn a handoff with changed files, what was implemented, what was left undone, commands run with exit codes, validation evidence, surprises/new risks, and decisions needing parent approval.",
   acceptance: {
-    level: "checked",
-    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"]
+    criteria: ["Implement the approved feature without widening scope"],
+    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
+    maxFinalizationTurns: 3
   },
   async: true
 })

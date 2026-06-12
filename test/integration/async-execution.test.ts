@@ -29,7 +29,7 @@ interface AsyncResultPayload {
 	sessionId?: string;
 	mode?: string;
 	summary?: string;
-	results: Array<{ output?: string; success?: boolean; error?: string; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; structuredOutput?: unknown; intercomTarget?: string; acceptance?: { status?: string; childReport?: unknown } }>;
+	results: Array<{ output?: string; success?: boolean; error?: string; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; structuredOutput?: unknown; intercomTarget?: string; acceptance?: { status?: string; childReport?: unknown }; resourceLimitExceeded?: { kind?: string; limit?: number; observed?: number; message?: string } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; error?: string }> }> };
 }
@@ -57,6 +57,7 @@ interface AsyncStatusPayload {
 		thinking?: string;
 		tokens?: { total: number };
 		acceptance?: { status?: string };
+		resourceLimitExceeded?: { kind?: string; limit?: number; observed?: number; message?: string };
 	}>;
 }
 
@@ -274,6 +275,33 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForAsyncResultFile(chainId, 10_000);
 	});
 
+	it("async single enforces agent maxTokens from observed usage", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Used async tokens" });
+		const id = `async-token-limit-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Use too many tokens",
+			agentConfig: makeAgent("worker", { maxTokens: 100 }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-token-limit" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const statusPath = path.join(ASYNC_DIR, id, "status.json");
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+
+		assert.equal(result.success, false);
+		assert.equal(result.results[0]?.success, false);
+		assert.equal(result.results[0]?.resourceLimitExceeded?.kind, "maxTokens");
+		assert.equal(result.results[0]?.resourceLimitExceeded?.limit, 100);
+		assert.equal(result.results[0]?.resourceLimitExceeded?.observed, 150);
+		assert.match(result.results[0]?.error ?? "", /Resource limit exceeded.*maxTokens 100 \(observed 150\)/);
+		assert.equal(status.steps?.[0]?.resourceLimitExceeded?.kind, "maxTokens");
+	});
+
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Async top-level report" });
 		const executor = createSubagentExecutor!({
@@ -313,9 +341,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 			assert.equal(payload.mode, "parallel");
 			assert.equal(payload.sessionId, "session-123");
-			assert.equal(payload.results[0]?.acceptance?.status, "checked");
+			assert.equal(payload.results[0]?.acceptance?.status, "not-required");
 			assert.equal(status.sessionId, "session-123");
-			assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
+			assert.equal(status.steps?.[0]?.acceptance?.status, "not-required");
 		const outputPath = path.join(tempDir, "async-top-output.md");
 		const outputDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(outputPath)) {
@@ -333,6 +361,48 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(taskArg.includes(`Update progress at: ${path.join(tempDir, "progress.md")}`));
 		assert.ok(taskArg.includes(`Write your findings to: ${outputPath}`));
 		assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), true);
+	});
+
+	it("async single lets explicit acceptance own completion for report-only output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const report = [
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [
+					{ id: "criterion-1", status: "satisfied", evidence: "file exists with exact content" },
+					{ id: "criterion-2", status: "satisfied", evidence: "verification command passed" },
+				],
+				changedFiles: ["async-guard-acceptance.txt"],
+				commandsRun: [{ command: "test file content", result: "passed", summary: "passed" }],
+				residualRisks: [],
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({ output: report });
+		mockPi.onCall({ output: report });
+		const id = `async-acceptance-guard-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Create async-guard-acceptance.txt with accepted criteria",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-acceptance-guard" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			sessionFile: path.join(tempDir, "async-acceptance-guard-session.jsonl"),
+			acceptance: {
+				criteria: ["Create async-guard-acceptance.txt with accepted criteria", "Verify the file content"],
+				maxFinalizationTurns: 3,
+			},
+		});
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+
+		assert.equal(result.success, true);
+		assert.equal(result.results[0]?.error, undefined);
+		assert.equal(result.results[0]?.output, "");
+		assert.equal(result.results[0]?.acceptance?.status, "checked");
+		assert.equal(result.results[0]?.acceptance?.finalization?.status, "completed");
+		assert.equal(mockPi.callCount(), 2);
 	});
 
 	it("async single rejects explicit reviewed acceptance without a reviewer result", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -370,7 +440,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			artifactConfig,
 			shareEnabled: false,
 			maxSubagentDepth: 2,
-			acceptance: { level: "reviewed", criteria: ["Patch bug"], review: false },
+			sessionFile: path.join(tempDir, "async-acceptance-session.jsonl"),
+			acceptance: { criteria: ["Patch bug"], review: { agent: "reviewer", required: true } },
 		});
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -379,8 +450,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(result.success, false);
 		assert.equal(result.results[0]?.acceptance?.status, "rejected");
 		assert.ok(result.results[0]?.acceptance?.childReport);
+		assert.equal(result.results[0]?.acceptance?.finalization?.status, "completed");
 		assert.equal(result.results[0]?.acceptance?.reviewResult?.status, "needs-parent-decision");
 		assert.equal(status.steps?.[0]?.acceptance?.status, "rejected");
+		assert.equal(status.steps?.[0]?.acceptance?.finalization?.status, "completed");
 	});
 
 	it("top-level async chain suppresses progress for {task} review-only tasks", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

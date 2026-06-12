@@ -24,6 +24,14 @@ interface SubagentParamsSchema {
 			minimum?: number;
 			description?: string;
 		};
+		timeoutMs?: {
+			minimum?: number;
+			description?: string;
+		};
+		maxRuntimeMs?: {
+			minimum?: number;
+			description?: string;
+		};
 		id?: {
 			type?: string;
 			description?: string;
@@ -86,6 +94,12 @@ function hasAnyOfArrayWithStringItems(schema: JsonSchemaNode | undefined): boole
 	});
 }
 
+function isRequiredOnlySchema(value: unknown): boolean {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const keys = Object.keys(value as Record<string, unknown>);
+	return keys.length === 1 && keys[0] === "required";
+}
+
 let schemas: Record<string, JsonSchemaNode> = {};
 let SubagentParams: SubagentParamsSchema | undefined;
 let schemasAvailable = true;
@@ -137,6 +151,19 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(concurrencySchema, "concurrency schema should exist");
 		assert.equal(concurrencySchema.minimum, 1);
 		assert.match(String(concurrencySchema.description ?? ""), /parallel/i);
+	});
+
+	it("includes foreground run timeout aliases", () => {
+		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
+		assert.ok(timeoutSchema, "timeoutMs schema should exist");
+		assert.equal(timeoutSchema.minimum, 1);
+		assert.match(String(timeoutSchema.description ?? ""), /foreground/i);
+		assert.match(String(timeoutSchema.description ?? ""), /soft-interrupted/i);
+
+		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
+		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
+		assert.equal(maxRuntimeSchema.minimum, 1);
+		assert.match(String(maxRuntimeSchema.description ?? ""), /alias/i);
 	});
 
 	it("uses an enum for management and control actions", () => {
@@ -232,6 +259,27 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		}
 
 		assert.deepEqual(missingItemsPaths, []);
+	});
+
+	it("does not encode acceptance contract presence with required-only schema nodes", () => {
+		const rejectedPaths: string[] = [];
+
+		for (const [name, schema] of Object.entries(schemas)) {
+			const stack: Array<{ path: string; value: unknown; insideAcceptance: boolean }> = [{ path: name, value: schema, insideAcceptance: false }];
+			while (stack.length > 0) {
+				const current = stack.pop()!;
+				const insideAcceptance = current.insideAcceptance
+					|| (current.value && typeof current.value === "object" && !Array.isArray(current.value) && String((current.value as JsonSchemaNode).description ?? "").startsWith("Optional acceptance contract."));
+				if (insideAcceptance && isRequiredOnlySchema(current.value)) rejectedPaths.push(current.path);
+				if (Array.isArray(current.value)) {
+					current.value.forEach((value, index) => stack.push({ path: `${current.path}[${index}]`, value, insideAcceptance }));
+				} else if (current.value && typeof current.value === "object") {
+					for (const [key, value] of Object.entries(current.value)) stack.push({ path: `${current.path}.${key}`, value, insideAcceptance });
+				}
+			}
+		}
+
+		assert.deepEqual(rejectedPaths, []);
 	});
 
 	it("does not emit provider-rejected union schema shapes", () => {
@@ -351,8 +399,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ parallel: [{ agent: "reviewer", phase: "Review", label: "Security", as: "security", outputSchema: { type: "object" } }] }] },
 			{ chain: [{ parallel: [{ agent: "reviewer", output: "review.md", reads: ["input.md"], skill: "review" }] }] },
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 }, parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } }, collect: { as: "reviews" } }] },
-			{ agent: "worker", task: "Fix", acceptance: false },
-			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
+			{ agent: "worker", task: "Fix", acceptance: { criteria: ["Patch the bug"], evidence: ["changed-files"], maxFinalizationTurns: 2 } },
+			{ agent: "worker", task: "Fix", acceptance: { verify: [{ id: "unit", command: "npm test" }] } },
+			{ agent: "worker", task: "Fix", acceptance: {} },
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
 		];
@@ -372,7 +421,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "reviewer", as: "child" }, collect: { as: "reviews" } }] },
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "reviewer" }, collect: { as: "reviews" }, when: "later" }] },
 			{ agent: "worker", task: "Fix", acceptance: true },
-			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: true } },
+			{ agent: "worker", task: "Fix", acceptance: "checked" },
+			{ agent: "worker", task: "Fix", acceptance: false },
+			{ agent: "worker", task: "Fix", acceptance: { level: "checked" } },
+			{ agent: "worker", task: "Fix", acceptance: { criteria: ["Patch"], review: true } },
 			{ config: [] },
 			{ config: null },
 		];

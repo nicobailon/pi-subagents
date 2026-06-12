@@ -201,6 +201,50 @@ Inspect code
 	});
 });
 
+describe("agent frontmatter resource limits", () => {
+	it("serializes resource limits into agent frontmatter", () => {
+		const agent: AgentConfig = {
+			name: "worker",
+			description: "Worker",
+			systemPrompt: "Do work",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "project",
+			filePath: "/tmp/worker.md",
+			maxExecutionTimeMs: 600000,
+			maxTokens: 50000,
+		};
+
+		const serialized = serializeAgent(agent);
+		assert.match(serialized, /maxExecutionTimeMs: 600000/);
+		assert.match(serialized, /maxTokens: 50000/);
+	});
+
+	it("parses resource limits from discovered agent frontmatter", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-resource-frontmatter-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
+name: worker
+description: Worker
+maxExecutionTimeMs: 600000
+maxTokens: 50000
+---
+
+Do work
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		const worker = result.agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.maxExecutionTimeMs, 600000);
+		assert.equal(worker?.maxTokens, 50000);
+		assert.equal(worker?.extraFields?.maxExecutionTimeMs, undefined);
+		assert.equal(worker?.extraFields?.maxTokens, undefined);
+	});
+});
+
 describe("agent frontmatter fallbackModels", () => {
 	it("serializes fallbackModels into agent frontmatter", () => {
 		const agent: AgentConfig = {

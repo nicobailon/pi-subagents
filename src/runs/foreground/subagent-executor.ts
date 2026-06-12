@@ -53,6 +53,7 @@ import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
+import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -120,6 +121,8 @@ export interface SubagentParamsLike {
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
 	concurrency?: number;
+	timeoutMs?: number;
+	maxRuntimeMs?: number;
 	worktree?: boolean;
 	context?: "fresh" | "fork";
 	async?: boolean;
@@ -168,6 +171,7 @@ interface ExecutionContextData {
 	artifactsDir: string;
 	backgroundRequestedWhileClarifying: boolean;
 	effectiveAsync: boolean;
+	foregroundTimeoutMs?: number;
 	controlConfig: ResolvedControlConfig;
 	intercomBridge: IntercomBridgeState;
 	nestedRoute?: NestedRouteInfo;
@@ -249,7 +253,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 		children: input.results.map((result, index) => ({
 			agent: result.agent,
 			index,
-			status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
+			status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached, timedOut: result.timedOut }),
 			...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
 		})),
 	});
@@ -715,6 +719,7 @@ async function emitForegroundResultIntercom(input: {
 			exitCode: result.exitCode,
 			interrupted: result.interrupted,
 			detached: result.detached,
+			timedOut: result.timedOut,
 		}),
 		summary: resultSummaryForIntercom(result),
 		index,
@@ -760,6 +765,51 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	};
 }
 
+function validationErrorResult(mode: Details["mode"], text: string): AgentToolResult<Details> {
+	return { content: [{ type: "text", text }], isError: true, details: { mode, results: [] } };
+}
+
+function resolveForegroundTimeoutMs(params: SubagentParamsLike): { timeoutMs?: number; error?: string } {
+	const rawTimeout = (params as { timeoutMs?: unknown }).timeoutMs;
+	const rawMaxRuntime = (params as { maxRuntimeMs?: unknown }).maxRuntimeMs;
+	for (const [name, value] of [["timeoutMs", rawTimeout], ["maxRuntimeMs", rawMaxRuntime]] as const) {
+		if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value) || value < 1)) {
+			return { error: `${name} must be a positive integer.` };
+		}
+	}
+	if (rawTimeout !== undefined && rawMaxRuntime !== undefined && rawTimeout !== rawMaxRuntime) {
+		return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one or use identical values." };
+	}
+	const timeoutMs = rawTimeout ?? rawMaxRuntime;
+	return timeoutMs === undefined ? {} : { timeoutMs };
+}
+
+function validateAcceptanceForExecution(params: SubagentParamsLike): AgentToolResult<Details> | null {
+	const topLevelErrors = validateAcceptanceInput(params.acceptance);
+	if (topLevelErrors.length > 0) return validationErrorResult("single", topLevelErrors.join(" "));
+	for (const [index, task] of (params.tasks ?? []).entries()) {
+		const errors = validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`);
+		if (errors.length > 0) return validationErrorResult("parallel", errors.join(" "));
+	}
+	for (const [stepIndex, step] of (params.chain ?? []).entries()) {
+		if (isParallelStep(step)) {
+			if (Object.hasOwn(step, "acceptance")) return validationErrorResult("chain", `chain[${stepIndex}].acceptance is not supported on static parallel groups; set acceptance on each parallel task.`);
+			for (const [taskIndex, task] of step.parallel.entries()) {
+				const errors = validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`);
+				if (errors.length > 0) return validationErrorResult("chain", errors.join(" "));
+			}
+		} else if (isDynamicParallelStep(step)) {
+			if (Object.hasOwn(step, "acceptance")) return validationErrorResult("chain", `chain[${stepIndex}].acceptance is not supported on dynamic fanout groups; set acceptance on chain[${stepIndex}].parallel.acceptance for each materialized child.`);
+			const errors = validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`);
+			if (errors.length > 0) return validationErrorResult("chain", errors.join(" "));
+		} else {
+			const stepErrors = validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`);
+			if (stepErrors.length > 0) return validationErrorResult("chain", stepErrors.join(" "));
+		}
+	}
+	return null;
+}
+
 function validateExecutionInput(
 	params: SubagentParamsLike,
 	agents: AgentConfig[],
@@ -768,6 +818,9 @@ function validateExecutionInput(
 	hasSingle: boolean,
 	allowClarifyTaskPrompt: boolean,
 ): AgentToolResult<Details> | null {
+	const acceptanceError = validateAcceptanceForExecution(params);
+	if (acceptanceError) return acceptanceError;
+
 	if (Number(hasChain) + Number(hasTasks) + Number(hasSingle) !== 1) {
 		return {
 			content: [
@@ -780,6 +833,9 @@ function validateExecutionInput(
 			details: { mode: "single" as const, results: [] },
 		};
 	}
+
+	const timeoutResolution = resolveForegroundTimeoutMs(params);
+	if (timeoutResolution.error) return validationErrorResult(getRequestedModeLabel(params), timeoutResolution.error);
 
 	if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
 		return {
@@ -1254,6 +1310,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		onUpdate,
 		onControlEvent,
 		controlConfig,
+		...(data.foregroundTimeoutMs !== undefined ? { timeoutMs: data.foregroundTimeoutMs } : {}),
 		childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(runId, agent, index) : undefined,
 		orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 		foregroundControl,
@@ -1308,9 +1365,12 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	}
 
 	const chainDetails = chainResult.details ? compactForegroundDetails({ ...chainResult.details, runId }) : undefined;
-	if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
+	if (foregroundControl) {
+		updateForegroundNestedProjection(foregroundControl);
+		if (chainDetails && foregroundControl.nestedChildren?.length) chainDetails.nestedChildren = foregroundControl.nestedChildren;
+	}
 	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, results: chainDetails.results });
-	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached)
+	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached || result.timedOut)
 		? await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
 			intercomBridge: data.intercomBridge,
@@ -1345,6 +1405,8 @@ interface ForegroundParallelRunInput {
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
 	maxOutput?: MaxOutputConfig;
+	timeoutMs?: number;
+	timeoutAt?: number;
 	paramsCwd: string;
 	maxSubagentDepths: number[];
 	availableModels: ModelInfo[];
@@ -1497,6 +1559,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			cwd: taskCwd,
 			signal: input.signal,
 			interruptSignal: interruptController.signal,
+			...(input.timeoutMs !== undefined && input.timeoutAt !== undefined ? { timeoutMs: input.timeoutMs, timeoutAt: input.timeoutAt } : {}),
 			allowIntercomDetach: agentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 			intercomEvents: input.intercomEvents,
 			runId: input.runId,
@@ -1510,6 +1573,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			outputPath,
 			outputMode: behavior?.outputMode,
 			maxSubagentDepth: input.maxSubagentDepths[index],
+			maxExecutionTimeMs: agentConfig?.maxExecutionTimeMs,
+			maxTokens: agentConfig?.maxTokens,
 			controlConfig: input.controlConfig,
 			onControlEvent: input.onControlEvent,
 			intercomSessionName: input.childIntercomTarget?.(task.agent, index),
@@ -1777,6 +1842,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			}
 		}
 
+		const timeoutAt = data.foregroundTimeoutMs !== undefined ? Date.now() + data.foregroundTimeoutMs : undefined;
 		const results = await runForegroundParallelTasks({
 			tasks,
 			taskTexts,
@@ -1791,6 +1857,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			artifactConfig,
 			artifactsDir,
 			maxOutput: params.maxOutput,
+			...(data.foregroundTimeoutMs !== undefined && timeoutAt !== undefined ? { timeoutMs: data.foregroundTimeoutMs, timeoutAt } : {}),
 			paramsCwd: effectiveCwd,
 			availableModels,
 			modelOverrides,
@@ -1818,6 +1885,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
 		}
 
+		const timedOut = results.find((result) => result.timedOut);
 		const interrupted = results.find((result) => result.interrupted);
 		const details = compactForegroundDetails({
 			mode: "parallel",
@@ -1826,7 +1894,18 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			progress: params.includeProgress ? allProgress : undefined,
 			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		});
+		if (foregroundControl) {
+			updateForegroundNestedProjection(foregroundControl);
+			if (foregroundControl.nestedChildren?.length) details.nestedChildren = foregroundControl.nestedChildren;
+		}
 		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, results: details.results });
+		if (timedOut) {
+			return {
+				content: [{ type: "text", text: `Parallel run timed out (${timedOut.agent}): ${timedOut.error ?? "timeout expired"}` }],
+				details,
+				isError: true,
+			};
+		}
 		if (interrupted) {
 			return {
 				content: [{ type: "text", text: `Parallel run paused after interrupt (${interrupted.agent}). Waiting for explicit next action.` }],
@@ -1842,7 +1921,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			};
 		}
 
-		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
 			intercomBridge: data.intercomBridge,
@@ -2039,6 +2117,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const forwardSingleUpdate = onUpdate
 		? (update: AgentToolResult<Details>) => {
+			let updateForRender = update;
 			if (foregroundControl) {
 				const firstProgress = update.details?.progress?.[0];
 				foregroundControl.currentAgent = params.agent;
@@ -2052,15 +2131,24 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				foregroundControl.tokens = firstProgress?.tokens;
 				foregroundControl.toolCount = firstProgress?.toolCount;
 				foregroundControl.updatedAt = Date.now();
+				updateForegroundNestedProjection(foregroundControl);
+				if (foregroundControl.nestedChildren?.length && update.details) {
+					updateForRender = {
+						...update,
+						details: { ...update.details, nestedChildren: foregroundControl.nestedChildren },
+					};
+				}
 			}
-			onUpdate(update);
+			onUpdate(updateForRender);
 		}
 		: undefined;
 
+	const timeoutAt = data.foregroundTimeoutMs !== undefined ? Date.now() + data.foregroundTimeoutMs : undefined;
 	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
 		cwd: effectiveCwd,
 		signal,
 		interruptSignal: interruptController.signal,
+		...(data.foregroundTimeoutMs !== undefined && timeoutAt !== undefined ? { timeoutMs: data.foregroundTimeoutMs, timeoutAt } : {}),
 		allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 		intercomEvents: deps.pi.events,
 		runId,
@@ -2073,6 +2161,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		outputPath,
 		outputMode: effectiveOutputMode,
 		maxSubagentDepth,
+		maxExecutionTimeMs: agentConfig.maxExecutionTimeMs,
+		maxTokens: agentConfig.maxTokens,
 		onUpdate: forwardSingleUpdate,
 		controlConfig,
 		onControlEvent,
@@ -2123,10 +2213,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		truncation: r.truncation,
 	});
+	if (foregroundControl) {
+		updateForegroundNestedProjection(foregroundControl);
+		if (foregroundControl.nestedChildren?.length) details.nestedChildren = foregroundControl.nestedChildren;
+	}
 	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, results: details.results });
 
-	if (!r.detached && !r.interrupted) {
-		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
+	if (!r.detached && !r.interrupted && !r.timedOut) {
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
 			intercomBridge: data.intercomBridge,
@@ -2148,6 +2241,14 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		return {
 			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
 			details,
+		};
+	}
+
+	if (r.timedOut) {
+		return {
+			content: [{ type: "text", text: `Run timed out (${params.agent}): ${r.error ?? "timeout expired"}` }],
+			details,
+			isError: true,
 		};
 	}
 
@@ -2378,6 +2479,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
+		const foregroundTimeout = resolveForegroundTimeoutMs(effectiveParams);
+		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
+		if (effectiveAsync && foregroundTimeout.timeoutMs !== undefined) {
+			return buildRequestedModeError(effectiveParams, "timeoutMs/maxRuntimeMs only applies to foreground subagent runs. Omit async:true or use action:'interrupt' for background runs.");
+		}
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 
 		const artifactConfig: ArtifactConfig = {
@@ -2429,6 +2535,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			artifactsDir,
 			backgroundRequestedWhileClarifying,
 			effectiveAsync,
+			...(foregroundTimeout.timeoutMs !== undefined ? { foregroundTimeoutMs: foregroundTimeout.timeoutMs } : {}),
 			controlConfig,
 			intercomBridge,
 			nestedRoute,

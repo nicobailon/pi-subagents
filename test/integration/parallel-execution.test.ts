@@ -171,6 +171,38 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(ok, 2);
 	});
 
+	it("top-level foreground parallel timeout returns completed and timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Fast result" });
+		mockPi.onCall({ delay: 10000 });
+		const executor = makeExecutor([makeAgent("fast"), makeAgent("slow")]);
+
+		const start = Date.now();
+		const result = await executor.execute(
+			"parallel-timeout",
+			{
+				tasks: [
+					{ agent: "fast", task: "Finish quickly" },
+					{ agent: "slow", task: "Run too long" },
+				],
+				concurrency: 1,
+				timeoutMs: 250,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as any;
+		const elapsed = Date.now() - start;
+
+		assert.ok(elapsed < 5000, `should time out early, took ${elapsed}ms`);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Parallel run timed out/);
+		assert.equal(result.details.results.length, 2);
+		assert.equal(result.details.results[0].exitCode, 0);
+		assert.equal(result.details.results[0].timedOut, undefined);
+		assert.equal(result.details.results[1].exitCode, 124);
+		assert.equal(result.details.results[1].timedOut, true);
+	});
+
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Saved report" });
 		const executor = makeExecutor();
@@ -287,9 +319,8 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		const taskArg = args.at(-1) ?? "";
 		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
 
-Inspect
-
-## Acceptance Contract`));
+Inspect`));
+		assert.doesNotMatch(taskArg, /## Acceptance Contract/);
 	});
 
 	it("top-level parallel progress emits the existing progress instruction style", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

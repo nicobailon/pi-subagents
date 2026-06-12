@@ -145,7 +145,7 @@ Use `~/.pi/agent/settings.json` for a user override or `.pi/settings.json` for a
 
 ## Where running subagents show up
 
-Foreground runs stream progress in the conversation while they run.
+Foreground runs stream progress in the conversation while they run. Use `timeoutMs` or its alias `maxRuntimeMs` when a foreground run must return within a wall-clock budget. When the timeout expires, running children are soft-interrupted, completed children stay in the result, and timed-out children return `timedOut: true` with a stable timeout message.
 
 Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`.
 
@@ -436,6 +436,8 @@ defaultProgress: true
 completionGuard: false
 interactive: true
 maxSubagentDepth: 1
+maxExecutionTimeMs: 600000
+maxTokens: 50000
 ---
 
 Your system prompt goes here.
@@ -462,6 +464,8 @@ Important fields:
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
 | `interactive` | Parsed for compatibility but not enforced in v1. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent’s children. |
+| `maxExecutionTimeMs` | Stops each foreground or async child run for this agent after the given number of milliseconds. |
+| `maxTokens` | Stops each foreground or async child run for this agent when observed input plus output tokens reach the limit. Token enforcement is best-effort because usage is reported after model events arrive. |
 
 ### Tool and extension selection
 
@@ -793,8 +797,9 @@ Agent definitions are not loaded into context by default. Management actions let
 | `model` | string | agent default | Override model. |
 | `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, and `acceptance`. |
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
+| `timeoutMs` / `maxRuntimeMs` | number | - | Foreground wall-clock timeout for single, parallel, and chain runs. Timed-out children return `timedOut: true`; async/background runs reject it. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
-| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. |
+| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Sequential steps and parallel child tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`; group-level acceptance is not supported because there is no child session to finalize. |
 | `context` | `fresh \| fork` | agent default or `fresh` | `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, and `oracle` default to `fork`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. |
 | `clarify` | boolean | true for chains | Show TUI preview/edit flow. |
@@ -806,7 +811,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Override the run's inferred acceptance gates. Use `"auto"`, `"attested"`, `"checked"`, `"verified"`, `"reviewed"`, or `{ level: "none", reason: "..." }`. |
+| `acceptance` | object | omitted | Explicit acceptance contract. When present, the child gets a structured contract, then the runtime continues the same session for a bounded self-review/repair loop before evaluating acceptance. |
 
 `context: "fork"` fails fast when the parent session is not persisted, the current leaf is missing, or the branched child session cannot be created. It never silently downgrades to `fresh`. In multi-agent runs, if any requested agent has `defaultContext: fork` and the launch omits `context`, the whole invocation uses forked context; pass `context: "fresh"` when you intentionally want a fresh run.
 
@@ -911,6 +916,19 @@ Session directory precedence is: `params.sessionDir`, then `config.defaultSessio
 
 Controls nested delegation when no inherited `PI_SUBAGENT_MAX_DEPTH` is already in effect. Per-agent `maxSubagentDepth` can tighten the limit for that agent’s child runs, but cannot relax an inherited stricter limit. This applies even to children that explicitly declare `tools: subagent`; at the cap, execution fanout is blocked instead of silently hiding nested work.
 
+### Agent resource limits
+
+Set `maxExecutionTimeMs` and `maxTokens` in agent frontmatter or through `subagent({ action: "create" | "update", config })` to bound a specific agent across foreground and async runs.
+
+```yaml
+maxExecutionTimeMs: 600000
+maxTokens: 50000
+```
+
+When a limit is reached, the child receives a soft interrupt, the run fails with a clear `Resource limit exceeded...` error, and the result includes `resourceLimitExceeded` with the limit kind, configured limit, and observed token count when available. Resource-limit failures do not trigger fallback model retries. `maxTokens` is best-effort because providers report usage after message events; a child may exceed the exact limit before the runtime can stop it.
+
+Spawn-count and per-agent child-concurrency quotas are not part of this release; use `maxSubagentDepth` and parallel `concurrency` for those boundaries today.
+
 ### `intercomBridge`
 
 ```json
@@ -969,7 +987,7 @@ Debug artifacts live under `{sessionDir}/subagent-artifacts/` or a user-scoped t
 - `{runId}_{agent}.jsonl`
 - `{runId}_{agent}_meta.json`
 
-Metadata records timing, usage, exit code, final model, attempted models, and fallback attempt outcomes.
+Metadata records timing, usage, exit code, final model, attempted models, fallback attempt outcomes, and any resource-limit termination reason.
 
 Session files are stored under a per-run session directory. With `context: "fork"`, each child starts with `--session <branched-session-file>` produced from the parent’s current leaf. That is a real session fork, not an injected summary.
 
@@ -989,33 +1007,60 @@ Async runs write:
 
 ## Acceptance Gates
 
-Every run resolves an effective acceptance policy. Callers may omit `acceptance` for the inferred default, or set it on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
+`acceptance` is an explicit contract. Omit it for lightweight runs. Set it on single runs, top-level parallel task items, sequential chain steps, static parallel task items, and dynamic fanout child templates when the child must prove the work meets concrete criteria. Do not set it on static parallel groups or dynamic fanout aggregate groups; those groups do not own a same-session child turn.
+
+If you are coming from Codex Goals, `acceptance` is the subagent equivalent for one delegated run. When a user says `/goal`, “goal”, “active goal”, “continue until evidence says done”, or “verify against a goal”, translate that into an acceptance contract: `criteria` are the target, `evidence` and `verify` are proof, `stopRules` are constraints, and `maxFinalizationTurns` is the bounded loop budget.
 
 ```ts
 {
   agent: "worker",
   task: "Implement the fix",
   acceptance: {
-    level: "verified",
     criteria: ["Patch the bug without widening scope"],
     evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }],
+    maxFinalizationTurns: 3
   }
 }
 ```
 
-Accepted levels are `auto`, `none`, `attested`, `checked`, `verified`, and `reviewed`. `acceptance: "auto"` is the default. Read-only reviewer/scout tasks infer lightweight attestation, normal writer tasks infer checked evidence, and async/risky/dynamic writer contexts infer a reviewed gate. To disable gates, prefer `{ level: "none", reason: "..." }`.
+When `acceptance` is present, the initial child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. After the child’s initial completion, the runtime continues the same persisted child session with an acceptance finalization prompt. The child can repair omissions in that same session, then must return the final `acceptance-report`. Missing or malformed finalization reports reject the run when the loop limit is reached.
 
-Acceptance provenance is stored separately from child prose:
+Public acceptance config is evidence-driven. There is no public `level` field and no `acceptance: "checked"` shorthand. Runtime provenance is derived from what actually happened:
 
-- `claimed`: child finished but did not provide structured evidence.
-- `attested`: child returned a structured acceptance report.
-- `checked`: runtime structural checks passed, such as required evidence and no staged files.
+- `attested`: the child returned a structured acceptance report.
+- `checked`: runtime structural checks passed, such as required criteria, required evidence, and no staged files.
 - `verified`: configured runtime verification commands passed. Child-reported command success does not count.
 - `reviewed`: an independent reviewer result is present.
-- `rejected`: attestation, structural checks, verification, or review failed.
+- `rejected`: attestation, structural checks, verification, review, or finalization failed.
 
-For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. Explicit failed gates fail the run. Inferred gates are persisted for observability without breaking older calls that omit `acceptance`.
+Self-review finalization never counts as `reviewed`, and it never counts as `verified` unless configured runtime verification commands actually pass. The visible child output remains the initial answer; finalization reports and residual risks are stored in the acceptance ledger and async/status details.
+
+When delegating implementation from a plan or spec, keep the task focused on what to implement and put the definition of done in `acceptance` so the runtime can finalize and evaluate it:
+
+```ts
+subagent({
+  agent: "worker",
+  async: true,
+  task: "Implement the plan at /Users/me/docs/mcp-alignment-plan.md. Use scout artifacts in ./handoff/ as context. Do not commit the scout artifacts.",
+  acceptance: {
+    criteria: [
+      "Implementation follows /Users/me/docs/mcp-alignment-plan.md",
+      "Plan acceptance checks are addressed",
+      "Scout handoff artifacts are not committed",
+      "Focused validation for changed behavior passes",
+      "Residual risks or skipped checks are reported"
+    ],
+    evidence: ["changed-files", "commands-run", "validation-output", "residual-risks"],
+    verify: [{ id: "focused", command: "npm test -- --runInBand" }],
+    stopRules: [
+      "Do not edit unrelated files",
+      "Stop and report if the plan requires an unapproved product decision"
+    ],
+    maxFinalizationTurns: 3
+  }
+})
+```
 
 ## Live progress
 

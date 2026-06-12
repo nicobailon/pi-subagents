@@ -78,42 +78,30 @@ const AcceptanceReviewGateSchema = Type.Object({
 }, { additionalProperties: false });
 
 const AcceptanceOverride = Type.Unsafe({
-	anyOf: [
-		{ type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
-		{ const: false },
-		{
-			type: "object",
-			properties: {
-				level: { type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
-				criteria: {
-					type: "array",
-					items: {
-						anyOf: [
-							{ type: "string" },
-							AcceptanceGateSchema,
-						],
-					},
-				},
-				evidence: { type: "array", items: AcceptanceEvidenceKind },
-				verify: { type: "array", items: AcceptanceVerifyCommandSchema },
-				review: {
-					anyOf: [
-						{ const: false },
-						AcceptanceReviewGateSchema,
-					],
-				},
-				stopRules: { type: "array", items: { type: "string" } },
-				reason: { type: "string" },
+	type: "object",
+	properties: {
+		criteria: {
+			type: "array",
+			items: {
+				anyOf: [
+					{ type: "string" },
+					AcceptanceGateSchema,
+				],
 			},
-			additionalProperties: false,
 		},
-	],
-	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands.",
+		evidence: { type: "array", items: AcceptanceEvidenceKind },
+		verify: { type: "array", items: AcceptanceVerifyCommandSchema },
+		review: AcceptanceReviewGateSchema,
+		stopRules: { type: "array", items: { type: "string" } },
+		maxFinalizationTurns: { type: "integer", minimum: 1, maximum: 10 },
+	},
+	additionalProperties: false,
+	description: "Optional acceptance contract. Use this for goal-style requests and for implementation handoffs from plans, PRDs, specs, issues, or broad fixes. Put implementation instructions and plan paths in task; put the definition of done in criteria, proof in evidence/verify, constraints in stopRules, and the bounded loop budget in maxFinalizationTurns. Runtime validation still requires at least one of criteria, evidence, verify, review, or stopRules. When present, the child must complete a same-session self-review/repair loop before acceptance is evaluated.",
 });
 
 const TaskItem = Type.Object({
-	agent: Type.String(), 
-	task: Type.String(), 
+	agent: Type.String(),
+	task: Type.String(),
 	cwd: Type.Optional(Type.String()),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
 	output: Type.Optional(OutputOverride),
@@ -262,10 +250,12 @@ export const SubagentParams = Type.Object({
 			{ type: "object", additionalProperties: true },
 			{ type: "string" },
 		],
-		description: "Agent or chain config for create/update. Agent: name, package (optional namespace; runtime name becomes package.name), description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext ('fresh'|'fork'), model, tools (comma-separated), extensions (comma-separated), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth. Chain: name, package, description, scope, steps (array of {agent, task?, output?, outputMode?, reads?, model?, skill?, progress?}). Presence of 'steps' creates a chain instead of an agent. String values must be valid JSON."
+		description: "Agent or chain config for create/update. Agent: name, package (optional namespace; runtime name becomes package.name), description, scope ('user'|'project', default 'user'), systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext ('fresh'|'fork'), model, tools (comma-separated), extensions (comma-separated), skills (comma-separated), thinking, output, reads, progress, maxSubagentDepth, maxExecutionTimeMs, maxTokens. Chain: name, package, description, scope, steps (array of {agent, task?, output?, outputMode?, reads?, model?, skill?, progress?}). Presence of 'steps' creates a chain instead of an agent. String values must be valid JSON."
 	})),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Foreground execution wall-clock timeout in milliseconds. When it expires, running children are soft-interrupted and timed-out results are returned. Foreground only; async/background runs ignore this field." })),
+	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias for timeoutMs. Use only one unless both values are identical." })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for each parallel task. " +
 			"Prevents filesystem conflicts. Requires clean git state. " +

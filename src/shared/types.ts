@@ -30,7 +30,7 @@ export interface ChainOutputMapEntry {
 
 export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
 
-export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused" | "detached";
+export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused" | "detached" | "timed-out";
 
 export interface WorkflowGraphNode {
 	id: string;
@@ -142,7 +142,7 @@ export interface ControlEvent {
 	recentFailureSummary?: string;
 }
 
-export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached";
+export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached" | "timed-out";
 export type SubagentRunMode = "single" | "parallel" | "chain";
 
 export type PublicNestedStepSummary = Pick<
@@ -239,7 +239,7 @@ export interface ModelAttempt {
 	usage?: Usage;
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
+export type AcceptanceProvenanceLevel = "none" | "attested" | "checked" | "verified" | "reviewed";
 
 export type AcceptanceEvidenceKind =
 	| "changed-files"
@@ -275,16 +275,15 @@ export interface AcceptanceReviewGate {
 }
 
 export interface AcceptanceConfig {
-	level?: AcceptanceLevel;
 	criteria?: Array<string | AcceptanceGate>;
 	evidence?: AcceptanceEvidenceKind[];
 	verify?: AcceptanceVerifyCommand[];
-	review?: AcceptanceReviewGate | false;
+	review?: AcceptanceReviewGate;
 	stopRules?: string[];
-	reason?: string;
+	maxFinalizationTurns?: number;
 }
 
-export type AcceptanceInput = AcceptanceLevel | false | AcceptanceConfig;
+export type AcceptanceInput = AcceptanceConfig;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;
@@ -294,15 +293,18 @@ export interface ResolvedAcceptanceGate extends AcceptanceGate {
 }
 
 export interface ResolvedAcceptanceConfig {
-	level: Exclude<AcceptanceLevel, "auto">;
+	level: AcceptanceProvenanceLevel;
 	explicit: boolean;
 	inferredReason: string[];
 	criteria: ResolvedAcceptanceGate[];
 	evidence: AcceptanceEvidenceKind[];
 	verify: AcceptanceVerifyCommand[];
-	review?: AcceptanceReviewGate | false;
+	review?: AcceptanceReviewGate;
 	stopRules: string[];
-	reason?: string;
+	finalization: {
+		mode: "none" | "self-review-loop";
+		maxTurns: number;
+	};
 }
 
 export interface AcceptanceReport {
@@ -366,6 +368,25 @@ export type AcceptanceLedgerStatus =
 	| "accepted"
 	| "rejected";
 
+export interface AcceptanceFinalizationTurn {
+	turn: number;
+	prompt: string;
+	status: AcceptanceLedgerStatus;
+	rawOutput?: string;
+	report?: AcceptanceReport;
+	parseError?: string;
+	runtimeChecks: AcceptanceRuntimeCheck[];
+	verifyRuns: AcceptanceVerifyResult[];
+	failureMessage?: string;
+}
+
+export interface AcceptanceFinalizationLedger {
+	mode: "self-review-loop";
+	status: "not-run" | "completed" | "failed";
+	maxTurns: number;
+	turns: AcceptanceFinalizationTurn[];
+}
+
 export interface AcceptanceLedger {
 	status: AcceptanceLedgerStatus;
 	explicit: boolean;
@@ -374,14 +395,24 @@ export interface AcceptanceLedger {
 	criteria: ResolvedAcceptanceGate[];
 	childReport?: AcceptanceReport;
 	childReportParseError?: string;
+	initialChildReport?: AcceptanceReport;
+	initialChildReportParseError?: string;
 	runtimeChecks: AcceptanceRuntimeCheck[];
 	verifyRuns: AcceptanceVerifyResult[];
 	reviewResult?: AcceptanceReviewResult;
+	finalization?: AcceptanceFinalizationLedger;
 	parentDecision?: {
 		status: "accepted" | "rejected";
 		at: string;
 		reason?: string;
 	};
+}
+
+export interface ResourceLimitExceeded {
+	kind: "maxExecutionTimeMs" | "maxTokens";
+	limit: number;
+	observed?: number;
+	message: string;
 }
 
 export interface SingleResult {
@@ -391,6 +422,8 @@ export interface SingleResult {
 	detached?: boolean;
 	detachedReason?: string;
 	interrupted?: boolean;
+	timedOut?: boolean;
+	resourceLimitExceeded?: ResourceLimitExceeded;
 	messages?: Message[];
 	usage: Usage;
 	model?: string;
@@ -443,6 +476,7 @@ export interface Details {
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	outputs?: ChainOutputMap;
+	nestedChildren?: NestedRunSummary[];
 }
 
 // ============================================================================
@@ -615,6 +649,7 @@ export interface AsyncStatus {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		resourceLimitExceeded?: ResourceLimitExceeded;
 	}>;
 	sessionDir?: string;
 	outputFile?: string;
@@ -756,6 +791,8 @@ export interface RunSyncOptions {
 	cwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
+	timeoutMs?: number;
+	timeoutAt?: number;
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
@@ -774,6 +811,8 @@ export interface RunSyncOptions {
 	outputPath?: string;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
+	maxExecutionTimeMs?: number;
+	maxTokens?: number;
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
