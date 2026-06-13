@@ -662,6 +662,66 @@ Canonical prompt
 		assert.equal(result.projectAgentsDir, path.join(dir, ".pi", "agents"));
 	});
 
+	it("does not discover project legacy skills as agents", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-legacy-skills-"));
+		tempDirs.push(dir);
+		fs.mkdirSync(path.join(dir, ".agents", "skills", "legacy-skill"), { recursive: true });
+		fs.writeFileSync(path.join(dir, ".agents", "legacy.md"), `---
+name: legacy
+description: Legacy
+---
+
+Legacy prompt
+`, "utf-8");
+		fs.writeFileSync(path.join(dir, ".agents", "skills", "legacy-skill", "SKILL.md"), `---
+name: legacy-skill
+description: Legacy skill
+---
+
+Legacy skill prompt
+`, "utf-8");
+
+		const result = discoverAgents(dir, "project");
+		assert.ok(result.agents.find((agent) => agent.name === "legacy"));
+		assert.equal(result.agents.find((agent) => agent.name === "legacy-skill"), undefined);
+	});
+
+	it("does not discover user legacy skills as agents", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-legacy-skills-project-"));
+		const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-legacy-skills-home-"));
+		tempDirs.push(dir, home);
+		const previousHome = process.env.HOME;
+		const previousUserProfile = process.env.USERPROFILE;
+		try {
+			process.env.HOME = home;
+			process.env.USERPROFILE = home;
+			fs.mkdirSync(path.join(home, ".agents", "skills", "legacy-skill"), { recursive: true });
+			fs.writeFileSync(path.join(home, ".agents", "legacy.md"), `---
+name: legacy-user
+description: Legacy user
+---
+
+Legacy user prompt
+`, "utf-8");
+			fs.writeFileSync(path.join(home, ".agents", "skills", "legacy-skill", "SKILL.md"), `---
+name: legacy-user-skill
+description: Legacy user skill
+---
+
+Legacy user skill prompt
+`, "utf-8");
+
+			const result = discoverAgents(dir, "user");
+			assert.ok(result.agents.find((agent) => agent.name === "legacy-user"));
+			assert.equal(result.agents.find((agent) => agent.name === "legacy-user-skill"), undefined);
+		} finally {
+			if (previousHome === undefined) delete process.env.HOME;
+			else process.env.HOME = previousHome;
+			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousUserProfile;
+		}
+	});
+
 	it("prefers .pi/agents over .agents on project agent name collisions", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-agent-collision-"));
 		tempDirs.push(dir);
