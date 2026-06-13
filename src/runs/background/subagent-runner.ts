@@ -965,7 +965,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const eventsPath = path.join(asyncDir, "events.jsonl");
 	const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
 	const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;
-	let activeChildInterrupt: (() => void) | undefined;
+	const activeChildInterrupts = new Map<number, () => void>();
 	let interrupted = false;
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
@@ -1055,6 +1055,34 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 	fs.mkdirSync(asyncDir, { recursive: true });
 	writeAtomicJson(statusPath, statusPayload);
+
+	const writeCrashResult = (reason: string) => {
+		try {
+			const crashResult = {
+				id,
+				agent: flatSteps[0]?.agent ?? "unknown",
+				mode: config.resultMode ?? statusPayload.mode,
+				success: false,
+				exitCode: 1,
+				error: `Runner crashed: ${reason}`,
+				timestamp: Date.now(),
+				durationMs: Date.now() - overallStartTime,
+				asyncDir,
+				cwd,
+			};
+			fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+			fs.writeFileSync(resultPath, JSON.stringify(crashResult, null, 2));
+		} catch {}
+	};
+	process.on("uncaughtException", (err) => {
+		writeCrashResult(`uncaughtException: ${err?.message ?? err}`);
+		process.exit(1);
+	});
+	process.on("unhandledRejection", (reason) => {
+		writeCrashResult(`unhandledRejection: ${reason}`);
+		process.exit(1);
+	});
+
 	const emitNestedSelfEvent = (type: "subagent.nested.updated" | "subagent.nested.completed"): void => {
 		if (!config.nestedRoute || !config.nestedSelf) return;
 		try {
@@ -1297,7 +1325,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
-		writeStatusPayload();
+		try { writeStatusPayload(); } catch {}
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
 		if (!controlConfig.enabled) return false;
@@ -1358,8 +1386,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	if (controlConfig.enabled) {
 		activityTimer = setInterval(() => {
 			if (statusPayload.state !== "running") return;
-			const now = Date.now();
-			updateRunnerActivityState(now);
+			try {
+				const now = Date.now();
+				updateRunnerActivityState(now);
+			} catch {}
 		}, 1000);
 		activityTimer.unref?.();
 	}
@@ -1387,7 +1417,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			ts: now,
 			runId: id,
 		}));
-		activeChildInterrupt?.();
+		for (const interrupt of activeChildInterrupts.values()) interrupt();
+		activeChildInterrupts.clear();
 	};
 	process.on(ASYNC_INTERRUPT_SIGNAL, interruptRunner);
 	appendJsonl(
@@ -1596,7 +1627,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					orchestratorIntercomTarget: config.controlIntercomTarget,
 					nestedRoute: config.nestedRoute,
 					registerInterrupt: (interrupt) => {
-						activeChildInterrupt = interrupt;
+						if (interrupt) activeChildInterrupts.set(fi, interrupt);
+						else activeChildInterrupts.delete(fi);
 					},
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
@@ -1843,7 +1875,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							orchestratorIntercomTarget: config.controlIntercomTarget,
 							nestedRoute: config.nestedRoute,
 							registerInterrupt: (interrupt) => {
-								activeChildInterrupt = interrupt;
+								if (interrupt) activeChildInterrupts.set(fi, interrupt);
+								else activeChildInterrupts.delete(fi);
 							},
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
@@ -2008,7 +2041,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				orchestratorIntercomTarget: config.controlIntercomTarget,
 				nestedRoute: config.nestedRoute,
 				registerInterrupt: (interrupt) => {
-					activeChildInterrupt = interrupt;
+					if (interrupt) activeChildInterrupts.set(flatIndex, interrupt);
+					else activeChildInterrupts.delete(flatIndex);
 				},
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
