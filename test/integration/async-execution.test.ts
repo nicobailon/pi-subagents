@@ -189,6 +189,40 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(typeof result, "boolean");
 	});
 
+	it("spawns the async runner with node when process.execPath is not node", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const originalExecPath = process.execPath;
+		process.execPath = path.join(tempDir, process.platform === "win32" ? "pi.exe" : "pi");
+		try {
+			mockPi.onCall({ output: "non-node exec async done" });
+			const id = `async-non-node-exec-${Date.now().toString(36)}`;
+			const result = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Say non-node exec async done. Do not edit files.",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+
+			assert.equal(result.isError, undefined);
+			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.output, "non-node exec async done");
+		} finally {
+			process.execPath = originalExecPath;
+		}
+	});
+
 	it("readStatus returns null for missing directory", () => {
 		const status = readStatus("/nonexistent/path/abc123");
 		assert.equal(status, null);
@@ -1503,7 +1537,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("returns a tool error when the async runner process cannot spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const originalExecPath = process.execPath;
-		process.execPath = path.join(tempDir, "missing-node");
+		process.execPath = path.join(tempDir, process.platform === "win32" ? "node.exe" : "node");
 		try {
 			const id = `async-spawn-fail-${Date.now().toString(36)}`;
 			const result = executeAsyncSingle(id, {

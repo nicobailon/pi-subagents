@@ -173,6 +173,14 @@ export function isAsyncAvailable(): boolean {
 	return jitiCliPath !== undefined;
 }
 
+function resolveAsyncRunnerNodeCommand(): string {
+	const basename = path.basename(process.execPath).toLowerCase();
+	if (basename === "node" || basename === "node.exe" || basename === "nodejs" || basename === "nodejs.exe") {
+		return process.execPath;
+	}
+	return process.platform === "win32" ? "node.exe" : "node";
+}
+
 /**
  * Spawn the async runner process
  */
@@ -194,8 +202,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	const cfgPath = getAsyncConfigPath(suffix);
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
+	const nodeCommand = resolveAsyncRunnerNodeCommand();
 
-	const proc = spawn(process.execPath, [jitiCliPath, runner, cfgPath], {
+	const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
 		cwd,
 		detached: true,
 		stdio: "ignore",
