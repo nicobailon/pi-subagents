@@ -271,7 +271,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
-	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
+	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR, {
+		widgetPlacement: config.ui?.widgetPlacement,
+	});
 	const executor = createSubagentExecutor({
 		pi,
 		state,
@@ -462,7 +464,7 @@ DIAGNOSTICS:
 	};
 
 	pi.registerTool(tool);
-	registerSlashCommands(pi, state);
+	registerSlashCommands(pi, state, config);
 
 	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
 	const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
@@ -502,7 +504,7 @@ DIAGNOSTICS:
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
 		if (state.asyncJobs.size > 0) {
-			renderWidget(ctx, Array.from(state.asyncJobs.values()));
+			renderWidget(ctx, Array.from(state.asyncJobs.values()), { placement: config.ui?.widgetPlacement });
 			ctx.ui.requestRender?.();
 			ensurePoller();
 		}

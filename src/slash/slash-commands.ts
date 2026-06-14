@@ -8,11 +8,13 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import { isDynamicParallelStep, isParallelStep, type ChainStep } from "../shared/settings.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
+import { renderSubagentResult } from "../tui/render.ts";
 import {
 	applySlashUpdate,
 	buildSlashInitialResult,
 	failSlashResult,
 	finalizeSlashResult,
+	getSlashRenderableSnapshot,
 } from "./slash-live-state.ts";
 import {
 	SLASH_RESULT_TYPE,
@@ -21,9 +23,11 @@ import {
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
+	type ExtensionConfig,
 	type JsonSchemaObject,
 	type SingleResult,
 	type SubagentState,
+	type WidgetPlacement,
 } from "../shared/types.ts";
 
 interface InlineConfig {
@@ -219,6 +223,7 @@ async function requestSlashRun(
 			const tool = update.currentTool ? ` ${update.currentTool}` : "";
 			const count = update.toolCount ?? 0;
 			ctx.ui.setStatus("subagent-slash", `${count} tools${tool} | Ctrl+O live detail`);
+			ctx.ui.requestRender?.();
 		};
 
 		const onTerminalInput = ctx.hasUI
@@ -307,22 +312,58 @@ function persistSlashSessionSnapshot(ctx: ExtensionContext): void {
 	}
 }
 
+function widgetPlacementOptions(placement: WidgetPlacement | undefined): { placement: "belowEditor" } | undefined {
+	return placement === "belowEditor" ? { placement } : undefined;
+}
+
+function shouldRenderSlashLiveWidget(config: ExtensionConfig | undefined): boolean {
+	return config?.ui?.slashLiveResult === "widget";
+}
+
+function installSlashLiveWidget(ctx: ExtensionContext, details: ReturnType<typeof buildSlashInitialResult>, config: ExtensionConfig | undefined): void {
+	if (!ctx.hasUI || !shouldRenderSlashLiveWidget(config)) return;
+	ctx.ui.setWidget(
+		"subagent-slash-live",
+		(_tui, theme) => ({
+			render(width: number): string[] {
+				const snapshot = getSlashRenderableSnapshot(details);
+				return renderSubagentResult(snapshot.result, { expanded: ctx.ui.getToolsExpanded?.() ?? false }, theme).render(width);
+			},
+			invalidate() {},
+		}),
+		widgetPlacementOptions(config?.ui?.widgetPlacement),
+	);
+	ctx.ui.requestRender?.();
+}
+
+function clearSlashLiveWidget(ctx: ExtensionContext, config: ExtensionConfig | undefined): void {
+	if (!ctx.hasUI || !shouldRenderSlashLiveWidget(config)) return;
+	ctx.ui.setWidget("subagent-slash-live", undefined);
+	ctx.ui.requestRender?.();
+}
+
 async function runSlashSubagent(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	params: SubagentParamsLike,
+	config?: ExtensionConfig,
 ): Promise<void> {
 	if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
 	const requestId = randomUUID();
 	const initialDetails = buildSlashInitialResult(requestId, params);
+	const useLiveWidget = ctx.hasUI && shouldRenderSlashLiveWidget(config);
 	const initialText = extractSlashMessageText(initialDetails.result.content) || "Running subagent...";
-	pi.sendMessage({
-		customType: SLASH_RESULT_TYPE,
-		content: initialText,
-		display: true,
-		details: initialDetails,
-	});
-	persistSlashSessionSnapshot(ctx);
+	if (useLiveWidget) {
+		installSlashLiveWidget(ctx, initialDetails, config);
+	} else {
+		pi.sendMessage({
+			customType: SLASH_RESULT_TYPE,
+			content: initialText,
+			display: true,
+			details: initialDetails,
+		});
+		persistSlashSessionSnapshot(ctx);
+	}
 
 	try {
 		const response = await requestSlashRun(pi, ctx, requestId, params);
@@ -337,6 +378,7 @@ async function runSlashSubagent(
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}
+		clearSlashLiveWidget(ctx, config);
 		if (response.isError && ctx.hasUI) {
 			ctx.ui.notify(response.errorText || "Subagent failed", "error");
 		}
@@ -353,6 +395,7 @@ async function runSlashSubagent(
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}
+		clearSlashLiveWidget(ctx, config);
 		if (message === "Cancelled") {
 			if (ctx.hasUI) ctx.ui.notify("Cancelled", "warning");
 			return;
@@ -446,6 +489,7 @@ const parseAgentArgs = (
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
+	config?: ExtensionConfig,
 ): void {
 	pi.registerCommand("run", {
 		description: "Run a subagent directly: /run agent[output=file] [task] [--bg] [--fork]",
@@ -473,7 +517,7 @@ export function registerSlashCommands(
 			if (inline.model) params.model = inline.model;
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			await runSlashSubagent(pi, ctx, params, config);
 		},
 	});
 
@@ -497,7 +541,7 @@ export function registerSlashCommands(
 			const params: SubagentParamsLike = { chain, task: parsed.task, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			await runSlashSubagent(pi, ctx, params, config);
 		},
 	});
 
@@ -527,7 +571,7 @@ export function registerSlashCommands(
 			const params: SubagentParamsLike = { chain: mapSavedChainSteps(chain), task, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			await runSlashSubagent(pi, ctx, params, config);
 		},
 	});
 
@@ -551,7 +595,7 @@ export function registerSlashCommands(
 			const params: SubagentParamsLike = { tasks, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			await runSlashSubagent(pi, ctx, params, config);
 		},
 	});
 
@@ -559,7 +603,7 @@ export function registerSlashCommands(
 	pi.registerCommand("subagents-doctor", {
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
-			await runSlashSubagent(pi, ctx, { action: "doctor" });
+			await runSlashSubagent(pi, ctx, { action: "doctor" }, config);
 		},
 	});
 

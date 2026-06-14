@@ -14,6 +14,7 @@ import {
 	type Details,
 	type NestedRunSummary,
 	type NestedStepSummary,
+	type WidgetPlacement,
 	type WorkflowNodeStatus,
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
@@ -1000,13 +1001,17 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 /**
  * Render the async jobs widget
  */
-export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
+function widgetPlacementOptions(placement: WidgetPlacement | undefined): { placement: "belowEditor" } | undefined {
+	return placement === "belowEditor" ? { placement } : undefined;
+}
+
+export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], options: { placement?: WidgetPlacement } = {}): void {
 	if (jobs.length === 0) {
 		if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);
 		return;
 	}
 	if (!ctx.hasUI) return;
-	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
+	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false), widgetPlacementOptions(options.placement));
 }
 
 function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme): Component {

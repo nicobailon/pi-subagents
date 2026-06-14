@@ -7,6 +7,7 @@ import {
 	type AsyncJobState,
 	type AsyncStartedEvent,
 	type ControlEvent,
+	type WidgetPlacement,
 	type SubagentState,
 	POLL_INTERVAL_MS,
 	RESULTS_DIR,
@@ -24,6 +25,7 @@ interface AsyncJobTrackerOptions {
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
+	widgetPlacement?: WidgetPlacement;
 }
 
 export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: SubagentState, asyncDirRoot: string, options: AsyncJobTrackerOptions = {}): {
@@ -36,7 +38,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
-		renderWidget(ctx, jobs);
+		renderWidget(ctx, jobs, { placement: options.widgetPlacement });
 		ctx.ui.requestRender?.();
 	};
 	const cancelCleanup = (asyncId: string) => {

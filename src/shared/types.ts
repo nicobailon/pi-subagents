@@ -815,6 +815,14 @@ interface ExtensionChainConfig {
 	};
 }
 
+export type WidgetPlacement = "aboveEditor" | "belowEditor";
+export type SlashLiveResultMode = "inline" | "widget";
+
+interface ExtensionUiConfig {
+	widgetPlacement?: WidgetPlacement;
+	slashLiveResult?: SlashLiveResultMode;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
@@ -823,6 +831,7 @@ export interface ExtensionConfig {
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
+	ui?: ExtensionUiConfig;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	intercomBridge?: IntercomBridgeConfig;

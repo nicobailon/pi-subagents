@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean) => string[];
 	clearLegacyResultAnimationTimer: (context: { state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> } }) => void;
-	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>) => void;
+	renderWidget: (ctx: Record<string, unknown>, jobs: Array<Record<string, unknown>>, options?: { placement?: "aboveEditor" | "belowEditor" }) => void;
 };
 
 const theme = {
@@ -37,8 +37,8 @@ function createUiContext() {
 		hasUI: true,
 		ui: {
 			theme,
-			setWidget: (_key: string, value: unknown) => {
-				widgets.push(value);
+			setWidget: (_key: string, value: unknown, options?: unknown) => {
+				widgets.push({ value, options });
 			},
 			requestRender: () => {
 				renderRequests += 1;
@@ -55,6 +55,13 @@ function createUiContext() {
 }
 
 describe("subagent async widget rendering", () => {
+	it("can place the async widget below the editor", () => {
+		const ui = createUiContext();
+		renderWidget(ui.ctx as never, [{ asyncId: "run-1", asyncDir: "/tmp/1", status: "running", agents: ["scout"] }], { placement: "belowEditor" });
+
+		assert.deepEqual((ui.widgets.at(-1) as { options?: unknown }).options, { placement: "belowEditor" });
+	});
+
 	it("orders running jobs before queued summaries and completions", () => {
 		const lines = buildWidgetLines([
 			{ asyncId: "done-1", asyncDir: "/tmp/done", status: "complete", agents: ["reviewer"], startedAt: 0, updatedAt: 1000 },
@@ -112,9 +119,9 @@ describe("subagent async widget rendering", () => {
 				{ index: 2, agent: "reviewer", status: "running", currentTool: "grep", currentToolStartedAt: now - 1000, turnCount: 3, toolCount: 11, tokens: { input: 14_000, output: 3_000, cache: 2_000, total: 19_000 } },
 			],
 		}]);
-		const widget = ui.widgets.at(-1);
-		assert.equal(typeof widget, "function", "renderWidget should install a component widget, not a capped string-array widget");
-		const lines = (widget as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(180).map((line) => line.trimEnd());
+		const widget = ui.widgets.at(-1) as { value: unknown };
+		assert.equal(typeof widget.value, "function", "renderWidget should install a component widget, not a capped string-array widget");
+		const lines = (widget.value as (_tui: unknown, widgetTheme: typeof theme) => { render(width: number): string[] })(undefined, theme).render(180).map((line) => line.trimEnd());
 		const text = lines.join("\n");
 		assert.match(text, /async subagent parallel \(3\) · background/);
 		assert.match(text, /Agent 1\/3: reviewer · running · active now · 5 turns · 18 tool uses · 44k token/);
@@ -510,6 +517,6 @@ describe("subagent async widget rendering", () => {
 		const afterClearCount = ui.widgets.length;
 		await new Promise((resolve) => setTimeout(resolve, 190));
 		assert.equal(ui.widgets.length, afterClearCount, "cleared widget should stay quiet");
-		assert.equal(ui.widgets.at(-1), undefined);
+		assert.equal((ui.widgets.at(-1) as { value?: unknown }).value, undefined);
 	});
 });

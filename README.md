@@ -882,6 +882,24 @@ Makes top-level calls use background execution when the request does not explici
 
 Forces depth-0 single, parallel, and chain runs into background mode and bypasses clarify UI by forcing `clarify: false`. Nested calls keep their own inherited settings.
 
+### `ui`
+
+```json
+{
+  "ui": {
+    "widgetPlacement": "belowEditor",
+    "slashLiveResult": "widget"
+  }
+}
+```
+
+`widgetPlacement` controls where live subagent widgets render. Use `belowEditor` to keep the async/background widget near the prompt instead of above it; omit it or use `aboveEditor` for Pi's default widget placement.
+
+`slashLiveResult` controls slash-command live progress cards for `/run`, `/chain`, `/parallel`, and `/run-chain`:
+
+- `inline` (default): show the live card in the conversation history.
+- `widget`: show the live card as a widget using `widgetPlacement`, then keep only the final result in conversation history.
+
 ### `parallel`
 
 ```json

@@ -41,6 +41,7 @@ interface RegisterSlashCommandsModule {
 			watcherRestartTimer: ReturnType<typeof setTimeout> | null;
 			resultFileCoalescer: { schedule(file: string, delayMs?: number): boolean; clear(): void };
 		},
+		config?: unknown,
 	) => void;
 }
 
@@ -126,6 +127,9 @@ function createCommandContext(
 		notify: (message: string, type?: string) => void;
 		setStatus: (key: string, text: string | undefined) => void;
 		setToolsExpanded: (expanded: boolean) => void;
+		setWidget: (key: string, value: unknown, options?: unknown) => void;
+		requestRender: () => void;
+		getToolsExpanded: () => boolean;
 		sessionManager: unknown;
 	}> = {},
 ) {
@@ -136,6 +140,9 @@ function createCommandContext(
 			notify: overrides.notify ?? ((_message: string) => {}),
 			setStatus: overrides.setStatus ?? ((_key: string, _text: string | undefined) => {}),
 			setToolsExpanded: overrides.setToolsExpanded ?? ((_expanded: boolean) => {}),
+			setWidget: overrides.setWidget ?? ((_key: string, _value: unknown, _options?: unknown) => {}),
+			requestRender: overrides.requestRender ?? (() => {}),
+			getToolsExpanded: overrides.getToolsExpanded ?? (() => false),
 			onTerminalInput: () => () => {},
 			custom: overrides.custom ?? (async () => undefined),
 		},
@@ -262,6 +269,49 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.match((sent[1] as { content?: string }).content ?? "", /Commit finished/);
 		assert.equal(sessionManager.rewrites, 2);
 		assert.equal(sessionManager.flushed, true);
+	});
+
+	it("/run can render the live slash result as a below-editor widget", async () => {
+		const sent: unknown[] = [];
+		const widgets: Array<{ value: unknown; options?: unknown }> = [];
+		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+		const events = createEventBus();
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const requestId = (data as { requestId: string }).requestId;
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId,
+				result: {
+					content: [{ type: "text", text: "Scout finished" }],
+					details: { mode: "single", results: [] },
+				},
+				isError: false,
+			});
+		});
+
+		const pi = {
+			events,
+			registerCommand(name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) {
+				commands.set(name, spec);
+			},
+			registerShortcut() {},
+			sendMessage(message: unknown) {
+				sent.push(message);
+			},
+		};
+
+		registerSlashCommands!(pi, createState(process.cwd()), { ui: { slashLiveResult: "widget", widgetPlacement: "belowEditor" } });
+		await commands.get("run")!.handler("scout inspect this", createCommandContext({
+			hasUI: true,
+			setWidget: (_key, value, options) => widgets.push({ value, options }),
+		}));
+
+		assert.equal(sent.length, 1);
+		assert.match((sent[0] as { content?: string }).content ?? "", /Scout finished/);
+		assert.ok(widgets.length >= 2, "slash widget should be installed and then cleared");
+		assert.deepEqual(widgets[0]?.options, { placement: "belowEditor" });
+		assert.equal(typeof widgets[0]?.value, "function");
+		assert.equal(widgets.at(-1)?.value, undefined);
 	});
 
 	it("/run finalizes the slash snapshot before the last UI redraw on success", async () => {
