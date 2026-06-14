@@ -1,573 +1,370 @@
 /**
- * Subagent Tool
+ * Subagent HTTP Extension
  *
- * Full-featured subagent with sync and async modes.
- * - Sync (default): Streams output, renders markdown, tracks usage
- * - Async: Background execution, emits events when done
+ * Delegates tasks to remote agents over HTTP.
+ * - Single: { agent, task } — blocks until remote agent completes (default)
+ * - Parallel: { tasks: [...] } — blocks until all remote agents complete
+ * - Async: { agent, task, async: true } — fire-and-forget, poll manually
+ * - Management: { action: "list" | "status" | "cancel" }
  *
- * Modes: single (agent + task), parallel (tasks[]), chain (chain[] with {previous})
- * Toggle: async parameter (default: false, configurable via config.json)
+ * Remote agents must implement: POST /invoke (202), GET /status/:runId, GET /result/:runId
  *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
+ * Config file: ~/.pi/agent/extensions/subagent-http/config.json
  */
 
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
-import { discoverAgents } from "../agents/agents.ts";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
-import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { cleanupOldChainDirs } from "../shared/settings.ts";
-import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.ts";
-import { SubagentParams } from "./schemas.ts";
-import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
-import { createResultWatcher } from "../runs/background/result-watcher.ts";
-import { registerSlashCommands } from "../slash/slash-commands.ts";
-import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
-import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
-import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
-import { inspectSubagentStatus } from "../runs/background/run-status.ts";
-import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
-import registerFanoutChildSubagentExtension from "./fanout-child.ts";
-import { formatDuration, shortenPath } from "../shared/formatters.ts";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { SubagentHttpParams } from "./schemas.ts";
 import { loadConfig } from "./config.ts";
-import {
-	type Details,
-	type SubagentState,
-	ASYNC_DIR,
-	DEFAULT_ARTIFACT_CONFIG,
-	RESULTS_DIR,
-	SLASH_RESULT_TYPE,
-	SUBAGENT_ASYNC_COMPLETE_EVENT,
-	SUBAGENT_ASYNC_STARTED_EVENT,
-	SUBAGENT_CONTROL_EVENT,
-	WIDGET_KEY,
-} from "../shared/types.ts";
-import {
-	clearPendingForegroundControlNotices,
-	formatSubagentControlNotice,
-	handleSubagentControlNotice,
-	SUBAGENT_CONTROL_MESSAGE_TYPE,
-	type SubagentControlMessageDetails,
-} from "./control-notices.ts";
+import type { AgentEndpoint, RemoteRun, RemoteRunState, ResultResponse } from "../transport/types.ts";
+import { listAgents } from "../transport/config.ts";
+import { invoke, getStatus, getResult, cancelRun } from "../transport/http-client.ts";
+import { AgentMonitor } from "../transport/agent-monitor.ts";
+import { pollUntilDone, type PollResult } from "../transport/poll.ts";
+import { randomUUID } from "node:crypto";
+import { JobTracker } from "../transport/job-tracker.ts";
 
 export { loadConfig } from "./config.ts";
 
-/**
- * Derive subagent session base directory from parent session file.
- * If parent session is ~/.pi/agent/sessions/abc123.jsonl,
- * returns ~/.pi/agent/sessions/abc123/ as the base.
- * Callers add runId to create the actual session root: abc123/{runId}/
- * Falls back to a unique temp directory if no parent session.
- */
-function getSubagentSessionRoot(parentSessionFile: string | null): string {
-	if (parentSessionFile) {
-		const baseName = path.basename(parentSessionFile, ".jsonl");
-		const sessionsDir = path.dirname(parentSessionFile);
-		return path.join(sessionsDir, baseName);
-	}
-	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-session-"));
+interface HttpDetails {
+  mode: "single" | "parallel" | "management";
+  runId?: string;
+  runs?: Array<{ runId: string; agent: string; state: string }>;
 }
 
-function expandTilde(p: string): string {
-	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
+function formatResult(agent: string, poll: PollResult): string {
+  if (poll.state === "timeout") return `${agent}: timed out after ${Math.round(poll.durationMs / 1000)}s`;
+  if (poll.state === "cancelled") return `${agent}: cancelled`;
+  const r = poll.result;
+  if (!r) return `${agent}: ${poll.state}${poll.error ? ` — ${poll.error}` : ""}`;
+  const meta = [
+    r.model ? `model: ${r.model}` : null,
+    r.usage ? `${r.usage.input}in/${r.usage.output}out, ${r.usage.turns} turns` : null,
+    `${Math.round(poll.durationMs / 1000)}s`,
+  ].filter(Boolean).join(", ");
+  const header = poll.state === "completed"
+    ? `${agent} completed (${meta})`
+    : `${agent} failed (${meta}): ${r.error || poll.error || "unknown error"}`;
+  return r.output ? `${header}\n\n${r.output}` : header;
 }
 
-/**
- * Create a directory and verify it is actually accessible.
- * On Windows with Azure AD/Entra ID, directories created shortly after
- * wake-from-sleep can end up with broken NTFS ACLs (null DACL) when the
- * cloud SID cannot be resolved without network connectivity. This leaves
- * the directory completely inaccessible to the creating user.
- */
-function ensureAccessibleDir(dirPath: string): void {
-	fs.mkdirSync(dirPath, { recursive: true });
-	try {
-		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
-	} catch {
-		try {
-			fs.rmSync(dirPath, { recursive: true, force: true });
-		} catch {
-			// Best effort: retry mkdir/access even if cleanup fails.
-		}
-		fs.mkdirSync(dirPath, { recursive: true });
-		fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
-	}
-}
+export default function registerSubagentHttpExtension(pi: ExtensionAPI): void {
+  const config = loadConfig();
+  const defaultTimeoutMs = config.defaults?.timeoutMs ?? 300000;
+  const pollIntervalMs = config.defaults?.pollIntervalMs ?? 3000;
+  const tracker = new JobTracker(pollIntervalMs);
+  const monitor = new AgentMonitor(config);
 
-function isSlashResultRunning(result: { details?: Details }): boolean {
-	return result.details?.progress?.some((entry) => entry.status === "running")
-		|| result.details?.results.some((entry) => entry.progress?.status === "running")
-		|| false;
-}
+  function resolveAgent(name: string): AgentEndpoint | undefined {
+    const lower = name.toLowerCase();
+    return config.agents.find(a => a.name?.toLowerCase() === lower);
+  }
 
-function isSlashResultError(result: { details?: Details }): boolean {
-	return result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false;
-}
+  // Notifications for async-mode runs only
+  tracker.onEvent((event) => {
+    if (event.type === "completed" || event.type === "failed" || event.type === "timeout") {
+      const status = event.type === "completed" ? "✓" : "✗";
+      const preview = event.result?.output?.slice(0, 200) ?? event.error ?? "(no output)";
+      try {
+        pi.sendMessage(
+          { customType: "subagent-notify", content: `${status} Remote subagent ${event.agent} ${event.type}: ${preview}`, display: true },
+          { triggerTurn: true },
+        );
+      } catch { /* session may be gone */ }
+    }
+  });
 
-function isStaleExtensionContextError(error: unknown): boolean {
-	return error instanceof Error && error.message.includes("Extension context no longer active");
-}
+  const tool: ToolDefinition<typeof SubagentHttpParams, HttpDetails> = {
+    name: "subagent",
+    label: "Remote Subagent",
+    description: `Delegate tasks to remote agents running as HTTP services. Blocks until the remote agent completes and returns the full result.
 
-function rebuildSlashResultContainer(
-	container: Container,
-	result: AgentToolResult<Details>,
-	options: { expanded: boolean },
-	theme: ExtensionContext["ui"]["theme"],
-): void {
-	container.clear();
-	container.addChild(new Spacer(1));
-	const boxTheme = isSlashResultRunning(result) ? "toolPendingBg" : isSlashResultError(result) ? "toolErrorBg" : "toolSuccessBg";
-	const box = new Box(1, 1, (text: string) => theme.bg(boxTheme, text));
-	box.addChild(renderSubagentResult(result, options, theme));
-	container.addChild(box);
-}
+DELEGATION (use exactly one mode):
+• SINGLE: { agent: "name", task: "do something" } — blocks until complete
+• PARALLEL: { tasks: [{agent: "a", task: "..."}, {agent: "b", task: "..."}] } — blocks until all complete
+• ASYNC: add async: true to return immediately (use action: "status" to check later)
 
-function createSlashResultComponent(
-	details: SlashMessageDetails,
-	options: { expanded: boolean },
-	theme: ExtensionContext["ui"]["theme"],
-): Container {
-	const container = new Container();
-	let lastVersion = -1;
-	container.render = (width: number): string[] => {
-		const snapshot = getSlashRenderableSnapshot(details);
-		if (snapshot.version !== lastVersion || isSlashResultRunning(snapshot.result)) {
-			lastVersion = snapshot.version;
-			rebuildSlashResultContainer(container, snapshot.result, options, theme);
-		}
-		return Container.prototype.render.call(container, width);
-	};
-	return container;
-}
+MANAGEMENT:
+• { action: "list" } — show available remote agents
+• { action: "status" } — show all tracked runs
+• { action: "status", id: "abc" } — check specific run
+• { action: "cancel", id: "abc" } — cancel a running task
 
-function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | undefined {
-	const lines = content.split("\n");
-	const header = lines[0] ?? "";
-	const match = header.match(/^Background task (completed|failed|paused): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
-	if (!match) return undefined;
-	const body = lines.slice(2);
-	let sessionIndex = -1;
-	for (let i = body.length - 1; i >= 1; i--) {
-		if (body[i - 1]?.trim() === "" && /^(Session|Session file|Session share error):\s+/.test(body[i]!)) {
-			sessionIndex = i;
-			break;
-		}
-	}
-	const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
-	const resultLines = sessionIndex >= 0 ? body.slice(0, sessionIndex) : body;
-	const resultPreview = resultLines.join("\n").trim() || "(no output)";
-	let sessionLabel: string | undefined;
-	let sessionValue: string | undefined;
-	if (sessionLine) {
-		const separator = sessionLine.indexOf(":");
-		sessionLabel = sessionLine.slice(0, separator).toLowerCase();
-		sessionValue = sessionLine.slice(separator + 1).trim();
-	}
-	return {
-		agent: match[2]!,
-		status: match[1] as SubagentNotifyDetails["status"],
-		...(match[3] ? { taskInfo: match[3] } : {}),
-		resultPreview,
-		...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
-	};
-}
+OPTIONAL:
+• pollIntervalMs: override adaptive poll interval (default: adaptive 2s→5s→10s→30s)`,
+    parameters: SubagentHttpParams,
 
-class SubagentControlNoticeComponent implements Component {
-	constructor(
-		private readonly details: SubagentControlMessageDetails,
-		private readonly theme: ExtensionContext["ui"]["theme"],
-	) {}
+    async execute(_id, params, _signal, _onUpdate, _ctx): Promise<AgentToolResult<HttpDetails>> {
+      // ACTION: list
+      if (params.action === "list") {
+        const agents = listAgents(config);
+        if (agents.length === 0) {
+          return {
+            content: [{ type: "text", text: "No remote agents configured. Add agents to ~/.pi/agent/extensions/subagent-http/config.json" }],
+            details: { mode: "management" },
+          };
+        }
+        const lines = agents.map((a) => {
+          const health = monitor.getHealth(a.url);
+          const statusIcon = !health ? "?" : health.status === "ready" ? "●" : health.status === "busy" ? "◐" : health.status === "starting" ? "○" : "✗";
+          const name = a.name || health?.describe?.name || health?.name || a.url;
+          const model = health?.describe?.model || a.model || "";
+          const desc = health?.describe?.description || a.description || "";
+          const caps = health?.describe?.capabilities || "";
+          const parts = [`${statusIcon} ${name} (${a.url})`];
+          if (model) parts[0] += ` [${model}]`;
+          if (desc) parts[0] += ` — ${desc}`;
+          if (caps) parts.push(`    ${caps}`);
+          if (health?.error) parts.push(`    Error: ${health.error}`);
+          return parts.join("\n");
+        });
+        const warnings = monitor.getWarnings();
+        const warningText = warnings.length > 0 ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
+        return {
+          content: [{ type: "text", text: `Remote agents:\n${lines.join("\n")}${warningText}` }],
+          details: { mode: "management" },
+        };
+      }
 
-	invalidate(): void {}
+      // ACTION: status
+      if (params.action === "status") {
+        if (params.id) {
+          const run = tracker.get(params.id);
+          if (!run) {
+            return {
+              content: [{ type: "text", text: `No run found matching '${params.id}'` }],
+              isError: true,
+              details: { mode: "management" },
+            };
+          }
+          try {
+            const freshStatus = await getStatus(run.url, run.runId);
+            run.state = freshStatus.state as RemoteRunState;
+            run.lastCheckedAt = Date.now();
+            if (freshStatus.state === "completed" || freshStatus.state === "failed") {
+              try {
+                const result = await getResult(run.url, run.runId);
+                run.result = result;
+                run.state = result.state as RemoteRunState;
+                if (result.error) run.error = result.error;
+              } catch { /* result fetch failed */ }
+            }
+          } catch { /* connectivity error */ }
+          const elapsed = Math.floor((Date.now() - run.startedAt) / 1000);
+          const lines = [
+            `Run: ${run.runId}`,
+            `Agent: ${run.agent} (${run.url})`,
+            `State: ${run.state}`,
+            `Elapsed: ${elapsed}s`,
+            run.result?.model ? `Model: ${run.result.model}` : null,
+            run.result?.usage ? `Usage: ${run.result.usage.input}in/${run.result.usage.output}out, ${run.result.usage.turns} turns` : null,
+            run.error ? `Error: ${run.error}` : null,
+            run.result?.output ? `\nOutput:\n${run.result.output}` : null,
+          ].filter(Boolean);
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: { mode: "management", runId: run.runId },
+          };
+        }
+        const allRuns = tracker.getAll();
+        if (allRuns.length === 0) {
+          return { content: [{ type: "text", text: "No runs tracked." }], details: { mode: "management" } };
+        }
+        const lines = allRuns.map(r => {
+          const elapsed = Math.floor((Date.now() - r.startedAt) / 1000);
+          return `• [${r.state}] ${r.agent} (${r.runId.slice(0, 8)}) — ${elapsed}s`;
+        });
+        return {
+          content: [{ type: "text", text: `Runs:\n${lines.join("\n")}` }],
+          details: { mode: "management", runs: allRuns.map(r => ({ runId: r.runId, agent: r.agent, state: r.state })) },
+        };
+      }
 
-	render(width: number): string[] {
-		const eventLabel = this.details.event.type.replaceAll("_", " ");
-		if (width < 3) return [truncateToWidth(`Subagent ${eventLabel}`, width)];
-		const bodyWidth = Math.max(1, width - 2);
-		const borderChar = "─";
-		const header = ` ⚠ Subagent ${eventLabel}: ${this.details.event.agent} `;
-		const headerText = truncateToWidth(header, bodyWidth, "");
-		const headerPadding = Math.max(0, bodyWidth - visibleWidth(headerText));
-		const lines = [this.theme.fg("accent", `╭${headerText}${borderChar.repeat(headerPadding)}╮`)];
+      // ACTION: cancel
+      if (params.action === "cancel") {
+        if (!params.id) {
+          return { content: [{ type: "text", text: "action='cancel' requires id." }], isError: true, details: { mode: "management" } };
+        }
+        const run = tracker.get(params.id);
+        if (!run) {
+          return { content: [{ type: "text", text: `No run found matching '${params.id}'` }], isError: true, details: { mode: "management" } };
+        }
+        if (run.state === "completed" || run.state === "failed" || run.state === "timeout") {
+          return { content: [{ type: "text", text: `Run ${run.runId} already finished (${run.state})` }], isError: true, details: { mode: "management" } };
+        }
+        try {
+          await cancelRun(run.url, run.runId);
+        } catch {
+          // /cancel not implemented — mark locally anyway
+        }
+        run.state = "failed";
+        run.error = "Cancelled by orchestrator";
+        return { content: [{ type: "text", text: `Cancelled run ${run.runId} (${run.agent})` }], details: { mode: "management", runId: run.runId } };
+      }
 
-		for (const line of wrapTextWithAnsi(formatSubagentControlNotice(this.details), bodyWidth)) {
-			const text = truncateToWidth(line, bodyWidth, "");
-			const padding = Math.max(0, bodyWidth - visibleWidth(text));
-			lines.push(this.theme.fg("accent", `│${text}${" ".repeat(padding)}│`));
-		}
-		lines.push(this.theme.fg("accent", `╰${borderChar.repeat(bodyWidth)}╯`));
-		return lines;
-	}
-}
+      // DELEGATION: parallel
+      if (params.tasks && params.tasks.length > 0) {
+        const isAsync = params.async === true;
 
-export default function registerSubagentExtension(pi: ExtensionAPI): void {
-	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
-		if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") registerFanoutChildSubagentExtension(pi);
-		return;
-	}
-	const globalStore = globalThis as Record<string, unknown>;
-	const runtimeCleanupStoreKey = "__piSubagentRuntimeCleanup";
-	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
-	if (typeof previousRuntimeCleanup === "function") {
-		try {
-			previousRuntimeCleanup();
-		} catch {
-			// Best effort cleanup for stale timers from an older reload.
-		}
-	}
+        const invocations = await Promise.allSettled(params.tasks.map(async (t) => {
+          const endpoint = resolveAgent(t.agent);
+          if (!endpoint) return { agent: t.agent, error: `Unknown agent: ${t.agent}` } as const;
+          try {
+            const correlationId = randomUUID();
+            const resp = await invoke(endpoint.url, { task: t.task, context: params.context, correlationId });
+            return { agent: t.agent, endpoint, runId: resp.runId } as const;
+          } catch (err) {
+            return { agent: t.agent, error: err instanceof Error ? err.message : String(err) } as const;
+          }
+        }));
 
-	ensureAccessibleDir(RESULTS_DIR);
-	ensureAccessibleDir(ASYNC_DIR);
-	cleanupOldChainDirs();
+        const dispatched = invocations
+          .map(r => r.status === "fulfilled" ? r.value : { agent: "?", error: "dispatch failed" } as const)
+          .filter((r): r is { agent: string; endpoint: AgentEndpoint; runId: string } => "runId" in r);
+        const errors = invocations
+          .map(r => r.status === "fulfilled" ? r.value : { agent: "?", error: "dispatch failed" } as const)
+          .filter((r): r is { agent: string; error: string } => "error" in r);
 
-	const config = loadConfig();
-	const asyncByDefault = config.asyncByDefault === true;
-	const tempArtifactsDir = getArtifactsDir(null);
-	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+        if (isAsync) {
+          for (const d of dispatched) {
+            tracker.track({
+              runId: d.runId, agent: d.agent, url: d.endpoint.url, task: "", state: "running",
+              startedAt: Date.now(), timeoutMs: d.endpoint.timeoutMs ?? defaultTimeoutMs, pollIntervalMs,
+            });
+          }
+          const lines = [
+            ...dispatched.map(d => `✓ ${d.agent}: delegated [${d.runId.slice(0, 8)}]`),
+            ...errors.map(e => `✗ ${e.agent}: ${e.error}`),
+          ];
+          return {
+            content: [{ type: "text", text: `Parallel delegation (async):\n${lines.join("\n")}\n\nUse subagent({ action: "status" }) to check progress.` }],
+            details: { mode: "parallel", runs: dispatched.map(d => ({ runId: d.runId, agent: d.agent, state: "running" })) },
+          };
+        }
 
-	const state: SubagentState = {
-		baseCwd: "",
-		currentSessionId: null,
-		asyncJobs: new Map(),
-		foregroundRuns: new Map(),
-		foregroundControls: new Map(),
-		lastForegroundControlId: null,
-		pendingForegroundControlNotices: new Map(),
-		cleanupTimers: new Map(),
-		lastUiContext: null,
-		poller: null,
-		completionSeen: new Map(),
-		watcher: null,
-		watcherRestartTimer: null,
-		resultFileCoalescer: {
-			schedule: () => false,
-			clear: () => {},
-		},
-	};
+        // Blocking: poll all until done
+        const pollResults = await Promise.allSettled(dispatched.map(async (d) => {
+          const poll = await pollUntilDone({
+            baseUrl: d.endpoint.url,
+            runId: d.runId,
+            timeoutMs: d.endpoint.timeoutMs ?? defaultTimeoutMs,
+            fixedIntervalMs: params.pollIntervalMs ?? undefined,
+            signal: _signal,
+          });
+          return { agent: d.agent, poll };
+        }));
 
-	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
-		pi,
-		state,
-		RESULTS_DIR,
-		10 * 60 * 1000,
-	);
-	startResultWatcher();
-	primeExistingResults();
+        const results = pollResults
+          .map(r => r.status === "fulfilled" ? r.value : null)
+          .filter(Boolean) as Array<{ agent: string; poll: PollResult }>;
 
-	const runtimeCleanup = () => {
-		stopResultWatcher();
-		clearPendingForegroundControlNotices(state);
-		if (state.poller) {
-			clearInterval(state.poller);
-			state.poller = null;
-		}
-	};
-	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
+        const parts: string[] = [];
+        for (const { agent, poll } of results) {
+          parts.push(formatResult(agent, poll));
+        }
+        for (const e of errors) {
+          parts.push(`${e.agent}: ${e.error}`);
+        }
 
-	const { ensurePoller, handleStarted, handleComplete, resetJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
-	const executor = createSubagentExecutor({
-		pi,
-		state,
-		config,
-		asyncByDefault,
-		tempArtifactsDir,
-		getSubagentSessionRoot,
-		expandTilde,
-		discoverAgents,
-	});
+        const allCompleted = results.every(r => r.poll.state === "completed");
+        return {
+          content: [{ type: "text", text: parts.join("\n\n---\n\n") }],
+          isError: !allCompleted && results.length > 0 ? true : errors.length > 0 && results.length === 0 ? true : undefined,
+          details: {
+            mode: "parallel",
+            runs: results.map(r => ({ runId: r.poll.result?.runId ?? "", agent: r.agent, state: r.poll.state })),
+          },
+        };
+      }
 
-	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
-		const details = resolveSlashMessageDetails(message.details);
-		if (!details) return undefined;
-		return createSlashResultComponent(details, options, theme);
-	});
+      // DELEGATION: single
+      if (params.agent && params.task) {
+        const endpoint = resolveAgent(params.agent);
+        if (!endpoint) {
+          return {
+            content: [{ type: "text", text: `Unknown agent: ${params.agent}. Use subagent({ action: "list" }) to see available agents.` }],
+            isError: true,
+            details: { mode: "single" },
+          };
+        }
 
-	pi.registerMessageRenderer<SubagentNotifyDetails>("subagent-notify", (message, options, theme) => {
-		const content = typeof message.content === "string" ? message.content : "";
-		const details = (message.details as SubagentNotifyDetails | undefined) ?? parseSubagentNotifyContent(content);
-		if (!details) return new Text(content, 0, 0);
-		const icon = details.status === "completed"
-			? theme.fg("success", "✓")
-			: details.status === "paused"
-				? theme.fg("warning", "■")
-				: theme.fg("error", "✗");
-		const parts: string[] = [];
-		if (details.taskInfo) parts.push(details.taskInfo);
-		if (details.durationMs !== undefined) parts.push(formatDuration(details.durationMs));
-		let text = `${icon} ${theme.bold(details.agent)} ${theme.fg("dim", details.status)}`;
-		if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${parts.map((part) => theme.fg("dim", part)).join(` ${theme.fg("dim", "·")} `)}`;
-		const trimmedPreview = details.resultPreview.trim();
-		const previewLines = options.expanded
-			? trimmedPreview.split("\n").filter((line) => line.trim())
-			: [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
-		for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
-			text += `\n  ${theme.fg("dim", `⎿  ${line}`)}`;
-		}
-		if (!options.expanded && trimmedPreview.includes("\n")) {
-			text += `\n  ${theme.fg("dim", "Ctrl+O full notification")}`;
-		}
-		if (details.sessionLabel && details.sessionValue) {
-			text += `\n  ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
-		}
-		return new Text(text, 0, 0);
-	});
+        let resp;
+        try {
+          const correlationId = randomUUID();
+          resp = await invoke(endpoint.url, { task: params.task, context: params.context, correlationId });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: "text", text: `Failed to delegate to ${params.agent}: ${msg}` }],
+            isError: true,
+            details: { mode: "single" },
+          };
+        }
 
-	pi.registerMessageRenderer<SubagentControlMessageDetails>(SUBAGENT_CONTROL_MESSAGE_TYPE, (message, _options, theme) => {
-		const details = message.details as SubagentControlMessageDetails | undefined;
-		if (!details?.event) return undefined;
-		const content = typeof message.content === "string" ? message.content : undefined;
-		return new SubagentControlNoticeComponent({ ...details, noticeText: formatSubagentControlNotice(details, content) }, theme);
-	});
+        // Async mode: return immediately
+        if (params.async === true) {
+          tracker.track({
+            runId: resp.runId, agent: params.agent, url: endpoint.url, task: params.task, state: "running",
+            startedAt: Date.now(), timeoutMs: endpoint.timeoutMs ?? defaultTimeoutMs, pollIntervalMs,
+          });
+          return {
+            content: [{ type: "text", text: `Delegated to ${params.agent} [${resp.runId.slice(0, 8)}] (async)\n\nUse subagent({ action: "status", id: "${resp.runId.slice(0, 8)}" }) to check progress.` }],
+            details: { mode: "single", runId: resp.runId },
+          };
+        }
 
-	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
-		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
-		return executor.execute(id, params, signal, onUpdate, ctx);
-	};
+        // Blocking: poll until done
+        const poll = await pollUntilDone({
+          baseUrl: endpoint.url,
+          runId: resp.runId,
+          timeoutMs: endpoint.timeoutMs ?? defaultTimeoutMs,
+          fixedIntervalMs: params.pollIntervalMs ?? undefined,
+          signal: _signal,
+        });
 
-	const slashBridge = registerSlashSubagentBridge({
-		events: pi.events,
-		getContext: () => state.lastUiContext,
-		execute: (id, params, signal, onUpdate, ctx) =>
-			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),
-	});
+        return {
+          content: [{ type: "text", text: formatResult(params.agent, poll) }],
+          isError: poll.state !== "completed" ? true : undefined,
+          details: { mode: "single", runId: resp.runId },
+        };
+      }
 
-	const promptTemplateBridge = registerPromptTemplateDelegationBridge({
-		events: pi.events,
-		getContext: () => state.lastUiContext,
-		execute: async (requestId, request, signal, ctx, onUpdate) => {
-			if (request.tasks && request.tasks.length > 0) {
-				return executeSubagentCollapsed(
-					requestId,
-					{
-						tasks: request.tasks,
-						context: request.context,
-						cwd: request.cwd,
-						worktree: request.worktree,
-						async: false,
-						clarify: false,
-					},
-					signal,
-					onUpdate,
-					ctx,
-				);
-			}
-			return executeSubagentCollapsed(
-				requestId,
-				{
-					agent: request.agent,
-					task: request.task,
-					context: request.context,
-					cwd: request.cwd,
-					model: request.model,
-					async: false,
-					clarify: false,
-				},
-				signal,
-				onUpdate,
-				ctx,
-			);
-		},
-	});
+      // No valid mode
+      return {
+        content: [{ type: "text", text: "Provide { agent, task } for single delegation, { tasks: [...] } for parallel, or { action: \"list\" }." }],
+        isError: true,
+        details: { mode: "management" },
+      };
+    },
 
-	function effectiveParallelTaskCount(tasks: Array<{ count?: unknown }> | undefined): number {
-		if (!tasks || tasks.length === 0) return 0;
-		return tasks.reduce((total, task) => {
-			const count = typeof task.count === "number" && Number.isInteger(task.count) && task.count >= 1 ? task.count : 1;
-			return total + count;
-		}, 0);
-	}
+    renderCall(args, theme) {
+      if (args.action === "list") return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}list`, 0, 0);
+      if (args.action === "status") {
+        const target = args.id ? ` ${args.id}` : "";
+        return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}status${target}`, 0, 0);
+      }
+      if (args.action === "cancel") {
+        return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}cancel ${args.id ?? "?"}`, 0, 0);
+      }
+      if (args.tasks?.length) {
+        const mode = args.async ? "async " : "";
+        return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${mode}parallel (${args.tasks.length})`, 0, 0);
+      }
+      const mode = args.async ? " [async]" : "";
+      return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent ?? "?")}${mode}`, 0, 0);
+    },
 
-	const tool: ToolDefinition<typeof SubagentParams, Details> = {
-		name: "subagent",
-		label: "Subagent",
-		description: `Delegate to subagents or manage agent definitions.
+    renderResult(result, _options, _theme) {
+      const text = result.content?.map(c => c.type === "text" ? c.text : "").join("") ?? "";
+      return new Text(text, 0, 0);
+    },
+  };
 
-EXECUTION (use exactly ONE mode):
-• Before executing, use { action: "list" } to inspect configured agents/chains. Only execute agents listed as executable/non-disabled.
-• SINGLE: { agent, task? } - one task; omit task for self-contained agents
-• CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
-• PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
-• Optional context: { context: "fresh" | "fork" } (default: if any requested agent has defaultContext: "fork", the whole invocation uses fork; otherwise "fresh"; inspect agent defaults via { action: "list" })
+  pi.registerTool(tool);
 
-CHAIN TEMPLATE VARIABLES (use in task strings):
-• {task} - The original task/request from the user
-• {previous} - Text response from the previous step (empty for first step)
-• {chain_dir} - Shared directory for chain files (e.g., <tmpdir>/pi-subagents-<scope>/chain-runs/abc123/)
-
-Example: { chain: [{agent:"agent-a", task:"Analyze {task}"}, {agent:"agent-b", task:"Plan based on {previous}"}] }
-
-MANAGEMENT (use action field, omit agent/task/chain/tasks):
-• { action: "list" } - discover executable agents/chains
-• { action: "get", agent: "name" } - full detail; packaged agents use dotted runtime names like "package.agent"
-• { action: "create", config: { name: "custom-agent", package: "code-analysis", systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, ... } }
-• { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", ... } } - merge
-• { action: "delete", agent: "code-analysis.custom-agent" }
-• Use chainName for chain operations; packaged chains also use dotted runtime names
-
-CONTROL:
-• { action: "status", id: "..." } - inspect an async/background run by id or prefix
-• { action: "interrupt", id?: "..." } - soft-interrupt the current child turn and leave the run paused
-• { action: "resume", id: "...", message: "...", index?: 0 } - follow up with a live async child or revive a completed async/foreground child from its session
-
-DIAGNOSTICS:
-• { action: "doctor" } - read-only report for runtime paths, discovery, sessions, and intercom`,
-		parameters: SubagentParams,
-
-		execute(id, params, signal, onUpdate, ctx) {
-			return executeSubagentCollapsed(id, params, signal, onUpdate, ctx);
-		},
-
-		renderCall(args, theme) {
-			if (args.action) {
-				const target = args.agent || args.chainName || "";
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`,
-					0, 0,
-				);
-			}
-			const isParallel = (args.tasks?.length ?? 0) > 0;
-			const parallelCount = effectiveParallelTaskCount(args.tasks as Array<{ count?: unknown }> | undefined);
-			const asyncLabel = args.async === true && args.clarify !== true && !isParallel ? theme.fg("warning", " [async]") : "";
-			if (args.chain?.length)
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}chain (${args.chain.length})${asyncLabel}`,
-					0,
-					0,
-				);
-			if (isParallel)
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}parallel (${parallelCount})`,
-					0,
-					0,
-				);
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
-				0,
-				0,
-			);
-		},
-
-		renderResult(result, options, theme, context) {
-			clearLegacyResultAnimationTimer(context);
-			return renderSubagentResult(result, options, theme);
-		},
-
-	};
-
-	pi.registerTool(tool);
-	registerSlashCommands(pi, state);
-
-	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
-	const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
-	const previousEventUnsubscribes = globalStore[eventUnsubscribeStoreKey];
-	if (Array.isArray(previousEventUnsubscribes)) {
-		for (const unsubscribe of previousEventUnsubscribes) {
-			if (typeof unsubscribe !== "function") continue;
-			try {
-				unsubscribe();
-			} catch {
-				// Best effort cleanup for stale handlers from an older reload.
-			}
-		}
-	}
-	registerSubagentNotify(pi);
-
-	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
-	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
-	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
-	const controlEventHandler = (payload: unknown) => {
-		handleSubagentControlNotice({
-			pi,
-			state,
-			visibleControlNotices,
-			details: payload as SubagentControlMessageDetails,
-		});
-	};
-	const eventUnsubscribes = [
-		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
-		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
-		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
-	];
-	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
-
-	pi.on("tool_result", (event, ctx) => {
-		if (event.toolName !== "subagent") return;
-		if (!ctx.hasUI) return;
-		state.lastUiContext = ctx;
-		if (state.asyncJobs.size > 0) {
-			renderWidget(ctx, Array.from(state.asyncJobs.values()));
-			ctx.ui.requestRender?.();
-			ensurePoller();
-		}
-	});
-
-	const cleanupSessionArtifacts = (ctx: ExtensionContext) => {
-		try {
-			const sessionFile = ctx.sessionManager.getSessionFile();
-			if (sessionFile) {
-				cleanupOldArtifacts(getArtifactsDir(sessionFile), DEFAULT_ARTIFACT_CONFIG.cleanupDays);
-			}
-		} catch {
-			// Cleanup failures should not block session lifecycle events.
-		}
-	};
-
-	const resetSessionState = (ctx: ExtensionContext) => {
-		state.baseCwd = ctx.cwd;
-		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-		state.lastUiContext = ctx;
-		cleanupSessionArtifacts(ctx);
-		clearPendingForegroundControlNotices(state);
-		resetJobs(ctx);
-		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
-		primeExistingResults();
-	};
-
-	pi.on("session_start", (_event, ctx) => {
-		resetSessionState(ctx);
-	});
-
-	pi.on("session_shutdown", () => {
-		for (const unsubscribe of eventUnsubscribes) {
-			try {
-				unsubscribe();
-			} catch {
-				// Best effort cleanup during shutdown.
-			}
-		}
-		if (globalStore[eventUnsubscribeStoreKey] === eventUnsubscribes) {
-			delete globalStore[eventUnsubscribeStoreKey];
-		}
-		stopResultWatcher();
-		if (state.poller) clearInterval(state.poller);
-		state.poller = null;
-		clearPendingForegroundControlNotices(state);
-		for (const timer of state.cleanupTimers.values()) {
-			clearTimeout(timer);
-		}
-		state.cleanupTimers.clear();
-		state.asyncJobs.clear();
-		clearSlashSnapshots();
-		slashBridge.cancelAll();
-		slashBridge.dispose();
-		promptTemplateBridge.cancelAll();
-		promptTemplateBridge.dispose();
-		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
-			delete globalStore[runtimeCleanupStoreKey];
-		}
-		try {
-			if (state.lastUiContext?.hasUI) {
-				state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
-			}
-		} catch (error) {
-			if (!isStaleExtensionContextError(error)) throw error;
-		}
-	});
+  pi.on("session_shutdown", () => {
+    tracker.stop();
+    monitor.stop();
+  });
 }

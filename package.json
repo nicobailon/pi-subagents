@@ -1,7 +1,7 @@
 {
-  "name": "pi-subagents",
-  "version": "0.26.0",
-  "description": "Pi extension for delegating tasks to subagents with chains, parallel execution, and TUI clarification",
+  "name": "pi-subagents-http",
+  "version": "0.25.0",
+  "description": "Pi extension for delegating tasks to remote agents over HTTP",
   "author": "Nico Bailon",
   "license": "MIT",
   "type": "module",
@@ -22,23 +22,13 @@
     "agents",
     "cli"
   ],
-  "bin": {
-    "pi-subagents": "install.mjs"
-  },
   "files": [
     "src/**/*.ts",
-    "*.mjs",
-    "agents/",
     "skills/**/*",
-    "prompts/**/*",
-    "README.md",
-    "CHANGELOG.md"
+    "README.md"
   ],
   "scripts": {
-    "test": "npm run test:unit",
-    "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
-    "test:integration": "node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test": "node --experimental-strip-types --test test/unit/*.test.ts"
   },
   "pi": {
     "extensions": [
@@ -46,9 +36,6 @@
     ],
     "skills": [
       "./skills"
-    ],
-    "prompts": [
-      "./prompts"
     ]
   },
   "peerDependencies": {
@@ -69,7 +56,6 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "jiti": "^2.7.0",
     "typebox": "^1.1.24"
   },
   "devDependencies": {
