@@ -18,11 +18,13 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Install devDependencies
+      - name: Install dependencies
         run: npm install
       - name: Run tests
-        run: npm run test:all
+        run: npm test
       - name: Publish to npm
         run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
