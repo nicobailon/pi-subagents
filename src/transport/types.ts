@@ -5,6 +5,7 @@ export interface AgentEndpoint {
   model?: string;
   timeoutMs?: number;
   heartbeat?: boolean; // default true — set false to skip health monitoring
+  transport?: "sse" | "poll";
 }
 
 export interface HttpConfig {
@@ -13,7 +14,13 @@ export interface HttpConfig {
     timeoutMs?: number;
     pollIntervalMs?: number;
     heartbeatIntervalMs?: number; // default 30000
+    transport?: "sse" | "poll";
   };
+  commands?: {
+    enabled?: boolean;
+    aliases?: Record<string, string>;
+  };
+  shortcuts?: Record<string, string>;
 }
 
 export interface InvokeRequest {

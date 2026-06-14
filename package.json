@@ -56,6 +56,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
+    "eventsource-parser": "^3.0.0",
     "typebox": "^1.1.24"
   },
   "devDependencies": {

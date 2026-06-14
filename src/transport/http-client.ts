@@ -1,10 +1,10 @@
 import type { InvokeRequest, InvokeResponse, StatusResponse, ResultResponse, DescribeResponse } from "./types.ts";
 
-export async function invoke(baseUrl: string, request: InvokeRequest): Promise<InvokeResponse> {
+export async function invoke(baseUrl: string, request: InvokeRequest, traceparent?: string | null): Promise<InvokeResponse> {
   const url = `${baseUrl.replace(/\/+$/, "")}/invoke`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(traceparent ? { traceparent } : {}) },
     body: JSON.stringify(request),
   });
   if (!res.ok) {

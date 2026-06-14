@@ -18,6 +18,7 @@ pi-subagents-http delegates tasks to remote agents via HTTP. Any server implemen
 | `/status/:runId` | GET | `200 { runId, state, startedAt?, durationMs?, progress? }` | Extension polls `/result` directly (gets 409 until done) |
 | `/health` | GET | `200 { status: "ok" }` | Agent monitor skips health checks |
 | `/describe` | GET | `200 { name, description?, model?, tools?, status? }` | Extension uses name from config.json |
+| `/events` | GET | `200 text/event-stream` — SSE stream of run lifecycle events | Extension falls back to polling `/status` + `/result` |
 
 ### Optional
 
@@ -110,6 +111,20 @@ States: `queued`, `running`, `completed`, `failed`, `timeout`, `cancelled`.
 ```
 
 Returns `404` if unknown, `409` if already finished.
+
+### GET /events → 200 (text/event-stream)
+
+SSE stream of run lifecycle events. Extension connects lazily on first delegation.
+
+Event types:
+- `run:accepted` — run queued: `{"runId": "abc", "state": "queued"}`
+- `run:progress` — turn completed: `{"runId": "abc", "state": "running", "turnCount": 3}`
+- `run:completed` — run finished: `{"runId": "abc", "state": "completed", "output": "...", "usage": {...}}`
+- `run:failed` — run failed: `{"runId": "abc", "state": "failed", "error": "..."}`
+- `run:cancelled` — run cancelled: `{"runId": "abc", "state": "cancelled"}`
+- `heartbeat` — keepalive (every 15s): `{"ts": 1718400000000, "activeRuns": 2}`
+
+Server should send heartbeat events every 15 seconds to keep connections alive through reverse proxies. Extension filters events by `runId` client-side.
 
 ## Minimal Implementation
 

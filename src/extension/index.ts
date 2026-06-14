@@ -22,6 +22,8 @@ import { listAgents } from "../transport/config.ts";
 import { invoke, getStatus, getResult, cancelRun } from "../transport/http-client.ts";
 import { AgentMonitor } from "../transport/agent-monitor.ts";
 import { pollUntilDone, type PollResult } from "../transport/poll.ts";
+import { SseClient, waitViaSse } from "../transport/sse-client.ts";
+import { registerCommands, registerShortcuts } from "./commands.ts";
 import { randomUUID } from "node:crypto";
 import { JobTracker } from "../transport/job-tracker.ts";
 
@@ -55,6 +57,40 @@ export default function registerSubagentHttpExtension(pi: ExtensionAPI): void {
   const pollIntervalMs = config.defaults?.pollIntervalMs ?? 3000;
   const tracker = new JobTracker(pollIntervalMs);
   const monitor = new AgentMonitor(config);
+
+  // OpenTelemetry trace propagation — listen for active trace from pi-otel extension
+  let activeTraceparent: string | null = null;
+  try {
+    pi.on("pi-otel:trace-active", (event: any) => {
+      if (event?.traceId && event?.spanId) {
+        activeTraceparent = `00-${event.traceId}-${event.spanId}-01`;
+      }
+    });
+  } catch { /* pi-otel not loaded — traceparent stays null */ }
+
+  const sseConnections = new Map<string, SseClient>();
+
+  function resolveTransport(agentUrl: string): "sse" | "poll" {
+    const agent = config.agents.find(a => a.url.replace(/\/+$/, "") === agentUrl.replace(/\/+$/, ""));
+    return agent?.transport ?? config.defaults?.transport ?? "sse";
+  }
+
+  function getOrCreateSse(agentUrl: string): SseClient | null {
+    if (resolveTransport(agentUrl) === "poll") return null;
+    const normalized = agentUrl.replace(/\/+$/, "");
+    if (!sseConnections.has(normalized)) {
+      const sse = new SseClient(`${normalized}/events`);
+      sseConnections.set(normalized, sse);
+      sse.connect();
+    }
+    return sseConnections.get(normalized)!;
+  }
+
+  function waitForResult(agentUrl: string, runId: string, timeoutMs: number, signal?: AbortSignal): Promise<PollResult> {
+    const sse = getOrCreateSse(agentUrl);
+    if (sse?.isConnected()) return waitViaSse(sse, runId, timeoutMs, signal);
+    return pollUntilDone({ baseUrl: agentUrl, runId, timeoutMs, signal });
+  }
 
   function resolveAgent(name: string): AgentEndpoint | undefined {
     const lower = name.toLowerCase();
@@ -212,7 +248,7 @@ OPTIONAL:
           if (!endpoint) return { agent: t.agent, error: `Unknown agent: ${t.agent}` } as const;
           try {
             const correlationId = randomUUID();
-            const resp = await invoke(endpoint.url, { task: t.task, context: params.context, correlationId });
+            const resp = await invoke(endpoint.url, { task: t.task, context: params.context, correlationId }, activeTraceparent);
             return { agent: t.agent, endpoint, runId: resp.runId } as const;
           } catch (err) {
             return { agent: t.agent, error: err instanceof Error ? err.message : String(err) } as const;
@@ -245,13 +281,7 @@ OPTIONAL:
 
         // Blocking: poll all until done
         const pollResults = await Promise.allSettled(dispatched.map(async (d) => {
-          const poll = await pollUntilDone({
-            baseUrl: d.endpoint.url,
-            runId: d.runId,
-            timeoutMs: d.endpoint.timeoutMs ?? defaultTimeoutMs,
-            fixedIntervalMs: params.pollIntervalMs ?? undefined,
-            signal: _signal,
-          });
+          const poll = await waitForResult(d.endpoint.url, d.runId, d.endpoint.timeoutMs ?? defaultTimeoutMs, _signal);
           return { agent: d.agent, poll };
         }));
 
@@ -292,7 +322,7 @@ OPTIONAL:
         let resp;
         try {
           const correlationId = randomUUID();
-          resp = await invoke(endpoint.url, { task: params.task, context: params.context, correlationId });
+          resp = await invoke(endpoint.url, { task: params.task, context: params.context, correlationId }, activeTraceparent);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return {
@@ -314,14 +344,8 @@ OPTIONAL:
           };
         }
 
-        // Blocking: poll until done
-        const poll = await pollUntilDone({
-          baseUrl: endpoint.url,
-          runId: resp.runId,
-          timeoutMs: endpoint.timeoutMs ?? defaultTimeoutMs,
-          fixedIntervalMs: params.pollIntervalMs ?? undefined,
-          signal: _signal,
-        });
+        // Blocking: wait via SSE or fall back to polling
+        const poll = await waitForResult(endpoint.url, resp.runId, endpoint.timeoutMs ?? defaultTimeoutMs, _signal);
 
         return {
           content: [{ type: "text", text: formatResult(params.agent, poll) }],
@@ -363,7 +387,12 @@ OPTIONAL:
 
   pi.registerTool(tool);
 
+  registerCommands(pi, config, waitForResult, formatResult);
+  registerShortcuts(pi, config);
+
   pi.on("session_shutdown", () => {
+    for (const sse of sseConnections.values()) sse.close();
+    sseConnections.clear();
     tracker.stop();
     monitor.stop();
   });
