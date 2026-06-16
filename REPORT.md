@@ -68,6 +68,7 @@ Decision rule: merge bug fixes and functionality judged 100% necessary; skip red
 - **Title:** `[Feature Request] Configurable minimum timeout`
 - **Decision:** Retain as part of the starting branch used to create `dev`.
 - **Reason:** `dev` was created from the current branch `configurable-foreground-timeout-floor`, whose tip is `origin/pr/280`; no separate merge was performed.
+- **Follow-up:** Updated the parallel foreground timeout integration test to set a low `minForegroundTimeoutMs`, because the new default floor intentionally raises short foreground timeouts.
 
 ## Skipped Open PRs
 
@@ -146,4 +147,10 @@ Decision rule: merge bug fixes and functionality judged 100% necessary; skip red
 ### PR #177 — SKIPPED
 - **Title:** sanitize forked session tool IDs and thinking signatures for Anthropic compatibility.
 - **Reason:** Draft PR; skip until ready.
+
+## Final Validation
+
+- `gh pr list --repo nicobailon/pi-subagents --state open --limit 200` matched every open upstream PR to a decision above.
+- `npm run test:unit` passed: 523 tests.
+- `npm run test:integration` passed: 379 tests.
 
