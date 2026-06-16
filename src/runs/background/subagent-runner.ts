@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
+import { buildRunnerCrashResultPayload } from "./crash-result.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -1140,6 +1141,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	let interrupted = false;
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
+	const bestEffortFailureCounts = new Map<string, number>();
+	const logBestEffortFailure = (context: string, error: unknown): void => {
+		const nextCount = (bestEffortFailureCounts.get(context) ?? 0) + 1;
+		bestEffortFailureCounts.set(context, nextCount);
+		if (nextCount <= 3 || nextCount === 10 || nextCount % 50 === 0) {
+			console.error(`[pi-subagents] ${context}:`, error);
+		}
+	};
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 	let latestSessionFile: string | undefined;
 
@@ -1229,21 +1238,27 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 	const writeCrashResult = (reason: string) => {
 		try {
-			const crashResult = {
+			const now = Date.now();
+			const crashResult = buildRunnerCrashResultPayload({
 				id,
 				agent: flatSteps[0]?.agent ?? "unknown",
 				mode: config.resultMode ?? statusPayload.mode,
-				success: false,
-				exitCode: 1,
-				error: `Runner crashed: ${reason}`,
-				timestamp: Date.now(),
-				durationMs: Date.now() - overallStartTime,
+				reason,
+				startedAt: overallStartTime,
+				now,
 				asyncDir,
 				cwd,
-			};
+				sessionId: config.sessionId,
+				topLevelIntercomTarget: config.controlIntercomTarget,
+				childIntercomTarget: config.childIntercomTargets?.[0],
+				taskIndex,
+				totalTasks,
+			});
 			fs.mkdirSync(path.dirname(resultPath), { recursive: true });
 			fs.writeFileSync(resultPath, JSON.stringify(crashResult, null, 2));
-		} catch {}
+		} catch (error) {
+			logBestEffortFailure("Failed to write async runner crash result", error);
+		}
 	};
 	process.on("uncaughtException", (err) => {
 		writeCrashResult(`uncaughtException: ${err?.message ?? err}`);
@@ -1496,7 +1511,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
-		try { writeStatusPayload(); } catch {}
+		try { writeStatusPayload(); } catch (error) { logBestEffortFailure("Failed to write async status after child event", error); }
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
 		if (!controlConfig.enabled) return false;
@@ -1551,7 +1566,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			changed = true;
 		}
 		statusPayload.lastUpdate = now;
-		if (changed) writeStatusPayload();
+		if (changed) {
+			try { writeStatusPayload(); } catch (error) { logBestEffortFailure("Failed to write async activity status", error); }
+		}
 		return changed;
 	};
 	if (controlConfig.enabled) {
@@ -1560,7 +1577,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			try {
 				const now = Date.now();
 				updateRunnerActivityState(now);
-			} catch {}
+			} catch (error) {
+				logBestEffortFailure("Failed to update async activity state", error);
+			}
 		}, 1000);
 		activityTimer.unref?.();
 	}

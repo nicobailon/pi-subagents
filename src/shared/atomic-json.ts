@@ -1,22 +1,43 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-function renameWithRetry(src: string, dest: string, maxRetries: number): void {
+type RenameSync = (src: string, dest: string) => void;
+
+interface WriteAtomicJsonOptions {
+	renameSync?: RenameSync;
+	maxRenameRetries?: number;
+	delayMsForAttempt?: (attempt: number) => number;
+}
+
+export function isRetryableAtomicRenameError(err: unknown): boolean {
+	const code = (err as NodeJS.ErrnoException).code;
+	return code === "EPERM" || code === "EBUSY" || code === "EACCES";
+}
+
+function sleepSync(delayMs: number): void {
+	const end = Date.now() + delayMs;
+	while (Date.now() < end) { /* spin-wait: sync context, cannot await */ }
+}
+
+function renameWithRetry(
+	src: string,
+	dest: string,
+	maxRetries: number,
+	renameSync: RenameSync,
+	delayMsForAttempt: (attempt: number) => number,
+): void {
 	for (let attempt = 0; ; attempt++) {
 		try {
-			fs.renameSync(src, dest);
+			renameSync(src, dest);
 			return;
 		} catch (err: unknown) {
-			const code = (err as NodeJS.ErrnoException).code;
-			if (attempt >= maxRetries || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw err;
-			const delayMs = 50 * (2 ** attempt);
-			const end = Date.now() + delayMs;
-			while (Date.now() < end) { /* spin-wait: sync context, cannot await */ }
+			if (attempt >= maxRetries || !isRetryableAtomicRenameError(err)) throw err;
+			sleepSync(delayMsForAttempt(attempt));
 		}
 	}
 }
 
-export function writeAtomicJson(filePath: string, payload: object): void {
+export function writeAtomicJson(filePath: string, payload: object, options: WriteAtomicJsonOptions = {}): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	const tempPath = path.join(
 		path.dirname(filePath),
@@ -24,7 +45,13 @@ export function writeAtomicJson(filePath: string, payload: object): void {
 	);
 	try {
 		fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf-8");
-		renameWithRetry(tempPath, filePath, 3);
+		renameWithRetry(
+			tempPath,
+			filePath,
+			options.maxRenameRetries ?? 3,
+			options.renameSync ?? fs.renameSync,
+			options.delayMsForAttempt ?? ((attempt) => 50 * (2 ** attempt)),
+		);
 	} finally {
 		fs.rmSync(tempPath, { force: true });
 	}
