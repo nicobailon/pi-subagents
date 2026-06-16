@@ -129,13 +129,9 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	if (process.env[SUBAGENT_CHILD_ENV] !== "1" || process.env[SUBAGENT_FANOUT_CHILD_ENV] !== "1") return;
 
 	const globalStore = globalThis as Record<string, unknown>;
-	const registeredKey = "__piSubagentFanoutChildRegisteredApis";
-	const registeredApis = globalStore[registeredKey] instanceof WeakSet
-		? globalStore[registeredKey] as WeakSet<ExtensionAPI>
-		: new WeakSet<ExtensionAPI>();
-	globalStore[registeredKey] = registeredApis;
-	if (registeredApis.has(pi)) return;
-	registeredApis.add(pi);
+	const registeredKey = "__piSubagentFanoutChildRegistered";
+	if (globalStore[registeredKey] === true) return;
+	globalStore[registeredKey] = true;
 
 	const config = loadConfig();
 	const state = createChildSafeState();
