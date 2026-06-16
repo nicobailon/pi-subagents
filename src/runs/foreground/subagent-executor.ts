@@ -4,7 +4,6 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type AgentConfig, type AgentScope } from "../../agents/agents.ts";
-import { getArtifactsDir } from "../../shared/artifacts.ts";
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
@@ -2384,8 +2383,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			...DEFAULT_ARTIFACT_CONFIG,
 			enabled: effectiveParams.artifacts !== false,
 		};
-		const artifactsDir = effectiveAsync ? deps.tempArtifactsDir : getArtifactsDir(parentSessionFile);
-
 		let sessionRoot: string;
 		if (effectiveParams.sessionDir) {
 			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
@@ -2404,6 +2401,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				new Error(`Failed to create session directory '${sessionRoot}': ${message}`),
 			);
 		}
+		const artifactsDir = effectiveAsync ? deps.tempArtifactsDir : path.join(sessionRoot, "artifacts");
 		const sessionDirForIndex = (idx?: number) =>
 			path.join(sessionRoot, `run-${idx ?? 0}`);
 		const childSessionFileForIndex = (idx?: number) =>
