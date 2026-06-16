@@ -109,6 +109,56 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("cleans slash bridge subscriptions before hot reload registration", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			import { SLASH_SUBAGENT_REQUEST_EVENT } from "./src/shared/types.ts";
+			import { PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT } from "./src/slash/prompt-template-bridge.ts";
+			const handlers = new Map();
+			const events = {
+				on(event, handler) {
+					if (!handlers.has(event)) handlers.set(event, new Set());
+					handlers.get(event).add(handler);
+					return () => handlers.get(event)?.delete(handler);
+				},
+				emit() {},
+			};
+			const fakePi = new Proxy({
+				events,
+				registerTool() {},
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			registerSubagentExtension(fakePi);
+			const slashCount = handlers.get(SLASH_SUBAGENT_REQUEST_EVENT)?.size ?? 0;
+			const promptCount = handlers.get(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT)?.size ?? 0;
+			if (slashCount !== 1) throw new Error("expected one slash request handler after reload, got " + slashCount);
+			if (promptCount !== 1) throw new Error("expected one prompt-template request handler after reload, got " + promptCount);
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("returns before registering anything for non-fanout children", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";

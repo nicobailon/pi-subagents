@@ -262,12 +262,21 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	startResultWatcher();
 	primeExistingResults();
 
+	const runtimeDisposables: Array<() => void> = [];
 	const runtimeCleanup = () => {
 		stopResultWatcher();
 		clearPendingForegroundControlNotices(state);
 		if (state.poller) {
 			clearInterval(state.poller);
 			state.poller = null;
+		}
+		while (runtimeDisposables.length > 0) {
+			const dispose = runtimeDisposables.pop();
+			try {
+				dispose?.();
+			} catch {
+				// Best effort cleanup for stale bridges from an older reload.
+			}
 		}
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
@@ -338,6 +347,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		execute: (id, params, signal, onUpdate, ctx) =>
 			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),
 	});
+	runtimeDisposables.push(() => {
+		slashBridge.cancelAll();
+		slashBridge.dispose();
+	});
 
 	const promptTemplateBridge = registerPromptTemplateDelegationBridge({
 		events: pi.events,
@@ -375,6 +388,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				ctx,
 			);
 		},
+	});
+	runtimeDisposables.push(() => {
+		promptTemplateBridge.cancelAll();
+		promptTemplateBridge.dispose();
 	});
 
 	function effectiveParallelTaskCount(tasks: Array<{ count?: unknown }> | undefined): number {
@@ -586,10 +603,7 @@ DIAGNOSTICS:
 		state.cleanupTimers.clear();
 		state.asyncJobs.clear();
 		clearSlashSnapshots();
-		slashBridge.cancelAll();
-		slashBridge.dispose();
-		promptTemplateBridge.cancelAll();
-		promptTemplateBridge.dispose();
+		runtimeCleanup();
 		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
 			delete globalStore[runtimeCleanupStoreKey];
 		}
