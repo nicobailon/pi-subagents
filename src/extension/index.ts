@@ -9,7 +9,7 @@
  * Toggle: async parameter (default: false, configurable via config.json)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
+ *   { "asyncByDefault": true, "forceTopLevelAsync": true, "minForegroundTimeoutMs": 300000, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
  */
 
 import * as fs from "node:fs";
@@ -42,7 +42,9 @@ import {
 	type SubagentState,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
+	normalizeForegroundTimeoutMs,
 	RESULTS_DIR,
+	resolveMinForegroundTimeoutMs,
 	SLASH_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
@@ -229,6 +231,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const config = loadConfig();
 	const asyncByDefault = config.asyncByDefault === true;
+	const minForegroundTimeoutMs = resolveMinForegroundTimeoutMs(config);
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
 
@@ -384,6 +387,32 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}, 0);
 	}
 
+	function prepareSubagentArguments(args: unknown): unknown {
+		if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
+		const next = { ...(args as Record<string, unknown>) };
+		const numericValues: Partial<Record<"timeoutMs" | "maxRuntimeMs", number>> = {};
+		for (const key of ["timeoutMs", "maxRuntimeMs"] as const) {
+			const value = next[key];
+			const numericValue = typeof value === "number"
+				? value
+				: typeof value === "string" && value.trim() !== ""
+					? Number(value)
+					: undefined;
+			if (typeof numericValue === "number") numericValues[key] = numericValue;
+		}
+		if (numericValues.timeoutMs !== undefined && numericValues.maxRuntimeMs !== undefined && numericValues.timeoutMs !== numericValues.maxRuntimeMs) {
+			return next;
+		}
+		for (const key of ["timeoutMs", "maxRuntimeMs"] as const) {
+			const numericValue = numericValues[key];
+			if (typeof numericValue === "number" && Number.isInteger(numericValue) && numericValue > 0) {
+				const normalizedValue = normalizeForegroundTimeoutMs(numericValue, minForegroundTimeoutMs);
+				if (normalizedValue !== numericValue) next[key] = normalizedValue;
+			}
+		}
+		return next;
+	}
+
 	const tool: ToolDefinition<typeof SubagentParams, Details> = {
 		name: "subagent",
 		label: "Subagent",
@@ -394,7 +423,7 @@ EXECUTION (use exactly ONE mode):
 • SINGLE: { agent, task? } - one task; omit task for self-contained agents
 • CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
 • PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
-• Foreground timeout: { timeoutMs } or { maxRuntimeMs } - wall-clock limit for foreground single, parallel, and chain runs. Timed-out children return timedOut:true with completed sibling/prior results preserved. Not for async/background runs.
+• Foreground timeout: { timeoutMs } or { maxRuntimeMs } - wall-clock limit for foreground single, parallel, and chain runs. Defaults to the configured minimum (${minForegroundTimeoutMs} ms) when omitted; shorter values are raised to that minimum. Timed-out children return timedOut:true with completed sibling/prior results preserved. Not for async/background runs.
 • Optional context: { context: "fresh" | "fork" } (default: if any requested agent has defaultContext: "fork", the whole invocation uses fork; otherwise "fresh"; inspect agent defaults via { action: "list" })
 • Goal-style requests: when the user says “/goal”, “goal”, “active goal”, “work until evidence says done”, or “verify against a goal”, model that as explicit acceptance. Use acceptance.criteria for the target, acceptance.evidence/verify for proof, acceptance.stopRules for constraints, and acceptance.maxFinalizationTurns for the bounded loop.
 • Plan/spec implementation handoffs: when delegating a plan, PRD, spec, issue, or broad fix to an editing-capable child, prefer structured acceptance instead of burying validation requirements in task prose. Put the implementation instructions and plan paths in task; put the definition of done, evidence, verification commands, constraints, and loop cap in acceptance.
@@ -422,6 +451,7 @@ CONTROL:
 DIAGNOSTICS:
 • { action: "doctor" } - read-only report for runtime paths, discovery, sessions, and intercom`,
 		parameters: SubagentParams,
+		prepareArguments: prepareSubagentArguments,
 
 		execute(id, params, signal, onUpdate, ctx) {
 			return executeSubagentCollapsed(id, params, signal, onUpdate, ctx);

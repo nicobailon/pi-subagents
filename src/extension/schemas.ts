@@ -3,7 +3,7 @@
  */
 
 import { Type } from "typebox";
-import { SUBAGENT_ACTIONS } from "../shared/types.ts";
+import { DEFAULT_MIN_FOREGROUND_TIMEOUT_MS, SUBAGENT_ACTIONS } from "../shared/types.ts";
 
 const SkillOverride = Type.Unsafe({
 	anyOf: [
@@ -254,8 +254,8 @@ export const SubagentParams = Type.Object({
 	})),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Foreground execution wall-clock timeout in milliseconds. When it expires, running children are soft-interrupted and timed-out results are returned. Foreground only; async/background runs ignore this field." })),
-	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias for timeoutMs. Use only one unless both values are identical." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: `Foreground execution wall-clock timeout in milliseconds. Defaults to the configured minForegroundTimeoutMs (${DEFAULT_MIN_FOREGROUND_TIMEOUT_MS} ms / 5 min by default) when omitted. Values below the configured minimum are raised to that minimum. When it expires, running children are soft-interrupted and timed-out results are returned. Foreground only; async/background runs ignore this field.` })),
+	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: `Alias for timeoutMs. Use only one unless both values are identical. Values below configured minForegroundTimeoutMs (${DEFAULT_MIN_FOREGROUND_TIMEOUT_MS} ms / 5 min by default) are raised to that minimum.` })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for each parallel task. " +
 			"Prevents filesystem conflicts. Requires clean git state. " +

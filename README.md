@@ -145,7 +145,7 @@ Use `~/.pi/agent/settings.json` for a user override or `.pi/settings.json` for a
 
 ## Where running subagents show up
 
-Foreground runs stream progress in the conversation while they run. Use `timeoutMs` or its alias `maxRuntimeMs` when a foreground run must return within a wall-clock budget. When the timeout expires, running children are soft-interrupted, completed children stay in the result, and timed-out children return `timedOut: true` with a stable timeout message.
+Foreground runs stream progress in the conversation while they run. Foreground runs default to the configured minimum foreground wall-clock budget: 300000 ms (5 min) unless `minForegroundTimeoutMs` is set in config. Use `timeoutMs` or its alias `maxRuntimeMs` to override that budget for a single foreground run; values below the configured minimum are raised to that minimum. When the timeout expires, running children are soft-interrupted, completed children stay in the result, and timed-out children return `timedOut: true` with a stable timeout message.
 
 Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`.
 
@@ -797,7 +797,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `model` | string | agent default | Override model. |
 | `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, and `acceptance`. |
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
-| `timeoutMs` / `maxRuntimeMs` | number | - | Foreground wall-clock timeout for single, parallel, and chain runs. Timed-out children return `timedOut: true`; async/background runs reject it. |
+| `timeoutMs` / `maxRuntimeMs` | number | `minForegroundTimeoutMs` | Foreground wall-clock timeout for single, parallel, and chain runs. Minimum/effective floor is configured by `minForegroundTimeoutMs` (`300000` ms by default); shorter values are raised. Timed-out children return `timedOut: true`; async/background runs reject it. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
 | `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Sequential steps and parallel child tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`; group-level acceptance is not supported because there is no child session to finalize. |
 | `context` | `fresh \| fork` | agent default or `fresh` | `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, and `oracle` default to `fork`. |
@@ -886,6 +886,14 @@ Makes top-level calls use background execution when the request does not explici
 ```
 
 Forces depth-0 single, parallel, and chain runs into background mode and bypasses clarify UI by forcing `clarify: false`. Nested calls keep their own inherited settings.
+
+### `minForegroundTimeoutMs`
+
+```json
+{ "minForegroundTimeoutMs": 300000 }
+```
+
+Sets the default and minimum foreground wall-clock timeout for single, parallel, and chain runs. The default is `300000` ms (5 min). Use a positive integer; invalid values fall back to the default. If a foreground tool call provides `timeoutMs` or `maxRuntimeMs` below this value, `pi-subagents` raises the effective timeout to `minForegroundTimeoutMs`. Async/background runs still reject `timeoutMs`/`maxRuntimeMs` because they should be controlled with `interrupt`.
 
 ### `parallel`
 

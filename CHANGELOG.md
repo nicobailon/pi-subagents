@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Added `minForegroundTimeoutMs` config for the foreground `timeoutMs`/`maxRuntimeMs` floor, defaulting to 300000 ms (5 min), and raise shorter caller-provided values instead of letting foreground subagent runs time out too early.
+
 ## [0.28.0] - 2026-06-03
 
 ### Added

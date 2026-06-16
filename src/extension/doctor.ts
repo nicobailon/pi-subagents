@@ -9,6 +9,7 @@ import {
 	CHAIN_RUNS_DIR,
 	RESULTS_DIR,
 	TEMP_ROOT_DIR,
+	resolveMinForegroundTimeoutMs,
 	type ExtensionConfig,
 	type SubagentState,
 } from "../shared/types.ts";
@@ -176,6 +177,7 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"Runtime",
 		`- cwd: ${input.cwd}`,
 		lineFromCheck("async support", () => `- async support: ${deps.isAsyncAvailable() ? "available" : "unavailable"}`),
+		lineFromCheck("min foreground timeout", () => `- min foreground timeout: ${resolveMinForegroundTimeoutMs(input.config)}ms`),
 		...formatSessionLines(input),
 		"",
 		"Filesystem",

@@ -81,6 +81,9 @@ import {
 	type SubagentRunMode,
 	type SubagentState,
 	DEFAULT_ARTIFACT_CONFIG,
+	DEFAULT_FOREGROUND_TIMEOUT_MS,
+	normalizeForegroundTimeoutMs,
+	resolveMinForegroundTimeoutMs,
 	SUBAGENT_ACTIONS,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
@@ -769,7 +772,7 @@ function validationErrorResult(mode: Details["mode"], text: string): AgentToolRe
 	return { content: [{ type: "text", text }], isError: true, details: { mode, results: [] } };
 }
 
-function resolveForegroundTimeoutMs(params: SubagentParamsLike): { timeoutMs?: number; error?: string } {
+function resolveForegroundTimeoutMs(params: SubagentParamsLike, defaultTimeoutMs?: number, minTimeoutMs = DEFAULT_FOREGROUND_TIMEOUT_MS): { timeoutMs?: number; error?: string } {
 	const rawTimeout = (params as { timeoutMs?: unknown }).timeoutMs;
 	const rawMaxRuntime = (params as { maxRuntimeMs?: unknown }).maxRuntimeMs;
 	for (const [name, value] of [["timeoutMs", rawTimeout], ["maxRuntimeMs", rawMaxRuntime]] as const) {
@@ -780,7 +783,7 @@ function resolveForegroundTimeoutMs(params: SubagentParamsLike): { timeoutMs?: n
 	if (rawTimeout !== undefined && rawMaxRuntime !== undefined && rawTimeout !== rawMaxRuntime) {
 		return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one or use identical values." };
 	}
-	const timeoutMs = rawTimeout ?? rawMaxRuntime;
+	const timeoutMs = normalizeForegroundTimeoutMs(rawTimeout ?? rawMaxRuntime ?? defaultTimeoutMs, minTimeoutMs);
 	return timeoutMs === undefined ? {} : { timeoutMs };
 }
 
@@ -2462,7 +2465,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
-		const foregroundTimeout = resolveForegroundTimeoutMs(effectiveParams);
+		const minForegroundTimeoutMs = resolveMinForegroundTimeoutMs(deps.config);
+		const foregroundTimeout = resolveForegroundTimeoutMs(
+			effectiveParams,
+			effectiveAsync ? undefined : minForegroundTimeoutMs,
+			minForegroundTimeoutMs,
+		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
 		if (effectiveAsync && foregroundTimeout.timeoutMs !== undefined) {
 			return buildRequestedModeError(effectiveParams, "timeoutMs/maxRuntimeMs only applies to foreground subagent runs. Omit async:true or use action:'interrupt' for background runs.");

@@ -857,6 +857,7 @@ export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
+	minForegroundTimeoutMs?: number;
 	maxSubagentDepth?: number;
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;
@@ -869,6 +870,18 @@ export interface ExtensionConfig {
 // ============================================================================
 // Constants
 // ============================================================================
+
+export const DEFAULT_MIN_FOREGROUND_TIMEOUT_MS = 300_000;
+export const DEFAULT_FOREGROUND_TIMEOUT_MS = DEFAULT_MIN_FOREGROUND_TIMEOUT_MS;
+
+export function resolveMinForegroundTimeoutMs(config?: Pick<ExtensionConfig, "minForegroundTimeoutMs">): number {
+	const value = config?.minForegroundTimeoutMs;
+	return Number.isInteger(value) && value > 0 ? value : DEFAULT_MIN_FOREGROUND_TIMEOUT_MS;
+}
+
+export function normalizeForegroundTimeoutMs(timeoutMs: number | undefined, minTimeoutMs: number): number | undefined {
+	return timeoutMs === undefined ? undefined : Math.max(timeoutMs, minTimeoutMs);
+}
 
 export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 	bytes: 200 * 1024,
