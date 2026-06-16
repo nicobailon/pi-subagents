@@ -21,9 +21,10 @@ describe("writeStepContextFile", () => {
 
     it("writes step context file with all fields populated", () => {
         tmpDir = mkTempDir();
+        const runId = "abc12345";
 
         const filePath = writeStepContextFile(tmpDir, {
-            chain_dir: tmpDir,
+            chain_dir: "/tmp/fake-chain-dir",
             step_index: 0,
             agent: "scout",
             output: path.join(tmpDir, "context.md"),
@@ -34,13 +35,19 @@ describe("writeStepContextFile", () => {
                     structured: { files: ["auth.ts"] },
                 },
             },
+            run_id: runId,
+            artifacts_dir: tmpDir,
         });
 
         assert.ok(fs.existsSync(filePath));
+        // Verify the filename matches the artifact naming scheme
+        assert.strictEqual(path.basename(filePath), "abc12345_scout_0_context.json");
         const raw = fs.readFileSync(filePath, "utf-8");
         const data = JSON.parse(raw) as StepContext;
 
         assert.strictEqual(data.agent, "scout");
+        assert.strictEqual(data.run_id, runId);
+        assert.strictEqual(data.artifacts_dir, tmpDir);
         assert.strictEqual(data.reads.length, 1);
         assert.strictEqual(data.reads[0], "plan.md");
         assert.strictEqual(data.output, path.join(tmpDir, "context.md"));
@@ -52,13 +59,16 @@ describe("writeStepContextFile", () => {
         tmpDir = mkTempDir();
 
         const filePath = writeStepContextFile(tmpDir, {
-            chain_dir: tmpDir,
+            chain_dir: "/tmp/fake-chain-dir",
             step_index: 0,
             agent: "planner",
             reads: [],
             inputs: {},
+            run_id: "run001",
+            artifacts_dir: tmpDir,
         });
 
+        assert.strictEqual(path.basename(filePath), "run001_planner_0_context.json");
         const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as StepContext;
         assert.strictEqual(data.reads.length, 0);
         assert.strictEqual(Object.keys(data.inputs).length, 0);
@@ -69,26 +79,30 @@ describe("writeStepContextFile", () => {
         tmpDir = mkTempDir();
 
         const filePath = writeStepContextFile(tmpDir, {
-            chain_dir: tmpDir,
+            chain_dir: "/tmp/fake-chain-dir",
             step_index: 2,
             agent: "reviewer",
             reads: ["context.md"],
             inputs: {},
+            run_id: "run002",
+            artifacts_dir: tmpDir,
         });
 
+        assert.strictEqual(path.basename(filePath), "run002_reviewer_2_context.json");
         const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as StepContext;
         assert.strictEqual(data.output, undefined);
     });
 
     it("multiple successive steps write distinct files", () => {
         tmpDir = mkTempDir();
+        const runId = "abc12345";
 
-        writeStepContextFile(tmpDir, { chain_dir: tmpDir, step_index: 0, agent: "scout", reads: [], inputs: {} });
-        writeStepContextFile(tmpDir, { chain_dir: tmpDir, step_index: 1, agent: "planner", reads: [], inputs: {} });
-        writeStepContextFile(tmpDir, { chain_dir: tmpDir, step_index: 2, agent: "worker", reads: [], inputs: {} });
+        writeStepContextFile(tmpDir, { chain_dir: "/tmp/chain", step_index: 0, agent: "scout", reads: [], inputs: {}, run_id: runId, artifacts_dir: tmpDir });
+        writeStepContextFile(tmpDir, { chain_dir: "/tmp/chain", step_index: 1, agent: "planner", reads: [], inputs: {}, run_id: runId, artifacts_dir: tmpDir });
+        writeStepContextFile(tmpDir, { chain_dir: "/tmp/chain", step_index: 2, agent: "worker", reads: [], inputs: {}, run_id: runId, artifacts_dir: tmpDir });
 
-        assert.ok(fs.existsSync(path.join(tmpDir, "step-0-context.json")));
-        assert.ok(fs.existsSync(path.join(tmpDir, "step-1-context.json")));
-        assert.ok(fs.existsSync(path.join(tmpDir, "step-2-context.json")));
+        assert.ok(fs.existsSync(path.join(tmpDir, "abc12345_scout_0_context.json")));
+        assert.ok(fs.existsSync(path.join(tmpDir, "abc12345_planner_1_context.json")));
+        assert.ok(fs.existsSync(path.join(tmpDir, "abc12345_worker_2_context.json")));
     });
 });
