@@ -476,6 +476,7 @@ export interface Details {
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	outputs?: ChainOutputMap;
+	nestedChildren?: NestedRunSummary[];
 }
 
 // ============================================================================

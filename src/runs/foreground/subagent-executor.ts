@@ -1368,7 +1368,10 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	}
 
 	const chainDetails = chainResult.details ? compactForegroundDetails({ ...chainResult.details, runId }) : undefined;
-	if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
+	if (foregroundControl) {
+		updateForegroundNestedProjection(foregroundControl);
+		if (chainDetails && foregroundControl.nestedChildren?.length) chainDetails.nestedChildren = foregroundControl.nestedChildren;
+	}
 	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, results: chainDetails.results });
 	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached || result.timedOut)
 		? await maybeBuildForegroundIntercomReceipt({
@@ -1894,6 +1897,10 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			progress: params.includeProgress ? allProgress : undefined,
 			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		});
+		if (foregroundControl) {
+			updateForegroundNestedProjection(foregroundControl);
+			if (foregroundControl.nestedChildren?.length) details.nestedChildren = foregroundControl.nestedChildren;
+		}
 		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, results: details.results });
 		if (timedOut) {
 			return {
@@ -1917,7 +1924,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			};
 		}
 
-		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
 			intercomBridge: data.intercomBridge,
@@ -2114,6 +2120,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const forwardSingleUpdate = onUpdate
 		? (update: AgentToolResult<Details>) => {
+			let updateForRender = update;
 			if (foregroundControl) {
 				const firstProgress = update.details?.progress?.[0];
 				foregroundControl.currentAgent = params.agent;
@@ -2127,8 +2134,15 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				foregroundControl.tokens = firstProgress?.tokens;
 				foregroundControl.toolCount = firstProgress?.toolCount;
 				foregroundControl.updatedAt = Date.now();
+				updateForegroundNestedProjection(foregroundControl);
+				if (foregroundControl.nestedChildren?.length && update.details) {
+					updateForRender = {
+						...update,
+						details: { ...update.details, nestedChildren: foregroundControl.nestedChildren },
+					};
+				}
 			}
-			onUpdate(update);
+			onUpdate(updateForRender);
 		}
 		: undefined;
 
@@ -2202,10 +2216,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		truncation: r.truncation,
 	});
+	if (foregroundControl) {
+		updateForegroundNestedProjection(foregroundControl);
+		if (foregroundControl.nestedChildren?.length) details.nestedChildren = foregroundControl.nestedChildren;
+	}
 	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, results: details.results });
 
 	if (!r.detached && !r.interrupted && !r.timedOut) {
-		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
 			intercomBridge: data.intercomBridge,

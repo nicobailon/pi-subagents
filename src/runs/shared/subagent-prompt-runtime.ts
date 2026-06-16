@@ -135,14 +135,15 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 }
 
 export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] {
+	const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
-		if (isParentOnlySubagentMessage(message) || isSubagentToolResultMessage(message)) {
+		if (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message))) {
 			changed = true;
 			continue;
 		}
-		const stripped = stripAssistantSubagentToolCallBlocks(message);
+		const stripped = preserveCurrentFanoutToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
 		if (stripped === undefined) {
 			changed = true;
 			continue;

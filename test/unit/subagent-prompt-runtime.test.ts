@@ -221,6 +221,16 @@ describe("subagent prompt runtime", () => {
 		);
 	});
 
+	it("preserves live nested subagent calls and results in fanout child context", () => {
+		const user = { role: "user", content: "Task" };
+		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };
+		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "delegate" } }] };
+		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
+		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+
+		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction]), [user, subagentCall, subagentResult]);
+	});
+
 	it("sets the child intercom session name from env during agent startup", async () => {
 		let sessionName: string | undefined;
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;

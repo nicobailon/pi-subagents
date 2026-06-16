@@ -41,11 +41,11 @@ describe("nested widget rendering", () => {
 	it("uses aggregate lines when collapsed and full child rows when expanded", () => {
 		const child = nested("nested-reviewer", "root-run", "running", { currentTool: "read" });
 		const collapsed = buildWidgetLines([job(child)], theme as any, 120, false).join("\n");
-		assert.match(collapsed, /↳ \+1 nested run \(1 running\)/);
+		assert.match(collapsed, /↳ \[\d{2}:\d{2}:\d{2}\] \+1 nested run \(1 running\)/);
 		assert.doesNotMatch(collapsed, /nested-reviewer · running/);
 
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");
-		assert.match(expanded, /↳ . nested-reviewer · running · read/);
+		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · read/);
 	});
 
 	it("collapses descendants beyond the nested depth budget", () => {
@@ -71,13 +71,13 @@ describe("nested widget rendering", () => {
 		state.steps![0]!.status = "complete";
 		const expanded = buildWidgetLines([state], theme as any, 120, true).join("\n");
 		assert.match(expanded, /✓ Step 1\/1: owner · complete/);
-		assert.match(expanded, /↳ . still-running · running/);
+		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . still-running · running/);
 	});
 
 	it("degrades stale child summaries to id and state", () => {
 		const child = nested("missing-metadata", "root-run", "failed", { agent: undefined, error: "owner gone" });
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");
-		assert.match(expanded, /missing-metadata · failed · Failed · owner gone/);
+		assert.match(expanded, /\[\d{2}:\d{2}:\d{2}\] . missing-metadata · failed · Failed · owner gone/);
 	});
 
 	it("rerenders when only nested state changes", () => {

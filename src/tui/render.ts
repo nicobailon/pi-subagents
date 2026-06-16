@@ -763,6 +763,29 @@ function nestedRunSeed(run: NestedRunSummary): number | undefined {
 	return runningSeed(run.lastUpdate, run.lastActivityAt, run.currentStep, run.toolCount, run.turnCount, run.totalTokens?.total, run.currentToolStartedAt);
 }
 
+function formatClockTime(ms: number | undefined): string | undefined {
+	if (ms === undefined || !Number.isFinite(ms)) return undefined;
+	const date = new Date(ms);
+	const pad = (value: number) => value.toString().padStart(2, "0");
+	return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function nestedRunTimestamp(run: NestedRunSummary): string | undefined {
+	return formatClockTime(run.state === "running"
+		? (run.lastActivityAt ?? run.currentToolStartedAt ?? run.lastUpdate ?? run.startedAt)
+		: (run.endedAt ?? run.lastUpdate ?? run.lastActivityAt ?? run.startedAt));
+}
+
+function nestedStepTimestamp(step: NestedStepSummary, fallback?: number): string | undefined {
+	return formatClockTime(step.status === "running"
+		? (step.lastActivityAt ?? step.currentToolStartedAt ?? fallback ?? step.startedAt)
+		: (step.endedAt ?? step.lastActivityAt ?? fallback ?? step.startedAt));
+}
+
+function nestedTimestampPrefix(timestamp: string | undefined): string {
+	return timestamp ? `[${timestamp}] ` : "";
+}
+
 function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount">, state: NestedRunSummary["state"] | NestedStepSummary["status"], snapshotNow?: number): string {
 	const facts: string[] = [];
 	if (input.currentTool && input.currentToolStartedAt !== undefined && snapshotNow !== undefined) facts.push(`${input.currentTool} ${formatDuration(Math.max(0, snapshotNow - input.currentToolStartedAt))}`);
@@ -781,11 +804,17 @@ function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activ
 	return "Done";
 }
 
+function nestedChildrenForResult(details: Details, resultIndex: number): NestedRunSummary[] | undefined {
+	const children = details.nestedChildren?.filter((child) => child.parentStepIndex === resultIndex);
+	return children?.length ? children : undefined;
+}
+
 function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme: Theme, width: number, expanded: boolean, snapshotNow?: number, lineBudget = expanded ? 12 : 1): string[] {
 	if (!children?.length || lineBudget <= 0) return [];
 	if (!expanded) {
 		const aggregate = formatNestedAggregate(children);
-		return aggregate ? [theme.fg("dim", `↳ ${aggregate}`)] : [];
+		const latest = children.reduce((acc, child) => Math.max(acc, child.lastUpdate ?? child.lastActivityAt ?? child.startedAt ?? 0), 0);
+		return aggregate ? [theme.fg("dim", `↳ ${nestedTimestampPrefix(formatClockTime(latest || undefined))}${aggregate}`)] : [];
 	}
 	const lines: string[] = [];
 	const maxDepth = 2;
@@ -805,7 +834,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate);
 			const error = child.error ? ` · ${child.error}` : "";
-			lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${error}`));
+			lines.push(theme.fg("dim", `${prefix}↳ ${nestedTimestampPrefix(nestedRunTimestamp(child))}${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${error}`));
 			if (depth === maxDepth) {
 				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
 				if (aggregate && lines.length < lineBudget) lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
@@ -813,7 +842,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
-				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
+				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
 			append(child.children, depth + 1, `${prefix}  `);
@@ -1044,11 +1073,17 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 		c.addChild(new Text(truncLine(theme.fg("dim", `  ⎿  ${activity}`), width), 0, 0));
 		const liveStatus = buildLiveStatusLine(r.progress, progressSnapshotNow);
 		if (liveStatus && liveStatus !== activity) c.addChild(new Text(truncLine(theme.fg("dim", `     ${liveStatus}`), width), 0, 0));
+		for (const nestedLine of formatNestedWidgetLines(d.nestedChildren, theme, width, false, progressSnapshotNow)) {
+			c.addChild(new Text(truncLine(`  ${nestedLine}`, width), 0, 0));
+		}
 		c.addChild(new Text(truncLine(theme.fg("accent", "  Press Ctrl+O for live detail"), width), 0, 0));
 		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `  output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
 		return c;
 	}
 
+	for (const nestedLine of formatNestedWidgetLines(d.nestedChildren, theme, width, true, undefined, 4)) {
+		c.addChild(new Text(truncLine(`  ${nestedLine}`, width), 0, 0));
+	}
 	c.addChild(new Text(truncLine(theme.fg("dim", `  ⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
 	const preview = firstOutputLine(output);
 	if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
@@ -1140,6 +1175,9 @@ function renderMultiCompact(d: Details, theme: Theme): Component {
 		if (rRunning && rProg && "status" in rProg) {
 			const activity = compactCurrentActivity(rProg);
 			c.addChild(new Text(truncLine(theme.fg("dim", `    ⎿  ${activity}`), width), 0, 0));
+			for (const nestedLine of formatNestedWidgetLines(nestedChildrenForResult(d, i), theme, width, false, snapshotNowForProgress(rProg))) {
+				c.addChild(new Text(truncLine(`    ${nestedLine}`, width), 0, 0));
+			}
 			c.addChild(new Text(truncLine(theme.fg("accent", "    Press Ctrl+O for live detail"), width), 0, 0));
 		} else if (!rPending && (r.exitCode !== 0 || r.interrupted || r.detached || r.timedOut || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
 			c.addChild(new Text(truncLine(theme.fg(r.exitCode !== 0 ? "error" : "dim", `    ⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
@@ -1208,6 +1246,9 @@ export function renderSubagentResult(
 
 		if (isRunning && r.progress) {
 			const progressSnapshotNow = snapshotNowForProgress(r.progress);
+			for (const nestedLine of formatNestedWidgetLines(d.nestedChildren, theme, w, expanded, progressSnapshotNow, expanded ? 12 : 1)) {
+				c.addChild(new Text(fit(`  ${nestedLine}`), 0, 0));
+			}
 			const toolLine = formatCurrentToolLine(r.progress, w, expanded, progressSnapshotNow);
 			if (toolLine) {
 				c.addChild(new Text(fit(theme.fg("warning", `> ${toolLine}`)), 0, 0));
@@ -1449,6 +1490,9 @@ export function renderSubagentResult(
 			const liveStatusLine = buildLiveStatusLine(rProg, progressSnapshotNow);
 			if (liveStatusLine) {
 				c.addChild(new Text(fit(theme.fg("accent", `    ${liveStatusLine}`)), 0, 0));
+			}
+			for (const nestedLine of formatNestedWidgetLines(nestedChildrenForResult(d, i), theme, w, expanded, progressSnapshotNow, expanded ? 8 : 1)) {
+				c.addChild(new Text(fit(`    ${nestedLine}`), 0, 0));
 			}
 			c.addChild(new Text(fit(theme.fg("accent", "    Press Ctrl+O for live detail")), 0, 0));
 			if (r.artifactPaths) {
