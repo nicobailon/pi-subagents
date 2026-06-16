@@ -112,11 +112,11 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		removeTempDir(tempDir);
 	});
 
-	function makeExecutor(agents = [makeAgent("echo")]) {
+	function makeExecutor(agents = [makeAgent("echo")], config = {}) {
 		return createSubagentExecutor({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
+			config,
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
@@ -174,7 +174,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	it("top-level foreground parallel timeout returns completed and timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Fast result" });
 		mockPi.onCall({ delay: 10000 });
-		const executor = makeExecutor([makeAgent("fast"), makeAgent("slow")]);
+		const executor = makeExecutor([makeAgent("fast"), makeAgent("slow")], { minForegroundTimeoutMs: 1 });
 
 		const start = Date.now();
 		const result = await executor.execute(
