@@ -57,6 +57,14 @@ import {
 	SUBAGENT_CONTROL_MESSAGE_TYPE,
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
+import {
+	applyPendingSubagentCostToLatestAssistantEntry,
+	applyPendingSubagentCostToMessage,
+	createSubagentStatusbarCostLedger,
+	recordSubagentAsyncCompleteCost,
+	recordSubagentToolResultCost,
+	resetSubagentStatusbarCostLedger,
+} from "./statusbar-cost.ts";
 
 export { loadConfig } from "./config.ts";
 
@@ -252,6 +260,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			clear: () => {},
 		},
 	};
+	const statusbarCostLedger = createSubagentStatusbarCostLedger();
 
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
@@ -538,14 +547,33 @@ DIAGNOSTICS:
 			details: payload as SubagentControlMessageDetails,
 		});
 	};
+	const handleAsyncComplete = (payload: unknown) => {
+		handleComplete(payload);
+		const recordedCost = recordSubagentAsyncCompleteCost(statusbarCostLedger, payload);
+		if (recordedCost > 0 && state.lastUiContext) {
+			const appliedCost = applyPendingSubagentCostToLatestAssistantEntry(statusbarCostLedger, state.lastUiContext.sessionManager.getEntries());
+			if (appliedCost > 0 && state.lastUiContext.hasUI) state.lastUiContext.ui.requestRender?.();
+		}
+	};
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
-		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
+		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleAsyncComplete),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
 
+	const applyPendingStatusbarCost = (message: Parameters<typeof applyPendingSubagentCostToMessage>[1], ctx: ExtensionContext): void => {
+		const appliedCost = applyPendingSubagentCostToMessage(statusbarCostLedger, message);
+		if (appliedCost > 0 && ctx.hasUI) ctx.ui.requestRender?.();
+	};
+
 	pi.on("tool_result", (event, ctx) => {
+		const recordedCost = recordSubagentToolResultCost(statusbarCostLedger, event);
+		if (recordedCost > 0) {
+			const appliedCost = applyPendingSubagentCostToLatestAssistantEntry(statusbarCostLedger, ctx.sessionManager.getEntries());
+			if (appliedCost > 0 && ctx.hasUI) ctx.ui.requestRender?.();
+		}
+
 		if (event.toolName !== "subagent") return;
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
@@ -554,6 +582,14 @@ DIAGNOSTICS:
 			ctx.ui.requestRender?.();
 			ensurePoller();
 		}
+	});
+
+	pi.on("turn_end", (event, ctx) => {
+		applyPendingStatusbarCost(event.message, ctx);
+	});
+
+	pi.on("message_end", (event, ctx) => {
+		applyPendingStatusbarCost(event.message, ctx);
 	});
 
 	const cleanupSessionArtifacts = (ctx: ExtensionContext) => {
@@ -571,6 +607,7 @@ DIAGNOSTICS:
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.lastUiContext = ctx;
+		resetSubagentStatusbarCostLedger(statusbarCostLedger);
 		cleanupSessionArtifacts(ctx);
 		clearPendingForegroundControlNotices(state);
 		resetJobs(ctx);

@@ -136,6 +136,7 @@ interface StepResult {
 	model?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	usage?: Usage;
 	artifactPaths?: ArtifactPaths;
 	truncated?: boolean;
 	structuredOutput?: unknown;
@@ -176,6 +177,19 @@ function tokenUsageFromAttempts(attempts: ModelAttempt[] | undefined): TokenUsag
 	}
 	const total = input + output;
 	return total > 0 ? { input, output, total } : null;
+}
+
+function usageFromAttempts(attempts: ModelAttempt[] | undefined): Usage {
+	const usage = emptyUsage();
+	for (const attempt of attempts ?? []) {
+		usage.input += attempt.usage?.input ?? 0;
+		usage.output += attempt.usage?.output ?? 0;
+		usage.cacheRead += attempt.usage?.cacheRead ?? 0;
+		usage.cacheWrite += attempt.usage?.cacheWrite ?? 0;
+		usage.cost += attempt.usage?.cost ?? 0;
+		usage.turns += attempt.usage?.turns ?? 0;
+	}
+	return usage;
 }
 
 function appendRecentStepOutput(step: RunnerStatusStep, lines: string[]): void {
@@ -646,6 +660,7 @@ async function runSingleStep(
 	model?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	usage: Usage;
 	artifactPaths?: ArtifactPaths;
 	interrupted?: boolean;
 	sessionFile?: string;
@@ -988,6 +1003,7 @@ async function runSingleStep(
 		model: finalResult?.model,
 		attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 		modelAttempts,
+		usage: usageFromAttempts(modelAttempts),
 		artifactPaths,
 		interrupted: finalResult?.interrupted,
 		completionGuardTriggered: completionGuardTriggeredFinal,
@@ -1762,7 +1778,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					statusPayload.steps[fi].exitCode = -1;
 					statusPayload.lastUpdate = skippedAt;
 					writeStatusPayload();
-					return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
+					return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true, usage: emptyUsage() };
 				}
 				const taskStartTime = Date.now();
 				statusPayload.currentStep = fi;
@@ -1837,6 +1853,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					model: pr.model,
 					attemptedModels: pr.attemptedModels,
 					modelAttempts: pr.modelAttempts,
+					usage: pr.usage,
 					artifactPaths: pr.artifactPaths,
 					structuredOutput: pr.structuredOutput,
 					structuredOutputPath: pr.structuredOutputPath,
@@ -1977,7 +1994,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: -1, durationMs: 0,
 							}));
-							return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
+							return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true, usage: emptyUsage() };
 						}
 
 						const taskStartTime = Date.now();
@@ -2105,14 +2122,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						model: pr.model,
 						attemptedModels: pr.attemptedModels,
 						modelAttempts: pr.modelAttempts,
+						usage: pr.usage,
 						artifactPaths: pr.artifactPaths,
-							structuredOutput: pr.structuredOutput,
-							structuredOutputPath: pr.structuredOutputPath,
-							structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
-							acceptance: pr.acceptance,
-							resourceLimitExceeded: pr.resourceLimitExceeded,
-						});
-					}
+						structuredOutput: pr.structuredOutput,
+						structuredOutputPath: pr.structuredOutputPath,
+						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
+						acceptance: pr.acceptance,
+						resourceLimitExceeded: pr.resourceLimitExceeded,
+					});
+				}
 				for (let t = 0; t < group.parallel.length; t++) {
 					const outputName = group.parallel[t]?.outputName;
 					if (outputName) outputs[outputName] = outputEntryFromAsyncResult({
@@ -2208,6 +2226,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				model: singleResult.model,
 				attemptedModels: singleResult.attemptedModels,
 				modelAttempts: singleResult.modelAttempts,
+				usage: singleResult.usage,
 				artifactPaths: singleResult.artifactPaths,
 				structuredOutput: singleResult.structuredOutput,
 				structuredOutputPath: singleResult.structuredOutputPath,
@@ -2417,6 +2436,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				model: r.model,
 				attemptedModels: r.attemptedModels,
 				modelAttempts: r.modelAttempts,
+				usage: r.usage,
 				artifactPaths: r.artifactPaths,
 				truncated: r.truncated,
 				structuredOutput: r.structuredOutput,

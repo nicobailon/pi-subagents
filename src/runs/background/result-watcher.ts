@@ -8,6 +8,7 @@ import {
 	type NestedRunSummary,
 	type SubagentResultIntercomChild,
 	type SubagentState,
+	type Usage,
 } from "../../shared/types.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -41,6 +42,7 @@ type ResultFileChild = {
 	error?: string;
 	success?: boolean;
 	sessionFile?: string;
+	usage?: Usage;
 	artifactPaths?: { outputPath?: string };
 	intercomTarget?: string;
 	children?: unknown;
