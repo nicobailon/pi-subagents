@@ -231,6 +231,22 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction]), [user, subagentCall, subagentResult]);
 	});
 
+	it("strips inherited parent subagent artifacts before preserving fanout child history", () => {
+		const priorUser = { role: "user", content: "Earlier parent task" };
+		const inheritedParentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "worker" } }] };
+		const inheritedParentResult = { role: "toolResult", toolName: "subagent", content: "parent result" };
+		const currentTask = { role: "user", content: "Current fanout child task" };
+		const childCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "delegate" } }] };
+		const childResult = { role: "toolResult", toolName: "subagent", content: "child result" };
+		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
+		process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+
+		assert.deepEqual(
+			stripParentOnlySubagentMessages([priorUser, inheritedParentCall, inheritedParentResult, instruction, currentTask, childCall, childResult]),
+			[priorUser, currentTask, childCall, childResult],
+		);
+	});
+
 	it("sets the child intercom session name from env during agent startup", async () => {
 		let sessionName: string | undefined;
 		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;

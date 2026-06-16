@@ -134,11 +134,22 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
+function findLastUserMessageIndex(messages: unknown[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if ((messages[i] as { role?: string })?.role === "user") return i;
+	}
+	return -1;
+}
+
 export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] {
-	const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
+	const preserveFanoutToolHistoryAfter = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1"
+		? findLastUserMessageIndex(messages)
+		: -1;
 	let changed = false;
 	const filtered: unknown[] = [];
-	for (const message of messages) {
+	for (let index = 0; index < messages.length; index++) {
+		const message = messages[index];
+		const preserveCurrentFanoutToolHistory = preserveFanoutToolHistoryAfter >= 0 && index > preserveFanoutToolHistoryAfter;
 		if (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message))) {
 			changed = true;
 			continue;
