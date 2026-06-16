@@ -218,6 +218,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 		const events = createEventBus();
 		let requestedParams: unknown;
+		let requestedCtx: unknown;
 		const sessionManager = {
 			flushed: false,
 			rewrites: 0,
@@ -227,8 +228,9 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			},
 		};
 		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
-			const payload = data as { requestId: string; params?: unknown };
+			const payload = data as { requestId: string; params?: unknown; ctx?: unknown };
 			requestedParams = payload.params;
+			requestedCtx = payload.ctx;
 			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
 			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
 				requestId: payload.requestId,
@@ -251,10 +253,12 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			},
 		};
 
+		const ctx = createCommandContext({ sessionManager });
 		registerSlashCommands!(pi, createState(process.cwd()));
-		await commands.get("run")!.handler("scout", createCommandContext({ sessionManager }));
+		await commands.get("run")!.handler("scout", ctx);
 
 		assert.deepEqual(requestedParams, { agent: "scout", task: "", clarify: false, agentScope: "both" });
+		assert.equal(requestedCtx, ctx);
 		assert.equal(sent.length, 2);
 		assert.equal((sent[0] as { display?: boolean }).display, true);
 		assert.equal((sent[0] as { content?: string }).content, "Running subagent...");
