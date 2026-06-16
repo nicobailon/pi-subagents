@@ -54,3 +54,96 @@ Decision rule: merge bug fixes and functionality judged 100% necessary; skip red
   - `node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/render-fork-badge.test.ts` passed.
 - **Residual risk:** Live `nestedChildren` propagation for chain/parallel foreground updates may still be incomplete; final details are enriched. Recorded as non-blocking because the core bug fix is necessary.
 
+### PR #268 — MERGED WITH REVIEW FIXES
+- **Title:** Use requester context for slash bridge runs.
+- **Decision:** Merge, then immediately fix review-loop finding.
+- **Reason:** Necessary slash bridge bug fix: bridge runs could use stale/null `lastUiContext` instead of the live slash command requester context.
+- **Process:** Simulated in `/tmp/pi-subagents-pr268-panel`; GPT-5.5 panel unanimously recommended merge.
+- **Review-loop fix implemented:** Runtime cleanup now disposes slash and prompt-template bridge subscriptions on hot reload/session shutdown, preventing duplicate handlers and stale pre-fix bridges.
+- **Validation:**
+  - `node --experimental-strip-types --test test/unit/slash-bridge.test.ts test/unit/index-child-registration.test.ts` passed.
+  - `node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/slash-commands.test.ts` passed.
+
+### PR #280 — ALREADY INCLUDED
+- **Title:** `[Feature Request] Configurable minimum timeout`
+- **Decision:** Retain as part of the starting branch used to create `dev`.
+- **Reason:** `dev` was created from the current branch `configurable-foreground-timeout-floor`, whose tip is `origin/pr/280`; no separate merge was performed.
+
+## Skipped Open PRs
+
+### PR #276 — SKIPPED
+- **Title:** Add configurable subagent live widget placement.
+- **Reason:** Optional UI configuration feature, not a 100% necessary bug fix/functionality for this sweep.
+
+### PR #261 — SKIPPED
+- **Title:** `feat(skills): support nested directories and lightweight injection`
+- **Reason:** Useful feature, but broad and optional; not necessary under the strict merge rule.
+
+### PR #258 — SKIPPED
+- **Title:** prevent skill files from being registered as subagents.
+- **Reason:** Redundant after merging PR #271, which fixes the same issue more narrowly and with project/user tests.
+
+### PR #255 — SKIPPED
+- **Title:** pi permission system integration.
+- **Reason:** Broad optional integration with an external permission-system package; useful, but not 100% necessary for core subagent operation.
+
+### PR #251 — SKIPPED
+- **Title:** parallel groups, metadata, group options, completion via `/chain`.
+- **Reason:** Large slash-command feature expansion; optional and not a necessary bug fix.
+
+### PR #250 — SKIPPED
+- **Title:** Trim repeated schema descriptions / harden schema pruning coverage.
+- **Reason:** Token/schema-surface optimization and tests; beneficial but optional.
+
+### PR #248 — SKIPPED
+- **Title:** remove `allOf`/`anyOf`/`const`/`if`/`then` from tool parameter schemas for provider compatibility.
+- **Reason:** Real provider-compatibility intent, but the PR is stale against current acceptance-contract/schema semantics. Simulation conflicted in `src/extension/schemas.ts`; taking the PR side would reintroduce old `level`/`reason` acceptance policy and `type: [...]` unions that current tests reject. Needs an updated patch, not a direct merge.
+
+### PR #244 — SKIPPED
+- **Title:** keep subagent spinners animating with session-scoped dirs.
+- **Reason:** UI polish/animation bug; not necessary enough under the strict rule.
+
+### PR #232 — SKIPPED
+- **Title:** EPERM-tolerant `ensureAccessibleDir` with pid-scoped fallback.
+- **Reason:** Necessary Windows/ACL bug-fix intent, but simulation conflicted in `src/extension/index.ts`; review found a build issue (`DIRS` use without import in `nested-events.ts`) and weak fallback coverage. Needs fixes before merge.
+
+### PR #231 — SKIPPED
+- **Title:** run-history v2 and builtin override extensions.
+- **Reason:** Broad feature/refactor; optional and conflict-prone.
+
+### PR #230 — SKIPPED
+- **Title:** document `contact_supervisor` as runtime-bridge-injected.
+- **Reason:** Documentation-only clarification; not necessary for runtime correctness.
+
+### PR #229 — SKIPPED
+- **Title:** resolve subagent context per agent `defaultContext`.
+- **Reason:** Large, stale/conflicting branch. Simulation conflicted across changelog/package/executor/tests, and current `dev` already contains modern default-context handling. Needs rebasing before reconsideration.
+
+### PR #227 — SKIPPED
+- **Title:** make default output paths unique and authoritative across all run modes.
+- **Reason:** Useful output-path correctness work, but simulation conflicted in async/foreground execution paths and overlaps with newer output handling; not safe as a direct merge.
+
+### PR #226 — SKIPPED
+- **Title:** auto-add unique runId/index suffix to default output paths.
+- **Reason:** Older/narrower version of PR #227 plus unrelated builtin progress changes; skipped as redundant/conflicting.
+
+### PR #219 — SKIPPED
+- **Title:** apply `agentOverrides` to user/project custom agents.
+- **Reason:** Configuration feature, not a necessary bug fix under the strict rule.
+
+### PR #206 — SKIPPED
+- **Title:** handle deferred session file writes from `createBranchedSession`.
+- **Reason:** Necessary fork-context bug-fix intent, but panel review found a correctness blocker: fallback-written session files can later duplicate header/history after child messages. Targeted tests passed but did not cover post-spawn persistence. Needs a safer patch.
+
+### PR #205 — SKIPPED
+- **Title:** prevent duplicate `subagent` tool registration in child processes.
+- **Reason:** Redundant after merging PR #270, which includes this fix and additional nested fanout fixes.
+
+### PR #204 — SKIPPED
+- **Title:** ignore legacy skill dirs in agent discovery.
+- **Reason:** Redundant after merging PR #271.
+
+### PR #177 — SKIPPED
+- **Title:** sanitize forked session tool IDs and thinking signatures for Anthropic compatibility.
+- **Reason:** Draft PR; skip until ready.
+
