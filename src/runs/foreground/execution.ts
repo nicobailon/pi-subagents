@@ -824,7 +824,7 @@ export async function runSync(
 			run_id: options.runId,
 			artifacts_dir: options.artifactsDir ?? tmpDir,
 		};
-		writeFileSync(join(tmpDir, `${options.runId}_${agentName}_${options.index ?? 0}_context.json`), JSON.stringify(ctx, null, 2));
+		writeFileSync(join(tmpDir, `${options.runId}_${agentName.replace(/[^\w.-]/g, "_")}_${options.index ?? 0}_context.json`), JSON.stringify(ctx, null, 2));
 		options.chainDir = tmpDir;
 	}
 

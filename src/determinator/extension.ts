@@ -44,13 +44,15 @@ export interface StepContext {
 
 export function findContextFile(chainDir: string, runId?: string): string | null {
   const effectiveRunId = runId ?? getRunId();
+  const childIndex = getChildIndex();
   if (!fs.existsSync(chainDir)) return null;
   const entries = fs.readdirSync(chainDir);
-  // Szukamy pliku *_context.json pasującego do runId
+  const expectedSuffix = `_${childIndex}_context.json`;
+  // Szukamy pliku *_context.json pasującego do runId i stepIndex
   for (const entry of entries) {
     if (
       entry.startsWith(effectiveRunId) &&
-      entry.endsWith("_context.json")
+      entry.endsWith(expectedSuffix)
     ) {
       return path.join(chainDir, entry);
     }
