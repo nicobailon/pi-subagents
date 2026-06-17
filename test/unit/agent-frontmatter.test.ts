@@ -378,6 +378,7 @@ Do work
 			const builtins = discoverAgentsAll(dir).builtin;
 			assert.ok(builtins.length > 0);
 			for (const agent of builtins) {
+				if (agent.name === "determinator") continue; // zero-LLM agent, no tools needed
 				assert.ok(agent.tools && agent.tools.length > 0, `${agent.name} should have explicit tools frontmatter`);
 			}
 		} finally {

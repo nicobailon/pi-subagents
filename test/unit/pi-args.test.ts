@@ -244,9 +244,35 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
 		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
+		assert.ok(!extensionArgs.some((arg) => arg.endsWith(path.join("src", "determinator", "extension.ts"))), "determinator extension should not be injected for generic agents");
 		assert.equal(env.PI_SUBAGENT_CHILD, "1");
 		assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
 		assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
+	});
+
+	it("injects determinator extension only when childAgentName is determinator", () => {
+		const without = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+		const withoutExtensions = without.args.filter((arg, index) => without.args[index - 1] === "--extension");
+		assert.ok(!withoutExtensions.some((arg) => arg.endsWith(path.join("src", "determinator", "extension.ts"))));
+
+		const withDeterminator = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "./my-script.ts",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			childAgentName: "determinator",
+			tools: [],
+		});
+		const withExtensions = withDeterminator.args.filter((arg, index) => withDeterminator.args[index - 1] === "--extension");
+		assert.ok(withExtensions.some((arg) => arg.endsWith(path.join("src", "determinator", "extension.ts"))));
+		assert.equal(withDeterminator.env.PI_SUBAGENT_CHILD_AGENT, "determinator");
 	});
 
 	it("passes child intercom and orchestrator metadata through env", () => {
@@ -461,6 +487,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
 		assert.equal(args[args.indexOf("--tools") + 1], "read,chrome_devtools_take_screenshot");
 		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
+		assert.ok(!extensionArgs.some((arg) => arg.endsWith(path.join("src", "determinator", "extension.ts"))), "determinator extension should not be injected for non-determinator agents");
 		assert.ok(extensionArgs.includes("./custom-tool.ts"));
 		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
 	});
