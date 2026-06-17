@@ -98,6 +98,7 @@ export interface StepContext {
   chain_dir: string;
   step_index: number;
   agent: string;
+  task: string;
   output?: string;
   reads: string[];
   inputs: Record<string, { text: string; structured?: unknown }>;
@@ -222,12 +223,32 @@ export default function registerDeterminatorExtension(
     const output =
       stepCtx?.output ?? parsed.writeTo ?? path.join(chainDir, "determinator-output.md");
 
-    // 4. Rozwiąż ścieżkę skryptu
-    const scriptPath = path.isAbsolute(parsed.scriptPath)
-      ? parsed.scriptPath
-      : path.resolve(process.cwd(), parsed.scriptPath);
+    // 4. Określ scriptPath, params i task — chain mode z context.json ma priorytet
+    let scriptPath = parsed.scriptPath;
+    let taskParams = parsed.params;
+    let cleanTask = parsed.body;
 
-    // 5. Zbuduj DeterminatorContext
+    if (stepCtx?.task) {
+      try {
+        const taskObj = JSON.parse(stepCtx.task);
+        if (typeof taskObj.script === "string" && taskObj.script.length > 0) {
+          scriptPath = taskObj.script;
+        }
+        if (taskObj.params && typeof taskObj.params === "object" && !Array.isArray(taskObj.params)) {
+          taskParams = taskObj.params as Record<string, unknown>;
+        }
+        cleanTask = stepCtx.task;
+      } catch {
+        // chain mode fallback — użyj parsed
+      }
+    }
+
+    // 5. Rozwiąż ścieżkę skryptu
+    const resolvedScriptPath = path.isAbsolute(scriptPath)
+      ? scriptPath
+      : path.resolve(process.cwd(), scriptPath);
+
+    // 6. Zbuduj DeterminatorContext
     const log = makeLogFn(chainDir);
     const execFn = await makeExecFn(process.cwd());
     const readFile = await makeReadFileFn();
@@ -237,9 +258,9 @@ export default function registerDeterminatorExtension(
       inputs,
       output,
       cwd: process.cwd(),
-      task: parsed.body,
+      task: cleanTask,
       chainDir,
-      params: parsed.params,
+      params: taskParams,
       runId,
       agentName: process.env.PI_SUBAGENT_CHILD_AGENT ?? "determinator",
       stepIndex: Number.isNaN(childIndex) ? 0 : childIndex,
@@ -252,12 +273,12 @@ export default function registerDeterminatorExtension(
     // 6. Załaduj i uruchom skrypt
     let resultContent: string;
     try {
-      log(`Loading script: ${scriptPath}`);
+      log(`Loading script: ${resolvedScriptPath}`);
 
       const jiti = createJiti(import.meta.url, {
         interopDefault: true,
       });
-      const mod = await jiti.import(scriptPath, { default: true });
+      const mod = await jiti.import(resolvedScriptPath, { default: true });
       const scriptFn: DeterminatorScript =
         typeof mod === "function" ? mod : (mod as { default: DeterminatorScript }).default;
 

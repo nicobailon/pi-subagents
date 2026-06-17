@@ -5,6 +5,7 @@ export interface StepContext {
     chain_dir: string;
     step_index: number;
     agent: string;
+    task: string;
     output?: string;
     reads: string[];
     inputs: Record<string, StepInputEntry>;
