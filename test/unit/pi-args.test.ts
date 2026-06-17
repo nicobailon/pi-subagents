@@ -465,6 +465,70 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
 	});
 
+	it("resolves named npm extension packages in explicit extension allowlists", () => {
+		const fixture = createMcpFixture();
+		const packageRoot = path.join(fixture.agentDir, "npm", "node_modules", "pi-intercom");
+		writeJson(path.join(packageRoot, "package.json"), {
+			name: "pi-intercom",
+			pi: { extensions: ["./index.ts"] },
+		});
+		fs.writeFileSync(path.join(packageRoot, "index.ts"), "export default {};\n", "utf-8");
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			extensions: ["pi-intercom", "./allowed-ext.ts"],
+		});
+
+		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		assert.ok(args.includes("--no-extensions"));
+		assert.ok(extensionArgs.includes(path.join(packageRoot, "index.ts")));
+		assert.ok(extensionArgs.includes("./allowed-ext.ts"));
+		assert.ok(!extensionArgs.includes("pi-intercom"));
+	});
+
+	it("resolves npm-prefixed and scoped extension package names", () => {
+		const fixture = createMcpFixture();
+		const packageRoot = path.join(fixture.agentDir, "npm", "node_modules", "@scope", "named-ext");
+		writeJson(path.join(packageRoot, "package.json"), {
+			name: "@scope/named-ext",
+			pi: { extensions: ["./src/extension.ts"] },
+		});
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			extensions: ["npm:@scope/named-ext"],
+		});
+
+		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		assert.ok(extensionArgs.includes(path.join(packageRoot, "src", "extension.ts")));
+		assert.ok(!extensionArgs.includes("npm:@scope/named-ext"));
+	});
+
+	it("keeps unresolved extension refs unchanged so Pi can report the final load error", () => {
+		const fixture = createMcpFixture();
+		void fixture;
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			extensions: ["missing-extension"],
+		});
+
+		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		assert.ok(extensionArgs.includes("missing-extension"));
+	});
+
 	it("authorizes child fanout only from exact declared builtin subagent", () => {
 		const { args, env } = buildPiArgs({
 			baseArgs: ["-p"],

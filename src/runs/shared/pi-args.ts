@@ -6,6 +6,7 @@ import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from ".
 import { resolveMcpDirectToolNames } from "./mcp-direct-tool-allowlist.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const TASK_ARG_LIMIT = 8000;
@@ -76,6 +77,62 @@ export function applyThinkingSuffix(model: string | undefined, thinking: string 
 	return `${model}:${thinking}`;
 }
 
+function isPathLikeExtensionRef(ref: string): boolean {
+	return path.isAbsolute(ref)
+		|| ref.startsWith("./")
+		|| ref.startsWith("../")
+		|| ref.startsWith("~/")
+		|| ref.startsWith("file:")
+		|| ref.endsWith(".ts")
+		|| ref.endsWith(".js")
+		|| ref.endsWith(".mjs")
+		|| ref.endsWith(".cjs");
+}
+
+function readJsonBestEffort(filePath: string): unknown {
+	try {
+		return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+	} catch {
+		return null;
+	}
+}
+
+function packageExtensionEntries(packageRoot: string): string[] {
+	const pkg = readJsonBestEffort(path.join(packageRoot, "package.json"));
+	if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) return [];
+	const pi = (pkg as { pi?: unknown }).pi;
+	if (!pi || typeof pi !== "object" || Array.isArray(pi)) return [];
+	const extensions = (pi as { extensions?: unknown }).extensions;
+	if (!Array.isArray(extensions)) return [];
+	return extensions.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+}
+
+function resolvePackageExtensionRef(ref: string): string[] | null {
+	const packageName = ref.startsWith("npm:") ? ref.slice("npm:".length) : ref;
+	if (!packageName || isPathLikeExtensionRef(packageName)) return null;
+
+	const agentDir = getAgentDir();
+	const candidates = [
+		path.join(agentDir, "npm", "node_modules", packageName),
+		path.join(agentDir, "node_modules", packageName),
+		path.join(agentDir, "extensions", packageName),
+	];
+
+	for (const packageRoot of candidates) {
+		if (!fs.existsSync(packageRoot)) continue;
+		const entries = packageExtensionEntries(packageRoot);
+		if (entries.length > 0) {
+			return entries.map((entry) => path.resolve(packageRoot, entry));
+		}
+		return [packageRoot];
+	}
+	return null;
+}
+
+export function resolveExtensionRefs(refs: string[]): string[] {
+	return refs.flatMap((ref) => resolvePackageExtensionRef(ref) ?? [ref]);
+}
+
 export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const args = [...input.baseArgs];
 
@@ -118,9 +175,10 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const runtimeExtensions = fanoutAuthorized
 		? [PROMPT_RUNTIME_EXTENSION_PATH, FANOUT_CHILD_EXTENSION_PATH]
 		: [PROMPT_RUNTIME_EXTENSION_PATH];
-	if (input.extensions !== undefined) {
+	const explicitExtensionRefs = input.extensions !== undefined ? resolveExtensionRefs(input.extensions) : undefined;
+	if (explicitExtensionRefs !== undefined) {
 		args.push("--no-extensions");
-		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...input.extensions])]) {
+		for (const extPath of [...new Set([...runtimeExtensions, ...toolExtensionPaths, ...explicitExtensionRefs])]) {
 			args.push("--extension", extPath);
 		}
 	} else {

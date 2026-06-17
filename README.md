@@ -447,7 +447,7 @@ Important fields:
 |-------|-------|
 | `package` | Optional package identifier. A file with `name: scout` and `package: code-analysis` registers as `code-analysis.scout`; serialization keeps `name` and `package` separate. |
 | `tools` | Builtin tool allowlist. `mcp:` entries select direct MCP tools when `pi-mcp-adapter` is installed. |
-| `extensions` | Omitted means normal extensions; empty means no extensions; comma-separated values allowlist specific extensions. |
+| `extensions` | Omitted means normal extensions; empty means no extensions; comma-separated names or paths allowlist specific extensions. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. |
 | `fallbackModels` | Ordered backup models for provider/model failures such as quota, auth, timeout, or unavailable model. Ordinary task failures do not trigger fallback. |
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. |
@@ -484,9 +484,11 @@ Direct MCP tools require [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-a
 # Empty: no extensions
 extensions:
 
-# Allowlist
-extensions: /abs/path/to/ext-a.ts, /abs/path/to/ext-b.ts
+# Allowlist by installed package name, npm-prefixed package name, or path
+extensions: pi-intercom, npm:@scope/ext-package, /abs/path/to/ext-a.ts, ./local-ext.ts
 ```
+
+Named entries resolve installed Pi packages from the user agent directory (for example `~/.pi/agent/npm/node_modules/<name>`). Packages with `pi.extensions` expand to those extension entry files; path entries are passed through unchanged.
 
 When `extensions` is present, it takes precedence over extension paths implied by `tools` entries.
 
