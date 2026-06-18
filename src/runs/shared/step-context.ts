@@ -11,6 +11,7 @@ export interface StepContext {
     inputs: Record<string, StepInputEntry>;
     run_id: string;
     artifacts_dir: string;
+    sessionFile?: string;
 }
 
 export interface StepInputEntry {

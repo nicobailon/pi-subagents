@@ -161,6 +161,7 @@ describe("loadContextFile", () => {
       inputs: {},
       run_id: "r1",
       artifacts_dir: path.join(dir, "artifacts"),
+      sessionFile: path.join(dir, "session.jsonl"),
     };
     fs.writeFileSync(contextFile, JSON.stringify(contextData), "utf-8");
 
