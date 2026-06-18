@@ -4,6 +4,7 @@ description: Lightweight subagent that inherits the parent model with no default
 systemPromptMode: append
 inheritProjectContext: true
 tools: read, grep, find, ls, bash, edit, write, contact_supervisor
+completionGuard: false
 inheritSkills: false
 ---
 

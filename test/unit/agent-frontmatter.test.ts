@@ -64,6 +64,15 @@ Do work
 			assert.equal(agent?.defaultContext, "fork", `${name} should default to fork context`);
 		}
 	});
+
+	it("loads packaged delegate with completion guard disabled", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-delegate-guard-"));
+		tempDirs.push(dir);
+		const agents = discoverAgentsAll(dir).builtin;
+		const delegate = agents.find((candidate) => candidate.name === "delegate");
+
+		assert.equal(delegate?.completionGuard, false);
+	});
 });
 
 describe("chain discovery", () => {
