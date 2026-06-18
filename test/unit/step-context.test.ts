@@ -37,6 +37,7 @@ describe("writeStepContextFile", () => {
             },
             run_id: runId,
             artifacts_dir: tmpDir,
+            sessionFile: "/tmp/sessions/run-0/session.jsonl",
         });
 
         assert.ok(fs.existsSync(filePath));
@@ -53,6 +54,7 @@ describe("writeStepContextFile", () => {
         assert.strictEqual(data.output, path.join(tmpDir, "context.md"));
         assert.strictEqual(data.inputs.scan.text, '{"files":["auth.ts"]}');
         assert.deepStrictEqual(data.inputs.scan.structured, { files: ["auth.ts"] });
+        assert.strictEqual(data.sessionFile, "/tmp/sessions/run-0/session.jsonl");
     });
 
     it("writes step context file with empty reads and no inputs (first step)", () => {
@@ -91,6 +93,25 @@ describe("writeStepContextFile", () => {
         assert.strictEqual(path.basename(filePath), "run002_reviewer_2_context.json");
         const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as StepContext;
         assert.strictEqual(data.output, undefined);
+    });
+
+    it("omits sessionFile when undefined", () => {
+        tmpDir = mkTempDir();
+        const runId = "run003";
+
+        const filePath = writeStepContextFile(tmpDir, {
+            chain_dir: "/tmp/fake-chain-dir",
+            step_index: 0,
+            agent: "scout",
+            reads: [],
+            inputs: {},
+            run_id: runId,
+            artifacts_dir: tmpDir,
+        });
+
+        const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as StepContext;
+        assert.strictEqual(data.sessionFile, undefined);
+        assert.strictEqual(Object.keys(data).includes("sessionFile"), false);
     });
 
     it("multiple successive steps write distinct files", () => {
