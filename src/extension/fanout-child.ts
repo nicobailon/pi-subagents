@@ -131,7 +131,6 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	const globalStore = globalThis as Record<string, unknown>;
 	const registeredKey = "__piSubagentFanoutChildRegistered";
 	if (globalStore[registeredKey] === true) return;
-	globalStore[registeredKey] = true;
 
 	const config = loadConfig();
 	const state = createChildSafeState();
@@ -162,5 +161,6 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	};
 
 	pi.registerTool(tool);
+	globalStore[registeredKey] = true;
 	startNestedControlInboxListener(pi, state);
 }

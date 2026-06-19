@@ -185,6 +185,47 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("deduplicates the child-safe subagent tool when both child extension entries load", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
+			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+			process.env[SUBAGENT_CHILD_ENV] = "1";
+			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+			const registeredNames = new Set();
+			const calls = [];
+			function makePi(source) {
+				return {
+					events: { on() { return () => {}; }, emit() {} },
+					registerTool(tool) {
+						if (registeredNames.has(tool.name)) throw new Error("Tool " + JSON.stringify(tool.name) + " conflicts with " + source);
+						registeredNames.add(tool.name);
+						calls.push(source + ":" + tool.name);
+					},
+					getSessionName() { return undefined; },
+				};
+			}
+			registerSubagentExtension(makePi("index.ts"));
+			registerFanoutChildSubagentExtension(makePi("fanout-child.ts"));
+			if (calls.length !== 1 || calls[0] !== "index.ts:subagent") {
+				throw new Error("expected exactly one child-safe subagent registration, got " + JSON.stringify(calls));
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, stdio: "pipe" },
+		);
+	});
+
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {
 		const script = String.raw`
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";

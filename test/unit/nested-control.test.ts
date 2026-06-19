@@ -29,9 +29,11 @@ const savedEnv = {
 	[SUBAGENT_PARENT_RUN_ID_ENV]: process.env[SUBAGENT_PARENT_RUN_ID_ENV],
 	[SUBAGENT_PARENT_CHILD_INDEX_ENV]: process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV],
 };
+const fanoutChildRegisteredKey = "__piSubagentFanoutChildRegistered";
 
 afterEach(() => {
 	for (const root of routeRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+	delete (globalThis as Record<string, unknown>)[fanoutChildRegisteredKey];
 	for (const [key, value] of Object.entries(savedEnv)) {
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
