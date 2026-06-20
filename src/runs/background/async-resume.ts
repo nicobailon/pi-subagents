@@ -18,6 +18,10 @@ export interface AsyncResumeDeps {
 	now?: () => number;
 }
 
+export interface AsyncResumeOptions {
+	requireSessionFile?: boolean;
+}
+
 export type AsyncResumeTarget = {
 	kind: "live" | "revive";
 	runId: string;
@@ -236,9 +240,10 @@ function validateResumeSessionFile(runId: string, sessionFile: string): string {
 	return resolved;
 }
 
-export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncResumeDeps = {}): AsyncResumeTarget {
+export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncResumeDeps = {}, options: AsyncResumeOptions = {}): AsyncResumeTarget {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const requireSessionFile = options.requireSessionFile ?? true;
 	const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
 	if (!location.asyncDir && !location.resultPath) {
 		throw new Error("Async run not found. Provide id or dir.");
@@ -313,8 +318,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const sessionFile = statusSteps[index]?.sessionFile
 		?? resultSteps[index]?.sessionFile
 		?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
-	if (!sessionFile) throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
-	const resolvedSessionFile = validateResumeSessionFile(runId, sessionFile);
+	if (!sessionFile && requireSessionFile) throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
+	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
 
 	return {
 		kind: "revive",
@@ -325,7 +330,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		index,
 		intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
 		cwd: status?.cwd ?? result?.cwd,
-		sessionFile: resolvedSessionFile,
+		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 	};
 }
 

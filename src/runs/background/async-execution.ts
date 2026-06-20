@@ -543,17 +543,18 @@ export function executeAsyncChain(
 	}
 
 	if (spawnResult.pid) {
-		const firstStep = chain[0];
-		const firstAgents = isParallelStep(firstStep)
-			? firstStep.parallel.map((t) => t.agent)
-			: isDynamicParallelStep(firstStep)
-				? [firstStep.parallel.agent]
-			: [(firstStep as SequentialStep).agent];
+		const eventChain = graphChain;
+		const eventFirstStep = eventChain[0];
+		const firstAgents = isParallelStep(eventFirstStep)
+			? eventFirstStep.parallel.map((t) => t.agent)
+			: isDynamicParallelStep(eventFirstStep)
+				? [eventFirstStep.parallel.agent]
+			: [(eventFirstStep as SequentialStep).agent];
 		const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 		const flatAgents: string[] = [];
 		let flatStepStart = 0;
-		for (let stepIndex = 0; stepIndex < chain.length; stepIndex++) {
-			const step = chain[stepIndex]!;
+		for (let stepIndex = 0; stepIndex < eventChain.length; stepIndex++) {
+			const step = eventChain[stepIndex]!;
 			if (isParallelStep(step)) {
 				parallelGroups.push({ start: flatStepStart, count: step.parallel.length, stepIndex });
 				flatAgents.push(...step.parallel.map((task) => task.agent));
@@ -591,7 +592,7 @@ export function executeAsyncChain(
 						state: "running",
 						agent: firstAgents[0],
 						agents: flatAgents,
-						chainStepCount: chain.length,
+						chainStepCount: eventChain.length,
 						parallelGroups,
 						startedAt: now,
 						lastUpdate: now,
@@ -608,15 +609,15 @@ export function executeAsyncChain(
 			mode: resultMode,
 			agent: firstAgents[0],
 			agents: flatAgents,
-			task: isParallelStep(firstStep)
-				? firstStep.parallel[0]?.task?.slice(0, 50)
-				: isDynamicParallelStep(firstStep)
-					? firstStep.parallel.task?.slice(0, 50)
-				: (firstStep as SequentialStep).task?.slice(0, 50),
-			chain: chain.map((s) =>
+			task: isParallelStep(eventFirstStep)
+				? eventFirstStep.parallel[0]?.task?.slice(0, 50)
+				: isDynamicParallelStep(eventFirstStep)
+					? eventFirstStep.parallel.task?.slice(0, 50)
+				: (eventFirstStep as SequentialStep).task?.slice(0, 50),
+			chain: eventChain.map((s) =>
 				isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : (s as SequentialStep).agent,
 			),
-			chainStepCount: chain.length,
+			chainStepCount: eventChain.length,
 			parallelGroups,
 			workflowGraph,
 			cwd: runnerCwd,

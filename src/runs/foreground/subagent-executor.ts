@@ -320,7 +320,7 @@ function isExactResumeError(error: unknown, source: "async" | "foreground", requ
 	return new RegExp(`\\b${source} run '${escapeRegExp(requested)}'`, "i").test(error.message);
 }
 
-function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState): ResumeSourceTarget {
+function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { asyncRequireSessionFile?: boolean } = {}): ResumeSourceTarget {
 	const requested = (params.id ?? params.runId)?.trim() ?? "";
 	let foregroundTarget: ForegroundResumeSourceTarget | undefined;
 	let foregroundError: unknown;
@@ -334,7 +334,7 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState): 
 		foregroundError = error;
 	}
 	try {
-		asyncTarget = { source: "async", ...resolveAsyncResumeTarget(params) };
+		asyncTarget = { source: "async", ...resolveAsyncResumeTarget(params, {}, { requireSessionFile: options.asyncRequireSessionFile }) };
 	} catch (error) {
 		asyncError = error;
 	}
@@ -588,7 +588,7 @@ async function resumeAsyncRun(input: {
 			];
 			target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
 		} else {
-			target = resolveResumeTarget(input.params, input.deps.state);
+			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: !attachChain });
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
