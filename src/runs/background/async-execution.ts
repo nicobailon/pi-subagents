@@ -40,6 +40,7 @@ import {
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
+import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -101,6 +102,7 @@ interface AsyncExecutionContext {
 interface AsyncChainParams {
 	chain: ChainStep[];
 	task?: string;
+	attachRoot?: ImportedAsyncRoot & { agent: string; outputName?: string; label?: string };
 	resultMode?: Exclude<SubagentRunMode, "single">;
 	agents: AgentConfig[];
 	ctx: AsyncExecutionContext;
@@ -255,6 +257,14 @@ export function executeAsyncChain(
 	const chainSkills = params.chainSkills ?? [];
 	const availableModels = params.availableModels;
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+	const graphChain: ChainStep[] = params.attachRoot
+		? [{
+				agent: params.attachRoot.agent,
+				task: `Attach async root ${params.attachRoot.runId}`,
+				label: params.attachRoot.label ?? `Attached root ${params.attachRoot.runId}`,
+				...(params.attachRoot.outputName ? { as: params.attachRoot.outputName } : {}),
+			}, ...chain]
+		: chain;
 	const firstStep = chain[0];
 	const originalTask = params.task ?? (firstStep
 		? (isParallelStep(firstStep)
@@ -269,7 +279,7 @@ export function executeAsyncChain(
 		if (error instanceof ChainOutputValidationError) return formatAsyncStartError(resultMode, error.message);
 		throw error;
 	}
-	const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: chain });
+	const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: graphChain });
 
 	for (const s of chain) {
 		const stepAgents = isParallelStep(s)
@@ -394,7 +404,7 @@ export function executeAsyncChain(
 
 	let steps: RunnerStep[];
 	try {
-		steps = chain.map((s, stepIndex) => {
+		const builtSteps = chain.map((s, stepIndex) => {
 			if (isParallelStep(s)) {
 				const parallelBehaviors = s.parallel.map((task) => {
 					const agent = agents.find((candidate) => candidate.name === task.agent)!;
@@ -450,12 +460,32 @@ export function executeAsyncChain(
 			}
 			return buildSeqStep(s as SequentialStep, nextSessionFile());
 		});
+		steps = params.attachRoot
+			? [{
+					agent: params.attachRoot.agent,
+					task: "",
+					label: params.attachRoot.label ?? `Attached root ${params.attachRoot.runId}`,
+					outputName: params.attachRoot.outputName,
+					importAsyncRoot: {
+						runId: params.attachRoot.runId,
+						asyncDir: params.attachRoot.asyncDir,
+						resultPath: params.attachRoot.resultPath,
+						index: params.attachRoot.index,
+					},
+					inheritProjectContext: false,
+					inheritSkills: false,
+				}, ...builtSteps]
+			: builtSteps;
 	} catch (error) {
 		if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError) return formatAsyncStartError(resultMode, error.message);
 		throw error;
 	}
 	let childTargetIndex = 0;
 	const childIntercomTargets = childIntercomTarget ? steps.flatMap((step) => {
+		if (!("parallel" in step) && step.importAsyncRoot) {
+			childTargetIndex++;
+			return [undefined];
+		}
 		if ("parallel" in step) {
 			if (!Array.isArray(step.parallel)) {
 				childTargetIndex++;

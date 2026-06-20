@@ -78,6 +78,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, formatAcceptancePrompt, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 
 interface SubagentRunConfig {
 	id: string;
@@ -601,6 +602,30 @@ async function runSingleStep(
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 }> {
+	if (step.importAsyncRoot) {
+		const imported = await waitForImportedAsyncRoot(step.importAsyncRoot);
+		try {
+			fs.writeFileSync(ctx.outputFile, imported.output, "utf-8");
+		} catch {
+			// Output files are observability only for imported roots.
+		}
+		return {
+			agent: imported.agent,
+			output: imported.output,
+			exitCode: imported.exitCode,
+			error: imported.error,
+			sessionFile: imported.sessionFile,
+			intercomTarget: imported.intercomTarget,
+			model: imported.model,
+			attemptedModels: imported.attemptedModels,
+			modelAttempts: imported.modelAttempts,
+			structuredOutput: imported.structuredOutput,
+			structuredOutputPath: imported.structuredOutputPath,
+			structuredOutputSchemaPath: imported.structuredOutputSchemaPath,
+			acceptance: imported.acceptance,
+		};
+	}
+
 	const effectiveStructuredOutput = step.structuredOutput ?? (step.structuredOutputSchema
 		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"))
 		: undefined);
