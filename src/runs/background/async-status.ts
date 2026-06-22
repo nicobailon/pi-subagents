@@ -146,6 +146,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			agent: step.agent,
 			...(step.label ? { label: step.label } : {}),
 			...(step.phase ? { phase: step.phase } : {}),
+			...(step.taskPreview ? { taskPreview: step.taskPreview } : {}),
 			...(step.outputName ? { outputName: step.outputName } : {}),
 			...(step.structured ? { structured: step.structured } : {}),
 			status: step.status,

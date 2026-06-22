@@ -586,6 +586,7 @@ export interface AsyncStatus {
 		agent: string;
 		phase?: string;
 		label?: string;
+		taskPreview?: string;
 		outputName?: string;
 		structured?: boolean;
 		status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
