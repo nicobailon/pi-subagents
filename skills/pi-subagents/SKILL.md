@@ -236,6 +236,11 @@ Useful override fields: `model`, `fallbackModels`, `thinking`,
 `disabled`, `skills`, `tools`, and `systemPrompt`. Create a user or project
 agent with the same name only when you want a substantially different agent.
 
+If a provider rejects model IDs with thinking suffixes, use
+`subagents.disableThinking: true` in user or project settings to clear bundled
+builtin thinking defaults globally. A higher-precedence per-agent `thinking`
+override can opt one builtin back in.
+
 ## Discovery and Scope Rules
 
 Agent files can live in:

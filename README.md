@@ -143,6 +143,8 @@ For a persistent override, edit settings. This example pins the reviewer everywh
 
 Use `~/.pi/agent/settings.json` for a user override or `.pi/settings.json` for a project override. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable a builtin. If you want a totally different agent, create a user or project agent with the same name; for normal tweaks, prefer overrides.
 
+If your provider rejects model IDs with thinking suffixes, set `subagents.disableThinking: true` in user or project settings. That clears bundled builtin thinking defaults in one place; an explicit higher-precedence `agentOverrides.<name>.thinking` value can opt a role back in.
+
 ## Where running subagents show up
 
 Foreground runs stream progress in the conversation while they run.
@@ -396,6 +398,8 @@ Example:
 Supported override fields are `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`, `disabled`, `skills`, `tools`, and `systemPrompt`. Use `defaultContext: false` in builtin overrides to clear an inherited context default. Project overrides beat user overrides.
 
 Set `disabled: true` to hide a builtin from runtime discovery and agent-facing `subagent({ action: "list" })` output. For bulk control, set `subagents.disableBuiltins: true` in settings.
+
+Set `subagents.disableThinking: true` to clear bundled builtin thinking defaults globally for providers that do not support `:low`, `:medium`, `:high`, or similar model suffixes. A higher-precedence per-agent `thinking` override can opt one builtin back in.
 
 ### Prompt assembly
 

@@ -201,6 +201,22 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(args.includes("--model"));
 		assert.ok(args.includes("openai-codex/gpt-5.4-mini:high"));
 	});
+
+	it("leaves provider-specific model suffixes untouched when thinking is disabled", () => {
+		const model = "openai-compatible/qwen2.5-coder:7b";
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(args.includes("--model"));
+		assert.ok(args.includes(model));
+		assert.ok(!args.includes(`${model}:high`));
+	});
 });
 
 describe("buildPiArgs system prompt mode wiring", () => {

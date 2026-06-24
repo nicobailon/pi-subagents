@@ -80,6 +80,86 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.override?.path, path.join(tempHome, ".pi", "agent", "settings.json"));
 	});
 
+	it("globally disables builtin thinking suffix defaults from user settings", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				disableThinking: true,
+			},
+		});
+
+		const builtins = discoverAgentsAll(tempProject).builtin;
+		assert.ok(builtins.some((agent) => agent.name === "reviewer"));
+		assert.deepEqual(
+			builtins
+				.filter((agent) => agent.thinking !== undefined)
+				.map((agent) => agent.name),
+			[],
+		);
+		assert.equal(
+			builtins.find((agent) => agent.name === "reviewer")?.override?.path,
+			path.join(tempHome, ".pi", "agent", "settings.json"),
+		);
+	});
+
+	it("lets an explicit same-scope thinking override opt back in when global thinking is disabled", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				disableThinking: true,
+				agentOverrides: {
+					reviewer: {
+						thinking: "high",
+					},
+				},
+			},
+		});
+
+		const agents = discoverAgents(tempProject, "both").agents;
+		const reviewer = agents.find((agent) => agent.name === "reviewer");
+		const worker = agents.find((agent) => agent.name === "worker");
+		assert.ok(reviewer);
+		assert.ok(worker);
+		assert.equal(reviewer.thinking, "high");
+		assert.equal(worker.thinking, undefined);
+	});
+
+	it("lets project settings disable builtin thinking even when user overrides request it", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					reviewer: {
+						thinking: "xhigh",
+					},
+				},
+			},
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				disableThinking: true,
+			},
+		});
+
+		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer");
+		assert.ok(reviewer);
+		assert.equal(reviewer.thinking, undefined);
+	});
+
+	it("surfaces malformed global thinking settings", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, {
+			subagents: {
+				disableThinking: "yes",
+			},
+		});
+
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("disableThinking"),
+		);
+	});
+
 	it("prefers project settings overrides over user settings overrides", () => {
 		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {

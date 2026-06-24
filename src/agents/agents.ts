@@ -107,6 +107,7 @@ export interface AgentConfig {
 interface SubagentSettings {
 	overrides: Record<string, BuiltinAgentOverrideConfig>;
 	disableBuiltins?: boolean;
+	disableThinking?: boolean;
 }
 
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {} };
@@ -661,17 +662,25 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 			throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
 		}
 	}
+	let disableThinking: boolean | undefined;
+	if ("disableThinking" in subagentsObject) {
+		if (typeof subagentsObject.disableThinking === "boolean") {
+			disableThinking = subagentsObject.disableThinking;
+		} else {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'disableThinking'; expected a boolean.`);
+		}
+	}
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
 	const agentOverrides = subagentsObject.agentOverrides;
 	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-		return { overrides: parsed, disableBuiltins };
+		return { overrides: parsed, disableBuiltins, disableThinking };
 	}
 	for (const [name, value] of Object.entries(agentOverrides)) {
 		const override = parseBuiltinOverrideEntry(name, value, filePath);
 		if (override) parsed[name] = override;
 	}
-	return { overrides: parsed, disableBuiltins };
+	return { overrides: parsed, disableBuiltins, disableThinking };
 }
 
 function applyBuiltinOverride(
@@ -709,6 +718,15 @@ function applyBuiltinOverride(
 	return next;
 }
 
+function clearBuiltinThinking(agent: AgentConfig, meta: { scope: "user" | "project"; path: string }): AgentConfig {
+	if (agent.thinking === undefined) return agent;
+	return {
+		...agent,
+		thinking: undefined,
+		override: agent.override ?? { ...meta, base: cloneOverrideBase(agent) },
+	};
+}
+
 function applyBuiltinOverrides(
 	builtinAgents: AgentConfig[],
 	userSettings: SubagentSettings,
@@ -718,27 +736,49 @@ function applyBuiltinOverrides(
 ): AgentConfig[] {
 	const projectBulkDisabled = projectSettings.disableBuiltins === true && projectSettingsPath !== null;
 	const userBulkDisabled = projectSettings.disableBuiltins === undefined && userSettings.disableBuiltins === true;
+	const projectThinkingConfigured = projectSettings.disableThinking !== undefined && projectSettingsPath !== null;
+	const disableThinking = projectThinkingConfigured ? projectSettings.disableThinking === true : userSettings.disableThinking === true;
+	const disableThinkingMeta = projectThinkingConfigured
+		? { scope: "project" as const, path: projectSettingsPath! }
+		: { scope: "user" as const, path: userSettingsPath };
+
+	const applyGlobalThinking = (agent: AgentConfig, hasExplicitThinkingOverride: boolean): AgentConfig => {
+		if (!disableThinking || hasExplicitThinkingOverride) return agent;
+		return clearBuiltinThinking(agent, disableThinkingMeta);
+	};
 
 	return builtinAgents.map((agent) => {
 		const projectOverride = projectSettings.overrides[agent.name];
 		if (projectOverride && projectSettingsPath) {
-			return applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath });
+			return applyGlobalThinking(
+				applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath }),
+				projectOverride.thinking !== undefined,
+			);
 		}
 
 		if (projectBulkDisabled && projectSettingsPath) {
-			return applyBuiltinOverride(agent, { disabled: true }, { scope: "project", path: projectSettingsPath });
+			return applyGlobalThinking(
+				applyBuiltinOverride(agent, { disabled: true }, { scope: "project", path: projectSettingsPath }),
+				false,
+			);
 		}
 
 		const userOverride = userSettings.overrides[agent.name];
 		if (userOverride) {
-			return applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath });
+			return applyGlobalThinking(
+				applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath }),
+				!projectThinkingConfigured && userOverride.thinking !== undefined,
+			);
 		}
 
 		if (userBulkDisabled) {
-			return applyBuiltinOverride(agent, { disabled: true }, { scope: "user", path: userSettingsPath });
+			return applyGlobalThinking(
+				applyBuiltinOverride(agent, { disabled: true }, { scope: "user", path: userSettingsPath }),
+				false,
+			);
 		}
 
-		return agent;
+		return applyGlobalThinking(agent, false);
 	});
 }
 
