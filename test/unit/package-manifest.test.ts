@@ -10,6 +10,7 @@ const sourceImportPattern = /from\s+["'](@earendil-works\/[^"']+)["']|import\s+[
 const oldPiScopePattern = /@mariozechner\/pi-/;
 const piPackageJsonSubpathPattern = /@earendil-works\/pi-[^"']+\/package\.json/;
 const cjsPiPackageResolutionPattern = /require(?:\.resolve)?\(\s*["']@earendil-works\/pi-/;
+const exactVersionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 function collectTsFiles(dir: string): string[] {
 	const files: string[] = [];
@@ -41,6 +42,16 @@ test("direct @earendil-works runtime imports are declared for CI installs", () =
 
 	const missing = [...imported].filter((specifier) => !declared.has(specifier)).sort();
 	assert.deepEqual(missing, []);
+});
+
+test("direct dependency declarations are exact version pins", () => {
+	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
+
+	for (const section of ["dependencies", "devDependencies"] as const) {
+		for (const [name, version] of Object.entries<string>(packageJson[section] ?? {})) {
+			assert.match(version, exactVersionPattern, `${section}.${name} should use an exact version`);
+		}
+	}
 });
 
 test("old pi package scope is not used by source or tests", () => {

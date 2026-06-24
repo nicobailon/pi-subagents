@@ -21,7 +21,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - name: Install devDependencies
-        run: npm install
+        run: npm ci --ignore-scripts
       - name: Run tests
         run: npm run test:all
       - name: Publish to npm

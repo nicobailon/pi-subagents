@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 24
       - name: Install devDependencies
-        run: npm install
+        run: npm ci --ignore-scripts
       - name: Unit tests
         run: npm test
       - name: Integration tests
