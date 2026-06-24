@@ -114,6 +114,46 @@ describe("prompt-template delegation bridge", () => {
 		bridge.dispose();
 	});
 
+	it("rebuilds compact tool-call summaries into delegated response messages", async () => {
+		const events = new FakeEvents();
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async () => ({
+				details: {
+					results: [{
+						finalOutput: "finished",
+						toolCalls: [
+							{ text: "write src/output.md", expandedText: "write src/output.md" },
+							{ text: "edit src/output.md", expandedText: "edit src/output.md" },
+						],
+					}],
+				},
+			}),
+		});
+
+		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
+		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, {
+			requestId: "r-compact-tools",
+			agent: "worker",
+			task: "do work",
+			context: "fresh",
+			model: "openai/gpt-5",
+			cwd: "/repo",
+		});
+
+		const response = await responsePromise as { messages: Array<{ role?: string; content?: Array<{ type?: string; name?: string; text?: string }> }> };
+		assert.equal(response.messages.length, 1);
+		assert.equal(response.messages[0]?.role, "assistant");
+		assert.deepEqual(
+			response.messages[0]?.content?.filter((part) => part.type === "toolCall").map((part) => part.name),
+			["write", "edit"],
+		);
+		assert.equal(response.messages[0]?.content?.some((part) => part.type === "text" && part.text === "finished"), true);
+
+		bridge.dispose();
+	});
+
 	it("filters malformed recent output entries in updates", async () => {
 		const events = new FakeEvents();
 		const bridge = registerPromptTemplateDelegationBridge({

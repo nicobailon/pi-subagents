@@ -79,6 +79,7 @@ interface PromptTemplateBridgeResult {
 			agent?: string;
 			messages?: unknown[];
 			finalOutput?: string;
+			toolCalls?: Array<{ text?: string; expandedText?: string }>;
 			exitCode?: number;
 			error?: string;
 			model?: string;
@@ -209,13 +210,35 @@ function resolveProgressModel(
 	return firstWithModel?.model;
 }
 
-function buildDelegationMessages(result: { messages?: unknown[]; finalOutput?: string }, fallbackText?: string): unknown[] {
+function toolCallNameFromSummary(summary: { text?: string; expandedText?: string }): string | undefined {
+	const text = typeof summary.expandedText === "string" && summary.expandedText.trim().length > 0
+		? summary.expandedText.trim()
+		: typeof summary.text === "string"
+			? summary.text.trim()
+			: "";
+	if (!text) return undefined;
+	if (text.startsWith("$ ")) return "bash";
+	return text.match(/^[A-Za-z_][\w.-]*/)?.[0];
+}
+
+function buildDelegationMessages(
+	result: { messages?: unknown[]; finalOutput?: string; toolCalls?: Array<{ text?: string; expandedText?: string }> },
+	fallbackText?: string,
+): unknown[] {
 	if (Array.isArray(result.messages) && result.messages.length > 0) return result.messages;
+	const toolCallParts = (result.toolCalls ?? []).flatMap((summary) => {
+		const name = toolCallNameFromSummary(summary);
+		return name ? [{ type: "toolCall", name, arguments: { summary: summary.expandedText ?? summary.text ?? "" } }] : [];
+	});
 	const text = typeof result.finalOutput === "string" && result.finalOutput.trim().length > 0
 		? result.finalOutput.trim()
 		: fallbackText;
-	if (!text) return [];
-	return [{ role: "assistant", content: [{ type: "text", text }] }];
+	const content = [
+		...toolCallParts,
+		...(text ? [{ type: "text", text }] : []),
+	];
+	if (content.length === 0) return [];
+	return [{ role: "assistant", content }];
 }
 
 function toDelegationUpdate(requestId: string, update: PromptTemplateBridgeResult): PromptTemplateDelegationUpdate | undefined {
