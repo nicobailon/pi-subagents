@@ -5,6 +5,7 @@
 ### Added
 - Added `/chain` inline parallel groups with per-step metadata, group options, and tab completion.
 - Added subagent profile commands and provider model catalog generation for quota and quality model profiles.
+- Added `PI_SUBAGENT_PI_BINARY` to let wrappers launch child agents through an explicit Pi binary instead of resolving `pi` from `PATH`.
 
 ### Fixed
 - Discover `pi-intercom` installations created by `--extension npm:pi-intercom` under Pi's temporary npm extension cache.
