@@ -19,6 +19,7 @@ let cwd = "";
 let oldAgentDir: string | undefined;
 let oldHome: string | undefined;
 let oldUserProfile: string | undefined;
+let oldSubagentsConfigDirName: string | undefined;
 
 function writeFile(filePath: string, content: string): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -38,6 +39,7 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 		oldAgentDir = process.env.PI_CODING_AGENT_DIR;
 		oldHome = process.env.HOME;
 		oldUserProfile = process.env.USERPROFILE;
+		oldSubagentsConfigDirName = process.env.PI_SUBAGENTS_CONFIG_DIR_NAME;
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-coding-agent-dir-"));
 		tempHome = path.join(tempDir, "home");
 		agentDir = path.join(tempDir, "agent");
@@ -57,6 +59,8 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 		else process.env.HOME = oldHome;
 		if (oldUserProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = oldUserProfile;
+		if (oldSubagentsConfigDirName === undefined) delete process.env.PI_SUBAGENTS_CONFIG_DIR_NAME;
+		else process.env.PI_SUBAGENTS_CONFIG_DIR_NAME = oldSubagentsConfigDirName;
 		clearSkillCache();
 		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
@@ -66,6 +70,10 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 		assert.equal(resolveConfigDirName({ CONFIG_DIR_NAME: "" }), ".pi");
 		assert.equal(getConfigDirName(), ".pi");
 		assert.equal(getProjectConfigDir(cwd), path.join(cwd, ".pi"));
+		process.env.PI_SUBAGENTS_CONFIG_DIR_NAME = ".custom-pi";
+		assert.equal(getConfigDirName(), ".custom-pi");
+		assert.equal(getProjectConfigDir(cwd), path.join(cwd, ".custom-pi"));
+		delete process.env.PI_SUBAGENTS_CONFIG_DIR_NAME;
 		assert.equal(getAgentDir(), agentDir);
 
 		process.env.PI_CODING_AGENT_DIR = "~";
@@ -84,6 +92,12 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 		const config = loadConfig();
 		assert.equal(config.asyncByDefault, true);
 		assert.equal(config.maxSubagentDepth, 3);
+	});
+
+	it("does not value-import the host pi package from runner-loaded shared utils", () => {
+		const utilsSource = fs.readFileSync(new URL("../../src/shared/utils.ts", import.meta.url), "utf-8");
+
+		assert.doesNotMatch(utilsSource, /from\s+["']@earendil-works\/pi-coding-agent["']/);
 	});
 
 	it("discovers user agents, chains, and settings under the configured agent dir", () => {

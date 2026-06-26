@@ -265,6 +265,45 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("captures detached runner stdio and forwards config-dir env", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const originalConfigDirName = process.env.PI_SUBAGENTS_CONFIG_DIR_NAME;
+		process.env.PI_SUBAGENTS_CONFIG_DIR_NAME = ".custom-pi";
+		try {
+			mockPi.onCall({ echoEnv: ["PI_SUBAGENTS_CONFIG_DIR_NAME"] });
+			const id = `async-runner-stdio-${Date.now().toString(36)}`;
+			const result = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Echo config env. Do not edit files.",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+
+			assert.equal(result.isError, undefined);
+			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, true);
+			assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), { PI_SUBAGENTS_CONFIG_DIR_NAME: ".custom-pi" });
+			assert.ok(ASYNC_DIR, "expected async dir constant");
+			const asyncDir = path.join(ASYNC_DIR, id);
+			assert.equal(fs.existsSync(path.join(asyncDir, "runner-stdout.log")), true);
+			assert.equal(fs.existsSync(path.join(asyncDir, "runner-stderr.log")), true);
+		} finally {
+			if (originalConfigDirName === undefined) delete process.env.PI_SUBAGENTS_CONFIG_DIR_NAME;
+			else process.env.PI_SUBAGENTS_CONFIG_DIR_NAME = originalConfigDirName;
+		}
+	});
+
 	it("readStatus returns null for missing directory", () => {
 		const status = readStatus("/nonexistent/path/abc123");
 		assert.equal(status, null);
