@@ -5,7 +5,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
@@ -15,12 +14,48 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Singl
 // ============================================================================
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
+const CONFIG_DIR_NAME_ENV = "PI_SUBAGENTS_CONFIG_DIR_NAME";
 
-export function resolveConfigDirName(codingAgentModule: unknown = piCodingAgent): string {
+function cleanConfigDirName(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function readConfigDirNameFromPackageJson(packageJsonPath: string): string | undefined {
+	try {
+		const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as { piConfig?: { configDir?: unknown } };
+		return cleanConfigDirName(pkg.piConfig?.configDir);
+	} catch {
+		return undefined;
+	}
+}
+
+function findConfigDirNameFromEntry(entryPoint: string | undefined = process.argv[1]): string | undefined {
+	if (!entryPoint) return undefined;
+	let dir: string;
+	try {
+		dir = path.dirname(fs.realpathSync(entryPoint));
+	} catch {
+		dir = path.dirname(entryPoint);
+	}
+	while (dir !== path.dirname(dir)) {
+		const packageJsonPath = path.join(dir, "package.json");
+		if (fs.existsSync(packageJsonPath)) {
+			const configDir = readConfigDirNameFromPackageJson(packageJsonPath);
+			if (configDir) return configDir;
+		}
+		dir = path.dirname(dir);
+	}
+	return undefined;
+}
+
+export function resolveConfigDirName(codingAgentModule?: unknown): string {
 	const value = codingAgentModule && typeof codingAgentModule === "object"
 		? (codingAgentModule as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME
 		: undefined;
-	return typeof value === "string" && value.trim() ? value : DEFAULT_CONFIG_DIR_NAME;
+	return cleanConfigDirName(value)
+		?? cleanConfigDirName(process.env[CONFIG_DIR_NAME_ENV])
+		?? findConfigDirNameFromEntry()
+		?? DEFAULT_CONFIG_DIR_NAME;
 }
 
 export function getConfigDirName(): string {

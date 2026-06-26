@@ -71,6 +71,41 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
+	it("includes runner stderr diagnostics when repairing a stale startup crash", () => {
+		const root = tempRoot("pi-stale-run-stderr-");
+		try {
+			const asyncDir = path.join(root, "run-dead-stderr");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				runId: "run-dead-stderr",
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [{ agent: "scout", status: "running", startedAt: 1000 }],
+			});
+			fs.writeFileSync(path.join(asyncDir, "runner-stderr.log"), "startup failed\nmissing peer package\n", "utf-8");
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, true);
+			assert.match(result.message ?? "", /Runner stderr tail:/);
+			assert.match(result.message ?? "", /missing peer package/);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			assert.match(status.steps[0].error, /missing peer package/);
+			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead-stderr.json"), "utf-8"));
+			assert.match(resultJson.summary, /missing peer package/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps stale repair successful when the event log cannot be appended", () => {
 		const root = tempRoot("pi-stale-event-log-collision-");
 		try {

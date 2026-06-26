@@ -215,6 +215,74 @@ function resolveAsyncRunnerNodeCommand(): string {
 	return process.platform === "win32" ? "node.exe" : "node";
 }
 
+interface RunnerStdioFiles {
+	stdio: "ignore" | ["ignore", number, number];
+	closeParentFds: () => void;
+	stderrPath?: string;
+}
+
+const CONFIG_DIR_NAME_ENV = "PI_SUBAGENTS_CONFIG_DIR_NAME";
+
+function cleanString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function getAsyncDirFromRunnerConfig(cfg: object): string | undefined {
+	return cleanString((cfg as { asyncDir?: unknown }).asyncDir);
+}
+
+function getPiPackageRootFromRunnerConfig(cfg: object): string | undefined {
+	return cleanString((cfg as { piPackageRoot?: unknown }).piPackageRoot);
+}
+
+function readPiPackageConfigDirName(piPackageRoot: string | undefined): string | undefined {
+	if (!piPackageRoot) return undefined;
+	try {
+		const pkg = JSON.parse(fs.readFileSync(path.join(piPackageRoot, "package.json"), "utf-8")) as { piConfig?: { configDir?: unknown } };
+		return cleanString(pkg.piConfig?.configDir);
+	} catch {
+		return undefined;
+	}
+}
+
+function buildRunnerEnv(cfg: object): NodeJS.ProcessEnv | undefined {
+	const configDirName = cleanString(process.env[CONFIG_DIR_NAME_ENV])
+		?? readPiPackageConfigDirName(getPiPackageRootFromRunnerConfig(cfg));
+	return configDirName ? { ...process.env, [CONFIG_DIR_NAME_ENV]: configDirName } : undefined;
+}
+
+function openRunnerStdioFiles(cfg: object): RunnerStdioFiles {
+	const asyncDir = getAsyncDirFromRunnerConfig(cfg);
+	if (!asyncDir) return { stdio: "ignore", closeParentFds: () => {} };
+
+	const stdoutPath = path.join(asyncDir, "runner-stdout.log");
+	const stderrPath = path.join(asyncDir, "runner-stderr.log");
+	let stdoutFd: number | undefined;
+	let stderrFd: number | undefined;
+	const closeParentFds = () => {
+		for (const fd of [stdoutFd, stderrFd]) {
+			if (fd === undefined) continue;
+			try {
+				fs.closeSync(fd);
+			} catch {
+				// Best-effort cleanup of parent-side log descriptors.
+			}
+		}
+		stdoutFd = undefined;
+		stderrFd = undefined;
+	};
+
+	try {
+		fs.mkdirSync(asyncDir, { recursive: true });
+		stdoutFd = fs.openSync(stdoutPath, "a");
+		stderrFd = fs.openSync(stderrPath, "a");
+		return { stdio: ["ignore", stdoutFd, stderrFd], closeParentFds, stderrPath };
+	} catch {
+		closeParentFds();
+		return { stdio: "ignore", closeParentFds: () => {} };
+	}
+}
+
 /**
  * Spawn the async runner process
  */
@@ -237,18 +305,37 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const runnerStdio = openRunnerStdioFiles(cfg);
+	const runnerEnv = buildRunnerEnv(cfg);
 
-	const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
-		cwd,
-		detached: true,
-		stdio: "ignore",
-		windowsHide: true,
-	});
+	let proc: ReturnType<typeof spawn>;
+	try {
+		proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
+			cwd,
+			detached: true,
+			stdio: runnerStdio.stdio,
+			...(runnerEnv ? { env: runnerEnv } : {}),
+			windowsHide: true,
+		});
+	} catch (error) {
+		runnerStdio.closeParentFds();
+		const message = error instanceof Error ? error.message : String(error);
+		return { error: `async runner spawn threw for cwd ${cwd}: ${message}` };
+	}
+	runnerStdio.closeParentFds();
 	proc.on("error", (error) => {
+		if (runnerStdio.stderrPath) {
+			try {
+				fs.appendFileSync(runnerStdio.stderrPath, `[pi-subagents] async spawn failed: ${error.message}\n`, "utf-8");
+			} catch {
+				// Diagnostics are best-effort; keep the original console fallback.
+			}
+		}
 		console.error(`[pi-subagents] async spawn failed: ${error.message}`);
 	});
 	if (typeof proc.pid !== "number") {
-		return { error: `async runner did not produce a pid for cwd: ${cwd}` };
+		const hint = runnerStdio.stderrPath ? `; stderr log: ${runnerStdio.stderrPath}` : "";
+		return { error: `async runner did not produce a pid for cwd: ${cwd}${hint}` };
 	}
 	proc.unref();
 	return { pid: proc.pid };
