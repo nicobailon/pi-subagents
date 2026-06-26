@@ -1091,6 +1091,14 @@ Session directory precedence is: `params.sessionDir`, then `config.defaultSessio
 
 Controls nested delegation when no inherited `PI_SUBAGENT_MAX_DEPTH` is already in effect. Per-agent `maxSubagentDepth` can tighten the limit for that agent’s child runs, but cannot relax an inherited stricter limit. This applies even to children that explicitly declare `tools: subagent`; at the cap, execution fanout is blocked instead of silently hiding nested work.
 
+### `PI_SUBAGENT_PI_BINARY`
+
+```bash
+export PI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
+```
+
+Overrides the command used to launch child Pi processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
+
 ### `intercomBridge`
 
 ```json
