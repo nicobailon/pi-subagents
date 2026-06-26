@@ -5,7 +5,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
@@ -16,9 +15,19 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Singl
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
 
-export function resolveConfigDirName(codingAgentModule: unknown = piCodingAgent): string {
-	const value = codingAgentModule && typeof codingAgentModule === "object"
-		? (codingAgentModule as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME
+function loadPiCodingAgent(): unknown {
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		return require("@earendil-works/pi-coding-agent");
+	} catch {
+		return undefined;
+	}
+}
+
+export function resolveConfigDirName(codingAgentModule?: unknown): string {
+	const mod = codingAgentModule ?? loadPiCodingAgent();
+	const value = mod && typeof mod === "object"
+		? (mod as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME
 		: undefined;
 	return typeof value === "string" && value.trim() ? value : DEFAULT_CONFIG_DIR_NAME;
 }
