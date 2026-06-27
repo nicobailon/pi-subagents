@@ -772,6 +772,13 @@ async function runSingleAttempt(
 				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
 		}
 	}
+	if (result.exitCode === 0 && !result.error) {
+		const finalText = getFinalOutput(result.messages);
+		if (!finalText?.trim()) {
+			result.exitCode = 1;
+			result.error = "Subagent produced no output (possible model cold-start or empty response).";
+		}
+	}
 	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
 		const structured = readStructuredOutput({
 			schema: options.structuredOutput.schema,
