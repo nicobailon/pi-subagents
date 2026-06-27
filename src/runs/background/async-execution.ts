@@ -207,9 +207,22 @@ export function isAsyncAvailable(): boolean {
 	return jitiCliPath !== undefined;
 }
 
+function isNodeExecutableName(execPath: string): boolean {
+	const basename = path.basename(execPath).toLowerCase();
+	return basename === "node" || basename === "node.exe" || basename === "nodejs" || basename === "nodejs.exe";
+}
+
+function canUseCurrentNodeExecutable(execPath: string): boolean {
+	try {
+		fs.accessSync(execPath, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function resolveAsyncRunnerNodeCommand(): string {
-	const basename = path.basename(process.execPath).toLowerCase();
-	if (basename === "node" || basename === "node.exe" || basename === "nodejs" || basename === "nodejs.exe") {
+	if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
 		return process.execPath;
 	}
 	return process.platform === "win32" ? "node.exe" : "node";

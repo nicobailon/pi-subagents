@@ -265,6 +265,40 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("falls back to PATH node when node-like process.execPath is stale", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const originalExecPath = process.execPath;
+		process.execPath = path.join(tempDir, "deleted-node-install", "bin", process.platform === "win32" ? "node.exe" : "node");
+		try {
+			mockPi.onCall({ output: "stale node exec async done" });
+			const id = `async-stale-node-exec-${Date.now().toString(36)}`;
+			const result = executeAsyncSingle(id, {
+				agent: "worker",
+				task: "Say stale node exec async done. Do not edit files.",
+				agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+
+			assert.equal(result.isError, undefined);
+			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.output, "stale node exec async done");
+		} finally {
+			process.execPath = originalExecPath;
+		}
+	});
+
 	it("readStatus returns null for missing directory", () => {
 		const status = readStatus("/nonexistent/path/abc123");
 		assert.equal(status, null);
@@ -1742,7 +1776,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("returns a tool error when the async runner process cannot spawn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
 		const originalExecPath = process.execPath;
-		process.execPath = path.join(tempDir, process.platform === "win32" ? "node.exe" : "node");
+		const pathKey = process.platform === "win32" ? "Path" : "PATH";
+		const originalPath = process.env[pathKey];
+		process.execPath = path.join(tempDir, process.platform === "win32" ? "pi.exe" : "pi");
+		process.env[pathKey] = tempDir;
 		try {
 			const id = `async-spawn-fail-${Date.now().toString(36)}`;
 			const result = executeAsyncSingle(id, {
@@ -1768,6 +1805,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.match(result.content[0]?.text ?? "", /async runner did not produce a pid/);
 		} finally {
 			process.execPath = originalExecPath;
+			if (originalPath === undefined) {
+				delete process.env[pathKey];
+			} else {
+				process.env[pathKey] = originalPath;
+			}
 		}
 	});
 
