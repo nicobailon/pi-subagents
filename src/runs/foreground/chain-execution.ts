@@ -35,6 +35,7 @@ import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost } from "../../shared/utils.ts";
+import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
 	cleanupWorktrees,
@@ -139,6 +140,7 @@ interface ParallelChainRunInput {
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	globalSemaphore?: Semaphore;
 }
 
 function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details {
@@ -356,6 +358,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			recordRun(task.agent, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
 			return result;
 		},
+		input.globalSemaphore,
 	);
 
 	return parallelResults;
@@ -406,6 +409,8 @@ interface ChainExecutionParams {
 	worktreeSetupHookTimeoutMs?: number;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
+	globalConcurrencyLimit?: number;
 }
 
 interface ChainExecutionResult {
@@ -597,6 +602,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	}
 
 	const deadlineAt = params.deadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const globalSemaphore = new Semaphore(params.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 	let prev = "";
 	let globalTaskIndex = 0;
 	let progressCreated = false;
@@ -686,6 +692,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					maxSubagentDepth: params.maxSubagentDepth,
 					timeoutMs: params.timeoutMs,
 					deadlineAt,
+					globalSemaphore,
 				});
 				globalTaskIndex += step.parallel.length;
 
@@ -895,6 +902,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				maxSubagentDepth: params.maxSubagentDepth,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
+				globalSemaphore,
 			});
 			globalTaskIndex += dynamicParallelStep.parallel.length;
 

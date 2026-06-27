@@ -840,6 +840,8 @@ export interface ExtensionConfig {
 	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
 	maxSubagentDepth?: number;
+	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
+	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
