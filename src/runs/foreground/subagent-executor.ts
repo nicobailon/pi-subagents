@@ -1938,6 +1938,12 @@ function findDuplicateParallelOutputPath(input: {
 }
 
 async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Promise<SingleResult[]> {
+	// Pre-warm fork session files sequentially before concurrent dispatch to avoid
+	// races where multiple workers simultaneously try to branch the same parent session.
+	// sessionFileForIndex caches results, so these calls return instantly inside mapConcurrent.
+	for (let i = 0; i < input.tasks.length; i++) {
+		input.sessionFileForIndex(i);
+	}
 	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
 		const behavior = input.behaviors[index];
 		const effectiveSkills = behavior?.skills;
