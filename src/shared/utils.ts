@@ -278,6 +278,23 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
 	return summaries;
 }
 
+/**
+ * Sum input tokens, output tokens, and cost across a set of SingleResults.
+ * Returns undefined if all results have zero usage (avoids polluting output for no-op runs).
+ */
+export function sumResultsCost(results: SingleResult[]): Details["totalCost"] {
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let costUsd = 0;
+	for (const result of results) {
+		inputTokens += result.usage.input;
+		outputTokens += result.usage.output;
+		costUsd += result.usage.cost;
+	}
+	if (inputTokens === 0 && outputTokens === 0 && costUsd === 0) return undefined;
+	return { inputTokens, outputTokens, costUsd };
+}
+
 export function compactForegroundResult(result: SingleResult): SingleResult {
 	if (result.progress?.status === "running") return result;
 	const toolCalls = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages);

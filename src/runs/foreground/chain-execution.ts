@@ -34,7 +34,7 @@ import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skill
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
-import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd } from "../../shared/utils.ts";
+import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost } from "../../shared/utils.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
 	cleanupWorktrees,
@@ -151,6 +151,7 @@ function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details 
 		totalSteps: input.totalSteps,
 		currentStepIndex: input.currentStepIndex,
 		outputs: input.outputs,
+		totalCost: sumResultsCost(input.results),
 	workflowGraph: buildWorkflowGraphSnapshot({
 			runId: input.runId,
 			mode: "chain",

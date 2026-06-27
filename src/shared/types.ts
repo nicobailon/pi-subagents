@@ -444,6 +444,12 @@ export interface Details {
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	outputs?: ChainOutputMap;
+	// Aggregated cost across all agents in the run
+	totalCost?: {
+		inputTokens: number;
+		outputTokens: number;
+		costUsd: number;
+	};
 }
 
 // ============================================================================

@@ -40,7 +40,7 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd } from "../../shared/utils.ts";
+import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost } from "../../shared/utils.ts";
 import {
 	attachNestedChildrenToResultChildren,
 	buildSubagentResultIntercomPayload,
@@ -1938,6 +1938,12 @@ function findDuplicateParallelOutputPath(input: {
 }
 
 async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Promise<SingleResult[]> {
+	// Pre-warm fork session files sequentially before concurrent dispatch to avoid
+	// races where multiple workers simultaneously try to branch the same parent session.
+	// sessionFileForIndex caches results, so these calls return instantly inside mapConcurrent.
+	for (let i = 0; i < input.tasks.length; i++) {
+		input.sessionFileForIndex(i);
+	}
 	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
 		const behavior = input.behaviors[index];
 		const effectiveSkills = behavior?.skills;
@@ -2314,6 +2320,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			results,
 			progress: params.includeProgress ? allProgress : undefined,
 			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
+			totalCost: sumResultsCost(results),
 		});
 		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, results: details.results });
 		if (interrupted) {
@@ -2623,6 +2630,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		progress: params.includeProgress ? allProgress : undefined,
 		artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		truncation: r.truncation,
+		totalCost: sumResultsCost([r]),
 	});
 	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, results: details.results });
 
