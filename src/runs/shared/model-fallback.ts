@@ -126,6 +126,10 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/\b502\b/,
 	/\b503\b/,
 	/\b504\b/,
+	/cold.?start/i,
+	/empty response/i,
+	/no output/i,
+	/model.*(?:load|fail|error)/i,
 ];
 
 export function isRetryableModelFailure(error: string | undefined): boolean {

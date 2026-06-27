@@ -444,6 +444,12 @@ export interface Details {
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	outputs?: ChainOutputMap;
+	// Aggregated cost across all agents in the run
+	totalCost?: {
+		inputTokens: number;
+		outputTokens: number;
+		costUsd: number;
+	};
 }
 
 // ============================================================================
@@ -834,6 +840,8 @@ export interface ExtensionConfig {
 	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
 	maxSubagentDepth?: number;
+	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
+	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
