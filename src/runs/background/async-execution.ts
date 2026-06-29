@@ -16,7 +16,7 @@ import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveS
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
-import { resolveChildCwd } from "../../shared/utils.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
@@ -243,6 +243,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 		detached: true,
 		stdio: "ignore",
 		windowsHide: true,
+		env: {
+			...process.env,
+			...(piPackageRoot ? { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: piPackageRoot } : {}),
+		},
 	});
 	proc.on("error", (error) => {
 		console.error(`[pi-subagents] async spawn failed: ${error.message}`);
