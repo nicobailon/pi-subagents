@@ -215,6 +215,26 @@ function resolveAsyncRunnerNodeCommand(): string {
 	return process.platform === "win32" ? "node.exe" : "node";
 }
 
+export function resolveAsyncRunnerLogPaths(cfg: object): { stdoutPath: string; stderrPath: string } | undefined {
+	const asyncDir = typeof (cfg as { asyncDir?: unknown }).asyncDir === "string"
+		? (cfg as { asyncDir: string }).asyncDir
+		: undefined;
+	if (!asyncDir) return undefined;
+	return {
+		stdoutPath: path.join(asyncDir, "runner.stdout.log"),
+		stderrPath: path.join(asyncDir, "runner.stderr.log"),
+	};
+}
+
+function closeFd(fd: number | undefined): void {
+	if (fd === undefined) return;
+	try {
+		fs.closeSync(fd);
+	} catch {
+		// Best-effort cleanup; child process already owns its duplicated stdio fd.
+	}
+}
+
 /**
  * Spawn the async runner process
  */
@@ -238,20 +258,36 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
 
-	const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
-		cwd,
-		detached: true,
-		stdio: "ignore",
-		windowsHide: true,
-	});
-	proc.on("error", (error) => {
-		console.error(`[pi-subagents] async spawn failed: ${error.message}`);
-	});
-	if (typeof proc.pid !== "number") {
-		return { error: `async runner did not produce a pid for cwd: ${cwd}` };
+	const logPaths = resolveAsyncRunnerLogPaths(cfg);
+	let stdoutFd: number | undefined;
+	let stderrFd: number | undefined;
+	try {
+		if (logPaths) {
+			fs.mkdirSync(path.dirname(logPaths.stdoutPath), { recursive: true });
+			stdoutFd = fs.openSync(logPaths.stdoutPath, "a");
+			stderrFd = fs.openSync(logPaths.stderrPath, "a");
+		}
+		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
+			cwd,
+			detached: true,
+			stdio: ["ignore", stdoutFd ?? "ignore", stderrFd ?? "ignore"],
+			windowsHide: true,
+		});
+		closeFd(stdoutFd);
+		closeFd(stderrFd);
+		proc.on("error", (error) => {
+			console.error(`[pi-subagents] async spawn failed: ${error.message}`);
+		});
+		if (typeof proc.pid !== "number") {
+			return { error: `async runner did not produce a pid for cwd: ${cwd}` };
+		}
+		proc.unref();
+		return { pid: proc.pid };
+	} catch (error) {
+		closeFd(stdoutFd);
+		closeFd(stderrFd);
+		return { error: error instanceof Error ? error.message : String(error) };
 	}
-	proc.unref();
-	return { pid: proc.pid };
 }
 
 function formatAsyncStartError(mode: SubagentRunMode, message: string): AsyncExecutionResult {
