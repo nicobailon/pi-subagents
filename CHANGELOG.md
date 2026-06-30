@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-06-25
+
 ### Added
 - Added `/chain` inline parallel groups with per-step metadata, group options, and tab completion.
 - Added subagent profile commands and provider model catalog generation for quota and quality model profiles.
