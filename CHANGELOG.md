@@ -5,12 +5,12 @@
 ## [0.31.1] - 2026-06-25
 
 ### Added
-- Added `/chain` inline parallel groups with per-step metadata, group options, and tab completion.
-- Added subagent profile commands and provider model catalog generation for quota and quality model profiles.
+- Added `/chain` inline parallel groups with per-step metadata, group options, and tab completion. Thanks to loss-and-quick (@loss-and-quick) for #312.
+- Added subagent profile commands and provider model catalog generation for quota and quality model profiles. Thanks to tencnivel (@tencnivel) for #333.
 
 ### Fixed
-- Discover `pi-intercom` installations created by `--extension npm:pi-intercom` under Pi's temporary npm extension cache.
-- Made async subagent interrupt, steer, and stop requests portable across platforms that do not support Unix signals.
+- Discover `pi-intercom` installations created by `--extension npm:pi-intercom` under Pi's temporary npm extension cache. Thanks to loss-and-quick (@loss-and-quick) for #336.
+- Made async subagent interrupt, steer, and stop requests portable across platforms that do not support Unix signals. Thanks to AeonDave (@AeonDave) for #332.
 - Hardened profile commands by probing models without tools, rejecting unsafe profile/provider path tokens, and resolving short model IDs and thinking suffixes against the current registry.
 - Limited inline `/chain` acceptance values to levels expressible in slash syntax and kept completion disabled inside shared `--` tasks with literal parentheses.
 
