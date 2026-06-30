@@ -5,7 +5,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary } from "./types.ts";
@@ -16,7 +15,7 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Singl
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
 
-export function resolveConfigDirName(codingAgentModule: unknown = piCodingAgent): string {
+export function resolveConfigDirName(codingAgentModule?: unknown): string {
 	const value = codingAgentModule && typeof codingAgentModule === "object"
 		? (codingAgentModule as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME
 		: undefined;
