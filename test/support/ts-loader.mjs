@@ -6,7 +6,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const renderPiCodingAgentShim = `export function getMarkdownTheme() { return {}; }`;
+const renderPiCodingAgentShim = `
+export function getMarkdownTheme() { return {}; }
+export function keyText(keybinding) { return keybinding === "app.tools.expand" ? "configured-expand-key" : ""; }
+`;
 
 const renderPiTuiShim = `
 function wrapText(text, width) {
