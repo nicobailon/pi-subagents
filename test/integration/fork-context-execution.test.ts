@@ -336,6 +336,102 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.deepEqual(readSessionArgsFromCalls(), [path.join(tempDir, "fork-1.jsonl")]);
 	});
 
+	it("sanitizes inherited signed thinking and forces child thinking off", async () => {
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const childSessionFile = path.join(tempDir, "fork-with-thinking.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		const manager = {
+			getSessionId: () => "session-123",
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "assistant-1",
+			openSession: () => ({
+				createBranchedSession: () => {
+					fs.writeFileSync(childSessionFile, [
+						{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
+						{ type: "message", id: "user-1", parentId: null, timestamp: "2026-04-16T00:00:01.000Z", message: { role: "user", content: "prompt" } },
+						{ type: "message", id: "assistant-1", parentId: "user-1", timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4-5", content: [{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" }, { type: "text", text: "answer" }] } },
+					].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf-8");
+					return childSessionFile;
+				},
+			}),
+		};
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+		const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.deepEqual(entries[2].message.content, [{ type: "text", text: "answer" }]);
+		assert.equal(entries[3].type, "thinking_level_change");
+		assert.equal(entries[3].thinkingLevel, "off");
+	});
+
+	it("forces every foreground fallback attempt off after sanitizing inherited signed thinking", async () => {
+		mockPi.reset();
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const childSessionFile = path.join(tempDir, "fork-with-thinking.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		const manager = {
+			getSessionId: () => "session-123",
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "assistant-1",
+			openSession: () => ({
+				createBranchedSession: () => {
+					fs.writeFileSync(childSessionFile, [
+						{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
+						{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4-5", content: [{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" }, { type: "text", text: "answer" }] } },
+					].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf-8");
+					return childSessionFile;
+				},
+			}),
+		};
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", fallbackModels: ["anthropic/claude-sonnet-4:low"], thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		const modelArgs = readAllCallArgs().map((args) => args[args.indexOf("--model") + 1]);
+		assert.deepEqual(modelArgs, ["openai/gpt-5-mini:off", "anthropic/claude-sonnet-4:off"]);
+	});
+
 	it("keeps default-fork context on run-path errors", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
@@ -554,6 +650,46 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.match(result.content[0]?.text ?? "", /Failed to create forked subagent session/);
 		assert.match(result.content[0]?.text ?? "", /branch write failed/);
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("keeps later foreground forked chain steps aligned after short dynamic fanout", async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ id: "one" }] } });
+		mockPi.onCall({ output: "inspected one" });
+		mockPi.onCall({ output: "final done" });
+		const parentSessionFile = path.join(tempDir, "parent-dynamic-chain.jsonl");
+		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "producer", description: "Producer", defaultContext: "fresh" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{
+				chain: [
+					{ agent: "producer", task: "produce", as: "items", outputSchema: { type: "object" } },
+					{
+						expand: { from: { output: "items", path: "/items" }, item: "item", key: "/id", maxItems: 3 },
+						parallel: { agent: "worker", task: "inspect {item.id}" },
+						collect: { as: "inspections" },
+					},
+					{ agent: "worker", task: "final" },
+				],
+				clarify: false,
+			},
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 3);
+		assert.equal(readSessionArg(readCallArgsForTask("inspect one")), path.join(tempDir, "fork-1.jsonl"));
+		assert.equal(readSessionArg(readCallArgsForTask("final")), path.join(tempDir, "fork-4.jsonl"));
 	});
 
 	it("reports unknown top-level parallel agents before default-fork preconditions", async () => {

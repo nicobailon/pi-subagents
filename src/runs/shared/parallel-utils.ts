@@ -55,6 +55,8 @@ export interface DynamicRunnerGroup {
 	failFast?: boolean;
 	phase?: string;
 	label?: string;
+	sessionFiles?: (string | undefined)[];
+	thinkingOverrides?: (string | undefined)[];
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 }
 

@@ -49,7 +49,7 @@ import {
 	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
-import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
@@ -1736,13 +1736,24 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				continue;
 			}
 
-			const dynamicSteps = materialized.parallel.map((task, itemIndex) => ({
-				...step.parallel,
-				task: task.task ?? step.parallel.task,
-				label: task.label ?? step.parallel.label,
-				structuredOutput: undefined,
-				structuredOutputSchema: step.parallel.structuredOutputSchema ?? step.parallel.structuredOutput?.schema,
-			}));
+			const dynamicSteps = materialized.parallel.map((task, itemIndex) => {
+				const thinkingOverride = step.thinkingOverrides?.[itemIndex];
+				const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
+				const thinking = thinkingOverride ? resolveEffectiveThinking(model, thinkingOverride) : undefined;
+				return {
+					...step.parallel,
+					task: task.task ?? step.parallel.task,
+					label: task.label ?? step.parallel.label,
+					...(step.sessionFiles?.[itemIndex] ? { sessionFile: step.sessionFiles[itemIndex] } : {}),
+					...(thinkingOverride ? {
+						...(model ? { model } : {}),
+						...(thinking ? { thinking } : {}),
+						...(step.parallel.modelCandidates ? { modelCandidates: step.parallel.modelCandidates.map((candidate) => applyThinkingSuffix(candidate, thinkingOverride, true)) } : {}),
+					} : {}),
+					structuredOutput: undefined,
+					structuredOutputSchema: step.parallel.structuredOutputSchema ?? step.parallel.structuredOutput?.schema,
+				};
+			});
 			const dynamicStatusSteps: RunnerStatusStep[] = dynamicSteps.map((task) => ({
 					agent: task.agent,
 					phase: task.phase ?? step.phase,

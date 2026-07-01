@@ -806,6 +806,52 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.workflowGraph?.nodes?.[2]?.flatIndex, 3);
 	});
 
+	it("async dynamic fanout applies fork session files and thinking overrides to materialized children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
+		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
+		const id = `async-dynamic-fork-thinking-${Date.now().toString(36)}`;
+		const sessionA = path.join(tempDir, "dynamic-a.jsonl");
+		const sessionB = path.join(tempDir, "dynamic-b.jsonl");
+		const result = executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 2 },
+					parallel: {
+						agent: "reviewer",
+						task: "Review {target.path}",
+						label: "Review {target.path}",
+						outputSchema: { type: "object" },
+					},
+					collect: { as: "reviews" },
+					concurrency: 1,
+				},
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer", { model: "anthropic/claude-sonnet-4-5:high", thinking: "high" })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionFilesByFlatIndex: [undefined, sessionA, sessionB],
+			thinkingOverridesByFlatIndex: [undefined, "off", "off"],
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok(!result.isError);
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const firstDynamicArgs = readMockPiArgs(mockPi, 1);
+		const secondDynamicArgs = readMockPiArgs(mockPi, 2);
+		assert.equal(payload.success, true);
+		assert.equal(firstDynamicArgs[firstDynamicArgs.indexOf("--session") + 1], sessionA);
+		assert.equal(secondDynamicArgs[secondDynamicArgs.indexOf("--session") + 1], sessionB);
+		assert.equal(firstDynamicArgs[firstDynamicArgs.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+		assert.equal(secondDynamicArgs[secondDynamicArgs.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+		assert.deepEqual(status.steps?.slice(1).map((step) => step.sessionFile), [sessionA, sessionB]);
+		assert.deepEqual(status.steps?.slice(1).map((step) => step.thinking), ["off", "off"]);
+	});
+
 	it("async dynamic fanout recomputes later child intercom targets by final flat index", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
@@ -1053,6 +1099,61 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(completed?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background single thinking override replaces primary and fallback suffixes", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "primary failed" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered asynchronously" });
+		const id = `async-fallback-thinking-off-${Date.now().toString(36)}`;
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", {
+				model: "openai/gpt-5-mini:high",
+				fallbackModels: ["anthropic/claude-sonnet-4:low"],
+				thinking: "high",
+			}),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			thinkingOverride: "off",
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const firstArgs = readMockPiArgs(mockPi, 0);
+		const secondArgs = readMockPiArgs(mockPi, 1);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4:off");
+		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:off", "anthropic/claude-sonnet-4:off"]);
+		assert.equal(firstArgs[firstArgs.indexOf("--model") + 1], "openai/gpt-5-mini:off");
+		assert.equal(secondArgs[secondArgs.indexOf("--model") + 1], "anthropic/claude-sonnet-4:off");
 	});
 
 	it("background runs retry fallback models when a zero-exit attempt has empty output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

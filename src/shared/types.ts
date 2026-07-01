@@ -805,6 +805,8 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Override the agent's default thinking level for this run */
+	thinkingOverride?: AgentConfig["thinking"];
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */

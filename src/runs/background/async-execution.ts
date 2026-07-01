@@ -118,6 +118,7 @@ interface AsyncChainParams {
 	sessionRoot?: string;
 	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
+	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
@@ -150,6 +151,7 @@ interface AsyncSingleParams {
 	outputMode?: "inline" | "file-only";
 	outputBaseDir?: string;
 	modelOverride?: string;
+	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
 	maxSubagentDepth: number;
 	worktreeSetupHook?: string;
@@ -179,6 +181,7 @@ export interface AsyncRunnerStepBuildParams {
 	cwd?: string;
 	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
+	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
@@ -335,6 +338,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		ctx,
 		cwd,
 		sessionFilesByFlatIndex,
+		thinkingOverridesByFlatIndex,
 		maxSubagentDepth,
 		worktreeBaseDir,
 		asyncDir,
@@ -396,7 +400,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(s.model ? { model: s.model } : {}),
 		};
 	};
-	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior) => {
+	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number) => {
 		const a = agents.find((x) => x.name === s.agent)!;
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
@@ -426,7 +430,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 
 		const requestedModel = behavior.model ?? a.model;
 		const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider);
-		const model = applyThinkingSuffix(primaryModel, a.thinking);
+		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
+		const effectiveThinking = thinkingOverride ?? a.thinking;
+		const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			agent: s.agent,
@@ -437,9 +443,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			structured: Boolean(s.outputSchema),
 			cwd: stepCwd,
 			model,
-			thinking: resolveEffectiveThinking(model, a.thinking),
+			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			modelCandidates: buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider).map((candidate) =>
-				applyThinkingSuffix(candidate, a.thinking),
+				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
 			),
 			tools: a.tools,
 			extensions: a.extensions,
@@ -469,10 +475,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	};
 
 	let flatStepIndex = 0;
-	const nextSessionFile = (): string | undefined => {
+	const nextFlatStep = (): { index: number; sessionFile?: string; thinkingOverride?: AgentConfig["thinking"] } => {
+		const index = flatStepIndex;
 		const sessionFile = sessionFilesByFlatIndex?.[flatStepIndex];
+		const thinkingOverride = thinkingOverridesByFlatIndex?.[flatStepIndex];
 		flatStepIndex++;
-		return sessionFile;
+		return {
+			index,
+			...(sessionFile ? { sessionFile } : {}),
+			...(thinkingOverride ? { thinkingOverride } : {}),
+		};
 	};
 
 	try {
@@ -497,7 +509,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 								behaviorCwd = undefined;
 							}
 						}
-						return buildSeqStep(t, nextSessionFile(), behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex]);
+						const staticStep = nextFlatStep();
+						return buildSeqStep(t, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index);
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
@@ -512,6 +525,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					writeInitialProgressFile(progressDir);
 					progressInstructionCreated = true;
 				}
+				const maxItems = s.expand.maxItems ?? params.dynamicFanoutMaxItems ?? 0;
+				const dynamicFlatSteps = Array.from({ length: maxItems }, () => nextFlatStep());
 				return {
 					expand: s.expand,
 					parallel: buildSeqStep(s.parallel as SequentialStep, undefined, undefined, progressPrecreated, behavior),
@@ -520,6 +535,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					failFast: s.failFast,
 					phase: s.phase,
 					label: s.label,
+					sessionFiles: dynamicFlatSteps.map((step) => step.sessionFile),
+					thinkingOverrides: dynamicFlatSteps.map((step) => step.thinkingOverride),
 					effectiveAcceptance: resolveEffectiveAcceptance({
 						explicit: s.acceptance,
 						agentName: s.parallel.agent,
@@ -530,7 +547,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					}),
 				};
 			}
-			return buildSeqStep(s as SequentialStep, nextSessionFile());
+			const staticStep = nextFlatStep();
+			return buildSeqStep(s as SequentialStep, staticStep.sessionFile, undefined, false, undefined, staticStep.index);
 		});
 		const steps = params.attachRoot
 			? [{
@@ -573,6 +591,7 @@ export function executeAsyncChain(
 		shareEnabled,
 		sessionRoot,
 		sessionFilesByFlatIndex,
+		thinkingOverridesByFlatIndex,
 		maxSubagentDepth,
 		worktreeSetupHook,
 		worktreeSetupHookTimeoutMs,
@@ -610,6 +629,7 @@ export function executeAsyncChain(
 		cwd,
 		chainSkills: params.chainSkills,
 		sessionFilesByFlatIndex,
+		thinkingOverridesByFlatIndex,
 		progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
 		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
@@ -854,7 +874,8 @@ export function executeAsyncSingle(
 		availableModels,
 		ctx.currentModelProvider,
 	);
-	const model = applyThinkingSuffix(primaryModel, agentConfig.thinking);
+	const effectiveThinking = params.thinkingOverride ?? agentConfig.thinking;
+	const model = applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
 	let spawnResult: { pid?: number; error?: string } = {};
 	try {
 		spawnResult = spawnRunner(
@@ -867,9 +888,9 @@ export function executeAsyncSingle(
 						task: taskWithOutputInstruction,
 						cwd: runnerCwd,
 						model,
-						thinking: resolveEffectiveThinking(model, agentConfig.thinking),
+						thinking: resolveEffectiveThinking(model, effectiveThinking),
 						modelCandidates: buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider).map((candidate) =>
-							applyThinkingSuffix(candidate, agentConfig.thinking),
+							applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined),
 						),
 						tools: agentConfig.tools,
 						extensions: agentConfig.extensions,

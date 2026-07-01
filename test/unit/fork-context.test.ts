@@ -43,6 +43,7 @@ describe("createForkContextResolver", () => {
 		});
 
 		assert.equal(resolver.sessionFileForIndex(0), undefined);
+		assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
 		assert.equal(calls, 0);
 	});
 
@@ -247,7 +248,7 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
-	it("fails clearly before forwarding a forked session with signed thinking blocks", () => {
+	it("removes signed Anthropic thinking blocks before forwarding a forked session", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-thinking-"));
 		try {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -267,10 +268,13 @@ describe("createForkContextResolver", () => {
 				}),
 			});
 
-			assert.throws(
-				() => resolver.sessionFileForIndex(0),
-				/Forked subagent context is unsafe for .*thinking\/redacted_thinking blocks.*context: "fresh"/,
-			);
+			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
+			assert.equal(resolver.thinkingOverrideForIndex(0), "off");
+			const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			assert.deepEqual(entries[2].message.content, [{ type: "text", text: "answer" }]);
+			assert.equal(entries[3].type, "thinking_level_change");
+			assert.equal(entries[3].thinkingLevel, "off");
+			assert.equal(entries[3].parentId, "assistant-1");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -296,6 +300,7 @@ describe("createForkContextResolver", () => {
 			});
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
+			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -321,12 +326,13 @@ describe("createForkContextResolver", () => {
 			});
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
+			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
 	});
 
-	it("fails clearly before fallback-persisting redacted thinking blocks", () => {
+	it("removes redacted thinking blocks before fallback-persisting a forked session", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-redacted-thinking-"));
 		try {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
@@ -348,11 +354,13 @@ describe("createForkContextResolver", () => {
 				}),
 			});
 
-			assert.throws(
-				() => resolver.sessionFileForIndex(0),
-				/Forked subagent context is unsafe for .*thinking\/redacted_thinking blocks/,
-			);
-			assert.equal(fs.existsSync(childSessionFile), false);
+			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
+			assert.equal(resolver.thinkingOverrideForIndex(0), "off");
+			const written = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			assert.deepEqual(written[2].message.content, [{ type: "text", text: "answer" }]);
+			assert.equal(written[3].type, "thinking_level_change");
+			assert.equal(written[3].thinkingLevel, "off");
+			assert.equal(written[3].parentId, "assistant-1");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

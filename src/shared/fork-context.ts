@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -6,6 +7,9 @@ type SubagentExecutionContext = "fresh" | "fork";
 
 interface BranchSessionEntry {
 	type: string;
+	id?: string;
+	parentId?: string | null;
+	timestamp?: string;
 	message?: {
 		role?: string;
 		content?: unknown;
@@ -13,6 +17,7 @@ interface BranchSessionEntry {
 		api?: string;
 		model?: string;
 	};
+	thinkingLevel?: string;
 }
 
 interface BranchSessionManager {
@@ -32,43 +37,65 @@ interface ForkContextResolverOptions {
 	openSession?: (path: string, sessionDir?: string) => BranchSessionManager;
 }
 
+interface ForkContextResolution {
+	sessionFile: string;
+	thinkingOverride?: "off";
+}
+
 interface ForkContextResolver {
 	sessionFileForIndex(index?: number): string | undefined;
+	thinkingOverrideForIndex(index?: number): "off" | undefined;
 }
 
 export function resolveSubagentContext(value: unknown): SubagentExecutionContext {
 	return value === "fork" ? "fork" : "fresh";
 }
 
-function hasUnsafeSignedThinkingBlock(message: BranchSessionEntry["message"]): boolean {
-	if (!message || !Array.isArray(message.content)) return false;
+function isUnsafeAnthropicThinkingBlock(message: BranchSessionEntry["message"], block: unknown): boolean {
+	if (!message || !block || typeof block !== "object" || !("type" in block)) return false;
 	const provider = typeof message.provider === "string" ? message.provider.toLowerCase() : "";
 	const api = typeof message.api === "string" ? message.api.toLowerCase() : "";
 	const model = typeof message.model === "string" ? message.model.toLowerCase() : "";
 	const isAnthropic = provider === "anthropic" || api === "anthropic-messages" || model.startsWith("anthropic/");
+	if (block.type === "redacted_thinking") return true;
+	if (block.type !== "thinking" || !isAnthropic) return false;
+	const signature = "thinkingSignature" in block ? block.thinkingSignature : "signature" in block ? block.signature : undefined;
+	return block.redacted === true || (typeof signature === "string" && signature.length > 0);
+}
 
-	return message.content.some((block) => {
-		if (!block || typeof block !== "object" || !("type" in block)) return false;
-		if (block.type === "redacted_thinking") return true;
-		if (block.type !== "thinking" || !isAnthropic) return false;
-		const signature = "thinkingSignature" in block ? block.thinkingSignature : "signature" in block ? block.signature : undefined;
-		return block.redacted === true || (typeof signature === "string" && signature.length > 0);
+function createEntryId(entries: BranchSessionEntry[]): string {
+	const ids = new Set(entries.map((entry) => entry.id).filter((id): id is string => typeof id === "string"));
+	for (let attempt = 0; attempt < 100; attempt++) {
+		const id = randomUUID().slice(0, 8);
+		if (!ids.has(id)) return id;
+	}
+	return randomUUID();
+}
+
+function appendThinkingOffEntry(entries: BranchSessionEntry[]): void {
+	const last = entries[entries.length - 1];
+	if (last?.type === "thinking_level_change" && last.thinkingLevel === "off") return;
+	const parent = [...entries].reverse().find((entry) => typeof entry.id === "string");
+	entries.push({
+		type: "thinking_level_change",
+		id: createEntryId(entries),
+		parentId: parent?.id ?? null,
+		timestamp: new Date().toISOString(),
+		thinkingLevel: "off",
 	});
 }
 
-function assertNoSignedThinkingBlocks(entries: BranchSessionEntry[], sessionFile: string): void {
-	const unsafeEntry = entries.find((entry) =>
-		entry.type === "message"
-		&& entry.message?.role === "assistant"
-		&& hasUnsafeSignedThinkingBlock(entry.message)
-	);
-	if (!unsafeEntry) return;
-
-	throw new Error(
-		`Forked subagent context is unsafe for ${sessionFile}: the inherited transcript contains Anthropic signed thinking/redacted_thinking blocks. `
-		+ "pi-subagents cannot verify lossless preservation of those blocks after session branching or compaction. "
-		+ "Run this subagent with context: \"fresh\" or fork from a parent transcript without those signed thinking blocks.",
-	);
+function sanitizeUnsafeThinkingBlocks(entries: BranchSessionEntry[]): boolean {
+	let sanitized = false;
+	for (const entry of entries) {
+		if (entry.type !== "message" || entry.message?.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
+		const filtered = entry.message.content.filter((block) => !isUnsafeAnthropicThinkingBlock(entry.message, block));
+		if (filtered.length === entry.message.content.length) continue;
+		entry.message.content = filtered;
+		sanitized = true;
+	}
+	if (sanitized) appendThinkingOffEntry(entries);
+	return sanitized;
 }
 
 function readSessionEntries(sessionFile: string): BranchSessionEntry[] {
@@ -91,6 +118,7 @@ export function createForkContextResolver(
 	if (resolveSubagentContext(requestedContext) !== "fork") {
 		return {
 			sessionFileForIndex: () => undefined,
+			thinkingOverrideForIndex: () => undefined,
 		};
 	}
 
@@ -108,39 +136,52 @@ export function createForkContextResolver(
 		?? sessionManager.openSession
 		?? ((file: string, dir?: string) => SessionManager.open(file, dir));
 	const sessionDir = sessionManager.getSessionDir?.();
-	const cachedSessionFiles = new Map<number, string>();
+	const cachedResolutions = new Map<number, ForkContextResolution>();
+
+	const resolveFork = (index = 0): ForkContextResolution => {
+		const cached = cachedResolutions.get(index);
+		if (cached) return cached;
+		try {
+			if (!fs.existsSync(parentSessionFile)) {
+				throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
+			}
+			const sourceManager = openSession(parentSessionFile, sessionDir);
+			const sessionFile = sourceManager.createBranchedSession(leafId);
+			if (!sessionFile) {
+				throw new Error("Session manager did not return a forked session file.");
+			}
+			let thinkingOverride: "off" | undefined;
+			if (!fs.existsSync(sessionFile)) {
+				const header = sourceManager.getHeader?.();
+				const entries = sourceManager.getEntries?.();
+				if (!header || !entries) {
+					throw new Error(`Session manager returned a forked session file that does not exist and cannot be persisted by fallback: ${sessionFile}`);
+				}
+				if (sanitizeUnsafeThinkingBlocks(entries)) thinkingOverride = "off";
+				fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+				fs.writeFileSync(sessionFile, `${[header, ...entries].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
+			} else {
+				const entries = readSessionEntries(sessionFile);
+				if (sanitizeUnsafeThinkingBlocks(entries)) {
+					thinkingOverride = "off";
+					fs.writeFileSync(sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
+				}
+			}
+			const resolution = { sessionFile, ...(thinkingOverride ? { thinkingOverride } : {}) };
+			cachedResolutions.set(index, resolution);
+			return resolution;
+		} catch (error) {
+			const cause = error instanceof Error ? error : new Error(String(error));
+			throw new Error(`Failed to create forked subagent session: ${cause.message}`, { cause });
+		}
+	};
 
 	return {
 		sessionFileForIndex(index = 0): string | undefined {
-			const cached = cachedSessionFiles.get(index);
-			if (cached) return cached;
-			try {
-				if (!fs.existsSync(parentSessionFile)) {
-					throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
-				}
-				const sourceManager = openSession(parentSessionFile, sessionDir);
-				const sessionFile = sourceManager.createBranchedSession(leafId);
-				if (!sessionFile) {
-					throw new Error("Session manager did not return a forked session file.");
-				}
-				if (!fs.existsSync(sessionFile)) {
-					const header = sourceManager.getHeader?.();
-					const entries = sourceManager.getEntries?.();
-					if (!header || !entries) {
-						throw new Error(`Session manager returned a forked session file that does not exist and cannot be persisted by fallback: ${sessionFile}`);
-					}
-					assertNoSignedThinkingBlocks(entries, sessionFile);
-					fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-					fs.writeFileSync(sessionFile, `${[header, ...entries].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
-				} else {
-					assertNoSignedThinkingBlocks(readSessionEntries(sessionFile), sessionFile);
-				}
-				cachedSessionFiles.set(index, sessionFile);
-				return sessionFile;
-			} catch (error) {
-				const cause = error instanceof Error ? error : new Error(String(error));
-				throw new Error(`Failed to create forked subagent session: ${cause.message}`, { cause });
-			}
+			return resolveFork(index).sessionFile;
+		},
+		thinkingOverrideForIndex(index = 0): "off" | undefined {
+			return resolveFork(index).thinkingOverride;
 		},
 	};
 }

@@ -243,6 +243,7 @@ describe("buildPiArgs model wiring", () => {
 		});
 
 		assert.equal(applyThinkingSuffix("anthropic/claude-haiku-4-5", "off"), "anthropic/claude-haiku-4-5:off");
+		assert.equal(applyThinkingSuffix("anthropic/claude-haiku-4-5:high", "off", true), "anthropic/claude-haiku-4-5:off");
 		assert.ok(args.includes("--model"));
 		assert.ok(args.includes("anthropic/claude-haiku-4-5:off"));
 	});

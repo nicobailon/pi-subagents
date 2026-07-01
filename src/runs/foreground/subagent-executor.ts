@@ -178,6 +178,7 @@ interface ExecutionContextData {
 	sessionDirForIndex: (idx?: number) => string;
 	sessionFileForIndex: (idx?: number) => string | undefined;
 	sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
+	thinkingOverrideForTask: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
 	backgroundRequestedWhileClarifying: boolean;
@@ -1428,6 +1429,7 @@ function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): Age
 function collectChainSessionFiles(
 	chain: ChainStep[],
 	sessionFileForTask: (agentName: string, idx?: number) => string | undefined,
+	dynamicFanoutMaxItems?: number,
 ): (string | undefined)[] {
 	const sessionFiles: (string | undefined)[] = [];
 	let flatIndex = 0;
@@ -1440,13 +1442,46 @@ function collectChainSessionFiles(
 			continue;
 		}
 		if (isDynamicParallelStep(step)) {
-			sessionFiles.push(undefined);
+			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
+			for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) {
+				sessionFiles.push(sessionFileForTask(step.parallel.agent, flatIndex));
+				flatIndex++;
+			}
 			continue;
 		}
 		sessionFiles.push(sessionFileForTask((step as SequentialStep).agent, flatIndex));
 		flatIndex++;
 	}
 	return sessionFiles;
+}
+
+function collectChainThinkingOverrides(
+	chain: ChainStep[],
+	thinkingOverrideForTask: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined,
+	dynamicFanoutMaxItems?: number,
+): (AgentConfig["thinking"] | undefined)[] {
+	const thinkingOverrides: (AgentConfig["thinking"] | undefined)[] = [];
+	let flatIndex = 0;
+	for (const step of chain) {
+		if (isParallelStep(step)) {
+			for (const task of step.parallel) {
+				thinkingOverrides.push(thinkingOverrideForTask(task.agent, flatIndex));
+				flatIndex++;
+			}
+			continue;
+		}
+		if (isDynamicParallelStep(step)) {
+			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
+			for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) {
+				thinkingOverrides.push(thinkingOverrideForTask(step.parallel.agent, flatIndex));
+				flatIndex++;
+			}
+			continue;
+		}
+		thinkingOverrides.push(thinkingOverrideForTask((step as SequentialStep).agent, flatIndex));
+		flatIndex++;
+	}
+	return thinkingOverrides;
 }
 
 function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultContextPolicy): ChainStep[] {
@@ -1487,6 +1522,7 @@ function preflightForkSessionsForStaticTasks(
 	params: SubagentParamsLike,
 	contextPolicy: AgentDefaultContextPolicy,
 	sessionFileForTask: (agentName: string, idx?: number) => string | undefined,
+	dynamicFanoutMaxItems?: number,
 ): void {
 	if (!contextPolicy.usesFork) return;
 	if (params.agent) {
@@ -1510,8 +1546,11 @@ function preflightForkSessionsForStaticTasks(
 			continue;
 		}
 		if (isDynamicParallelStep(step)) {
-			if (shouldForkAgent(contextPolicy, step.parallel.agent)) sessionFileForTask(step.parallel.agent, flatIndex);
-			flatIndex++;
+			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
+			if (shouldForkAgent(contextPolicy, step.parallel.agent)) {
+				for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) sessionFileForTask(step.parallel.agent, flatIndex + itemIndex);
+			}
+			flatIndex += maxItems;
 			continue;
 		}
 		const sequential = step as SequentialStep;
@@ -1530,6 +1569,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		sessionRoot,
 		sessionFileForIndex,
 		sessionFileForTask,
+		thinkingOverrideForTask,
 		artifactConfig,
 		artifactsDir,
 		effectiveAsync,
@@ -1623,6 +1663,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			sessionRoot,
 			chainSkills: [],
 			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index)),
+			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index)),
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -1652,7 +1693,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			shareEnabled,
 			sessionRoot,
 			chainSkills,
-			sessionFilesByFlatIndex: collectChainSessionFiles(chain, sessionFileForTask),
+			sessionFilesByFlatIndex: collectChainSessionFiles(chain, sessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems),
+			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(chain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
 			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
@@ -1700,6 +1742,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			outputMode: effectiveOutputMode,
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
+			thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
 			maxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -1727,6 +1770,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		sessionDirForIndex,
 		sessionFileForIndex,
 		sessionFileForTask,
+		thinkingOverrideForTask,
 		artifactsDir,
 		artifactConfig,
 		onUpdate,
@@ -1754,6 +1798,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		sessionDirForIndex,
 		sessionFileForIndex,
 		sessionFileForTask,
+		thinkingOverrideForTask,
 		artifactsDir,
 		artifactConfig,
 		includeProgress: params.includeProgress,
@@ -1811,7 +1856,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			shareEnabled,
 			sessionRoot,
 			chainSkills: chainResult.requestedAsync.chainSkills,
-			sessionFilesByFlatIndex: collectChainSessionFiles(asyncChain, sessionFileForTask),
+			sessionFilesByFlatIndex: collectChainSessionFiles(asyncChain, sessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems),
+			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(asyncChain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
 			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
@@ -1865,6 +1911,7 @@ interface ForegroundParallelRunInput {
 	sessionDirForIndex: (idx?: number) => string | undefined;
 	sessionFileForIndex: (idx?: number) => string | undefined;
 	sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
+	thinkingOverrideForTask: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
 	shareEnabled: boolean;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
@@ -2061,6 +2108,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 			nestedRoute: input.foregroundControl?.nestedRoute,
 			modelOverride: input.modelOverrides[index],
+			thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
 			availableModels: input.availableModels,
 			preferredModelProvider: input.ctx.model?.provider,
 			skills: effectiveSkills === false ? [] : effectiveSkills,
@@ -2122,6 +2170,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		sessionDirForIndex,
 		sessionFileForIndex,
 		sessionFileForTask,
+		thinkingOverrideForTask,
 		shareEnabled,
 		artifactConfig,
 		artifactsDir,
@@ -2281,6 +2330,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				sessionRoot,
 				chainSkills: [],
 				sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index)),
+				thinkingOverridesByFlatIndex: tasks.map((task, index) => thinkingOverrideForTask(task.agent, index)),
 				maxSubagentDepth: currentMaxSubagentDepth,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -2347,6 +2397,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			sessionDirForIndex,
 			sessionFileForIndex,
 			sessionFileForTask,
+			thinkingOverrideForTask,
 			shareEnabled,
 			artifactConfig,
 			artifactsDir,
@@ -2467,6 +2518,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		runId,
 		sessionDirForIndex,
 		sessionFileForTask,
+		thinkingOverrideForTask,
 		shareEnabled,
 		artifactConfig,
 		artifactsDir,
@@ -2574,6 +2626,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				outputMode: effectiveOutputMode,
 				outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 				modelOverride,
+				thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
 				maxSubagentDepth,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -2664,6 +2717,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		nestedRoute: foregroundControl?.nestedRoute,
 		index: 0,
 		modelOverride,
+		thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
 		availableModels,
 		preferredModelProvider: currentProvider,
 		skills: effectiveSkills,
@@ -3011,8 +3065,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (validationError) return validationError;
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
+		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
 		try {
-			forkSessionFileForIndex = createForkContextResolver(ctx.sessionManager, contextPolicy.usesFork ? "fork" : undefined).sessionFileForIndex;
+			const forkContextResolver = createForkContextResolver(ctx.sessionManager, contextPolicy.usesFork ? "fork" : undefined);
+			forkSessionFileForIndex = forkContextResolver.sessionFileForIndex;
+			forkThinkingOverrideForIndex = forkContextResolver.thinkingOverrideForIndex;
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		}
@@ -3052,12 +3109,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			path.join(sessionRoot, `run-${idx ?? 0}`);
 		const forkSessionFileForTask = (agentName: string, idx?: number) =>
 			shouldForkAgent(contextPolicy, agentName) ? forkSessionFileForIndex(idx) : undefined;
+		const forkThinkingOverrideForTask = (agentName: string, idx?: number) =>
+			shouldForkAgent(contextPolicy, agentName) ? forkThinkingOverrideForIndex(idx) : undefined;
 		const childSessionFileForTask = (agentName: string, idx?: number) =>
 			forkSessionFileForTask(agentName, idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
-			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask);
+			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		}
@@ -3091,6 +3150,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			sessionDirForIndex,
 			sessionFileForIndex: childSessionFileForIndex,
 			sessionFileForTask: childSessionFileForTask,
+			thinkingOverrideForTask: forkThinkingOverrideForTask,
 			artifactConfig,
 			artifactsDir,
 			backgroundRequestedWhileClarifying,
