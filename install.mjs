@@ -85,8 +85,9 @@ if (fs.existsSync(EXTENSION_DIR)) {
 }
 
 console.log(`
-The extension is now available in pi. Tool added:
+The extension is now available in pi. Tools added:
   • subagent - Delegate tasks to agents and inspect run status
+  • wait - Block until background subagent runs finish (delivers their results)
 
 Documentation: ${EXTENSION_DIR}/README.md
 `);

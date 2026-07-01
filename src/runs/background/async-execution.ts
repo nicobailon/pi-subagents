@@ -206,8 +206,8 @@ export function formatAsyncStartedMessage(headline: string): string {
 		headline,
 		"",
 		"The async run is detached. Do not run sleep timers or polling loops just to wait for it.",
-		"If you have independent work, continue that work. If you have nothing else to do until the async result arrives, end your turn now; Pi will deliver the completion when the run finishes.",
-		"Use subagent({ action: \"status\", id: \"...\" }) when you need the current status/result, or to inspect a blocked/stale run. Do not poll just to wait.",
+		"If you have independent work, continue that work. When you have nothing left to do until the async result arrives, call wait() — it blocks until the run finishes and delivers the completion here. Only if you are certain you will get another turn (an interactive session where the user will prompt you again) can you instead stop and let Pi wake you; inside a skill that must run to completion, or in a non-interactive run, there is no next turn, so use wait().",
+		"Use subagent({ action: \"status\", id: \"...\" }) when you need a one-shot status/result or to inspect a blocked/stale run. To block until completion, prefer wait(). Do not poll in a loop just to wait.",
 	].join("\n");
 }
 

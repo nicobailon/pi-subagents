@@ -263,3 +263,15 @@ const SubagentParamsSchema = Type.Object({
 });
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
+
+const WaitParamsSchema = Type.Object({
+	id: Type.Optional(Type.String({
+		description: "Run id or prefix to wait for. Omit to wait for every active async run started in this session.",
+	})),
+	timeoutMs: Type.Optional(Type.Integer({
+		minimum: 1,
+		description: "Give up waiting after this many milliseconds (the runs keep going regardless). Defaults to 1800000 (30 minutes).",
+	})),
+});
+
+export const WaitParams = keepTopLevelParameterDescriptions(WaitParamsSchema);

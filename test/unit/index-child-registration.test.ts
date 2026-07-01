@@ -22,7 +22,7 @@ describe("subagent extension child mode", () => {
 			let registeredTool;
 			const fakePi = new Proxy({
 				events,
-				registerTool(tool) { registeredTool = tool; },
+				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
 				registerCommand() {},
 				registerShortcut() {},
 				registerMessageRenderer() {},
@@ -74,7 +74,7 @@ describe("subagent extension child mode", () => {
 			let registeredTool;
 			const fakePi = new Proxy({
 				events,
-				registerTool(tool) { registeredTool = tool; },
+				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
 				registerCommand() {},
 				registerShortcut() {},
 				registerMessageRenderer() {},

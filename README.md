@@ -504,7 +504,9 @@ You can combine them in either order:
 /run reviewer "review this diff" --bg --fork
 ```
 
-Background runs are detached. If the parent agent has other independent work, it should keep working. If it has nothing useful to do until the background result arrives, it should end the turn instead of running sleep or status-polling loops. Pi will deliver the completion when the run finishes.
+Background runs are detached. If the parent agent has other independent work, it should keep working. When it has nothing useful to do until the background result arrives, it should call the `wait` tool instead of running sleep or status-polling loops: `wait()` blocks until every background run in the session finishes (or `wait({ id })` for one run), delivering each completion into the conversation, then returns.
+
+`wait` is what lets a background-launching skill run to completion in a single turn, including non-interactive `pi -p` invocations where there is no subsequent turn to receive a completion notification. Ending the turn to wait for a completion only works in an interactive session where the user will prompt the agent again; in a run-to-completion skill or a non-interactive run, use `wait` so the still-running children are not abandoned.
 
 The `oracle` and `worker` builtins are designed for an explicit decision loop. A typical pattern is to ask `oracle` for diagnosis and a recommended execution prompt, then only run `worker` after the main agent approves that direction.
 

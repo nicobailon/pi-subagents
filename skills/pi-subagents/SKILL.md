@@ -336,7 +336,11 @@ Prefer async mode for every subagent launch. Set `async: true` no matter the tas
 
 Async does not mean parallel writes. Do not edit the same active worktree while an async worker is changing it. Parent-side overlap should be reading, validation prep, synthesis, command planning, or review of unaffected context unless the writer is isolated in a separate worktree.
 
-Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed. If there is no independent work left and you would only be running `sleep` or status polling commands to wait, end your turn instead. Pi will deliver the async completion when it arrives.
+Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed.
+
+When there is no independent work left and you just need the async result, **call `wait()`** rather than `sleep`/status-polling loops. `wait()` blocks the current turn until every async run in this session finishes (or a specific `id`), delivering each completion into the conversation as it arrives, and returns as soon as they are done. Use `wait({ id: "..." })` to block on one run and `wait({ timeoutMs })` to cap how long you block.
+
+Prefer `wait()` over ending the turn whenever you must keep going to finish the job — inside a skill that has to run to completion, or in any non-interactive run (`pi -p ...`) where the whole task is a single turn. In those cases ending the turn abandons the still-running children, because there is no next turn to receive their completion. Only end the turn to wait when you are in an interactive session and are certain the user will prompt you again; then Pi will wake you when the run finishes.
 
 ```typescript
 subagent({
@@ -658,6 +662,16 @@ command only after user approval. To hide future recommendations, use
 ### Prefer async orchestration
 
 Launch every subagent asynchronously by default. Use `async: true` for scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, chains, and parallel groups unless you intentionally need a foreground/blocking run. The parent should keep moving: inspect code while scouts run, prepare validation while a worker implements, do a local diff pass while reviewers review, and synthesize or verify while a fix worker applies accepted feedback. Async is the default orchestration posture; foreground runs are the explicit opt-out.
+
+### Use wait() to block until async runs finish
+
+When you have launched async runs and have no independent work left but must keep going to finish the task, call `wait()`. It blocks the current turn until the runs complete and delivers their completion notifications into the conversation, then returns.
+
+- `wait()` — block until every active async run in this session finishes.
+- `wait({ id: "..." })` — block on one run (id or prefix).
+- `wait({ timeoutMs })` — cap the block; the runs keep going if it elapses.
+
+`wait()` is the correct way to "keep N in flight until all rounds are done" style loops and any run-to-completion skill: launch, then `wait()`, then react to results, without `sleep`/status-poll loops and without ending the turn. Reserve ending-the-turn-to-wait for interactive sessions where the user will prompt you again; in a skill that must complete or a non-interactive `pi -p` run there is no next turn, so `wait()` is required to avoid abandoning live children.
 
 ### Keep writes single-threaded by default
 

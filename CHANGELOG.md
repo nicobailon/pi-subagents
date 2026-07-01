@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added a `wait` tool that blocks until background (async) subagent runs in the session finish, delivering each completion into the conversation before it returns. This lets a subagent-launching skill run to completion in a single turn — including non-interactive `pi -p` runs, where ending the turn to wait for a completion notification would abandon the still-running children. Accepts `{ id }` to wait on one run and `{ timeoutMs }` to cap the wait, reconciles crashed runners so it cannot hang indefinitely, and returns early if the turn is aborted. Async-start guidance in the tool output, `SKILL.md`, and `README.md` now points to `wait` instead of "end your turn".
 - Added `subagents.defaultModel` so subagents can have a global default model separate from the parent session model. Thanks to Artem Timofeev (@atimofeev) for #339.
 - Added `/subagent-cost` and `totalChildUsage` run details so parent sessions can inspect aggregate subagent child usage and cost. Thanks to Aaron Ky-Riesenbach (@aaronkyriesenbach) for #343.
 - Added configurable companion package recommendations for `pi-intercom` and `pi-prompt-template-model`, surfaced in session-start transcript messages, `subagent({ action: "list" })`, and `/subagents-doctor`, with `/subagents-companions` hide/show/status controls.

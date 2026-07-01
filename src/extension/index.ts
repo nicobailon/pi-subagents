@@ -23,7 +23,7 @@ import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "..
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.ts";
-import { SubagentParams } from "./schemas.ts";
+import { SubagentParams, WaitParams } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
@@ -32,6 +32,7 @@ import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
+import { waitForSubagents } from "../runs/background/wait.ts";
 import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
@@ -542,6 +543,26 @@ DIAGNOSTICS:
 	};
 
 	pi.registerTool(tool);
+
+	const waitTool: ToolDefinition<typeof WaitParams, Details> = {
+		name: "wait",
+		label: "Wait",
+		description: `Block until background (async) subagent runs started in this session finish, then return.
+
+Use this after launching async subagents when you have no independent work left and must not end your turn — for example inside a skill that has to run to completion, or any non-interactive run (\`pi -p ...\`) where the whole task is a single turn and ending it would abandon the still-running children.
+
+• { } — wait for every active async run in this session
+• { id: "..." } — wait only for one run (id or prefix)
+• { timeoutMs: 600000 } — stop waiting after N ms (the runs keep going regardless; default 30 min)
+
+While it waits, Pi delivers each run's completion notification as it arrives, so their results are in context by the time wait returns. Prefer this over sleep/poll loops: it wakes the instant runs finish and reconciles crashed runners instead of hanging. It resolves early if the turn is aborted.`,
+		parameters: WaitParams,
+		execute(_id, params, signal, _onUpdate, _ctx) {
+			return waitForSubagents(params, signal, { state });
+		},
+	};
+	pi.registerTool(waitTool);
+
 	registerSlashCommands(pi, state);
 
 	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
