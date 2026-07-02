@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added optional scheduled subagent runs so callers can defer a subagent launch until a future time. `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` arms a one-shot timer that launches the run as a normal tracked async run once it fires, with `schedule-list`, `schedule-status`, and `schedule-cancel` management actions. Schedules are persisted per session and restored after a Pi restart; jobs missed by more than the configured lateness window are marked `missed` instead of firing late. The feature is opt-in and requires `{ "scheduledRuns": { "enabled": true } }` in `~/.pi/agent/extensions/subagent/config.json`. Only schedule explicit delayed runs the user asked for. Inspired by @tintinweb's pi-subagents.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
 
 ### Fixed

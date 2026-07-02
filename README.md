@@ -1106,6 +1106,14 @@ Caps simultaneously running subagent tasks within a single run across top-level 
 
 Caps the total number of child subagent launches allowed during one parent session, including single runs, parallel task counts, static chain steps, and bounded dynamic fanout children. Set `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` to override the config for a process. The default is `40`; `0` blocks new subagent launches for that session.
 
+### `scheduledRuns`
+
+```json
+{ "scheduledRuns": { "enabled": true, "maxPending": 20, "maxLatenessMs": 300000 } }
+```
+
+Enables optional one-shot scheduled subagent runs. When enabled, `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` defers a subagent launch until a future time. The scheduled run launches as a normal tracked async run with fresh context once it fires, and joins the existing async widget, status, `wait`, and completion-notification paths. `schedule-list`, `schedule-status`, and `schedule-cancel` manage pending jobs. Schedules are persisted per session and restored after a Pi restart; a job missed by more than `maxLatenessMs` while Pi is unavailable is marked `missed` instead of firing late. `maxPending` caps the number of pending or running scheduled jobs per session (default `20`). The feature is opt-in: leave `enabled` unset to keep scheduling out of the tool surface and prompt. Only schedule explicit delayed runs the user asked for.
+
 ### `parallel`
 
 ```json

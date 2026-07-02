@@ -32,6 +32,7 @@ import {
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.ts";
+import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
@@ -149,6 +150,8 @@ export interface SubagentParamsLike {
 	agentScope?: unknown;
 	chainDir?: string;
 	acceptance?: AcceptanceInput;
+	schedule?: string;
+	scheduleName?: string;
 }
 
 interface ExecutorDeps {
@@ -156,6 +159,7 @@ interface ExecutorDeps {
 	state: SubagentState;
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
+	handleScheduledRunAction?: (params: SubagentParamsLike, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	companionSuggestionLines?: (input: { surface: "list" | "doctor"; cwd: string; context?: "fresh" | "fork"; orchestratorTarget?: string }) => string[];
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
@@ -2918,6 +2922,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (params.action === "append-step") {
 				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+			}
+			if (params.action === "schedule" || params.action === "schedule-list" || params.action === "schedule-status" || params.action === "schedule-cancel") {
+				if (!deps.handleScheduledRunAction) {
+					return {
+						content: [{ type: "text", text: `Action '${params.action}' is not available in this subagent context.` }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				return deps.handleScheduledRunAction(paramsWithResolvedCwd, ctx);
 			}
 			if (params.action === "interrupt") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
