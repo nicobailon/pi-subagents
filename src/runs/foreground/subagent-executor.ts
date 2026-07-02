@@ -52,7 +52,7 @@ import {
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
 import { buildRevivedAsyncTask, interruptLiveAsyncResumeTarget, resolveAsyncResumeTarget } from "../background/async-resume.ts";
-import { deliverInterruptRequest } from "../background/control-channel.ts";
+import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
@@ -496,6 +496,66 @@ function interruptAsyncRun(
 	}
 }
 
+function steerAsyncRun(input: {
+	state: SubagentState;
+	runId: string;
+	message: string;
+	index?: number;
+	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+	location: { asyncDir: string | null; resolvedId?: string };
+}): AgentToolResult<Details> {
+	if (!input.location.asyncDir) {
+		return {
+			content: [{ type: "text", text: `Async run '${input.runId}' has no live run directory to steer.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
+	const status = reconcileAsyncRun(input.location.asyncDir, { kill: input.kill }).status;
+	if (!status || (status.state !== "running" && status.state !== "queued")) {
+		return {
+			content: [{ type: "text", text: `Async run '${input.runId}' is not running or queued and cannot be steered.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
+	const steps = status.steps ?? [];
+	if (input.index !== undefined) {
+		if (input.index < 0 || input.index >= steps.length) {
+			return {
+				content: [{ type: "text", text: `Async run '${status.runId}' has ${steps.length} children. Index ${input.index} is out of range.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+		const targetStep = steps[input.index];
+		if (targetStep && targetStep.status !== "running" && targetStep.status !== "pending") {
+			return {
+				content: [{ type: "text", text: `Async run '${status.runId}' child ${input.index} is ${targetStep.status} and cannot be steered.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+	} else {
+		const running = steps.filter((step) => step.status === "running");
+		if (running.length === 0 && steps.length > 1) {
+			return {
+				content: [{ type: "text", text: `Async run '${status.runId}' has no running child yet. Provide index to steer a queued child.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+	}
+	requestAsyncSteer(input.location.asyncDir, { message: input.message, targetIndex: input.index, source: "steer-action" });
+	const tracked = input.state.asyncJobs.get(status.runId);
+	if (tracked) tracked.updatedAt = Date.now();
+	const childText = input.index !== undefined ? ` child ${input.index}` : " running child";
+	return {
+		content: [{ type: "text", text: `Steering queued for async run ${status.runId}${childText}. Delivery requires a live Pi child session that supports mid-run steering.` }],
+		details: { mode: "management", results: [] },
+	};
+}
+
 function duplicateNames(names: string[]): string[] {
 	const seen = new Set<string>();
 	const duplicates = new Set<string>();
@@ -780,6 +840,22 @@ function directNestedAsyncInterrupt(target: ResolvedSubagentRunId & { kind: "nes
 	}
 }
 
+function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number }): AgentToolResult<Details> | undefined {
+	const run = input.target.match.run;
+	const asyncDir = resolveNestedAsyncDir(input.target.match.rootRunId, run);
+	if (!asyncDir) return undefined;
+	const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(RESULTS_DIR, "nested", input.target.match.rootRunId) }).status;
+	if (!status || (status.state !== "running" && status.state !== "queued")) return undefined;
+	const steps = status.steps ?? [];
+	if (input.index !== undefined) {
+		if (input.index < 0 || input.index >= steps.length) return { content: [{ type: "text", text: `Nested async run ${run.id} has ${steps.length} children. Index ${input.index} is out of range.` }], isError: true, details: { mode: "management", results: [] } };
+		const step = steps[input.index];
+		if (step && step.status !== "running" && step.status !== "pending") return { content: [{ type: "text", text: `Nested async run ${run.id} child ${input.index} is ${step.status} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	requestAsyncSteer(asyncDir, { message: input.message, targetIndex: input.index, source: "nested-steer" });
+	return { content: [{ type: "text", text: `Steering queued for nested async run ${run.id}. Delivery requires a live Pi child session that supports mid-run steering.` }], details: { mode: "management", results: [] } };
+}
+
 async function interruptNestedRun(target: ResolvedSubagentRunId & { kind: "nested" }): Promise<AgentToolResult<Details>> {
 	const run = target.match.run;
 	if (run.state === "complete") return { content: [{ type: "text", text: `Nested run ${run.id} is already complete and cannot be interrupted.` }], isError: true, details: { mode: "management", results: [] } };
@@ -797,6 +873,14 @@ async function resumeLiveNestedRun(input: { target: ResolvedSubagentRunId & { ki
 	const result = await sendNestedControlRequest(input.target, "resume", input.message);
 	if (result) return { content: [{ type: "text", text: result.message }], isError: result.ok ? undefined : true, details: { mode: "management", results: [] } };
 	return { content: [{ type: "text", text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
+}
+
+function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number }): AgentToolResult<Details> {
+	const run = input.target.match.run;
+	if (run.state !== "running" && run.state !== "queued") return { content: [{ type: "text", text: `Nested run ${run.id} is ${run.state} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
+	const direct = directNestedAsyncSteer(input);
+	if (direct) return direct;
+	return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
 }
 
 async function resumeAsyncRun(input: {
@@ -2915,6 +2999,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (params.action === "resume") {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+			}
+			if (params.action === "steer") {
+				const message = (paramsWithResolvedCwd.message ?? paramsWithResolvedCwd.task ?? "").trim();
+				if (!message) return { content: [{ type: "text", text: "action='steer' requires message." }], isError: true, details: { mode: "management", results: [] } };
+				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				if (!targetRunId) return { content: [{ type: "text", text: "action='steer' requires id." }], isError: true, details: { mode: "management", results: [] } };
+				let resolved: ResolvedSubagentRunId | undefined;
+				try {
+					resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+				} catch (error) {
+					const text = error instanceof Error ? error.message : String(error);
+					return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index });
+				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
+				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location });
 			}
 			if (params.action === "append-step") {
 				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });

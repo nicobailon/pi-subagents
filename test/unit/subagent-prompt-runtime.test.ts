@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { writeSteerRequestToDir } from "../../src/runs/background/control-channel.ts";
+import { SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_INBOX_ENV } from "../../src/runs/shared/pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
@@ -21,6 +22,7 @@ const envSnapshot = {
 	PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
 	PI_SUBAGENT_FANOUT_CHILD: process.env.PI_SUBAGENT_FANOUT_CHILD,
+	PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
 };
@@ -53,6 +55,8 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
 	if (envSnapshot.PI_SUBAGENT_FANOUT_CHILD === undefined) delete process.env.PI_SUBAGENT_FANOUT_CHILD;
 	else process.env.PI_SUBAGENT_FANOUT_CHILD = envSnapshot.PI_SUBAGENT_FANOUT_CHILD;
+	if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined) delete process.env[SUBAGENT_STEER_INBOX_ENV];
+	else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
@@ -60,6 +64,37 @@ afterEach(() => {
 });
 
 describe("subagent prompt runtime", () => {
+	it("delivers steering inbox requests as mid-run user messages", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-runtime-"));
+		try {
+			const inbox = path.join(dir, "steer");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: Array<{ content: string; options: { deliverAs: string } }> = [];
+
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				sendUserMessage(content: string, options: { deliverAs: string }) {
+					sent.push({ content, options });
+				},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(content: string, options: { deliverAs: string }): void });
+
+			writeSteerRequestToDir(inbox, { type: "steer", id: "steer-1", ts: 1, message: "Focus on tests." });
+			handlers.get("message_start")?.({});
+			handlers.get("session_shutdown")?.({});
+
+			assert.equal(sent.length, 1);
+			assert.equal(sent[0]?.options.deliverAs, "steer");
+			assert.match(sent[0]?.content ?? "", /Mid-run steering/);
+			assert.match(sent[0]?.content ?? "", /Focus on tests\./);
+			assert.deepEqual(fs.readdirSync(inbox).filter((entry) => entry.endsWith(".json")), []);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-runtime-"));
 		try {

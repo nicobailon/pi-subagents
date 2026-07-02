@@ -599,6 +599,8 @@ export interface AsyncStatus {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
+	steerCount?: number;
+	lastSteerAt?: number;
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate?: number;
@@ -643,6 +645,8 @@ export interface AsyncStatus {
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		totalCost?: CostSummary;
+		steerCount?: number;
+		lastSteerAt?: number;
 		error?: string;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
@@ -674,6 +678,8 @@ export interface AsyncJobState {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
+	steerCount?: number;
+	lastSteerAt?: number;
 	mode?: SubagentRunMode;
 	agents?: string[];
 	currentStep?: number;
@@ -996,7 +1002,7 @@ export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 40;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "status", "interrupt", "resume", "append-step", "doctor"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "status", "interrupt", "resume", "steer", "append-step", "doctor"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

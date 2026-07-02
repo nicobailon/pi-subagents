@@ -158,7 +158,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		label: "Subagent",
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",
-			"Allowed management/control actions: list, get, status, interrupt, resume, append-step, doctor.",
+			"Allowed management/control actions: list, get, status, interrupt, resume, steer, append-step, doctor.",
 			"Agent config mutation actions create, update, and delete are blocked in this mode.",
 		].join("\n"),
 		parameters: SubagentParams,

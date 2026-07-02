@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, watchAsyncControlInbox } from "./control-channel.ts";
+import { consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepSteer, stepSteerInboxDir, watchAsyncControlInbox, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -698,6 +698,7 @@ interface SingleStepContext {
 	flatIndex: number;
 	flatStepCount: number;
 	outputFile: string;
+	steerInboxDir?: string;
 	piPackageRoot?: string;
 	piArgv1?: string;
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
@@ -861,6 +862,7 @@ async function runSingleStep(
 			parentControlInbox: ctx.nestedRoute?.controlInbox,
 			parentRootRunId: ctx.nestedRoute?.rootRunId,
 			parentCapabilityToken: ctx.nestedRoute?.capabilityToken,
+			steerInboxDir: ctx.steerInboxDir,
 			structuredOutput: effectiveStructuredOutput,
 		});
 		const run = await runPiStreaming(
@@ -1176,6 +1178,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;
 	const activeChildInterrupts = new Map<number, () => void>();
 	const activeChildTimeouts = new Map<number, () => void>();
+	const pendingStepSteers: SteerRequest[] = [];
 	let interrupted = false;
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
@@ -1563,6 +1566,58 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		appendControlEvent(event);
 		return true;
 	};
+	const deliverSteerRequest = (request: SteerRequest): void => {
+		if (statusPayload.state !== "running") return;
+		const runningIndexes = statusPayload.steps
+			.map((step, index) => ({ step, index }))
+			.filter(({ step }) => step.status === "running")
+			.map(({ index }) => index);
+		const targets = request.targetIndex !== undefined ? [request.targetIndex] : runningIndexes;
+		const now = Date.now();
+		const accepted: number[] = [];
+		const rejected: Array<{ index: number; reason: string }> = [];
+		for (const index of targets) {
+			const step = statusPayload.steps[index];
+			if (!step) {
+				rejected.push({ index, reason: "child index out of range" });
+				continue;
+			}
+			if (step.status !== "running") {
+				rejected.push({ index, reason: `child is ${step.status}` });
+				continue;
+			}
+			enqueueStepSteer(asyncDir, index, request);
+			step.steerCount = (step.steerCount ?? 0) + 1;
+			step.lastSteerAt = now;
+			accepted.push(index);
+		}
+		if (accepted.length > 0) {
+			statusPayload.steerCount = (statusPayload.steerCount ?? 0) + accepted.length;
+			statusPayload.lastSteerAt = now;
+			statusPayload.lastUpdate = now;
+			writeStatusPayload();
+		}
+		appendJsonl(eventsPath, JSON.stringify({
+			type: "subagent.steer.requested",
+			ts: now,
+			runId: id,
+			requestId: request.id,
+			message: request.message,
+			...(request.source ? { source: request.source } : {}),
+			...(request.targetIndex !== undefined ? { targetIndex: request.targetIndex } : {}),
+			acceptedIndexes: accepted,
+			...(rejected.length ? { rejected } : {}),
+		}));
+	};
+	const flushPendingStepSteers = (flatIndex: number): void => {
+		const remaining: SteerRequest[] = [];
+		for (const request of pendingStepSteers.splice(0)) {
+			if (request.targetIndex === undefined) deliverSteerRequest({ ...request, targetIndex: flatIndex });
+			else if (request.targetIndex === flatIndex) deliverSteerRequest(request);
+			else remaining.push(request);
+		}
+		pendingStepSteers.push(...remaining);
+	};
 	const updateStepModel = (flatIndex: number, model: string | undefined, thinking: string | undefined, now = Date.now()): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
@@ -1787,10 +1842,19 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		timeoutActiveChildren();
 	};
 	process.on(ASYNC_INTERRUPT_SIGNAL, interruptRunner);
-	// Portable control inbox: the parent drops an interrupt request file here when
-	// it cannot deliver the OS signal (e.g. ENOSYS on Windows). Routes into the
-	// same graceful interruptRunner() so stop/steer work on every platform.
-	const disposeControlInbox = watchAsyncControlInbox(asyncDir, { onInterrupt: interruptRunner, onTimeout: timeoutRunner });
+	// Portable control inbox: the parent drops control request files here when
+	// it cannot deliver OS signals (e.g. ENOSYS on Windows) or when steering a
+	// live child. Interrupts still route into the same graceful interruptRunner().
+	const disposeControlInbox = watchAsyncControlInbox(asyncDir, {
+		onInterrupt: interruptRunner,
+		onTimeout: timeoutRunner,
+		onSteer: (request) => {
+			const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
+			if (targetStep?.status === "pending") pendingStepSteers.push(request);
+			else if (request.targetIndex !== undefined || statusPayload.steps.some((step) => step.status === "running")) deliverSteerRequest(request);
+			else pendingStepSteers.push(request);
+		},
+	});
 	if (config.deadlineAt !== undefined) {
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
@@ -2013,6 +2077,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.lastUpdate = taskStartTime;
 				writeStatusPayload();
 				appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent }));
+				flushPendingStepSteers(fi);
 				const singleResult = await runSingleStep(task, {
 					previousOutput, placeholder, cwd, sessionEnabled,
 					outputs,
@@ -2020,6 +2085,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					artifactsDir, artifactConfig, id,
 					flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
 					outputFile: path.join(asyncDir, `output-${fi}.log`),
+					steerInboxDir: stepSteerInboxDir(asyncDir, fi),
 					piPackageRoot: config.piPackageRoot,
 					piArgv1: config.piArgv1,
 					childIntercomTarget: config.childIntercomTargets?.[fi],
@@ -2276,6 +2342,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							? path.join(config.sessionDir, `parallel-${taskIdx}`)
 							: undefined;
 						const { taskForRun, taskCwd } = prepareParallelTaskRun(task, cwd, worktreeSetup, taskIdx);
+						flushPendingStepSteers(fi);
 
 						const singleResult = await runSingleStep(taskForRun, {
 							previousOutput, placeholder, cwd: taskCwd, sessionEnabled,
@@ -2284,6 +2351,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							artifactsDir, artifactConfig, id,
 							flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
 							outputFile: path.join(asyncDir, `output-${fi}.log`),
+							steerInboxDir: stepSteerInboxDir(asyncDir, fi),
 							piPackageRoot: config.piPackageRoot,
 							piArgv1: config.piArgv1,
 							childIntercomTarget: config.childIntercomTargets?.[fi],
@@ -2451,6 +2519,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				agent: seqStep.agent,
 			}));
 
+			flushPendingStepSteers(flatIndex);
 			const singleResult = await runSingleStep(seqStep, {
 				previousOutput, placeholder, cwd, sessionEnabled,
 				outputs,
@@ -2458,6 +2527,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				artifactsDir, artifactConfig, id,
 				flatIndex, flatStepCount: Math.max(statusPayload.steps.length, 1),
 				outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
+				steerInboxDir: stepSteerInboxDir(asyncDir, flatIndex),
 				piPackageRoot: config.piPackageRoot,
 				piArgv1: config.piArgv1,
 				childIntercomTarget: config.childIntercomTargets?.[flatIndex],
