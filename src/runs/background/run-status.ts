@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
@@ -18,6 +19,9 @@ interface RunStatusParams {
 	id?: string;
 	runId?: string;
 	dir?: string;
+	index?: number;
+	view?: "fleet" | "transcript";
+	lines?: number;
 }
 
 interface RunStatusDeps {
@@ -27,6 +31,7 @@ interface RunStatusDeps {
 	now?: () => number;
 	state?: SubagentState;
 	nested?: NestedRunResolutionScope;
+	sessionRoots?: string[];
 }
 
 function hasExistingSessionFile(value: unknown): value is string {
@@ -101,6 +106,16 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDeps = {}): AgentToolResult<Details> {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	if (params.view && params.view !== "fleet" && params.view !== "transcript") {
+		return {
+			content: [{ type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` }],
+			isError: true,
+			details: { mode: "single", results: [] },
+		};
+	}
+	if (params.view === "fleet") {
+		return inspectSubagentFleet(params, { asyncDirRoot, resultsDir, kill: deps.kill, now: deps.now, state: deps.state, childSafe: Boolean(deps.nested) });
+	}
 	if (!params.id && !params.runId && !params.dir) {
 		if (deps.nested) {
 			return {
@@ -111,6 +126,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], resultsDir, kill: deps.kill, now: deps.now });
+			if (params.view === "transcript") {
+				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
+				return {
+					content: [{ type: "text", text: runs.length === 0 ? "No active async run transcript is available." : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.` }],
+					isError: true,
+					details: { mode: "single", results: [] },
+				};
+			}
 			return {
 				content: [{ type: "text", text: formatAsyncRunList(runs) }],
 				details: { mode: "single", results: [] },
@@ -134,6 +157,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				reconcileNestedAsyncDescendants(resolved.match.route, { resultsDir, kill: deps.kill, now: deps.now });
 				const refreshed = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
 				const nested = refreshed?.kind === "nested" ? refreshed : resolved;
+				if (params.view === "transcript") {
+					try {
+						return { content: [{ type: "text", text: formatNestedRunTranscript(nested.match.run, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+					}
+				}
 				return { content: [{ type: "text", text: formatNestedExactStatus(nested.match.rootRunId, nested.match.run) }], details: { mode: "single", results: [] } };
 			}
 			if (resolved?.kind === "async") location = resolved.location;
@@ -176,6 +207,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
+			if (params.view === "transcript") {
+				try {
+					return { content: [{ type: "text", text: formatAsyncRunTranscript(status, asyncDir, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+				}
+			}
 			let nestedChildren: NestedRunSummary[] = [];
 			let nestedWarning: string | undefined;
 			try {
@@ -248,7 +287,15 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	if (resultPath) {
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; exitCode?: number; state?: string; sessionFile?: string; results?: Array<{ agent?: string; sessionFile?: string }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; sessionFile?: string; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }> };
+			if (params.view === "transcript") {
+				try {
+					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+				}
+			}
 			const status = data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
 			const lines = [`Run: ${runId}`, `State: ${status}`, `Result: ${resultPath}`];

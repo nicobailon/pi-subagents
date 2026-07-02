@@ -1259,6 +1259,11 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 		assert.deepEqual(params, { action: "doctor" });
 	});
 
+	it("routes fleet to the read-only status view", async () => {
+		const { params } = await captureSlashCommandParams("subagents-fleet", "", process.cwd());
+		assert.deepEqual(params, { action: "status", view: "fleet" });
+	});
+
 	it("does not register the removed subagents-status overlay command", async () => {
 		await withIsolatedHome(async () => {
 			const commands = new Map<string, RegisteredSlashCommand>();
