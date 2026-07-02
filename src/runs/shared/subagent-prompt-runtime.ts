@@ -302,7 +302,32 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		registerNativeSupervisorClient(pi);
 	};
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
-	onRuntimeEvent("session_start", () => {
+	// Make `subagent_wait` available inside subagents too. A subagent that backgrounds a
+	// bash/agent job (pi-patty-bg-tasks) or launches its own async runs can then
+	// block on their completion. Background-work tracking uses registered
+	// providers; async-run scoping uses this child's own session id.
+	const childWaitState = {
+		baseCwd: "",
+		currentSessionId: null,
+		asyncJobs: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
+		cleanupTimers: new Map(),
+		lastUiContext: null,
+		poller: null,
+		completionSeen: new Map(),
+		watcher: null,
+		watcherRestartTimer: null,
+		resultFileCoalescer: { schedule: () => false, clear: () => {} },
+	} as unknown as SubagentState;
+	try {
+		registerWaitTool(pi, childWaitState);
+	} catch {
+		// subagent_wait is a convenience in children; never block child startup on it.
+	}
+	onRuntimeEvent("session_start", (_event: unknown, ctx: unknown) => {
+		const sm = (ctx as { sessionManager?: { getSessionId?: () => string | undefined } } | undefined)?.sessionManager;
+		childWaitState.currentSessionId = sm?.getSessionId?.() ?? null;
 		registerNativeSupervisorClientOnce();
 		refreshChildToolDiagnostic(pi);
 	});
@@ -376,33 +401,4 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		return { systemPrompt: rewritten };
 	});
 
-	// Make `subagent_wait` available inside subagents too. A subagent that backgrounds a
-	// bash/agent job (pi-patty-bg-tasks) or launches its own async runs can then
-	// block on their completion — the same tool the parent has. Background-job
-	// tracking uses the process-global live set (no state needed); async-run
-	// scoping uses this child's own session id, resolved lazily at wait time.
-	try {
-		const childState = {
-			baseCwd: "",
-			currentSessionId: null,
-			asyncJobs: new Map(),
-			foregroundControls: new Map(),
-			lastForegroundControlId: null,
-			cleanupTimers: new Map(),
-			lastUiContext: null,
-			poller: null,
-			completionSeen: new Map(),
-			watcher: null,
-			watcherRestartTimer: null,
-			resultFileCoalescer: { schedule: () => false, clear: () => {} },
-		} as unknown as SubagentState;
-		const onChildSessionStart = pi.on as unknown as (event: string, handler: (event: unknown, ctx: unknown) => unknown) => void;
-		onChildSessionStart("session_start", (_event: unknown, ctx: unknown) => {
-			const sm = (ctx as { sessionManager?: { getSessionId?: () => string | undefined } }).sessionManager;
-			childState.currentSessionId = sm?.getSessionId?.() ?? null;
-		});
-		registerWaitTool(pi, childState);
-	} catch {
-		// subagent_wait is a convenience in children; never block child startup on it.
-	}
 }

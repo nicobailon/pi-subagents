@@ -460,10 +460,11 @@ describe("subagent prompt runtime", () => {
 			},
 		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
-		assert.deepEqual(registered, []);
+		const nativeTools = () => registered.filter((name) => name !== "subagent_wait");
+		assert.deepEqual(nativeTools(), []);
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, []);
+		assert.deepEqual(nativeTools(), []);
 	});
 
 	it("keeps installed pi-intercom while filling only a missing child contact_supervisor tool", async () => {
@@ -484,7 +485,7 @@ describe("subagent prompt runtime", () => {
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
 
-		assert.deepEqual(registered, ["contact_supervisor"]);
+		assert.deepEqual(registered.filter((name) => name !== "subagent_wait"), ["contact_supervisor"]);
 	});
 
 	it("registers native supervisor tools at runtime when pi-intercom is absent", async () => {
@@ -503,10 +504,11 @@ describe("subagent prompt runtime", () => {
 		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 		handlers.get("session_start")?.({});
-		assert.deepEqual(registered, ["contact_supervisor"]);
+		const nativeTools = () => registered.filter((name) => name !== "subagent_wait");
+		assert.deepEqual(nativeTools(), ["contact_supervisor"]);
 
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, ["contact_supervisor", "intercom"]);
+		assert.deepEqual(nativeTools(), ["contact_supervisor", "intercom"]);
 	});
 
 	it("records and explains requested tools missing from the child registry", async () => {

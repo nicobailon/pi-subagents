@@ -42,6 +42,23 @@ export interface BackgroundWorkProvider {
 	 * with no push signal still works via the poll fallback.
 	 */
 	wakeChannels?: readonly string[];
+	/**
+	 * Optional health check, run by `subagent_wait` on every poll tick before it reads
+	 * `liveCount()`. This is the provider's chance to reconcile its own units the
+	 * way pi-subagents reconciles detached async runs: detect a unit whose
+	 * process has died or wedged (no progress / not alive) and resolve it —
+	 * typically by terminating it so it stops counting as live and its normal
+	 * completion path fires.
+	 *
+	 * Without this, `subagent_wait` can block forever on a unit the provider still reports
+	 * as "running" but which will never finish (e.g. a background child hung in
+	 * its event loop, producing no output and never exiting). Implementations
+	 * must be cheap, synchronous, and must never throw — a throwing reconcile is
+	 * ignored so it can't break subagent_wait's loop.
+	 *
+	 * `nowMs` is passed so staleness thresholds are testable with a fake clock.
+	 */
+	reconcile?(nowMs: number): void;
 }
 
 /**
@@ -105,4 +122,19 @@ export function backgroundWorkWakeChannels(): string[] {
 		for (const ch of p.wakeChannels ?? []) channels.add(ch);
 	}
 	return [...channels];
+}
+
+/**
+ * Run every registered provider's optional `reconcile()` health check. Called by
+ * `subagent_wait` on each poll tick so a wedged/dead unit gets resolved instead
+ * of blocking forever. Never throws; a provider that throws is skipped.
+ */
+export function reconcileBackgroundWork(nowMs: number = Date.now()): void {
+	for (const p of registry().values()) {
+		try {
+			p.reconcile?.(nowMs);
+		} catch {
+			// A misbehaving provider must not break subagent_wait's reconciliation loop.
+		}
+	}
 }

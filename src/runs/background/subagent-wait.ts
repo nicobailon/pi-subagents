@@ -54,7 +54,7 @@ import {
 	type WaitToolConfig,
 } from "../../shared/types.ts";
 import { formatDuration } from "../../shared/formatters.ts";
-import { totalLiveBackgroundWork, backgroundWorkWakeChannels } from "./bg-providers.ts";
+import { totalLiveBackgroundWork, backgroundWorkWakeChannels, reconcileBackgroundWork } from "./bg-providers.ts";
 
 /** States that mean a run is still in flight (not yet resolved). */
 const ACTIVE_STATES: ReadonlyArray<AsyncRunSummary["state"]> = ["queued", "running"];
@@ -129,7 +129,7 @@ export interface SubagentWaitDeps {
 	/** Injectable sleep for tests. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	/**
-	 * Optional event bus (pi.events). When provided, wait wakes immediately on a
+	 * Optional event bus (pi.events). When provided, subagent_wait wakes immediately on a
 	 * subagent completion/control event instead of waiting out the poll interval;
 	 * the poll then remains as a reconciliation fallback (crashed runners, missed
 	 * events). Omit in tests that want pure poll behavior.
@@ -141,6 +141,12 @@ export interface SubagentWaitDeps {
 	 * for tests.
 	 */
 	bgTaskCount?: () => number;
+	/**
+	 * Run registered providers' health checks (reconcile) once per poll tick, so a
+	 * wedged/dead provider unit is resolved instead of blocking subagent_wait forever.
+	 * Defaults to reconcileBackgroundWork; injectable for tests.
+	 */
+	reconcileBg?: (nowMs: number) => void;
 }
 
 /** Subagent-run bus channels that indicate a run changed state or needs attention. */
@@ -153,7 +159,7 @@ const SUBAGENT_WAKE_CHANNELS = [
 ];
 
 /**
- * All channels wait wakes on: the subagent channels above plus whatever wake
+ * All channels subagent_wait wakes on: the subagent channels above plus whatever wake
  * channels registered background-work providers contribute (e.g. a job-finished
  * event from pi-patty-bg-tasks or any other provider). Computed per call so
  * providers that register after module load are still honored.
@@ -372,7 +378,11 @@ export async function waitForSubagents(
 	// Background work from registered providers (e.g. pi-patty-bg-tasks) is
 	// tracked only for an unscoped wait — an `id` targets a specific async run.
 	const bgCountFn = deps.bgTaskCount ?? liveBgTaskCount;
+	const reconcileBg = deps.reconcileBg ?? reconcileBackgroundWork;
 	const trackBg = !params.id;
+	// Health-check providers before the first count so a unit that is already
+	// dead/wedged at wait entry isn't counted as outstanding.
+	if (trackBg) reconcileBg(now());
 	const initialBgCount = trackBg ? bgCountFn() : 0;
 
 	let active: AsyncRunSummary[];
@@ -450,6 +460,10 @@ export async function waitForSubagents(
 			);
 		}
 		await waitForWake(pollIntervalMs, signal, deps);
+		// Reconcile provider health each tick: a background unit whose process died
+		// or wedged is resolved here (e.g. terminated) so its live count drops and
+		// subagent_wait can make progress instead of blocking on a unit that never finishes.
+		if (trackBg) reconcileBg(now());
 		try {
 			active = activeRunsForSession(waitParams, deps);
 			pending = active.filter((run) => !needsAttention(run));
