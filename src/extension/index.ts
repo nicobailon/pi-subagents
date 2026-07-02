@@ -30,6 +30,7 @@ import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
+import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { waitForSubagents } from "../runs/background/wait.ts";
@@ -427,6 +428,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const rpcBridge = registerSubagentRpcBridge({
+		events: pi.events,
+		getContext: () => state.lastUiContext,
+		execute: (id, params, signal, onUpdate, ctx) => executor.execute(id, params, signal, onUpdate, ctx),
+	});
+
 	function effectiveParallelTaskCount(tasks: Array<{ count?: unknown }> | undefined): number {
 		if (!tasks || tasks.length === 0) return 0;
 		return tasks.reduce((total, task) => {
@@ -597,6 +604,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
+		rpcBridge.dispose,
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
 
@@ -650,6 +658,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 
 	pi.on("session_start", (_event, ctx) => {
 		resetSessionState(ctx);
+		rpcBridge.emitReady(ctx);
 		maybeSendCompanionStartupMessage({
 			pi,
 			ctx,
