@@ -211,7 +211,7 @@ describe("subagent_wait tool", () => {
 			const text = textOf(result);
 			assert.match(text, /1 of 3 run\(s\) finished/);
 			assert.match(text, /1 complete/);
-			assert.match(text, /2 run\(s\) still in flight/);
+			assert.match(text, /2 run\(s\).*still in flight/);
 			// Must not have blocked on b and c: a bounded number of polls.
 			assert.ok(polls <= 2, `first-completion should return promptly, polled ${polls}`);
 		} finally {

@@ -23,7 +23,7 @@ import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
-import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
+import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.ts";
 import { SubagentParams, SubagentWaitParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -38,7 +38,7 @@ import { createNativeSupervisorChannel } from "../intercom/native-supervisor-cha
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
-import { resolveWaitToolConfig, waitForSubagents } from "../runs/background/subagent-wait.ts";
+import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import registerSubagentNotify, { parseSubagentNotifyContent, type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
@@ -227,7 +227,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
-	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
@@ -490,25 +489,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.registerTool(tool);
 
-	const subagentWaitTool: ToolDefinition<typeof SubagentWaitParams, Details> = {
-		name: "subagent_wait",
-		label: "Subagent Wait",
-		description: `Block until background (async) subagent runs started in this session finish, then return.
-
-Use this after launching async subagents when you have no independent work left and must not end your turn — for example inside a skill that has to run to completion, or any non-interactive run (\`pi -p ...\`) where the whole task is a single turn and ending it would abandon the still-running children.
-
-• { } — return as soon as the FIRST active run finishes (default). Ideal for a rolling fleet: launch N, wait, spawn a replacement for the one that finished, then call subagent_wait again — keeping N in flight.
-• { all: true } — block until EVERY active run in this session is finished.
-• { id: "..." } — wait for one specific async run or remembered detached foreground run (id or prefix) to finish.
-• { timeoutMs: 600000 } — stop waiting after N ms (the runs keep going regardless; default 30 min)
-
-subagent_wait also returns when a run needs attention (a child that went idle or blocked for a decision), not only on completion — so a stuck child never stalls the loop; the summary names the run(s) to inspect/nudge/resume/interrupt. It wakes the instant a completion or control event arrives (subscribed to Pi's event bus, with a poll fallback that reconciles crashed runners), keeps the turn alive for normal notification delivery, and resolves early if the turn is aborted.${waitToolConfig.enabled ? "" : "\n\nConfigured behavior: subagent_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,
-		parameters: SubagentWaitParams,
-		execute(_id, params, signal, _onUpdate, _ctx) {
-			return waitForSubagents(params, signal, { state, events: pi.events, enabled: waitToolConfig.enabled });
-		},
-	};
-	pi.registerTool(subagentWaitTool);
+	registerWaitTool(pi, state, { waitTool: config.waitTool });
 
 	registerSlashCommands(pi, state);
 

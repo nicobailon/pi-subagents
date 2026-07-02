@@ -134,7 +134,15 @@ export interface SubagentWaitDeps {
 	 * events). Omit in tests that want pure poll behavior.
 	 */
 	events?: WaitEventBus;
+	/**
+	 * Count of in-flight background bash/agent jobs (pi-patty-bg-tasks). Defaults
+	 * to reading that extension's process-global live set; injectable for tests.
+	 */
+	bgTaskCount?: () => number;
 }
+
+/** Bus channel emitted by pi-patty-bg-tasks when a background job finishes. */
+const BG_TASK_FINISHED_EVENT = "patty:bg-task-finished";
 
 /** Bus channels that indicate a run changed state or needs attention. */
 const WAKE_CHANNELS = [
@@ -143,7 +151,24 @@ const WAKE_CHANNELS = [
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
+	// pi-patty-bg-tasks emits this the instant a background bash/agent job
+	// finishes, so wait catches a backgrounded shell completing, not just
+	// subagent runs.
+	BG_TASK_FINISHED_EVENT,
 ];
+
+/**
+ * Count of in-flight background jobs published by pi-patty-bg-tasks on a
+ * process-global set (its shared-live.ts, keyed by this versioned symbol). Both
+ * extensions share one Node process, so this is a dependency-free read of how
+ * many backgrounded bash/agent jobs are running. Returns 0 when the extension
+ * isn't installed (the global is absent).
+ */
+const PATTY_LIVE_KEY = "__pi_patty_bg_live_jobs_v1";
+function liveBgTaskCount(): number {
+	const set = (globalThis as Record<string, unknown>)[PATTY_LIVE_KEY];
+	return set instanceof Set ? set.size : 0;
+}
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve) => {
@@ -343,6 +368,12 @@ export async function waitForSubagents(
 	// first run to finish.
 	const waitForAll = params.id ? true : params.all === true;
 
+	// Background bash/agent jobs (pi-patty-bg-tasks) are tracked only for an
+	// unscoped wait — an `id` targets a specific async subagent run.
+	const bgCountFn = deps.bgTaskCount ?? liveBgTaskCount;
+	const trackBg = !params.id;
+	const initialBgCount = trackBg ? bgCountFn() : 0;
+
 	let active: AsyncRunSummary[];
 	let foreground: ForegroundResumeRun[];
 	try {
@@ -369,10 +400,10 @@ export async function waitForSubagents(
 		active = selected?.kind === "async" ? [selected.run] : [];
 	}
 
-	if (active.length === 0) {
+	if (active.length === 0 && initialBgCount === 0) {
 		const finished = params.id
 			? `No active run matched "${params.id}". Nothing to wait for.`
-			: "No active async runs in this session. Nothing to wait for.";
+			: "No active async runs or background jobs in this session. Nothing to wait for.";
 		return result(finished);
 	}
 	const waitParams = params.id ? { ...params, id: active[0]!.id } : params;
@@ -389,10 +420,17 @@ export async function waitForSubagents(
 		// caller has to act on it (nudge/resume/interrupt) and blocking longer
 		// helps nothing.
 		if (attention.length > 0) return true;
-		if (waitForAll) return active.every((run) => !initialIds.has(run.id));
-		// First-completion: satisfied once any initially-pending run is gone.
+		const bgNow = trackBg ? bgCountFn() : 0;
+		if (waitForAll) {
+			// Everything must be terminal: no initial async runs still active AND
+			// no background jobs left running.
+			return active.every((run) => !initialIds.has(run.id)) && bgNow === 0;
+		}
+		// First-completion: satisfied once any initially-pending async run is gone,
+		// OR any background job has finished (bg count dropped).
 		const stillActiveInitial = active.filter((run) => initialIds.has(run.id));
-		return stillActiveInitial.length < initialCount;
+		if (stillActiveInitial.length < initialCount) return true;
+		return bgNow < initialBgCount;
 	};
 
 	let attention = active.filter((run) => needsAttention(run));
@@ -441,30 +479,42 @@ export async function waitForSubagents(
 	const elapsed = formatDuration(now() - startedAt);
 	const outcome = terminalSummary ? ` Outcome: ${terminalSummary}.` : "";
 
+	// Background-job accounting (pi-patty-bg-tasks).
+	const bgNow = trackBg ? bgCountFn() : 0;
+	const bgFinished = Math.max(0, initialBgCount - bgNow);
+	const bgNote = initialBgCount > 0
+		? ` ${bgFinished} of ${initialBgCount} background job(s) finished` + (bgNow > 0 ? `, ${bgNow} still running.` : ".")
+		: "";
+
 	if (waitForAll) {
-		const scope = params.id ? `run "${params.id}"` : `${initialCount} async run(s)`;
+		const parts: string[] = [];
+		if (initialCount > 0) parts.push(`${initialCount} async run(s)`);
+		if (initialBgCount > 0) parts.push(`${initialBgCount} background job(s)`);
+		const scope = params.id ? `run "${params.id}"` : (parts.join(" + ") || "0 runs");
 		const status = attention.length > 0 ? "attention required" : "done";
 		const notificationText = attention.length > 0
 			? "Relevant completion/control events have been observed; inspect status if the notification is not visible yet."
 			: "Completion events have been observed; inspect status if the notification is not visible yet.";
 		return result(
-			`Waited ${elapsed} for ${scope}; ${status}.${outcome}${attentionNote} ${notificationText}`,
+			`Waited ${elapsed} for ${scope}; ${status}.${outcome}${bgNote}${attentionNote} ${notificationText}`,
 		);
 	}
 
 	// First-completion mode.
-	const remainder = stillRunning > 0
-		? ` ${stillRunning} run(s) still in flight — call subagent_wait again to catch the next one.`
+	const remainder = (stillRunning > 0 || bgNow > 0)
+		? ` ${stillRunning} run(s) + ${bgNow} background job(s) still in flight — call subagent_wait again to catch the next one.`
 		: attention.length > 0
 			? " No other runs are waitable until attention is handled."
-			: " No runs remain in flight.";
+			: " Nothing remains in flight.";
 	const progress = attention.length > 0 && finishedCount === 0
 		? `${attention.length} of ${initialCount} run(s) need attention`
-		: `${finishedCount} of ${initialCount} run(s) finished`;
-	const notificationText = finishedCount > 0
-		? " Completion events for the finished run(s) have been observed; inspect status if the notification is not visible yet."
+		: initialCount > 0
+			? `${finishedCount} of ${initialCount} run(s) finished`
+			: "no async runs tracked";
+	const notificationText = (finishedCount > 0 || bgFinished > 0)
+		? " Completion events for the finished work have been observed; inspect status if the notification is not visible yet."
 		: " Relevant control events have been observed; inspect status if the notification is not visible yet.";
 	return result(
-		`Waited ${elapsed}; ${progress}.${outcome}${attentionNote}${remainder}${notificationText}`,
+		`Waited ${elapsed}; ${progress}.${outcome}${bgNote}${attentionNote}${remainder}${notificationText}`,
 	);
 }

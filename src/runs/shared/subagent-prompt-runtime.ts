@@ -13,10 +13,11 @@ import {
 	type ChildToolDiagnostic,
 } from "./tool-availability.ts";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
-import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
+import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
+import { registerWaitTool } from "../background/wait-tool.ts";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -374,4 +375,34 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		if (rewritten === event.systemPrompt) return;
 		return { systemPrompt: rewritten };
 	});
+
+	// Make `subagent_wait` available inside subagents too. A subagent that backgrounds a
+	// bash/agent job (pi-patty-bg-tasks) or launches its own async runs can then
+	// block on their completion — the same tool the parent has. Background-job
+	// tracking uses the process-global live set (no state needed); async-run
+	// scoping uses this child's own session id, resolved lazily at wait time.
+	try {
+		const childState = {
+			baseCwd: "",
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+			cleanupTimers: new Map(),
+			lastUiContext: null,
+			poller: null,
+			completionSeen: new Map(),
+			watcher: null,
+			watcherRestartTimer: null,
+			resultFileCoalescer: { schedule: () => false, clear: () => {} },
+		} as unknown as SubagentState;
+		const onChildSessionStart = pi.on as unknown as (event: string, handler: (event: unknown, ctx: unknown) => unknown) => void;
+		onChildSessionStart("session_start", (_event: unknown, ctx: unknown) => {
+			const sm = (ctx as { sessionManager?: { getSessionId?: () => string | undefined } }).sessionManager;
+			childState.currentSessionId = sm?.getSessionId?.() ?? null;
+		});
+		registerWaitTool(pi, childState);
+	} catch {
+		// subagent_wait is a convenience in children; never block child startup on it.
+	}
 }

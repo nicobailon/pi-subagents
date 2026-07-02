@@ -642,4 +642,14 @@ describe("subagent prompt runtime", () => {
 
 		assert.equal(contextHandler?.({ messages }), undefined);
 	});
+
+	it("registers subagent_wait so subagents can block on their own background work", () => {
+		const registered: string[] = [];
+		registerSubagentPromptRuntime({
+			registerTool(tool: { name: string }) { registered.push(tool.name); },
+			on() {},
+			events: { on() { return () => {}; }, emit() {} },
+		} as unknown as Parameters<typeof registerSubagentPromptRuntime>[0]);
+		assert.ok(registered.includes("subagent_wait"), `child runtime should register 'subagent_wait'; got ${registered.join(", ")}`);
+	});
 });
