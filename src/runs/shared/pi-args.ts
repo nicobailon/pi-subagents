@@ -26,6 +26,7 @@ export const SUBAGENT_PARENT_DEPTH_ENV = "PI_SUBAGENT_PARENT_DEPTH";
 export const SUBAGENT_PARENT_PATH_ENV = "PI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
+export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 
 interface BuildPiArgsInput {
 	parentSessionId?: string;
@@ -60,6 +61,7 @@ interface BuildPiArgsInput {
 	parentDepth?: number;
 	parentPath?: NestedPathEntry[];
 	parentCapabilityToken?: string;
+	steerInboxDir?: string;
 	structuredOutput?: {
 		schema: JsonSchemaObject;
 		schemaPath: string;
@@ -223,6 +225,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
+	}
+	if (input.steerInboxDir) {
+		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
 	}
 
 	env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";

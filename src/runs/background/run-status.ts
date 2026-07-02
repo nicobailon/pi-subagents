@@ -94,7 +94,7 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 		}
 	}
 	lines.push(...formatNestedRunStatusLines(run.children, { indent: "  ", commandHints: true }));
-	lines.push("Commands:", `  Status: subagent({ action: "status", id: "${run.id}" })`, `  Interrupt: subagent({ action: "interrupt", id: "${run.id}" })`, `  Resume: subagent({ action: "resume", id: "${run.id}", message: "..." })`, `  Root status: subagent({ action: "status", id: "${rootRunId}" })`);
+	lines.push("Commands:", `  Status: subagent({ action: "status", id: "${run.id}" })`, `  Interrupt: subagent({ action: "interrupt", id: "${run.id}" })`, `  Resume: subagent({ action: "resume", id: "${run.id}", message: "..." })`, `  Steer: subagent({ action: "steer", id: "${run.id}", message: "..." })`, `  Root status: subagent({ action: "status", id: "${rootRunId}" })`);
 	return lines.join("\n");
 }
 
@@ -228,6 +228,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				if (stepOutputPath !== outputPath && fs.existsSync(stepOutputPath)) lines.push(`  Output: ${stepOutputPath}`);
 				if (step.status === "running") {
 					lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
+					lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`);
 				}
 			}
 			const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
@@ -235,6 +236,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			lines.push(...formatNestedRunStatusLines(unattached, { indent: "", commandHints: true, maxLines: 20 }));
 			if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
 			if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
+			if (status.state === "running") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
 			if (status.state !== "running") {
 				lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
 			}

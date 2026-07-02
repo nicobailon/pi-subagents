@@ -201,16 +201,16 @@ const SubagentParamsSchema = Type.Object({
 		description: "Management/control action. Omit for execution mode."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', action='resume', or action='append-step'."
+		description: "Run id or prefix for action='status', action='interrupt', action='resume', action='steer', or action='append-step'."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt', action='resume', or action='append-step'. Defaults to the most recently active controllable run for interrupt. Prefer id for new calls."
+		description: "Target run ID for action='interrupt', action='resume', action='steer', or action='append-step'. Defaults to the most recently active controllable run for interrupt. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
-		description: "Async run directory for action='status' or action='resume'."
+		description: "Async run directory for action='status', action='resume', or action='steer'."
 	})),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child." })),
-	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume'. Use index to choose a child from multi-child runs." })),
+	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume' or non-terminal guidance for action='steer'. Use index to choose a child from multi-child runs." })),
 	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
 	chainName: Type.Optional(Type.String({
 		description: "Chain name for get/update/delete management actions"
