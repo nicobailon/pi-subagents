@@ -12,6 +12,7 @@ import {
 	writeArtifact,
 	writeMetadata,
 } from "../../shared/artifacts.ts";
+import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import {
 	type AgentProgress,
 	type ArtifactPaths,
@@ -175,6 +176,7 @@ async function runSingleAttempt(
 		skillsWarning?: string;
 		jsonlPath?: string;
 		artifactPaths?: ArtifactPaths;
+		transcriptWriter?: ChildTranscriptWriter;
 		attemptNotes: string[];
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
@@ -506,9 +508,11 @@ async function runSingleAttempt(
 			try {
 				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
 			} catch {
+				shared.transcriptWriter?.writeStdoutLine(line);
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
 			}
+			shared.transcriptWriter?.writeChildEvent(evt);
 
 			const now = Date.now();
 			progress.durationMs = now - startTime;
@@ -682,6 +686,7 @@ async function runSingleAttempt(
 			}
 			processClosed = true;
 			if (buf.trim()) processLine(buf);
+			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
 			if (!result.error && assistantError) result.error = assistantError;
 			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
 			if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
@@ -697,6 +702,7 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			cleanupTempDir(tempDir);
+			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
 			if (!result.error) {
 				result.error = error instanceof Error ? error.message : String(error);
 			}
@@ -968,6 +974,7 @@ export async function runSync(
 
 	let artifactPathsResult: ArtifactPaths | undefined;
 	let jsonlPath: string | undefined;
+	let transcriptWriter: ChildTranscriptWriter | undefined;
 	if (options.artifactsDir && options.artifactConfig?.enabled !== false) {
 		artifactPathsResult = getArtifactPaths(options.artifactsDir, options.runId, agentName, options.index);
 		ensureArtifactsDir(options.artifactsDir);
@@ -976,6 +983,17 @@ export async function runSync(
 		}
 		if (options.artifactConfig?.includeJsonl !== false) {
 			jsonlPath = artifactPathsResult.jsonlPath;
+		}
+		if (options.artifactConfig?.includeTranscript !== false) {
+			transcriptWriter = createChildTranscriptWriter({
+				transcriptPath: artifactPathsResult.transcriptPath,
+				source: "foreground",
+				runId: options.runId,
+				agent: agentName,
+				childIndex: options.index,
+				cwd: options.cwd ?? runtimeCwd,
+			});
+			transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
 		}
 	}
 
@@ -991,6 +1009,7 @@ export async function runSync(
 			skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
 			jsonlPath,
 			artifactPaths: artifactPathsResult,
+			transcriptWriter,
 			attemptNotes,
 			outputSnapshot,
 			originalTask: task,
@@ -1046,6 +1065,8 @@ export async function runSync(
 		}
 	}
 
+	if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
+
 	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
 		result.artifactPaths = artifactPathsResult;
 		if (options.artifactConfig?.includeOutput !== false) {
@@ -1064,6 +1085,8 @@ export async function runSync(
 				durationMs: result.progressSummary?.durationMs,
 				toolCount: result.progressSummary?.toolCount,
 				error: result.error,
+				transcriptPath: artifactPathsResult.transcriptPath,
+				transcriptError: result.transcriptError,
 				skills: result.skills,
 				skillsWarning: result.skillsWarning,
 				timestamp: Date.now(),

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added uniform per-child transcript artifacts (`<run>_<agent>_transcript.jsonl`) for foreground and async subagent runs, gated by `subagents.artifacts.includeTranscript` (default on). Each transcript is a versioned JSONL stream of child messages, tool starts/ends, and stdout/stderr lines with a byte cap and truncation marker.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
 
 ### Fixed

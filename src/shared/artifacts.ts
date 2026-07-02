@@ -34,6 +34,7 @@ export function getArtifactPaths(artifactsDir: string, runId: string, agent: str
 		inputPath: path.join(artifactsDir, `${base}_input.md`),
 		outputPath: path.join(artifactsDir, `${base}_output.md`),
 		jsonlPath: path.join(artifactsDir, `${base}.jsonl`),
+		transcriptPath: path.join(artifactsDir, `${base}_transcript.jsonl`),
 		metadataPath: path.join(artifactsDir, `${base}_meta.json`),
 	};
 }
