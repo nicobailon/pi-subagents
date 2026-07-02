@@ -584,6 +584,23 @@ subagent({
 subagent({ action: "delete", agent: "code-analysis.my-agent" })
 ```
 
+### Eject, disable, enable, and reset
+
+```typescript
+// Copy a bundled builtin/package agent to user scope as an editable custom file.
+subagent({ action: "eject", agent: "reviewer" })
+subagent({ action: "eject", agent: "reviewer", agentScope: "project" })
+
+// Hide an agent from runtime discovery without deleting it (reversible).
+subagent({ action: "disable", agent: "reviewer" })
+subagent({ action: "enable", agent: "reviewer", agentScope: "project" })
+
+// Delete the scope's custom agent file and/or settings override, restoring the bundled default.
+subagent({ action: "reset", agent: "reviewer" })
+```
+
+`eject` copies a builtin or package agent verbatim into the user (default) or project agent dir so it can be customized without hunting package files; the copy shadows the original by runtime name. `disable` writes a reversible `agentOverrides.<name>.disabled: true` entry to the user or project settings file. `enable` removes that `disabled` field while keeping any other override fields. `reset` removes the scope's custom file and settings override to restore the bundled default, and refuses if no bundled default exists (use `delete` for purely custom agents). All four take optional `agentScope: "user" | "project"`; project overrides win over user ones, so target the project scope to undo a project-scope disable.
+
 Use management actions when the system needs to create or edit subagents on
 demand without dropping into raw file editing.
 

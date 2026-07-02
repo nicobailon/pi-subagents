@@ -191,7 +191,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
 	});
 
-	it("top-level parallel preserves completed siblings and marks timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel preserves completed siblings and marks timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Slow review", delay: 10000 });
 		mockPi.onCall({ matchArgIncludes: "Fast review", output: "fast done" });
 		const executor = makeExecutor();

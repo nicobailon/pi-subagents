@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added `subagent({ action: "eject" })`, `disable`, `enable`, and `reset` management actions for bundled and custom agents. `eject` copies a builtin or package agent to user/project scope as an editable custom file that shadows the original; `disable`/`enable` toggle a reversible `agentOverrides.<name>.disabled` settings override without deleting the agent; `reset` removes the scope's custom agent file and/or settings override to restore the bundled default. All four accept `agentScope: "user" | "project"` (default `user`) and are blocked from child-safe fanout mode alongside `create`/`update`/`delete`.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
 
 ### Fixed
