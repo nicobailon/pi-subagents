@@ -15,12 +15,20 @@ import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
+import { parseMemoryFrontmatter } from "./agent-memory.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
 export type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
 export type AgentDefaultContext = "fresh" | "fork";
+
+export type AgentMemoryScope = "project" | "user";
+
+export interface AgentMemoryConfig {
+	scope: AgentMemoryScope;
+	path: string;
+}
 
 export const BUILTIN_AGENT_NAMES = [
 	"context-builder",
@@ -117,6 +125,7 @@ export interface AgentConfig {
 	interactive?: boolean;
 	maxSubagentDepth?: number;
 	completionGuard?: boolean;
+	memory?: AgentMemoryConfig;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
@@ -508,7 +517,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 	};
 }
 
-function findNearestProjectRoot(cwd: string): string | null {
+export function findNearestProjectRoot(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
 		if (isDirectory(getProjectConfigDir(currentDir)) || isDirectory(path.join(currentDir, ".agents"))) {
@@ -1188,6 +1197,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 					? parsedMaxSubagentDepth
 					: undefined,
 			completionGuard,
+			memory: parseMemoryFrontmatter(frontmatter.memory),
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
 		};
 		agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));

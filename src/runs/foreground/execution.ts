@@ -43,6 +43,7 @@ import {
 	extractTextFromContent,
 } from "../../shared/utils.ts";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
+import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
@@ -950,6 +951,10 @@ export async function runSync(
 	if (resolvedSkills.length > 0) {
 		const skillInjection = buildSkillInjection(resolvedSkills);
 		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
+	}
+	const memoryInjection = buildAgentMemoryInjection(agent, skillCwd);
+	if (memoryInjection) {
+		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	}
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
 
