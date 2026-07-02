@@ -94,10 +94,39 @@ describe("wait tool", () => {
 			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, { sleep }));
 			assert.equal(result.isError, undefined);
 			const text = textOf(result);
-			assert.match(text, /all done/i);
+			assert.match(text, /done/i);
 			assert.match(text, /1 complete/);
 			assert.match(text, /1 failed/);
 			assert.ok(polls >= 2, "all:true should wait for both completions");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("wakes when a run needs attention, not only on completion", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-attn-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			// Two runs, all:true so it would normally block until both finish.
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+			writeStatus(asyncRoot, "run-b", "running", { sessionId: "sess-1", pid: 999998 });
+
+			// Neither completes; run-a flags needs_attention (blocked for a decision).
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				if (polls === 1) {
+					writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999, activityState: "needs_attention" });
+				}
+			};
+
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			const text = textOf(result);
+			assert.match(text, /need attention/i, "should report the attention run");
+			assert.match(text, /run-a/, "should name the attention run");
+			assert.ok(polls <= 2, `should break on attention promptly, polled ${polls}`);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -164,7 +193,7 @@ describe("wait tool", () => {
 
 			const result = await waitForSubagents({ id: "run-al" }, undefined, baseDeps(root, state, { sleep }));
 			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /run "run-al".*all done/is);
+			assert.match(textOf(result), /run "run-al".*done/is);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

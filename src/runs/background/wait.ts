@@ -19,6 +19,14 @@
  * to finish, spawn its replacement, wait again — keeping N in flight instead of
  * draining to zero between batches. Pass `all: true` to block until every
  * tracked run is terminal, or `id` to block on one specific run.
+ *
+ * `wait` also returns when a run needs attention — not just on completion. A
+ * child that goes idle or blocks for a decision surfaces `needs_attention`
+ * (the same signal Pi shows as a control notice and, interactively, wakes the
+ * parent with). Since `wait` is used exactly where there is no next turn to
+ * receive that notice, it must break on it too, or a stuck child would stall
+ * the loop until the timeout. Attention runs are reported so the caller can
+ * inspect / nudge / resume / interrupt them.
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -80,7 +88,17 @@ function matchesId(run: AsyncRunSummary, id: string): boolean {
 	return run.id === id || run.id.startsWith(id);
 }
 
-/** Snapshot of the async runs this wait call cares about, refreshed from disk. */
+/** A running run that has flagged it needs the parent's attention. */
+function needsAttention(run: AsyncRunSummary): boolean {
+	return run.activityState === "needs_attention";
+}
+
+/**
+ * Runs from this session that are still queued/running AND not asking for
+ * attention. A run that needs attention is treated as no longer "pending" so
+ * the wait breaks on it (the caller must nudge / resume / interrupt it), the
+ * same way a completion breaks the wait.
+ */
 function activeRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
@@ -91,7 +109,23 @@ function activeRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSumma
 		kill: deps.kill,
 		now: deps.now,
 	});
-	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+	const scoped = params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+	return scoped.filter((run) => !needsAttention(run));
+}
+
+/** Runs (from the initial set) currently flagged needs_attention, for reporting. */
+function attentionRunsForSession(params: WaitParams, deps: WaitDeps, initialIds: Set<string>): AsyncRunSummary[] {
+	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
+	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const runs = listAsyncRuns(asyncDirRoot, {
+		states: [...ACTIVE_STATES],
+		sessionId: deps.state.currentSessionId ?? undefined,
+		resultsDir,
+		kill: deps.kill,
+		now: deps.now,
+	});
+	const scoped = params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+	return scoped.filter((run) => needsAttention(run) && initialIds.has(run.id));
 }
 
 /** All runs (any state) for this session, for the final summary. */
@@ -168,14 +202,25 @@ export async function waitForSubagents(
 	const initialIds = new Set(pending.map((run) => run.id));
 	const initialCount = initialIds.size;
 
-	const done = (active: AsyncRunSummary[]): boolean => {
+	const done = (active: AsyncRunSummary[], attention: AsyncRunSummary[]): boolean => {
+		// A run needing attention always breaks the wait, in either mode: the
+		// caller has to act on it (nudge/resume/interrupt) and blocking longer
+		// helps nothing.
+		if (attention.length > 0) return true;
 		if (waitForAll) return active.length === 0;
 		// First-completion: satisfied once any initially-pending run is gone.
 		const stillActiveInitial = active.filter((run) => initialIds.has(run.id));
 		return stillActiveInitial.length < initialCount;
 	};
 
-	while (!done(pending)) {
+	let attention: AsyncRunSummary[] = [];
+	try {
+		attention = attentionRunsForSession(params, deps, initialIds);
+	} catch {
+		// best-effort; attention reporting is non-critical
+	}
+
+	while (!done(pending, attention)) {
 		if (signal?.aborted) {
 			const stillActive = pending.map((run) => `${run.id} (${run.state})`).join(", ");
 			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Still active: ${stillActive}.`, true);
@@ -191,6 +236,7 @@ export async function waitForSubagents(
 		await sleep(pollIntervalMs, signal);
 		try {
 			pending = activeRunsForSession(params, deps);
+			attention = attentionRunsForSession(params, deps, initialIds);
 		} catch (error) {
 			return result(error instanceof Error ? error.message : String(error), true);
 		}
@@ -211,6 +257,10 @@ export async function waitForSubagents(
 		// Summary is best-effort; the important part is that the wait resolved.
 	}
 
+	const attentionNote = attention.length > 0
+		? ` ${attention.length} run(s) need attention: ${attention.map((r) => r.id).join(", ")} — inspect with subagent({ action: "status" }) then nudge/resume/interrupt.`
+		: "";
+
 	const stillRunning = pending.filter((run) => initialIds.has(run.id)).length;
 	const elapsed = formatDuration(now() - startedAt);
 	const outcome = terminalSummary ? ` Outcome: ${terminalSummary}.` : "";
@@ -218,7 +268,7 @@ export async function waitForSubagents(
 	if (waitForAll) {
 		const scope = params.id ? `run "${params.id}"` : `${initialCount} async run(s)`;
 		return result(
-			`Waited ${elapsed} for ${scope} to finish; all done.${outcome} `
+			`Waited ${elapsed} for ${scope}; done.${outcome}${attentionNote} `
 				+ `Completion notifications have been delivered above.`,
 		);
 	}
@@ -228,7 +278,7 @@ export async function waitForSubagents(
 		? ` ${stillRunning} run(s) still in flight — call wait again to catch the next one.`
 		: " No runs remain in flight.";
 	return result(
-		`Waited ${elapsed}; ${finishedCount} of ${initialCount} run(s) finished.${outcome}`
+		`Waited ${elapsed}; ${finishedCount} of ${initialCount} run(s) finished.${outcome}${attentionNote}`
 			+ `${remainder} Completion notifications for the finished run(s) have been delivered above.`,
 	);
 }
