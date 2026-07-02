@@ -32,6 +32,12 @@ interface SubagentParamsSchema {
 			minimum?: number;
 			description?: string;
 		};
+		turnBudget?: {
+			properties?: {
+				maxTurns?: { minimum?: number };
+				graceTurns?: { minimum?: number };
+			};
+		};
 		id?: {
 			type?: string;
 			description?: string;
@@ -169,9 +175,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
-	it("includes foreground timeout aliases", () => {
+	it("includes foreground timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
+		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
 		assert.ok(timeoutSchema, "timeoutMs schema should exist");
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
@@ -180,6 +187,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /timeoutMs/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and async\/background/i);
+		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
+		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
 	});
 
 	it("includes subagent control fields", () => {
@@ -462,6 +471,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", acceptance: { level: "checked", review: false } }, collect: { as: "reviews" } }] },
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 3, graceTurns: 0 } },
 		];
 		const invalidValues = [
 			{ skill: 123 },
@@ -483,6 +495,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", acceptance: true }, collect: { as: "reviews" } }] },
 			{ config: [] },
 			{ config: null },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 0 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: -1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1.5 } },
+			{ agent: "worker", task: "Fix", turnBudget: { graceTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1, extra: true } },
 		];
 
 		for (const value of validValues) {

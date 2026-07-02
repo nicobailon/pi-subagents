@@ -177,6 +177,11 @@ const ChainItem = Type.Object({
 	additionalProperties: false,
 });
 
+const TurnBudgetOverride = Type.Object({
+	maxTurns: Type.Integer({ minimum: 1 }),
+	graceTurns: Type.Optional(Type.Integer({ minimum: 0 })),
+}, { additionalProperties: false, description: "Optional assistant-turn budget. At maxTurns the child is asked to wrap up; after graceTurns additional assistant turns it is aborted and partial output is returned." });
+
 const ControlOverrides = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ description: "Enable/disable subagent control attention tracking for this run" })),
 	needsAttentionAfterMs: Type.Optional(Type.Integer({ minimum: 1, description: "No-observed-activity window before a run needs attention" })),
@@ -237,6 +242,7 @@ const SubagentParamsSchema = Type.Object({
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional run-level timeout in ms for foreground and async/background runs. Alias of maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs for optional run-level timeout in foreground and async/background runs." })),
+	turnBudget: Type.Optional(TurnBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String()),
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),

@@ -88,6 +88,25 @@ export interface Usage {
 	turns: number;
 }
 
+export interface TurnBudgetConfig {
+	maxTurns: number;
+	graceTurns?: number;
+}
+
+export interface ResolvedTurnBudget {
+	maxTurns: number;
+	graceTurns: number;
+}
+
+export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
+
+export interface TurnBudgetState extends ResolvedTurnBudget {
+	outcome: TurnBudgetOutcome;
+	turnCount: number;
+	wrapUpRequestedAtTurn?: number;
+	exceededAtTurn?: number;
+}
+
 export interface TokenUsage {
 	input: number;
 	output: number;
@@ -149,7 +168,7 @@ export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFAC
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "status" | "sessionFile" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "startedAt" | "endedAt" | "error" | "timedOut"
+	"agent" | "status" | "sessionFile" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "startedAt" | "endedAt" | "error" | "timedOut" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -162,7 +181,7 @@ export type CostSummary = {
 
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut"
+	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -400,6 +419,9 @@ export interface SingleResult {
 	detachedReason?: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
 	messages?: Message[];
 	usage: Usage;
 	model?: string;
@@ -438,6 +460,7 @@ export interface Details {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
+	turnBudget?: ResolvedTurnBudget;
 	progress?: AgentProgress[];
 	progressSummary?: ProgressSummary;
 	artifacts?: {
@@ -519,6 +542,9 @@ export interface NestedStepSummary {
 	endedAt?: number;
 	error?: string;
 	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
 	children?: NestedRunSummary[];
 }
 
@@ -557,6 +583,9 @@ export interface NestedRunSummary extends NestedRunAddress {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
 	error?: string;
 }
 
@@ -582,6 +611,7 @@ export interface AsyncStartedEvent {
 	workflowGraph?: WorkflowGraphSnapshot;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	turnBudget?: TurnBudgetState;
 	nestedRoute?: NestedRouteInfo;
 }
 
@@ -605,6 +635,9 @@ export interface AsyncStatus {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
 	pid?: number;
 	cwd?: string;
 	currentStep?: number;
@@ -636,6 +669,9 @@ export interface AsyncStatus {
 		durationMs?: number;
 		exitCode?: number | null;
 		timedOut?: boolean;
+		turnBudget?: TurnBudgetState;
+		turnBudgetExceeded?: boolean;
+		wrapUpRequested?: boolean;
 		tokens?: TokenUsage;
 		skills?: string[];
 		model?: string;
@@ -690,6 +726,9 @@ export interface AsyncJobState {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
@@ -801,6 +840,7 @@ export interface RunSyncOptions {
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	turnBudget?: ResolvedTurnBudget;
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
@@ -896,6 +936,7 @@ export interface ExtensionConfig {
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
+	turnBudget?: TurnBudgetConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
 	worktreeSetupHook?: string;

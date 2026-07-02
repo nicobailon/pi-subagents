@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added an optional `turnBudget` (`maxTurns` with `graceTurns`) for foreground and async/background subagent runs. At the soft `maxTurns` limit the child is warned via its system prompt to wrap up; after `graceTurns` additional assistant turns the run is aborted and partial output is returned. `turnBudget`, `turnBudgetExceeded`, and `wrapUpRequested` propagate through results, async status, and nested summaries.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
 
 ### Fixed
