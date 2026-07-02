@@ -49,6 +49,16 @@ interface SubagentParamsSchema {
 			enum?: string[];
 			description?: string;
 		};
+		view?: {
+			type?: string;
+			enum?: string[];
+			description?: string;
+		};
+		lines?: {
+			minimum?: number;
+			maximum?: number;
+			description?: string;
+		};
 		control?: {
 			properties?: {
 				needsAttentionAfterMs?: { minimum?: number };
@@ -200,6 +210,19 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(dirSchema, "dir schema should exist");
 		assert.equal(dirSchema.type, "string");
 		assert.match(String(dirSchema.description ?? ""), /status/i);
+
+		const viewSchema = SubagentParams?.properties?.view;
+		assert.ok(viewSchema, "view schema should exist");
+		assert.equal(viewSchema.type, "string");
+		assert.deepEqual(viewSchema.enum, ["fleet", "transcript"]);
+		assert.match(String(viewSchema.description ?? ""), /status view/i);
+		assert.match(String(viewSchema.description ?? ""), /transcript/i);
+
+		const linesSchema = SubagentParams?.properties?.lines;
+		assert.ok(linesSchema, "lines schema should exist");
+		assert.equal(linesSchema.minimum, 1);
+		assert.equal(linesSchema.maximum, 500);
+		assert.match(String(linesSchema.description ?? ""), /transcript/i);
 
 		const controlSchema = SubagentParams?.properties?.control;
 		assert.ok(controlSchema, "control schema should exist");

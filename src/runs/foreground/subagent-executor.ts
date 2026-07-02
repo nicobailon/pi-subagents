@@ -123,6 +123,8 @@ export interface SubagentParamsLike {
 	runId?: string;
 	dir?: string;
 	index?: number;
+	view?: "fleet" | "transcript";
+	lines?: number;
 	agent?: string;
 	task?: string;
 	message?: string;
@@ -235,6 +237,13 @@ function nestedResolutionScopeForExecutor(deps: ExecutorDeps): NestedRunResoluti
 		routes: route ? [route] : [],
 		...(address ? { descendantOf: { parentRunId: address.parentRunId, ...(address.parentStepIndex !== undefined ? { parentStepIndex: address.parentStepIndex } : {}) } } : {}),
 	};
+}
+
+function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
+	const roots = deps.config.defaultSessionDir ? [path.resolve(deps.expandTilde(deps.config.defaultSessionDir))] : [];
+	const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
+	if (parentSessionFile) roots.push(deps.getSubagentSessionRoot(parentSessionFile));
+	return [...new Set(roots)];
 }
 
 function reserveSubagentSpawns(input: { state: SubagentState; config: ExtensionConfig; sessionId: string | null; requested: number; mode: "single" | "parallel" | "chain" }): AgentToolResult<Details> | undefined {
@@ -2895,13 +2904,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (params.action === "status") {
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
+				const nestedScope = nestedResolutionScopeForExecutor(deps);
+				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
+				if (paramsWithResolvedCwd.view === "fleet") {
+					return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots });
+				}
 				if (targetRunId) {
 					try {
-						const nestedScope = nestedResolutionScopeForExecutor(deps);
 						const resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedScope });
 						if (resolved?.kind === "foreground") {
 							const foreground = getForegroundControl(deps.state, resolved.id);
-							if (foreground) return foregroundStatusResult(foreground);
+							if (foreground) {
+								if (paramsWithResolvedCwd.view === "transcript") {
+									return {
+										content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled." }],
+										details: { mode: "management", results: [] },
+									};
+								}
+								return foregroundStatusResult(foreground);
+							}
 						}
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
@@ -2909,9 +2930,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 				} else {
 					const foreground = getForegroundControl(deps.state, undefined);
-					if (foreground) return foregroundStatusResult(foreground);
+					if (foreground && paramsWithResolvedCwd.view !== "transcript") return foregroundStatusResult(foreground);
+					if (foreground && paramsWithResolvedCwd.view === "transcript") {
+						return {
+							content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript." }],
+							details: { mode: "management", results: [] },
+						};
+					}
 				}
-				return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+				return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots });
 			}
 			if (params.action === "resume") {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });

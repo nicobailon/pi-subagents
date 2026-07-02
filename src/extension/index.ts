@@ -489,6 +489,8 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 
 CONTROL:
 • { action: "status", id: "..." } - inspect an async/background run by id or prefix
+• { action: "status", view: "fleet" } - read-only active foreground/async fleet view with transcript commands
+• { action: "status", id: "...", view: "transcript", index?: 0, lines?: 80 } - tail a run or child output/session transcript
 • { action: "interrupt", id?: "..." } - soft-interrupt the current child turn and leave the run paused
 • { action: "resume", id: "...", message: "...", index?: 0 } - interrupt then follow up with a live async child, or revive a completed async/foreground child from its session
 • { action: "append-step", id: "...", chain: [{agent:"agent-c", task:"Use {previous}"}] } - append one step to the tail of a running async chain
