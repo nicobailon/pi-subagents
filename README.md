@@ -1074,6 +1074,16 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
 
+### `toolDescriptionMode`
+
+```json
+{ "toolDescriptionMode": "compact" }
+```
+
+Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/wait guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
+
+`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
+
 ### `asyncByDefault`
 
 ```json

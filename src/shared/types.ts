@@ -886,8 +886,12 @@ export interface CompanionSuggestionsConfig {
 	packages?: Partial<Record<CompanionSuggestionPackage, CompanionSuggestionPackageConfig>>;
 }
 
+export type ToolDescriptionMode = "full" | "compact" | "custom";
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
+	toolDescriptionMode?: ToolDescriptionMode;
 	forceTopLevelAsync?: boolean;
 	defaultSessionDir?: string;
 	singleRunOutputBaseDir?: string;

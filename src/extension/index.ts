@@ -37,6 +37,7 @@ import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/back
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
+import { buildSubagentToolDescription } from "./tool-description.ts";
 import {
 	buildCompanionDoctorLines,
 	buildCompanionListLines,
@@ -460,41 +461,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const tool: ToolDefinition<typeof SubagentParams, Details> = {
 		name: "subagent",
 		label: "Subagent",
-		description: `Delegate to subagents or manage agent definitions.
-
-EXECUTION (use exactly ONE mode):
-• Before executing, use { action: "list" } to inspect configured agents/chains. Only execute agents listed as executable/non-disabled.
-• SINGLE: { agent, task? } - one task; omit task for self-contained agents
-• CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
-• PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
-• Optional context: { context: "fresh" | "fork" } (explicit value overrides every child; when omitted, each requested agent uses its own defaultContext, otherwise "fresh"; inspect agent defaults via { action: "list" })
-• Optional timeout: { timeoutMs } or { maxRuntimeMs } sets a run-level max runtime for foreground and async/background runs
-• If { action: "list" } shows proactive skill subagent suggestions, consider a small fresh-context fanout for broad tasks where one of those skills would materially help
-
-CHAIN TEMPLATE VARIABLES (use in task strings):
-• {task} - The original task/request from the user
-• {previous} - Text response from the previous step (empty for first step)
-• {chain_dir} - Shared directory for chain files (e.g., <tmpdir>/pi-subagents-<scope>/chain-runs/abc123/)
-
-Example: { chain: [{agent:"agent-a", task:"Analyze {task}"}, {agent:"agent-b", task:"Plan based on {previous}"}] }
-
-MANAGEMENT (use action field, omit agent/task/chain/tasks):
-• { action: "list" } - discover executable agents/chains
-• { action: "get", agent: "name" } - full detail; packaged agents use dotted runtime names like "package.agent"
-• { action: "models", agent?: "name" } - show the runtime-loaded builtin subagent model mapping, optionally filtered to one builtin
-• { action: "create", config: { name: "custom-agent", package: "code-analysis", systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, ... } }
-• { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", ... } } - merge
-• { action: "delete", agent: "code-analysis.custom-agent" }
-• Use chainName for chain operations; packaged chains also use dotted runtime names
-
-CONTROL:
-• { action: "status", id: "..." } - inspect an async/background run by id or prefix
-• { action: "interrupt", id?: "..." } - soft-interrupt the current child turn and leave the run paused
-• { action: "resume", id: "...", message: "...", index?: 0 } - interrupt then follow up with a live async child, or revive a completed async/foreground child from its session
-• { action: "append-step", id: "...", chain: [{agent:"agent-c", task:"Use {previous}"}] } - append one step to the tail of a running async chain
-
-DIAGNOSTICS:
-• { action: "doctor" } - read-only report for runtime paths, discovery, sessions, and intercom`,
+		description: buildSubagentToolDescription(config),
 		parameters: SubagentParams,
 
 		execute(id, params, signal, onUpdate, ctx) {
