@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	buildModelCandidates,
+	fuzzyResolveModel,
 	isRetryableModelFailure,
+	normalizeModelSegment,
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
@@ -141,10 +143,181 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 	});
 
 	it("never emits the literal \"inherit\" string as a model", () => {
-		// Regression guard: the old resolveModelCandidate returned \"inherit\" verbatim
+		// Regression guard: the old resolveModelCandidate returned "inherit" verbatim
 		// (no registry match), which the child rejected and silently fell back to
 		// the global default.
 		assert.notEqual(resolveSubagentModelOverride("inherit", parentModel, availableModels), "inherit");
 		assert.notEqual(resolveSubagentModelOverride("inherit", undefined, availableModels), "inherit");
+	});
+});
+
+describe("fuzzyResolveModel / normalizeModelSegment", () => {
+	const registry = [
+		{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+		{ provider: "anthropic", id: "claude-haiku-4-5", fullId: "anthropic/claude-haiku-4-5" },
+		{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+		{ provider: "github-copilot", id: "gpt-5-mini", fullId: "github-copilot/gpt-5-mini" },
+	];
+
+	it("normalizes dots, underscores, case, and repeated dashes", () => {
+		assert.equal(normalizeModelSegment("Claude.Sonnet_4"), "claude-sonnet-4");
+		assert.equal(normalizeModelSegment("GPT--5.Mini"), "gpt-5-mini");
+	});
+
+	it("fuzzy-matches a bare id with separator/case differences", () => {
+		assert.equal(fuzzyResolveModel("Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+		assert.equal(fuzzyResolveModel("claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("fuzzy-matches a bare id with an optional trailing date stamp", () => {
+		assert.equal(fuzzyResolveModel("claude-haiku-4-5-20251001", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("fuzzy-matches an undated query against a dated registry id", () => {
+		const dated = [
+			{ provider: "anthropic", id: "claude-3-5-sonnet-20241022", fullId: "anthropic/claude-3-5-sonnet-20241022" },
+		];
+		assert.equal(fuzzyResolveModel("claude-3-5-sonnet", dated), "anthropic/claude-3-5-sonnet-20241022");
+	});
+
+	it("fuzzy-matches a qualified provider/id with case/separator differences", () => {
+		assert.equal(fuzzyResolveModel("Anthropic/Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+		assert.equal(fuzzyResolveModel("anthropic/claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("does not switch providers for a qualified query", () => {
+		// Named provider has no such model; do not fall back to another provider.
+		assert.equal(fuzzyResolveModel("openai/claude-sonnet-4", registry), undefined);
+		assert.equal(fuzzyResolveModel("github-copilot/claude-haiku-4-5", registry), undefined);
+	});
+
+	it("prefers the current provider for an ambiguous bare fuzzy id", () => {
+		assert.equal(fuzzyResolveModel("GPT.5.Mini", registry, "github-copilot"), "github-copilot/gpt-5-mini");
+	});
+
+	it("returns undefined for an ambiguous bare fuzzy id with no preferred provider", () => {
+		assert.equal(fuzzyResolveModel("gpt-5-mini", registry), undefined);
+	});
+
+	it("returns undefined when nothing fuzzy-matches", () => {
+		assert.equal(fuzzyResolveModel("does-not-exist", registry), undefined);
+		assert.equal(fuzzyResolveModel("anthropic/does-not-exist", registry), undefined);
+	});
+});
+
+describe("resolveModelCandidate fuzzy fallback", () => {
+	const registry = [
+		{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+		{ provider: "anthropic", id: "claude-haiku-4-5", fullId: "anthropic/claude-haiku-4-5" },
+	];
+
+	it("resolves a bare id with case/separator differences via fuzzy fallback", () => {
+		assert.equal(resolveModelCandidate("Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+		assert.equal(resolveModelCandidate("claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("resolves a bare id with a trailing date stamp via fuzzy fallback", () => {
+		assert.equal(resolveModelCandidate("claude-haiku-4-5-20251001", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("resolves a qualified provider/id with case differences via fuzzy fallback", () => {
+		assert.equal(resolveModelCandidate("Anthropic/Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+	});
+
+	it("preserves the thinking suffix through fuzzy resolution", () => {
+		assert.equal(resolveModelCandidate("claude.haiku.4.5:high", registry), "anthropic/claude-haiku-4-5:high");
+	});
+
+	it("still prefers exact registry matches over fuzzy", () => {
+		assert.equal(resolveModelCandidate("anthropic/claude-sonnet-4", registry), "anthropic/claude-sonnet-4");
+	});
+
+	it("leaves an unknown qualified model unchanged instead of switching providers", () => {
+		assert.equal(resolveModelCandidate("openai/claude-sonnet-4", registry), "openai/claude-sonnet-4");
+	});
+
+	it("leaves an unknown bare id unchanged when no fuzzy match exists", () => {
+		assert.equal(resolveModelCandidate("does-not-exist", registry), "does-not-exist");
+	});
+});
+
+describe("resolveSubagentModelOverride scope enforcement", () => {
+	const availableModels = [
+		{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+		{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+		{ provider: "deepseek", id: "deepseek-v4", fullId: "deepseek/deepseek-v4" },
+	];
+	const parentModel = { provider: "deepseek", id: "deepseek-v4" };
+	const scope = { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] } as const;
+
+	it("is a no-op when scope is not enforced", () => {
+		assert.equal(
+			resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, { scope: { enforce: false, allow: ["anthropic/*"] }, source: "explicit" }),
+			"deepseek/deepseek-v4",
+		);
+	});
+
+	it("throws for an explicit out-of-scope model", () => {
+		assert.throws(
+			() => resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, { scope, source: "explicit" }),
+			/outside the configured subagent model scope/,
+		);
+	});
+
+	it("warns (and still returns the model) for an inherited out-of-scope model", () => {
+		const warnings: string[] = [];
+		const resolved = resolveSubagentModelOverride("deepseek/deepseek-v4", parentModel, availableModels, undefined, {
+			scope,
+			source: "inherited",
+			onWarn: (v) => warnings.push(v.message),
+		});
+		assert.equal(resolved, "deepseek/deepseek-v4");
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0]!, /outside the configured subagent model scope/);
+	});
+
+	it("warns for an inherited parent-session model that is out of scope", () => {
+		const warnings: string[] = [];
+		// No explicit model requested: inherits the parent (deepseek), which is out of scope.
+		const resolved = resolveSubagentModelOverride(undefined, parentModel, availableModels, undefined, {
+			scope,
+			onWarn: (v) => warnings.push(v.message),
+		});
+		assert.equal(resolved, "deepseek/deepseek-v4");
+		assert.equal(warnings.length, 1);
+	});
+
+	it("passes through an in-scope explicit model without warning or error", () => {
+		const warnings: string[] = [];
+		const resolved = resolveSubagentModelOverride("gpt-5-mini", parentModel, availableModels, undefined, {
+			scope,
+			source: "explicit",
+			onWarn: (v) => warnings.push(v.message),
+		});
+		assert.equal(resolved, "openai/gpt-5-mini");
+		assert.equal(warnings.length, 0);
+	});
+
+	it("checks the resolved (canonicalized) model against the scope", () => {
+		// Fuzzy-resolves Claude-Sonnet-4 -> anthropic/claude-sonnet-4, which is in scope.
+		const warnings: string[] = [];
+		const resolved = resolveSubagentModelOverride("Claude-Sonnet-4", parentModel, availableModels, undefined, {
+			scope,
+			source: "explicit",
+			onWarn: (v) => warnings.push(v.message),
+		});
+		assert.equal(resolved, "anthropic/claude-sonnet-4");
+		assert.equal(warnings.length, 0);
+	});
+
+	it("ignores a thinking suffix when checking scope", () => {
+		const warnings: string[] = [];
+		const resolved = resolveSubagentModelOverride("gpt-5-mini:high", parentModel, availableModels, undefined, {
+			scope,
+			source: "explicit",
+			onWarn: (v) => warnings.push(v.message),
+		});
+		assert.equal(resolved, "openai/gpt-5-mini:high");
+		assert.equal(warnings.length, 0);
 	});
 });

@@ -168,6 +168,23 @@ To inspect what `pi-subagents` has actually loaded right now, use:
 
 That reports the live runtime mapping, which can differ from settings on disk until you reload Pi.
 
+You do not have to spell a model exactly. Model ids are matched fuzzily against the registry, so separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case differences (`Claude-Sonnet-4` vs `claude-sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001` vs `claude-haiku-4-5`) all resolve to the same model. Exact `provider/id` matches still win, and a qualified `provider/model` query never silently switches providers — it only matches within the named provider. Ambiguous bare ids that exist under multiple providers still require a provider prefix or the current session's provider to disambiguate.
+
+To keep subagents inside a budget or compliance profile, enforce a model scope. Put `subagents.modelScope` in user or project settings (project overrides user):
+
+```json
+{
+  "subagents": {
+    "modelScope": {
+      "enforce": true,
+      "allow": ["anthropic/*", "openai/gpt-5-*"]
+    }
+  }
+}
+```
+
+`allow` is a list of glob patterns matched against the resolved `provider/id` (only `*` is special, case-insensitive). A resolved model that matches none of the patterns is rejected. Models you pass explicitly — the tool-call `model`, `--model`, or a clarify pick — error and abort the run. Models that come from agent frontmatter, `subagents.defaultModel`, or the inherited parent session model only warn, so existing configurations keep working while you tighten the scope. `enforce: true` requires a non-empty `allow` list; otherwise the config is rejected at load time.
+
 ## Where running subagents show up
 
 Foreground runs stream progress in the conversation while they run.

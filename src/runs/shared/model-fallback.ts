@@ -1,5 +1,6 @@
 import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
+import { checkModelScope, type ModelScopeConfig, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 
 export type { AvailableModelInfo };
 
@@ -30,6 +31,109 @@ export interface ParentModel {
 }
 
 /**
+ * Normalize a model id or provider segment for fuzzy comparison: case-fold,
+ * treat dots/underscores as dashes (so `4.5` matches `4-5`), and collapse
+ * repeated separators. Pure.
+ */
+export function normalizeModelSegment(segment: string): string {
+	return segment
+		.toLowerCase()
+		.replace(/[._]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
+}
+
+/** Drop a trailing 8-digit date stamp (e.g. `-20251001`) so dated and undated ids match. Pure. */
+function stripTrailingDateStamp(segment: string): string {
+	return segment.replace(/-?\d{8}$/, "");
+}
+
+/**
+ * Fuzzy-resolve a base model id (thinking suffix already stripped) against the
+ * registry, tolerating separator, case, and optional date-stamp differences so
+ * users do not have to spell provider/model exactly. A qualified `provider/id`
+ * query only matches within the named provider — this never silently switches
+ * providers for security/cost-sensitive configs. Returns the matched `fullId`,
+ * or `undefined` when there is no match or the match is ambiguous across
+ * providers (and no `preferredProvider` disambiguates). Pure.
+ */
+export function fuzzyResolveModel(
+	baseModel: string,
+	availableModels: AvailableModelInfo[],
+	preferredProvider?: string,
+): string | undefined {
+	const slashIdx = baseModel.indexOf("/");
+	const queryProvider = slashIdx === -1 ? undefined : normalizeModelSegment(baseModel.slice(0, slashIdx));
+	const queryId = normalizeModelSegment(slashIdx === -1 ? baseModel : baseModel.slice(slashIdx + 1));
+	const queryIdNoDate = stripTrailingDateStamp(queryId);
+
+	const candidates = availableModels.filter((entry) => {
+		const entryId = normalizeModelSegment(entry.id);
+		if (entryId !== queryId && stripTrailingDateStamp(entryId) !== queryIdNoDate) return false;
+		if (queryProvider !== undefined && normalizeModelSegment(entry.provider) !== queryProvider) return false;
+		return true;
+	});
+	if (candidates.length === 0) return undefined;
+	if (preferredProvider) {
+		const preferredProviderNorm = normalizeModelSegment(preferredProvider);
+		const preferred = candidates.find((entry) => normalizeModelSegment(entry.provider) === preferredProviderNorm);
+		if (preferred) return preferred.fullId;
+	}
+	if (candidates.length === 1) return candidates[0]!.fullId;
+	return undefined;
+}
+
+/**
+ * Resolve a possibly-loose model id to a canonical `provider/id` (plus any
+ * thinking suffix). Exact registry matches win; fuzzy normalization
+ * (separator/case/date-stamp via {@link fuzzyResolveModel}) is a fallback so
+ * spelling differences still resolve. Never switches providers for a qualified
+ * query. Pure.
+ */
+export function resolveModelCandidate(
+	model: string | undefined,
+	availableModels: AvailableModelInfo[] | undefined,
+	preferredProvider?: string,
+): string | undefined {
+	if (!model) return undefined;
+	if (!availableModels || availableModels.length === 0) return model;
+
+	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
+
+	if (baseModel.includes("/")) {
+		const exact = availableModels.find((entry) => entry.fullId === baseModel);
+		if (exact) return `${exact.fullId}${thinkingSuffix}`;
+		const fuzzy = fuzzyResolveModel(baseModel, availableModels, preferredProvider);
+		if (fuzzy) return `${fuzzy}${thinkingSuffix}`;
+		return model;
+	}
+
+	const matches = availableModels.filter((entry) => entry.id === baseModel);
+	if (preferredProvider) {
+		const preferredMatch = matches.find((entry) => entry.provider === preferredProvider);
+		if (preferredMatch) return `${preferredMatch.fullId}${thinkingSuffix}`;
+	}
+	if (matches.length === 1) return `${matches[0]!.fullId}${thinkingSuffix}`;
+
+	const fuzzy = fuzzyResolveModel(baseModel, availableModels, preferredProvider);
+	if (fuzzy) return `${fuzzy}${thinkingSuffix}`;
+	return model;
+}
+
+export interface ResolveSubagentModelOverrideOptions {
+	/** When set with `enforce: true`, out-of-scope models are rejected. */
+	scope?: ModelScopeConfig;
+	/** Origin of the requested model: explicit caller-supplied (hard error) vs inherited (warn). Defaults to `"inherited"`. */
+	source?: ModelSource;
+	/** Called for warn-severity violations instead of `console.warn`. */
+	onWarn?: (violation: ModelScopeViolation) => void;
+}
+
+function defaultScopeWarn(violation: ModelScopeViolation): void {
+	console.warn(`[pi-subagents] ${violation.message}`);
+}
+
+/**
  * Resolve the `--model` override passed to a spawned subagent.
  *
  * When no model is requested (`undefined`, `false`, empty, or the `"inherit"`
@@ -43,38 +147,33 @@ export interface ParentModel {
  * session's model.
  *
  * An explicitly requested model string is resolved via {@link resolveModelCandidate}.
+ * When `options.scope.enforce` is on, an out-of-scope resolved model throws for
+ * an explicit (`source: "explicit"`) request and warns for an inherited one.
  */
 export function resolveSubagentModelOverride(
 	requestedModel: string | boolean | undefined,
 	parentModel: ParentModel | undefined,
 	availableModels: AvailableModelInfo[] | undefined,
 	preferredProvider?: string,
+	options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
 	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
+	let resolved: string | undefined;
 	if (explicit === undefined) {
-		return parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+	} else {
+		resolved = resolveModelCandidate(explicit, availableModels, preferredProvider);
 	}
-	return resolveModelCandidate(explicit, availableModels, preferredProvider);
-}
-
-export function resolveModelCandidate(
-	model: string | undefined,
-	availableModels: AvailableModelInfo[] | undefined,
-	preferredProvider?: string,
-): string | undefined {
-	if (!model) return undefined;
-	if (model.includes("/")) return model;
-	if (!availableModels || availableModels.length === 0) return model;
-
-	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
-	const matches = availableModels.filter((entry) => entry.id === baseModel);
-	if (preferredProvider) {
-		const preferredMatch = matches.find((entry) => entry.provider === preferredProvider);
-		if (preferredMatch) return `${preferredMatch.fullId}${thinkingSuffix}`;
+	if (resolved && options?.scope?.enforce) {
+		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
+		const violation = checkModelScope(resolved, options.scope, source);
+		if (violation) {
+			if (violation.severity === "error") throw new Error(violation.message);
+			(options.onWarn ?? defaultScopeWarn)(violation);
+		}
 	}
-	if (matches.length !== 1) return model;
-	return `${matches[0]!.fullId}${thinkingSuffix}`;
+	return resolved;
 }
 
 export function buildModelCandidates(

@@ -61,6 +61,7 @@ import {
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
+import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
@@ -93,6 +94,7 @@ interface ParallelChainRunInput {
 	agents: AgentConfig[];
 	stepIndex: number;
 	availableModels: ModelInfo[];
+	modelScope?: ModelScopeConfig;
 	chainDir: string;
 	prev: string;
 	originalTask: string;
@@ -245,6 +247,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				input.ctx.model,
 				input.availableModels,
 				input.ctx.model?.provider,
+				{ scope: input.modelScope, source: task.model ? "explicit" : "inherited" },
 			);
 			const maxSubagentDepth = resolveChildMaxSubagentDepth(input.maxSubagentDepth, taskAgentConfig?.maxSubagentDepth);
 
@@ -458,6 +461,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		intercomEvents,
 		chainSkills: chainSkillsParam,
 		chainDir: chainDirBase,
+		modelScope,
 	} = params;
 	const chainSkills = chainSkillsParam ?? [];
 
@@ -665,6 +669,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					agents,
 					stepIndex,
 					availableModels,
+					modelScope,
 					chainDir,
 					prev,
 					originalTask,
@@ -880,6 +885,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				agents,
 				stepIndex,
 				availableModels,
+				modelScope,
 				chainDir,
 				prev,
 				originalTask,
@@ -1060,13 +1066,14 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const cleanTask = stepTask;
 			stepTask = prefix + stepTask + suffix;
 
-			const effectiveModel = tuiOverride?.model
-				?? resolveSubagentModelOverride(
-					seqStep.model ?? agentConfig.model,
-					ctx.model,
-					availableModels,
-					ctx.model?.provider,
-				);
+			const explicitStepModel = tuiOverride?.model ?? seqStep.model;
+			const effectiveModel = resolveSubagentModelOverride(
+				explicitStepModel ?? agentConfig.model,
+				ctx.model,
+				availableModels,
+				ctx.model?.provider,
+				{ scope: modelScope, source: explicitStepModel ? "explicit" : "inherited" },
+			);
 
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
