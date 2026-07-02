@@ -27,6 +27,13 @@
  * receive that notice, it must break on it too, or a stuck child would stall
  * the loop until the timeout. Attention runs are reported so the caller can
  * inspect / nudge / resume / interrupt them.
+ *
+ * Wake mechanism: when given Pi's event bus (`deps.events`), `wait` subscribes
+ * to the subagent completion/control channels and wakes the instant any fires,
+ * rather than waiting out a fixed poll interval. A poll still runs on the
+ * interval as a reconciliation fallback (crashed runners, missed events), and
+ * the poll is the source of truth for what actually changed — the event only
+ * ends the sleep early. With no bus, `wait` degrades to pure polling.
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -55,6 +62,11 @@ export interface WaitParams {
 	timeoutMs?: number;
 }
 
+/** Minimal event-bus surface wait subscribes to (matches pi.events). */
+export interface WaitEventBus {
+	on(channel: string, handler: (data: unknown) => void): () => void;
+}
+
 export interface WaitDeps {
 	state: SubagentState;
 	asyncDirRoot?: string;
@@ -64,7 +76,22 @@ export interface WaitDeps {
 	pollIntervalMs?: number;
 	/** Injectable sleep for tests. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+	/**
+	 * Optional event bus (pi.events). When provided, wait wakes immediately on a
+	 * subagent completion/control event instead of waiting out the poll interval;
+	 * the poll then remains as a reconciliation fallback (crashed runners, missed
+	 * events). Omit in tests that want pure poll behavior.
+	 */
+	events?: WaitEventBus;
 }
+
+/** Bus channels that indicate a run changed state or needs attention. */
+const WAKE_CHANNELS = [
+	"subagent:async-complete",
+	"subagent:control-event",
+	"subagent:control-intercom",
+	"subagent:result-intercom",
+];
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve) => {
@@ -81,6 +108,33 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 			resolve();
 		};
 		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+/**
+ * Sleep up to `ms`, but wake early if a subagent event fires on the bus (or the
+ * turn aborts). Returns when the first of those happens. With no bus this is a
+ * plain sleep, so the poll interval alone drives progress.
+ */
+function waitForWake(ms: number, signal: AbortSignal | undefined, deps: WaitDeps): Promise<void> {
+	const sleep = deps.sleep ?? defaultSleep;
+	if (!deps.events) return sleep(ms, signal);
+	return new Promise((resolve) => {
+		let settled = false;
+		const unsubs: Array<() => void> = [];
+		const done = () => {
+			if (settled) return;
+			settled = true;
+			for (const u of unsubs) {
+				try { u(); } catch { /* best effort */ }
+			}
+			resolve();
+		};
+		for (const channel of WAKE_CHANNELS) {
+			try { unsubs.push(deps.events!.on(channel, done)); } catch { /* ignore bad channel */ }
+		}
+		// Poll-interval fallback so we still reconcile even if no event arrives.
+		void sleep(ms, signal).then(done);
 	});
 }
 
@@ -172,7 +226,6 @@ export async function waitForSubagents(
 	deps: WaitDeps,
 ): Promise<AgentToolResult<Details>> {
 	const now = deps.now ?? Date.now;
-	const sleep = deps.sleep ?? defaultSleep;
 	const pollIntervalMs = Math.max(MIN_POLL_INTERVAL_MS, deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
 	const timeoutMs = params.timeoutMs !== undefined && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
 	const startedAt = now();
@@ -233,7 +286,7 @@ export async function waitForSubagents(
 				true,
 			);
 		}
-		await sleep(pollIntervalMs, signal);
+		await waitForWake(pollIntervalMs, signal, deps);
 		try {
 			pending = activeRunsForSession(params, deps);
 			attention = attentionRunsForSession(params, deps, initialIds);

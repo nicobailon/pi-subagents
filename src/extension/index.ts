@@ -556,10 +556,10 @@ Use this after launching async subagents when you have no independent work left 
 • { id: "..." } — wait for one specific run (id or prefix) to finish.
 • { timeoutMs: 600000 } — stop waiting after N ms (the runs keep going regardless; default 30 min)
 
-While it waits, Pi delivers each finished run's completion notification as it arrives, so those results are in context by the time wait returns. Prefer this over sleep/poll loops: it wakes the instant a run finishes and reconciles crashed runners instead of hanging. It resolves early if the turn is aborted.`,
+wait also returns when a run needs attention (a child that went idle or blocked for a decision), not only on completion — so a stuck child never stalls the loop; the summary names the run(s) to inspect/nudge/resume/interrupt. It wakes the instant a completion or control event arrives (subscribed to Pi's event bus, with a poll fallback that reconciles crashed runners), delivers each finished run's notification into context, and resolves early if the turn is aborted.`,
 		parameters: WaitParams,
 		execute(_id, params, signal, _onUpdate, _ctx) {
-			return waitForSubagents(params, signal, { state });
+			return waitForSubagents(params, signal, { state, events: pi.events });
 		},
 	};
 	pi.registerTool(waitTool);

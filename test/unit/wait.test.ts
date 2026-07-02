@@ -243,4 +243,82 @@ describe("wait tool", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("wakes immediately on an event bus emission instead of waiting the poll interval", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-event-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+
+			// Fake bus. Emitting on a wake channel should end wait's sleep early.
+			const handlers = new Map<string, Array<(d: unknown) => void>>();
+			const events = {
+				on(channel: string, handler: (d: unknown) => void) {
+					const list = handlers.get(channel) ?? [];
+					list.push(handler);
+					handlers.set(channel, list);
+					return () => {
+						const l = handlers.get(channel) ?? [];
+						handlers.set(channel, l.filter((h) => h !== handler));
+					};
+				},
+				emit(channel: string, data: unknown) {
+					for (const h of handlers.get(channel) ?? []) h(data);
+				},
+			};
+
+			// A real timer-based sleep with a LONG poll interval; if wait waited for
+			// the poll it would take ~10s. The event should wake it in ~10ms.
+			let sleepCalls = 0;
+			const realSleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+				sleepCalls += 1;
+				const t = setTimeout(resolve, ms);
+				signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+			});
+
+			const startedAt = Date.now();
+			const p = waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				events,
+				pollIntervalMs: 10_000,
+				sleep: realSleep,
+			}));
+
+			// After a short delay, flip the run terminal and emit a completion event.
+			setTimeout(() => {
+				writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+				events.emit("subagent:async-complete", { id: "run-a" });
+			}, 15);
+
+			const result = await p;
+			const elapsed = Date.now() - startedAt;
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /done/i);
+			assert.ok(elapsed < 2_000, `should wake via event (~15ms), not the 10s poll; took ${elapsed}ms`);
+			assert.ok(sleepCalls >= 1, "poll-interval sleep still armed as fallback");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("still resolves via poll when no event bus is provided (fallback)", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-nobus-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				if (polls === 1) writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+			};
+			// No `events` in deps → pure poll path.
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /done/i);
+			assert.ok(polls >= 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });
