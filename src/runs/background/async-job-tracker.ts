@@ -447,7 +447,18 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
+			// Scope restore to this session's runs. asyncDirRoot is shared across
+			// every Pi session on the machine, so without the sessionId filter a
+			// new session would adopt other sessions' active runs — surfacing their
+			// TUI widget and completion notifications here. Matches result-watcher
+			// delivery scoping and the subagent_wait tool.
+			runs = listAsyncRuns(asyncDirRoot, {
+				states: ["queued", "running"],
+				sessionId: state.currentSessionId,
+				resultsDir,
+				kill: options.kill,
+				now: options.now,
+			});
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;

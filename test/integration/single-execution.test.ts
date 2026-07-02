@@ -409,6 +409,28 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
+	it("does not reject concurrent async subagent launches in one turn", async () => {
+		mockPi.onCall({ output: "async one" });
+		mockPi.onCall({ output: "async two" });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+		const ctx = makeMinimalCtx(tempDir);
+
+		// Two detached (async) launches fired CONCURRENTLY in the same turn — the
+		// fleet pattern. Fire without awaiting the first so both are in flight at
+		// once; the old single-dispatch guard rejected the second with "Issue
+		// exactly ONE subagent call per turn". Assert on the guard message only:
+		// async launch may or may not fully spawn in the sandbox, but neither call
+		// should ever be turned away by the dispatch guard.
+		const [first, second] = await Promise.all([
+			executor.execute("first", { agent: "echo", task: "First", async: true }, new AbortController().signal, undefined, ctx),
+			executor.execute("second", { agent: "second", task: "Second", async: true }, new AbortController().signal, undefined, ctx),
+		]);
+
+		const guardMsg = /Issue exactly ONE subagent call per turn/;
+		assert.doesNotMatch(first.content[0]?.text ?? "", guardMsg, "first async launch must not hit the dispatch guard");
+		assert.doesNotMatch(second.content[0]?.text ?? "", guardMsg, "second concurrent async launch must not hit the dispatch guard");
+	});
+
 	it("blocks total subagent spawns after the per-session quota", async () => {
 		mockPi.onCall({ output: "first call completed" });
 		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 });

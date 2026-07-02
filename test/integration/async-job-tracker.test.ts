@@ -223,39 +223,38 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("restores only active async runs for the current session", () => {
+	it("restores only the current session's runs, not other sessions'", async () => {
 		const asyncRoot = createTempDir("pi-async-job-restore-scope-");
 		try {
-			const ownerDir = path.join(asyncRoot, "run-owner");
-			const otherDir = path.join(asyncRoot, "run-other");
-			fs.mkdirSync(ownerDir, { recursive: true });
-			fs.mkdirSync(otherDir, { recursive: true });
-			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
-				runId: "run-owner",
-				mode: "single",
-				state: "running",
-				sessionId: "session-owner",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
-			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
-				runId: "run-other",
-				mode: "single",
-				state: "running",
-				sessionId: "session-other",
-				startedAt: 1000,
-				steps: [{ agent: "worker", status: "running" }],
-			}), "utf-8");
+			const writeRun = (id: string, sessionId: string) => {
+				const runDir = path.join(asyncRoot, id);
+				fs.mkdirSync(runDir, { recursive: true });
+				fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+					runId: id,
+					mode: "single",
+					state: "running",
+					sessionId,
+					startedAt: 1000,
+					lastUpdate: 2000,
+					steps: [{ agent: "worker", status: "running" }],
+				}), "utf-8");
+			};
+			writeRun("run-mine", "session-mine");
+			writeRun("run-theirs", "session-theirs");
 
 			const state = createState();
-			state.currentSessionId = "session-owner";
-			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, {
+			state.currentSessionId = "session-mine";
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
 				pollIntervalMs: 10,
 			});
-			tracker.restoreActiveJobs();
+			tracker.resetJobs(ui.ctx as never);
+			tracker.restoreActiveJobs(ui.ctx as never);
 
-			assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
-			tracker.resetJobs();
+			assert.ok(state.asyncJobs.get("run-mine"), "expected this session's run to be restored");
+			assert.equal(state.asyncJobs.get("run-theirs"), undefined, "must not restore another session's run");
+			assert.equal(state.asyncJobs.size, 1);
 		} finally {
 			removeTempDir(asyncRoot);
 		}

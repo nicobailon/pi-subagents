@@ -3781,6 +3781,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const requestParams = omitExecutionModeActionAlias(params);
 		if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
+		// The single-dispatch guard only serializes FOREGROUND (blocking) runs:
+		// they hold the turn and drive the interactive UI through a single
+		// foreground-control slot, so two concurrent ones would collide. Async
+		// runs are detached and return immediately, so any number can be launched
+		// in one turn — that is the intended fleet/fan-out pattern (launch N, then
+		// subagent_wait()). Only foreground runs engage the in-progress lock.
+		const runsForeground = !((requestParams.async ?? deps.asyncByDefault) && requestParams.clarify !== true);
+		if (!runsForeground) return execute(id, requestParams, signal, onUpdate, ctx);
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;
 		try {
