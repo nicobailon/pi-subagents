@@ -74,7 +74,7 @@ describe("wait tool", () => {
 		}
 	});
 
-	it("resolves once every active run reaches a terminal state", async () => {
+	it("with all:true, resolves once every active run reaches a terminal state", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-resolve-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -82,23 +82,51 @@ describe("wait tool", () => {
 			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
 			writeStatus(asyncRoot, "run-b", "queued", { sessionId: "sess-1", pid: 999998 });
 
-			// After the first poll, flip both runs to terminal states.
+			// Flip one run terminal on the first poll, the other on the second — so
+			// all:true must keep waiting past the first completion.
 			let polls = 0;
 			const sleep = async () => {
 				polls += 1;
-				if (polls === 1) {
-					writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
-					writeStatus(asyncRoot, "run-b", "failed", { sessionId: "sess-1" });
-				}
+				if (polls === 1) writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+				if (polls === 2) writeStatus(asyncRoot, "run-b", "failed", { sessionId: "sess-1" });
 			};
 
-			const result = await waitForSubagents({}, undefined, baseDeps(root, state, { sleep }));
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, { sleep }));
 			assert.equal(result.isError, undefined);
 			const text = textOf(result);
 			assert.match(text, /all done/i);
 			assert.match(text, /1 complete/);
 			assert.match(text, /1 failed/);
-			assert.ok(polls >= 1, "should have polled at least once");
+			assert.ok(polls >= 2, "all:true should wait for both completions");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("by default returns as soon as the FIRST run finishes, leaving the rest in flight", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-first-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+			writeStatus(asyncRoot, "run-b", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "run-c", "running", { sessionId: "sess-1", pid: 999997 });
+
+			// Only run-a finishes; b and c stay running forever.
+			let polls = 0;
+			const sleep = async () => {
+				polls += 1;
+				if (polls === 1) writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+			};
+
+			const result = await waitForSubagents({}, undefined, baseDeps(root, state, { sleep }));
+			assert.equal(result.isError, undefined);
+			const text = textOf(result);
+			assert.match(text, /1 of 3 run\(s\) finished/);
+			assert.match(text, /1 complete/);
+			assert.match(text, /2 run\(s\) still in flight/);
+			// Must not have blocked on b and c: a bounded number of polls.
+			assert.ok(polls <= 2, `first-completion should return promptly, polled ${polls}`);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

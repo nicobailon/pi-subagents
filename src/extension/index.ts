@@ -551,11 +551,12 @@ DIAGNOSTICS:
 
 Use this after launching async subagents when you have no independent work left and must not end your turn — for example inside a skill that has to run to completion, or any non-interactive run (\`pi -p ...\`) where the whole task is a single turn and ending it would abandon the still-running children.
 
-• { } — wait for every active async run in this session
-• { id: "..." } — wait only for one run (id or prefix)
+• { } — return as soon as the FIRST active run finishes (default). Ideal for a rolling fleet: launch N, wait, spawn a replacement for the one that finished, wait again — keeping N in flight.
+• { all: true } — block until EVERY active run in this session is finished.
+• { id: "..." } — wait for one specific run (id or prefix) to finish.
 • { timeoutMs: 600000 } — stop waiting after N ms (the runs keep going regardless; default 30 min)
 
-While it waits, Pi delivers each run's completion notification as it arrives, so their results are in context by the time wait returns. Prefer this over sleep/poll loops: it wakes the instant runs finish and reconciles crashed runners instead of hanging. It resolves early if the turn is aborted.`,
+While it waits, Pi delivers each finished run's completion notification as it arrives, so those results are in context by the time wait returns. Prefer this over sleep/poll loops: it wakes the instant a run finishes and reconciles crashed runners instead of hanging. It resolves early if the turn is aborted.`,
 		parameters: WaitParams,
 		execute(_id, params, signal, _onUpdate, _ctx) {
 			return waitForSubagents(params, signal, { state });

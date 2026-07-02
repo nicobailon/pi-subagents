@@ -8,11 +8,17 @@
  * cannot work at all non-interactively (`pi -p ...`), where the run is a single
  * turn: once the turn ends there is nothing left to receive the notification.
  *
- * `wait` closes that gap. It keeps the turn alive by resolving only once every
- * tracked async run for this session has reached a terminal state
- * (complete / failed / paused), the caller-supplied timeout elapses, or the
- * turn is aborted. Because it awaits inside the turn, the completion the model
- * was told to wait for is actually observed before the tool returns.
+ * `wait` closes that gap. It keeps the turn alive until a tracked async run for
+ * this session reaches a terminal state (complete / failed / paused), the
+ * caller-supplied timeout elapses, or the turn is aborted. Because it awaits
+ * inside the turn, the completion the model was told to wait for is actually
+ * observed before the tool returns.
+ *
+ * By default `wait` returns as soon as ONE run finishes, so a fleet manager can
+ * use it in a rolling-replacement loop: launch N workers, wait for the next one
+ * to finish, spawn its replacement, wait again — keeping N in flight instead of
+ * draining to zero between batches. Pass `all: true` to block until every
+ * tracked run is terminal, or `id` to block on one specific run.
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -28,8 +34,15 @@ const MIN_POLL_INTERVAL_MS = 250;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 export interface WaitParams {
-	/** Optional run id/prefix to wait for. When omitted, waits for every active run in this session. */
+	/** Optional run id/prefix to wait for. When omitted, waits across every active run in this session. */
 	id?: string;
+	/**
+	 * When true, block until EVERY active run in this session (or matching `id`)
+	 * is terminal. Default false: return as soon as the first run finishes, so a
+	 * fleet manager can spawn a replacement and wait again. Ignored when `id`
+	 * targets a single run.
+	 */
+	all?: boolean;
 	/** Give up after this many milliseconds. Defaults to 30 minutes. */
 	timeoutMs?: number;
 }
@@ -130,6 +143,11 @@ export async function waitForSubagents(
 	const timeoutMs = params.timeoutMs !== undefined && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
 	const startedAt = now();
 
+	// A single named run always means "wait until that one is done", regardless
+	// of `all`. Otherwise `all` decides: true → every run terminal; false → the
+	// first run to finish.
+	const waitForAll = params.id ? true : params.all === true;
+
 	let pending: AsyncRunSummary[];
 	try {
 		pending = activeRunsForSession(params, deps);
@@ -144,9 +162,20 @@ export async function waitForSubagents(
 		return result(finished);
 	}
 
-	const waitedFor = pending.length;
+	// The set of runs in flight when the wait began. In first-completion mode we
+	// return as soon as any of THESE leaves the active set — a run spawned by a
+	// concurrent turn shouldn't satisfy this wait.
+	const initialIds = new Set(pending.map((run) => run.id));
+	const initialCount = initialIds.size;
 
-	while (pending.length > 0) {
+	const done = (active: AsyncRunSummary[]): boolean => {
+		if (waitForAll) return active.length === 0;
+		// First-completion: satisfied once any initially-pending run is gone.
+		const stillActiveInitial = active.filter((run) => initialIds.has(run.id));
+		return stillActiveInitial.length < initialCount;
+	};
+
+	while (!done(pending)) {
 		if (signal?.aborted) {
 			const stillActive = pending.map((run) => `${run.id} (${run.state})`).join(", ");
 			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Still active: ${stillActive}.`, true);
@@ -167,20 +196,39 @@ export async function waitForSubagents(
 		}
 	}
 
-	// Everything terminal — report how they finished.
+	// Report how the finished run(s) came out. In first-completion mode, name the
+	// runs from the initial set that are now terminal.
 	let terminalSummary = "";
+	let finishedCount = 0;
 	try {
-		const terminal = allRunsForSession(params, deps).filter((run) => !ACTIVE_STATES.includes(run.state));
+		const allNow = allRunsForSession(params, deps);
+		const terminal = allNow.filter(
+			(run) => !ACTIVE_STATES.includes(run.state) && (waitForAll || initialIds.has(run.id)),
+		);
+		finishedCount = terminal.length;
 		terminalSummary = summarizeTerminalRuns(terminal);
 	} catch {
 		// Summary is best-effort; the important part is that the wait resolved.
 	}
 
+	const stillRunning = pending.filter((run) => initialIds.has(run.id)).length;
 	const elapsed = formatDuration(now() - startedAt);
-	const scope = params.id ? `run "${params.id}"` : `${waitedFor} async run(s)`;
 	const outcome = terminalSummary ? ` Outcome: ${terminalSummary}.` : "";
+
+	if (waitForAll) {
+		const scope = params.id ? `run "${params.id}"` : `${initialCount} async run(s)`;
+		return result(
+			`Waited ${elapsed} for ${scope} to finish; all done.${outcome} `
+				+ `Completion notifications have been delivered above.`,
+		);
+	}
+
+	// First-completion mode.
+	const remainder = stillRunning > 0
+		? ` ${stillRunning} run(s) still in flight — call wait again to catch the next one.`
+		: " No runs remain in flight.";
 	return result(
-		`Waited ${elapsed} for ${scope} to finish; all done.${outcome} `
-			+ `Completion notifications for each run have been delivered above.`,
+		`Waited ${elapsed}; ${finishedCount} of ${initialCount} run(s) finished.${outcome}`
+			+ `${remainder} Completion notifications for the finished run(s) have been delivered above.`,
 	);
 }

@@ -266,7 +266,10 @@ export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSc
 
 const WaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix to wait for. Omit to wait for every active async run started in this session.",
+		description: "Run id or prefix to wait for one specific run. Omit to wait across every active async run started in this session.",
+	})),
+	all: Type.Optional(Type.Boolean({
+		description: "Wait for ALL active runs to finish. Default false: return as soon as the first run finishes, so a fleet manager can spawn a replacement and wait again. Ignored when id targets a single run.",
 	})),
 	timeoutMs: Type.Optional(Type.Integer({
 		minimum: 1,
