@@ -120,6 +120,25 @@ export interface ResolvedControlConfig {
 	notifyChannels: ControlNotificationChannel[];
 }
 
+/**
+ * Smart completion batching for async-completion notifications. Successful
+ * sibling completions are held briefly so they arrive as one grouped message;
+ * failure and attention signals bypass grouping and always fire immediately.
+ */
+export interface CompletionBatchConfig {
+	enabled?: boolean;
+	/** Idle window after each arrival; resets on every new item. */
+	debounceMs?: number;
+	/** Hard cap measured from the first item in a group. */
+	maxWaitMs?: number;
+	/** Shorter idle window for straggler groups. */
+	stragglerDebounceMs?: number;
+	/** Shorter hard cap for straggler groups. */
+	stragglerMaxWaitMs?: number;
+	/** Arrivals within this window after an emit join a straggler group. */
+	stragglerWindowMs?: number;
+}
+
 export interface ControlEvent {
 	type: ControlEventType;
 	from?: ActivityState;
@@ -896,6 +915,7 @@ export interface ExtensionConfig {
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
+	completionBatch?: CompletionBatchConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
 	worktreeSetupHook?: string;

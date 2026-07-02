@@ -73,7 +73,7 @@ describe("attachPostExitStdioGuard", () => {
 		assert.equal(trySignalChild({ kill: () => { throw new Error("gone"); } }, "SIGTERM"), false);
 	});
 
-	it("does not delay a clean exit", async () => {
+	it("does not delay a clean exit", { skip: process.platform === "win32" ? "bash scripts unavailable on Windows" : undefined }, async () => {
 		const script = writeScript("clean.sh", ["#!/bin/bash", "set -eu", "echo hello", "exit 0"]);
 		const result = await runWithGuard(script, 2000, 8000, 5000);
 		assert.equal(result.exitCode, 0);
@@ -81,7 +81,7 @@ describe("attachPostExitStdioGuard", () => {
 		assert.ok(result.resolvedMs < 500, `expected fast close, got ${result.resolvedMs}ms`);
 	});
 
-	it("cuts off a silent grandchild with the idle timer", async () => {
+	it("cuts off a silent grandchild with the idle timer", { skip: process.platform === "win32" ? "bash scripts unavailable on Windows" : undefined }, async () => {
 		const idleMs = 1500;
 		const result = await runWithGuard(makeSilentLeakyScript(30), idleMs, 8000, 10000);
 		assert.equal(result.exitCode, 0);
@@ -90,7 +90,7 @@ describe("attachPostExitStdioGuard", () => {
 		assert.ok(result.resolvedMs < idleMs + 2000, `expected idle cutoff, got ${result.resolvedMs}ms`);
 	});
 
-	it("cuts off a chatty grandchild with the hard timer", async () => {
+	it("cuts off a chatty grandchild with the hard timer", { skip: process.platform === "win32" ? "bash scripts unavailable on Windows" : undefined }, async () => {
 		const hardMs = 2000;
 		const result = await runWithGuard(makeChattyLeakyScript(200), 1000, hardMs, 10000);
 		assert.equal(result.exitCode, 0);

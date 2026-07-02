@@ -580,7 +580,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 			}
 		}
 	}
-	registerSubagentNotify(pi);
+	registerSubagentNotify(pi, { batchConfig: config.completionBatch });
 
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();

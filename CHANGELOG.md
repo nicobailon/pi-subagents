@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added smart completion batching for async subagent notifications. Successful sibling completions that finish within a short window now arrive as a single grouped message instead of separate notifications; a hard max-wait cap prevents holding them indefinitely, and late-finishing siblings join a shorter straggler group. Failed and paused completions bypass batching and fire immediately so failure and attention signals are never delayed. The debounce window, max-wait cap, and straggler windows are configurable via `completionBatch` in `config.json`.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
 
 ### Fixed
