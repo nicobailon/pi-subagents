@@ -3,10 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- Added a real Pi-session E2E test lane with faux provider routing to verify parent-child subagent result delivery without network model calls.
+- Hardened the `wait` tool's wake path so an event wake cancels its poll-interval fallback timer instead of letting both run, and so an already-aborted turn resolves immediately. Added a test that verifies an event wakes `wait` before the poll interval elapses.
 - Added a parent-side `wait` tool for detached async subagent runs. `wait()` returns when the next active run finishes or needs attention, `wait({ all: true })` drains all active runs, `wait({ id })` targets one run, and `wait({ timeoutMs })` caps the block. This lets background-launching skills and non-interactive `pi -p` runs keep going without sleep/status-polling loops or abandoned children. Thanks to RoboBryce (@robobryce) for #365.
 
 ### Fixed
 - Derive live-detail and full-notification hints from Pi's configured expand key instead of hard-coding `Ctrl+O`. Thanks to Kylegl (@kylegl) for #364.
+- Hardened the async timeout integration test to wait for the mock child to spawn before asserting the timeout result, fixing a race where the timeout could fire before the child existed.
 
 ## [0.32.0] - 2026-07-01
 
