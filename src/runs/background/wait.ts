@@ -132,19 +132,28 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: WaitDeps
 	return new Promise((resolve) => {
 		let settled = false;
 		const unsubs: Array<() => void> = [];
+		const wakeController = new AbortController();
 		const done = () => {
 			if (settled) return;
 			settled = true;
+			wakeController.abort();
+			signal?.removeEventListener("abort", done);
 			for (const u of unsubs) {
 				try { u(); } catch { /* best effort */ }
 			}
 			resolve();
 		};
+		if (signal?.aborted) {
+			done();
+			return;
+		}
+		signal?.addEventListener("abort", done, { once: true });
 		for (const channel of WAKE_CHANNELS) {
 			try { unsubs.push(events.on(channel, done)); } catch { /* ignore bad channel */ }
 		}
 		// Poll-interval fallback so we still reconcile even if no event arrives.
-		void sleep(ms, signal).then(done);
+		// The local signal cancels that fallback timer when an event wakes us first.
+		void sleep(ms, wakeController.signal).then(done);
 	});
 }
 
