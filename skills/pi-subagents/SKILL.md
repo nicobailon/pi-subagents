@@ -641,6 +641,12 @@ If `subagent({ action: "list" })`, `/subagents-doctor`, or a startup message rec
 command only after user approval. To hide future recommendations, use
 `/subagents-companions hide <package> workspace` or `... user`.
 
+## Extension RPC
+
+Other Pi extensions can call `pi-subagents` through the in-process event bus. The stable v1 channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`.
+
+Methods: `ping`, `status`, `spawn`, `interrupt`, and `stop`. `spawn` is async-only and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, spawn limits, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status` and `interrupt` map to the normal control actions. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.
+
 ## Important Constraints
 
 - **Forking requires a persisted parent session.** If the current session does not
