@@ -12,6 +12,7 @@
  *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
  */
 
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -27,6 +28,7 @@ import { SubagentParams, WaitParams } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
+import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
@@ -299,6 +301,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const runtimeCleanup = () => {
 		stopResultWatcher();
+		scheduledRunManager.stop();
 		clearPendingForegroundControlNotices(state);
 		if (state.poller) {
 			clearInterval(state.poller);
@@ -308,11 +311,26 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
 	const { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
+	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
+	const scheduledRunManager = createScheduledRunManager({
+		config,
+		launch: (params, ctx, signal) => {
+			if (!executorExecute) {
+				return Promise.resolve({
+					content: [{ type: "text", text: "Scheduled subagent launch is unavailable (executor not ready)." }],
+					isError: true,
+					details: { mode: "management" as const, results: [] },
+				});
+			}
+			return executorExecute(randomUUID(), params, signal, undefined, ctx);
+		},
+	});
 	const executor = createSubagentExecutor({
 		pi,
 		state,
 		config,
 		asyncByDefault,
+		handleScheduledRunAction: (params, ctx) => scheduledRunManager.handleToolCall(params, ctx),
 		companionSuggestionLines: ({ surface, cwd, context, orchestratorTarget }) => {
 			const statuses = collectCompanionStatuses({ pi, config, cwd, context, orchestratorTarget });
 			return surface === "doctor" ? buildCompanionDoctorLines(statuses) : buildCompanionListLines(statuses);
@@ -322,6 +340,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		expandTilde,
 		discoverAgents,
 	});
+	executorExecute = executor.execute;
 
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
@@ -493,6 +512,12 @@ CONTROL:
 • { action: "resume", id: "...", message: "...", index?: 0 } - interrupt then follow up with a live async child, or revive a completed async/foreground child from its session
 • { action: "append-step", id: "...", chain: [{agent:"agent-c", task:"Use {previous}"}] } - append one step to the tail of a running async chain
 
+SCHEDULE (opt-in; requires { "scheduledRuns": { "enabled": true } } in config.json):
+• { action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? } - defer a subagent launch until a future time. Also accepts tasks[] or chain[]. Scheduled runs always launch async with fresh context; they become normal tracked async runs once they fire. Only schedule explicit delayed runs the user asked for.
+• { action: "schedule-list" } - list scheduled runs for this session
+• { action: "schedule-status", id: "..." } - inspect one scheduled run
+• { action: "schedule-cancel", id: "..." } - cancel a scheduled run before it fires
+
 DIAGNOSTICS:
 • { action: "doctor" } - read-only report for runtime paths, discovery, sessions, and intercom`,
 		parameters: SubagentParams,
@@ -644,6 +669,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		clearPendingForegroundControlNotices(state);
 		resetJobs(ctx);
 		restoreActiveJobs(ctx);
+		scheduledRunManager.bindSession(ctx);
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 		primeExistingResults();
 	};
@@ -677,6 +703,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 			delete globalStore[eventUnsubscribeStoreKey];
 		}
 		stopResultWatcher();
+		scheduledRunManager.stop();
 		if (state.poller) clearInterval(state.poller);
 		state.poller = null;
 		clearPendingForegroundControlNotices(state);
