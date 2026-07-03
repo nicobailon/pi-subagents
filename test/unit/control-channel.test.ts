@@ -5,9 +5,14 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	consumeInterruptRequest,
+	consumeSteerRequests,
 	deliverInterruptRequest,
+	enqueueStepSteer,
 	interruptRequestPath,
 	requestAsyncInterrupt,
+	requestAsyncSteer,
+	steerRequestsDir,
+	stepSteerInboxDir,
 	watchAsyncControlInbox,
 } from "../../src/runs/background/control-channel.ts";
 
@@ -66,6 +71,81 @@ describe("control channel: request file", () => {
 			assert.equal(consumeInterruptRequest(asyncDir), true);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
 			assert.equal(consumeInterruptRequest(asyncDir), false);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("writes and consumes ordered steer requests", () => {
+		const asyncDir = tmpAsyncDir("pi-control-steer-");
+		try {
+			requestAsyncSteer(asyncDir, { message: "  later guidance  ", targetIndex: 1, id: "b", ts: 200, source: "test" });
+			requestAsyncSteer(asyncDir, { message: "first guidance", id: "a", ts: 100 });
+			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 2);
+
+			assert.deepEqual(consumeSteerRequests(asyncDir), [
+				{ type: "steer", id: "a", ts: 100, message: "first guidance" },
+				{ type: "steer", id: "b", ts: 200, message: "later guidance", targetIndex: 1, source: "test" },
+			]);
+			assert.deepEqual(consumeSteerRequests(asyncDir), []);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("keeps steer request ids out of filesystem paths", () => {
+		const asyncDir = tmpAsyncDir("pi-control-steer-safe-name-");
+		try {
+			const requestPath = requestAsyncSteer(asyncDir, { message: "safe", id: "../outside\\bad:thing", ts: 1 });
+			assert.equal(path.dirname(requestPath), steerRequestsDir(asyncDir));
+			assert.equal(path.basename(requestPath), `0000000000001-${Buffer.from("../outside\\bad:thing").toString("base64url")}.json`);
+			assert.deepEqual(consumeSteerRequests(asyncDir), [
+				{ type: "steer", id: "../outside\\bad:thing", ts: 1, message: "safe" },
+			]);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("does not deliver a steer request if another consumer removed it first", () => {
+		const asyncDir = tmpAsyncDir("pi-control-steer-concurrent-");
+		try {
+			requestAsyncSteer(asyncDir, { message: "already taken", id: "s", ts: 1 });
+			const fsImpl = {
+				existsSync: fs.existsSync,
+				readdirSync: fs.readdirSync,
+				readFileSync: fs.readFileSync,
+				rmSync: (target: fs.PathLike, options?: fs.RmOptions) => {
+					fs.rmSync(target, options);
+					const error = new Error("already removed") as NodeJS.ErrnoException;
+					error.code = "ENOENT";
+					throw error;
+				},
+			};
+			assert.deepEqual(consumeSteerRequests(asyncDir, fsImpl), []);
+			assert.deepEqual(consumeSteerRequests(asyncDir), []);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("enqueues a steer request for a specific child inbox", () => {
+		const asyncDir = tmpAsyncDir("pi-control-step-steer-");
+		try {
+			enqueueStepSteer(asyncDir, 2, { type: "steer", id: "s1", ts: 300, message: "focus", targetIndex: 0 });
+			const request = JSON.parse(fs.readFileSync(path.join(stepSteerInboxDir(asyncDir, 2), fs.readdirSync(stepSteerInboxDir(asyncDir, 2))[0]!), "utf-8"));
+			assert.equal(request.targetIndex, 2);
+			assert.equal(request.message, "focus");
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("rejects empty steer messages and invalid target indexes", () => {
+		const asyncDir = tmpAsyncDir("pi-control-steer-invalid-");
+		try {
+			assert.throws(() => requestAsyncSteer(asyncDir, { message: "   " }), /steer message must not be empty/);
+			assert.throws(() => requestAsyncSteer(asyncDir, { message: "ok", targetIndex: -1 }), /targetIndex/);
 		} finally {
 			cleanup(asyncDir);
 		}
@@ -163,6 +243,8 @@ describe("control channel: watchAsyncControlInbox", () => {
 			mkdirSync: fs.mkdirSync,
 			existsSync: fs.existsSync,
 			rmSync: fs.rmSync,
+			readdirSync: fs.readdirSync,
+			readFileSync: fs.readFileSync,
 			watch: ((_dir: string, cb: () => void) => {
 				listener = cb;
 				return { close: () => { closed = true; }, on: () => {} };
@@ -214,6 +296,30 @@ describe("control channel: watchAsyncControlInbox", () => {
 			requestAsyncInterrupt(asyncDir);
 			h.trigger();
 			assert.equal(fired, 1);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("delivers steer requests without firing interrupt", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-steer-");
+		try {
+			let interrupted = 0;
+			const steers: Array<{ message: string; targetIndex?: number }> = [];
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, {
+				onInterrupt: () => interrupted++,
+				onSteer: (request) => steers.push({ message: request.message, targetIndex: request.targetIndex }),
+				fs: h.fsImpl,
+				timers: h.timers,
+			});
+
+			requestAsyncSteer(asyncDir, { message: "go narrower", targetIndex: 0, id: "s", ts: 1 });
+			h.trigger();
+
+			assert.equal(interrupted, 0);
+			assert.deepEqual(steers, [{ message: "go narrower", targetIndex: 0 }]);
+			dispose();
 		} finally {
 			cleanup(asyncDir);
 		}
