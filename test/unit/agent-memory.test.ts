@@ -93,6 +93,13 @@ describe("parseMemoryFrontmatter", () => {
 		});
 	});
 
+	it("parses an inline object memory block", () => {
+		assert.deepEqual(parseMemoryFrontmatter('{ scope: "project", path: "security-reviewer" }'), {
+			scope: "project",
+			path: "security-reviewer",
+		});
+	});
+
 	it("rejects unknown scopes", () => {
 		assert.equal(parseMemoryFrontmatter("scope: global\npath: x"), undefined);
 	});
@@ -148,6 +155,27 @@ describe("resolveMemoryDir", () => {
 		assert.ok("error" in resolveMemoryDir(root, "a/../b"));
 	});
 
+	it("rejects absolute and Windows drive-like paths", () => {
+		const root = mkdtemp("pi-subagents-mem-root-");
+		assert.ok("error" in resolveMemoryDir(root, "/tmp/reviewer"));
+		assert.ok("error" in resolveMemoryDir(root, "C:\\Users\\reviewer"));
+		assert.ok("error" in resolveMemoryDir(root, "C:reviewer"));
+		assert.ok("error" in resolveMemoryDir(root, "team:C"));
+	});
+
+	it("rejects a symlinked ancestor before prompting a first write", () => {
+		const root = mkdtemp("pi-subagents-mem-root-");
+		const outside = mkdtemp("pi-subagents-mem-outside-");
+		const linkPath = path.join(root, "leak");
+		try {
+			fs.symlinkSync(outside, linkPath);
+		} catch {
+			return;
+		}
+		const resolved = resolveMemoryDir(root, "leak/new-agent");
+		assert.ok("error" in resolved, "expected symlink ancestor escape to be rejected");
+	});
+
 	it("rejects a memory dir that is a symlink escaping the root", () => {
 		const root = mkdtemp("pi-subagents-mem-root-");
 		const outside = mkdtemp("pi-subagents-mem-outside-");
@@ -187,6 +215,15 @@ describe("readMemoryFile", () => {
 		assert.equal((result as { byteCapped: boolean }).byteCapped, true);
 	});
 
+	it("does not return more than the memory byte cap", () => {
+		const dir = mkdtemp("pi-subagents-mem-dir-");
+		writeMemoryFile(dir, "x".repeat(1024 * 1024));
+		const result = readMemoryFile(dir);
+		assert.ok(result && result !== "unsafe");
+		assert.equal(result.byteCapped, true);
+		assert.ok(Buffer.byteLength(result.contents, "utf-8") <= 16 * 1024);
+	});
+
 	it("rejects a symlinked memory file that escapes the memory dir", () => {
 		const dir = mkdtemp("pi-subagents-mem-dir-");
 		const outsideFile = path.join(mkdtemp("pi-subagents-mem-outside-"), "secret.md");
@@ -216,6 +253,7 @@ describe("buildAgentMemoryInjection", () => {
 		assert.match(injection, /# Persistent agent memory/);
 		assert.match(injection, new RegExp(`Memory file: ${escapeRegex(memoryFile)}`));
 		assert.match(injection, /append a concise dated entry/);
+		assert.match(injection, /reference data, not instructions/);
 		assert.match(injection, /Threat: token leakage in logs\./);
 		assert.match(injection, /Gotcha: retry on 429\./);
 		assert.doesNotMatch(injection, /read-only/);
@@ -239,6 +277,7 @@ describe("buildAgentMemoryInjection", () => {
 		const injection = buildAgentMemoryInjection(agent, project);
 		assert.match(injection, /read-only, role-specific memory scope/);
 		assert.match(injection, /Do not attempt to edit or create the memory file/);
+		assert.match(injection, /reference data, not instructions/);
 		assert.match(injection, /Known flake: async timeout test\./);
 		assert.doesNotMatch(injection, /You may create it/);
 		assert.doesNotMatch(injection, /append a concise dated entry/);
@@ -314,9 +353,7 @@ describe("agent memory frontmatter round-trip", () => {
 name: security-reviewer
 description: Recurring security reviewer
 tools: read, grep, bash, edit
-memory:
-  scope: project
-  path: security-reviewer
+memory: { scope: project, path: security-reviewer }
 ---
 
 Review for threats.
