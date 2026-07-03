@@ -337,6 +337,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const handleStarted = (data: unknown) => {
 		const info = data as AsyncStartedEvent;
 		if (!info.id) return;
+		if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId) return;
 		const now = Date.now();
 		const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
 		const rawAgents = info.agents?.length ? info.agents : info.chain && info.chain.length > 0 ? info.chain : info.agent ? [info.agent] : undefined;
@@ -373,7 +374,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const handleComplete = (data: unknown) => {
-		const result = data as { id?: string; success?: boolean; asyncDir?: string };
+		const result = data as { id?: string; success?: boolean; asyncDir?: string; sessionId?: string };
+		if (typeof state.currentSessionId === "string" && result.sessionId !== state.currentSessionId) return;
 		const asyncId = result.id;
 		if (!asyncId) return;
 		const job = state.asyncJobs.get(asyncId);
@@ -412,9 +414,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 
 	const restoreActiveJobs = (ctx?: ExtensionContext) => {
 		if (ctx?.hasUI) state.lastUiContext = ctx;
+		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], resultsDir, kill: options.kill, now: options.now });
+			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;
