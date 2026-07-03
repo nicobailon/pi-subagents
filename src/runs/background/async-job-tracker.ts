@@ -17,7 +17,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
-import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { listAsyncRuns, sessionFilters, type AsyncRunSummary } from "./async-status.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -424,7 +424,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
+			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], filters: sessionFilters(state.currentSessionId), resultsDir, kill: options.kill, now: options.now });
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;

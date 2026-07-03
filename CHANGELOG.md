@@ -20,6 +20,7 @@
 
 ### Fixed
 - Scope async subagent completion notifications to the exact owning Pi session so another session in the same repo no longer receives result notices.
+- Restore only the async runs spawned by the session that is starting, instead of every active run in the shared async directory, so unrelated Pi sessions (and their footers) no longer pick up someone else's background subagents on launch. `listAsyncRuns` now takes a composable `filters` list instead of an ad hoc `sessionId` option, so future restore-scoping filters (e.g. by cwd) can be added without changing its call sites. Thanks to @EtienneChollet, @TwistedTabby, and @vicary for confirming the regression. Fixes #383.
 - Harden scheduled-run timestamp parsing and persisted store validation so ambiguous absolute times and corrupted job records fail clearly instead of being normalized or dropped.
 - Derive live-detail and full-notification hints from Pi's configured expand key instead of hard-coding `Ctrl+O`. Thanks to Kylegl (@kylegl) for #364.
 - Tolerate transient Windows `EPERM`/`EBUSY`/`EACCES` locks when atomically replacing async JSON files. Thanks to ThanhNT29Jacky (@ThanhNT29Jacky) for #380.

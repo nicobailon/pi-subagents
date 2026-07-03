@@ -37,7 +37,7 @@
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { listAsyncRuns, sessionFilters, type AsyncRunSummary } from "./async-status.ts";
 import {
 	ASYNC_DIR,
 	RESULTS_DIR,
@@ -172,7 +172,7 @@ function activeRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSumma
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
 	const runs = listAsyncRuns(asyncDirRoot, {
 		states: [...ACTIVE_STATES],
-		sessionId: deps.state.currentSessionId ?? undefined,
+		filters: sessionFilters(deps.state.currentSessionId),
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
@@ -190,7 +190,7 @@ function allRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSummary[
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
 	const runs = listAsyncRuns(asyncDirRoot, {
-		sessionId: deps.state.currentSessionId ?? undefined,
+		filters: sessionFilters(deps.state.currentSessionId),
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,

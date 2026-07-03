@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { filterBySessionId, formatAsyncRunList, listAsyncRuns, sessionFilters } from "../../src/runs/background/async-status.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
 	const dir = path.join(root, id);
@@ -456,6 +456,70 @@ describe("async status helpers", () => {
 			// 200 terminal dirs filtered to active states should resolve in well
 			// under a second. The old per-run nested-route scan blew past this.
 			assert.ok(elapsed < 1000, `listAsyncRuns took ${elapsed}ms for 200 terminal runs`);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("scopes results to the owning session via filterBySessionId", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-filter-session-"));
+		try {
+			createAsyncDir(root, "run-owner", {
+				runId: "run-owner",
+				mode: "single",
+				state: "running",
+				sessionId: "session-owner",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			createAsyncDir(root, "run-other", {
+				runId: "run-other",
+				mode: "single",
+				state: "running",
+				sessionId: "session-other",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+
+			const owned = listAsyncRuns(root, { filters: [filterBySessionId("session-owner")] });
+			assert.deepEqual(owned.map((run) => run.id), ["run-owner"]);
+
+			// sessionFilters is the no-filtering-when-unset convenience used by call sites.
+			assert.deepEqual(sessionFilters(undefined), []);
+			const all = listAsyncRuns(root, { filters: sessionFilters(undefined) });
+			assert.deepEqual(new Set(all.map((run) => run.id)), new Set(["run-owner", "run-other"]));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("combines multiple filters with AND semantics", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-filter-combo-"));
+		try {
+			createAsyncDir(root, "run-match", {
+				runId: "run-match",
+				mode: "single",
+				state: "running",
+				sessionId: "session-owner",
+				cwd: "/repo-a",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			createAsyncDir(root, "run-wrong-cwd", {
+				runId: "run-wrong-cwd",
+				mode: "single",
+				state: "running",
+				sessionId: "session-owner",
+				cwd: "/repo-b",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+
+			// A hypothetical future cwd filter, written the same way filterBySessionId is,
+			// composes with it without any changes to listAsyncRuns itself.
+			const byCwd = (cwd: string) => (({ status }: { status: { cwd?: string } }) => status.cwd === cwd);
+			const runs = listAsyncRuns(root, { filters: [filterBySessionId("session-owner"), byCwd("/repo-a")] });
+			assert.deepEqual(runs.map((run) => run.id), ["run-match"]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

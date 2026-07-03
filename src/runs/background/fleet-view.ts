@@ -16,7 +16,7 @@ import {
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
-import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, sessionFilters, type AsyncRunSummary } from "./async-status.ts";
 
 const DEFAULT_TRANSCRIPT_LINES = 80;
 const MAX_TRANSCRIPT_LINES = 500;
@@ -305,7 +305,7 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 	try {
 		asyncRuns = listAsyncRuns(deps.asyncDirRoot ?? ASYNC_DIR, {
 			states: ["queued", "running"],
-			sessionId: deps.state?.currentSessionId ?? undefined,
+			filters: sessionFilters(deps.state?.currentSessionId),
 			resultsDir: deps.resultsDir ?? RESULTS_DIR,
 			kill: deps.kill,
 			now: deps.now,

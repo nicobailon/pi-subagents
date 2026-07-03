@@ -84,9 +84,27 @@ export interface AsyncRunSummary {
 	nestedWarnings?: string[];
 }
 
+export interface AsyncRunFilterContext {
+	status: AsyncStatus & { cwd?: string };
+	asyncDir: string;
+}
+
+/** ANDed together, so a new filter kind (e.g. by cwd) can be added without touching existing ones. */
+export type AsyncRunFilter = (context: AsyncRunFilterContext) => boolean;
+
+/** The session that spawned the run, i.e. the parent/owning session, not any child run session. */
+export function filterBySessionId(sessionId: string): AsyncRunFilter {
+	return ({ status }) => status.sessionId === sessionId;
+}
+
+/** Convenience for the common "scope to the current session" case; empty (no filtering) when unset. */
+export function sessionFilters(sessionId?: string | null): AsyncRunFilter[] {
+	return sessionId ? [filterBySessionId(sessionId)] : [];
+}
+
 interface AsyncRunListOptions {
 	states?: Array<AsyncRunSummary["state"]>;
-	sessionId?: string;
+	filters?: AsyncRunFilter[];
 	limit?: number;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -291,7 +309,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		// restoration at load from scanning that directory when no active runs
 		// match.
 		if (allowedStates && !allowedStates.has(status.state)) continue;
-		if (options.sessionId && status.sessionId !== options.sessionId) continue;
+		if (options.filters?.some((filter) => !filter({ status, asyncDir })) ?? false) continue;
 		const nestedWarnings: string[] = [];
 		let nestedRoute: NestedRoute | undefined;
 		try {

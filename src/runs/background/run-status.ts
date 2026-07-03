@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
+import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, sessionFilters } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
@@ -135,7 +135,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			};
 		}
 		try {
-			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now });
+			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], filters: sessionFilters(currentSessionId), resultsDir, kill: deps.kill, now: deps.now });
 			if (params.view === "transcript") {
 				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
 				return {
