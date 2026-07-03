@@ -164,10 +164,14 @@ function loadCustomToolDescription(options?: ToolDescriptionOptions): string | u
 }
 
 function withMandatorySafetyGuidance(description: string): string {
-	const trimmed = description.trim();
-	return trimmed.includes(SUBAGENT_SAFETY_GUIDANCE)
-		? trimmed
-		: `${trimmed}\n\n${SUBAGENT_SAFETY_GUIDANCE}`;
+	const customDescription = description
+		.split(SUBAGENT_SAFETY_GUIDANCE)
+		.map((part) => part.trim())
+		.filter(Boolean)
+		.join("\n\n");
+	return customDescription
+		? `${customDescription}\n\n${SUBAGENT_SAFETY_GUIDANCE}`
+		: SUBAGENT_SAFETY_GUIDANCE;
 }
 
 export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
