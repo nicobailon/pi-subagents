@@ -12,6 +12,7 @@
  *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
  */
 
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -27,6 +28,7 @@ import { SubagentParams, WaitParams } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
+import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
@@ -301,6 +303,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const runtimeCleanup = () => {
 		stopResultWatcher();
+		scheduledRunManager.stop();
 		clearPendingForegroundControlNotices(state);
 		if (state.poller) {
 			clearInterval(state.poller);
@@ -310,11 +313,26 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
 	const { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
+	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
+	const scheduledRunManager = createScheduledRunManager({
+		config,
+		launch: (params, ctx, signal) => {
+			if (!executorExecute) {
+				return Promise.resolve({
+					content: [{ type: "text", text: "Scheduled subagent launch is unavailable (executor not ready)." }],
+					isError: true,
+					details: { mode: "management" as const, results: [] },
+				});
+			}
+			return executorExecute(randomUUID(), params, signal, undefined, ctx);
+		},
+	});
 	const executor = createSubagentExecutor({
 		pi,
 		state,
 		config,
 		asyncByDefault,
+		handleScheduledRunAction: (params, ctx) => scheduledRunManager.handleToolCall(params, ctx),
 		companionSuggestionLines: ({ surface, cwd, context, orchestratorTarget }) => {
 			const statuses = collectCompanionStatuses({ pi, config, cwd, context, orchestratorTarget });
 			return surface === "doctor" ? buildCompanionDoctorLines(statuses) : buildCompanionListLines(statuses);
@@ -324,6 +342,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		expandTilde,
 		discoverAgents,
 	});
+	executorExecute = executor.execute;
 
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
@@ -619,6 +638,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		clearPendingForegroundControlNotices(state);
 		resetJobs(ctx);
 		restoreActiveJobs(ctx);
+		scheduledRunManager.bindSession(ctx);
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 		primeExistingResults();
 	};
@@ -653,6 +673,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 			delete globalStore[eventUnsubscribeStoreKey];
 		}
 		stopResultWatcher();
+		scheduledRunManager.stop();
 		if (state.poller) clearInterval(state.poller);
 		state.poller = null;
 		clearPendingForegroundControlNotices(state);

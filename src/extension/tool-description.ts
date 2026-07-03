@@ -50,6 +50,12 @@ CONTROL:
 • { action: "steer", id: "...", message: "...", index?: 0 } - queue non-terminal guidance for a live/queued async Pi child when supported
 • { action: "append-step", id: "...", chain: [{agent:"agent-c", task:"Use {previous}"}] } - append one step to the tail of a running async chain
 
+SCHEDULE (opt-in; requires { "scheduledRuns": { "enabled": true } } in config.json):
+• { action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? } - defer a subagent launch until a future time. Also accepts tasks[] or chain[]. Scheduled runs always launch async with fresh context; they become normal tracked async runs once they fire. Only schedule explicit delayed runs the user asked for.
+• { action: "schedule-list" } - list scheduled runs for this session
+• { action: "schedule-status", id: "..." } - inspect one scheduled run
+• { action: "schedule-cancel", id: "..." } - cancel a scheduled run before it fires
+
 DIAGNOSTICS:
 • { action: "doctor" } - read-only report for runtime paths, discovery, sessions, and intercom
 
@@ -67,6 +73,7 @@ EXECUTE:
 MANAGE / CONTROL:
 • Use action without execution fields: list, get, models, create, update, delete, doctor.
 • Async control actions: status, interrupt, resume, steer, append-step. Use status view:"fleet" for active-run overview, view:"transcript" to tail child output, and steer for non-terminal live guidance. Use id/runId prefixes carefully; use index for a specific child.
+• Opt-in schedule actions: schedule, schedule-list, schedule-status, schedule-cancel. Schedule only explicit delayed runs the user asked for.
 
 ASYNC / WAIT:
 • async:true detaches background work. Do not sleep or poll just to wait; use the wait tool only when this turn must block. Otherwise continue useful work or respond and let completion notifications arrive.

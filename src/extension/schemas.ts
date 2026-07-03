@@ -221,6 +221,8 @@ const SubagentParamsSchema = Type.Object({
 	})),
 	lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Maximum transcript lines for action='status', view='transcript'. Defaults to 80." })),
 	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume' or non-terminal guidance for action='steer'. Use index to choose a child from multi-child runs." })),
+	schedule: Type.Optional(Type.String({ description: "Explicit one-shot schedule for action='schedule'. Only honored when scheduledRuns.enabled is true. Use '+10m' or a future ISO timestamp with timezone; scheduled runs always launch async with fresh context." })),
+	scheduleName: Type.Optional(Type.String({ description: "Optional display name for action='schedule'." })),
 	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
 	chainName: Type.Optional(Type.String({
 		description: "Chain name for get/update/delete management actions"
