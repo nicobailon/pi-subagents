@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { writeSteerRequestToDir } from "../../src/runs/background/control-channel.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_INBOX_ENV } from "../../src/runs/shared/pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
+import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -25,6 +26,7 @@ const envSnapshot = {
 	PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
+	PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -61,9 +63,38 @@ afterEach(() => {
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
+	if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
+	else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
 });
 
 describe("subagent prompt runtime", () => {
+	it("nudges after the tool budget soft limit and blocks configured tools after hard", () => {
+		const handlers = new Map<string, (payload: { toolName?: string }) => unknown>();
+		const sent: string[] = [];
+		process.env[TOOL_BUDGET_ENV] = JSON.stringify({ soft: 2, hard: 2, block: ["read"] });
+
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { toolName?: string }) => unknown) {
+				handlers.set(event, handler);
+			},
+			sendUserMessage(content: string) {
+				sent.push(content);
+			},
+		} as { on(event: string, handler: (payload: { toolName?: string }) => unknown): void; sendUserMessage(content: string): void });
+
+		const toolCall = handlers.get("tool_call");
+		assert.ok(toolCall, "tool_call handler should be registered");
+		assert.equal(toolCall({ toolName: "grep" }), undefined);
+		assert.equal(toolCall({ toolName: "grep" }), undefined);
+		assert.equal(sent.length, 1);
+		assert.match(sent[0] ?? "", /soft limit reached/);
+		assert.deepEqual(toolCall({ toolName: "read" }), {
+			block: true,
+			reason: "Tool budget hard limit reached after 3 tool calls (hard 2). The 'read' tool is blocked so you can finalize from the context you already have.",
+		});
+		assert.equal(toolCall({ toolName: "write" }), undefined);
+	});
+
 	it("delivers steering inbox requests as mid-run user messages", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-runtime-"));
 		try {

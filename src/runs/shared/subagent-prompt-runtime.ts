@@ -5,7 +5,8 @@ import { registerNativeSupervisorClient } from "../../intercom/native-supervisor
 import { consumeSteerRequestsFromDir, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
-import type { JsonSchemaObject } from "../../shared/types.ts";
+import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
+import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -167,6 +168,28 @@ export function formatSteerMessage(request: SteerRequest): string {
 	].join("\n");
 }
 
+function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undefined): void {
+	if (!budget) return;
+	let toolCount = 0;
+	let softNudged = false;
+	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string }) => unknown) => void;
+	onRuntimeEvent("tool_call", (event) => {
+		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+		toolCount++;
+		if (budget.soft !== undefined && toolCount >= budget.soft && !softNudged) {
+			softNudged = true;
+			try {
+				sendUserMessage?.(toolBudgetSoftNudge(budget, toolCount), { deliverAs: "steer" });
+			} catch {
+				// Budget nudges are advisory; blocking below remains authoritative.
+			}
+		}
+		if (!shouldBlockToolForBudget(budget, toolName, toolCount)) return undefined;
+		return { block: true, reason: toolBudgetBlockedMessage(budget, toolName, toolCount) };
+	});
+}
+
 function registerSteeringInbox(pi: ExtensionAPI): void {
 	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
 	if (!steerInbox) return;
@@ -237,6 +260,7 @@ function registerSteeringInbox(pi: ExtensionAPI): void {
 
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerSteeringInbox(pi);
+	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV]));
 	registerNativeSupervisorClient(pi);
 	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];

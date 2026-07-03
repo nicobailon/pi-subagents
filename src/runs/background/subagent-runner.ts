@@ -22,7 +22,9 @@ import {
 	type NestedRunSummary,
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
+	type ResolvedToolBudget,
 	type SubagentRunMode,
+	type ToolBudgetState,
 	type TurnBudgetState,
 	type Usage,
 	type WorkflowGraphSnapshot,
@@ -90,6 +92,7 @@ import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
+import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 
 interface SubagentRunConfig {
 	id: string;
@@ -122,6 +125,7 @@ interface SubagentRunConfig {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	toolBudget?: ResolvedToolBudget;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
 }
@@ -138,6 +142,8 @@ interface StepResult {
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	sessionFile?: string;
 	intercomTarget?: string;
 	model?: string;
@@ -344,6 +350,8 @@ interface RunPiStreamingResult {
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	observedMutationAttempt?: boolean;
 }
 
@@ -793,6 +801,8 @@ async function runSingleStep(
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
 	sessionFile?: string;
 	intercomTarget?: string;
 	completionGuardTriggered?: boolean;
@@ -899,6 +909,8 @@ async function runSingleStep(
 	let finalOutputSnapshot: SingleOutputSnapshot | undefined;
 	let completionGuardTriggeredFinal = false;
 	let turnBudget = ctx.turnBudget ? initialTurnBudgetState(ctx.turnBudget) : undefined;
+	let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
+	let toolBudgetBlocked = false;
 
 	for (let index = 0; index < candidates.length; index++) {
 		if (ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
@@ -942,6 +954,7 @@ async function runSingleStep(
 			parentCapabilityToken: ctx.nestedRoute?.capabilityToken,
 			steerInboxDir: ctx.steerInboxDir,
 			structuredOutput: effectiveStructuredOutput,
+			toolBudget: step.toolBudget,
 		});
 		const run = await runPiStreaming(
 			args,
@@ -1036,6 +1049,12 @@ async function runSingleStep(
 		if (candidate) attemptedModels.push(candidate);
 		completionGuardTriggeredFinal = completionGuardTriggered;
 		finalOutputSnapshot = outputSnapshot;
+		if (step.toolBudget) {
+			const toolMessages = run.messages.filter((message) => message.role === "toolResult");
+			const blockedMessage = toolMessages.find((message) => extractTextFromContent(message.content).includes("Tool budget hard limit reached"));
+			toolBudgetBlocked = Boolean(blockedMessage);
+			toolBudget = toolBudgetState(step.toolBudget, toolMessages.length, blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined);
+		}
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput } as RunPiStreamingResult & { structuredOutput?: unknown };
 		if (run.turnBudgetExceeded) break;
 		if (run.timedOut || ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
@@ -1139,6 +1158,8 @@ async function runSingleStep(
 		turnBudget,
 		turnBudgetExceeded: turnBudgetExceeded || undefined,
 		wrapUpRequested: finalResult?.wrapUpRequested || turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
+		toolBudget,
+		toolBudgetBlocked: toolBudgetBlocked || undefined,
 		completionGuardTriggered: completionGuardTriggeredFinal,
 		structuredOutput: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : (finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
 		structuredOutputPath: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.outputPath,
@@ -1339,6 +1360,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					outputName: task.outputName,
 					structured: task.structured,
 					status: "pending",
+					...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
 					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
 					...(transcriptPath ? { transcriptPath } : {}),
 					skills: task.skills,
@@ -1359,6 +1381,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				outputName: step.collect.as,
 				structured: Boolean(step.collect.outputSchema),
 				status: "pending",
+				...(step.parallel.toolBudget ? { toolBudget: initialToolBudgetState(step.parallel.toolBudget) } : {}),
 				recentTools: [],
 				recentOutput: [],
 			});
@@ -1373,6 +1396,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				outputName: step.outputName,
 				structured: step.structured,
 				status: "pending",
+				...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
 				...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 				...(transcriptPath ? { transcriptPath } : {}),
 				skills: step.skills,
@@ -1400,6 +1424,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 		...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
+		...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
 		pid: process.pid,
 		cwd,
 		currentStep: 0,
@@ -1815,6 +1840,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			const mutates = isMutatingTool(event.toolName, event.args);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
 			step.toolCount = (step.toolCount ?? 0) + 1;
+			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			if (configuredToolBudget) {
+				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount);
+				statusPayload.toolBudget = step.toolBudget;
+			}
 			step.currentTool = event.toolName;
 			step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
 			step.currentToolStartedAt = now;
@@ -1836,6 +1866,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			const toolSnapshot = pendingToolResults[flatIndex];
 			pendingToolResults[flatIndex] = undefined;
 			const resultText = extractTextFromContent(event.message.content);
+			if (toolSnapshot && resultText.includes("Tool budget hard limit reached")) {
+				const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+				if (configuredToolBudget) {
+					step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, toolSnapshot.tool);
+					step.toolBudgetBlocked = true;
+					statusPayload.toolBudget = step.toolBudget;
+					statusPayload.toolBudgetBlocked = true;
+				}
+			}
 			appendRecentStepOutput(step, resultText.split("\n").slice(-10));
 			if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
 				const state = mutatingFailureStates[flatIndex]!;
@@ -2297,6 +2336,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.steps[fi].turnBudget = singleResult.turnBudget;
 				statusPayload.steps[fi].turnBudgetExceeded = singleResult.turnBudgetExceeded;
 				statusPayload.steps[fi].wrapUpRequested = singleResult.wrapUpRequested;
+				statusPayload.steps[fi].toolBudget = singleResult.toolBudget;
+				statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;
+				if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
+				if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 				if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
 				if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
 				if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
@@ -2337,6 +2380,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					turnBudget: pr.turnBudget,
 					turnBudgetExceeded: pr.turnBudgetExceeded,
 					wrapUpRequested: pr.wrapUpRequested,
+					toolBudget: pr.toolBudget,
+					toolBudgetBlocked: pr.toolBudgetBlocked,
 					sessionFile: pr.sessionFile,
 					intercomTarget: pr.intercomTarget,
 					model: pr.model,
@@ -2584,6 +2629,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].turnBudget = singleResult.turnBudget;
 						statusPayload.steps[fi].turnBudgetExceeded = singleResult.turnBudgetExceeded;
 						statusPayload.steps[fi].wrapUpRequested = singleResult.wrapUpRequested;
+						statusPayload.steps[fi].toolBudget = singleResult.toolBudget;
+						statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;
+						if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
+						if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 						if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
 						if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
 						if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
@@ -2660,6 +2709,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						turnBudget: pr.turnBudget,
 						turnBudgetExceeded: pr.turnBudgetExceeded,
 						wrapUpRequested: pr.wrapUpRequested,
+						toolBudget: pr.toolBudget,
+						toolBudgetBlocked: pr.toolBudgetBlocked,
 						sessionFile: pr.sessionFile,
 						intercomTarget: pr.intercomTarget,
 						model: pr.model,
@@ -2788,6 +2839,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				turnBudget: singleResult.turnBudget,
 				turnBudgetExceeded: singleResult.turnBudgetExceeded,
 				wrapUpRequested: singleResult.wrapUpRequested,
+				toolBudget: singleResult.toolBudget,
+				toolBudgetBlocked: singleResult.toolBudgetBlocked,
 			});
 			if (seqStep.outputName) {
 				outputs[seqStep.outputName] = outputEntryFromAsyncResult({
@@ -2829,6 +2882,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].turnBudget = singleResult.turnBudget;
 			statusPayload.steps[flatIndex].turnBudgetExceeded = singleResult.turnBudgetExceeded;
 			statusPayload.steps[flatIndex].wrapUpRequested = singleResult.wrapUpRequested;
+			statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
+			statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
+			if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
+			if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 			if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
 			if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
 			if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
@@ -3019,6 +3076,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
 			...(statusPayload.turnBudgetExceeded ? { turnBudgetExceeded: true } : {}),
 			...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
+			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
+			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
 			...(timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : {}),
 			results: results.map((r) => ({
 				agent: r.agent,
@@ -3031,6 +3090,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				turnBudget: r.turnBudget,
 				turnBudgetExceeded: r.turnBudgetExceeded || undefined,
 				wrapUpRequested: r.wrapUpRequested || undefined,
+				toolBudget: r.toolBudget,
+				toolBudgetBlocked: r.toolBudgetBlocked || undefined,
 				sessionFile: r.sessionFile,
 				intercomTarget: r.intercomTarget,
 				model: r.model,

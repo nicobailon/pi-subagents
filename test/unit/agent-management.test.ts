@@ -114,7 +114,7 @@ Inspect
 `, "utf-8");
 
 		const created = handleCreate(
-			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.scout", task: "Inspect" }] } },
+			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.scout", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
 			ctx,
 		);
 		assert.equal(created.isError, false);
@@ -124,6 +124,7 @@ Inspect
 		assert.match(content, /^name: review-flow$/m);
 		assert.match(content, /^package: code-analysis$/m);
 		assert.match(content, /^## code-analysis\.scout$/m);
+		assert.match(content, /^toolBudget: \{"soft":3,"hard":5,"block":\["read"\]\}$/m);
 
 		const updated = handleUpdate(
 			{ chainName: "code-analysis.review-flow", config: { package: false } },
@@ -135,6 +136,48 @@ Inspect
 		content = fs.readFileSync(updatedPath, "utf-8");
 		assert.match(content, /^name: review-flow$/m);
 		assert.doesNotMatch(content, /^package:/m);
+	});
+
+	it("creates and updates agents with tool budgets", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const result = handleCreate(
+			{ config: { name: "budgeted-reviewer", description: "Review with a budget", scope: "project", toolBudget: { soft: 4, hard: 7, block: ["read", "grep"] } } },
+			ctx,
+		);
+
+		assert.equal(result.isError, false);
+		const filePath = path.join(tempDir, ".pi", "agents", "budgeted-reviewer.md");
+		let content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^toolBudget: \{"soft":4,"hard":7,"block":\["read","grep"\]\}$/m);
+
+		const got = handleManagementAction("get", { agent: "budgeted-reviewer" }, ctx);
+		assert.equal(got.isError, false);
+		assert.match(readText(got), /Tool budget: \{"soft":4,"hard":7,"block":\["read","grep"\]\}/);
+
+		const updated = handleUpdate(
+			{ agent: "budgeted-reviewer", config: { toolBudget: { hard: 3, block: "*" } } },
+			ctx,
+		);
+		assert.equal(updated.isError, false);
+		content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^toolBudget: \{"hard":3,"block":"\*"\}$/m);
+	});
+
+	it("rejects invalid tool budget management config", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const agentResult = handleCreate(
+			{ config: { name: "bad-budget", description: "Bad budget", scope: "project", toolBudget: { soft: 5, hard: 4 } } },
+			ctx,
+		);
+		assert.equal(agentResult.isError, true);
+		assert.match(readText(agentResult), /config\.toolBudget\.soft must be <= config\.toolBudget\.hard/);
+
+		const chainResult = handleCreate(
+			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer", toolBudget: { hard: 2, block: [] } }] } },
+			ctx,
+		);
+		assert.equal(chainResult.isError, true);
+		assert.match(readText(chainResult), /config\.steps\[0\]\.toolBudget\.block must contain at least one tool name/);
 	});
 
 	it("creates agents with completion guard disabled", () => {
@@ -251,6 +294,7 @@ Drive the failing test first.
 						skills: ["override-skill"],
 						defaultContext: "fork",
 						completionGuard: false,
+						toolBudget: { hard: 3 },
 					},
 				},
 			},
@@ -264,6 +308,7 @@ tools:
 skills:
 defaultContext:
 completionGuard: true
+toolBudget:
 ---
 
 Drive the failing test first.
@@ -289,6 +334,7 @@ Drive the failing test first.
 		assert.match(content, /^skills: ?$/m);
 		assert.match(content, /^defaultContext: ?$/m);
 		assert.match(content, /^completionGuard: true$/m);
+		assert.match(content, /^toolBudget: ?$/m);
 
 		const gotAfter = handleManagementAction("get", { agent: "implementer" }, ctx);
 		assert.equal(gotAfter.isError, false);

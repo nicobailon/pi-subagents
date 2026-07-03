@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceInput, OutputMode } from "../shared/types.ts";
+import type { AcceptanceInput, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
@@ -69,6 +69,7 @@ export interface BuiltinAgentOverrideBase {
 	mcpDirectTools?: string[];
 	subagentOnlyExtensions?: string[];
 	completionGuard?: boolean;
+	toolBudget?: ToolBudgetConfig;
 }
 
 interface BuiltinAgentOverrideConfig {
@@ -85,6 +86,7 @@ interface BuiltinAgentOverrideConfig {
 	tools?: string[] | false;
 	subagentOnlyExtensions?: string[] | false;
 	completionGuard?: boolean;
+	toolBudget?: ToolBudgetConfig | false;
 }
 
 interface BuiltinAgentOverrideInfo {
@@ -126,6 +128,7 @@ export interface AgentConfig {
 	interactive?: boolean;
 	maxSubagentDepth?: number;
 	completionGuard?: boolean;
+	toolBudget?: ToolBudgetConfig;
 	memory?: AgentMemoryConfig;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
@@ -164,6 +167,7 @@ export interface ChainStepConfig {
 	failFast?: boolean;
 	worktree?: boolean;
 	acceptance?: AcceptanceInput;
+	toolBudget?: ToolBudgetConfig;
 }
 
 export interface ChainConfig {
@@ -497,6 +501,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions ? [...agent.subagentOnlyExtensions] : undefined,
 		completionGuard: agent.completionGuard,
+		toolBudget: agent.toolBudget,
 	};
 }
 
@@ -517,6 +522,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.tools !== undefined ? { tools: override.tools === false ? false : [...override.tools] } : {}),
 		...(override.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: override.subagentOnlyExtensions === false ? false : [...override.subagentOnlyExtensions] } : {}),
 		...(override.completionGuard !== undefined ? { completionGuard: override.completionGuard } : {}),
+		...(override.toolBudget !== undefined ? { toolBudget: override.toolBudget === false ? false : { ...override.toolBudget, ...(Array.isArray(override.toolBudget.block) ? { block: [...override.toolBudget.block] } : {}) } } : {}),
 	};
 }
 
@@ -661,6 +667,16 @@ function parseBuiltinOverrideEntry(
 		}
 	}
 
+	if ("toolBudget" in input) {
+		if (input.toolBudget === false) {
+			override.toolBudget = false;
+		} else if (input.toolBudget && typeof input.toolBudget === "object" && !Array.isArray(input.toolBudget)) {
+			override.toolBudget = input.toolBudget as ToolBudgetConfig;
+		} else {
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`);
+		}
+	}
+
 	if ("systemPrompt" in input) {
 		if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
 		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
@@ -782,6 +798,7 @@ function applyBuiltinOverride(
 		next.subagentOnlyExtensions = override.subagentOnlyExtensions === false ? undefined : [...override.subagentOnlyExtensions];
 	}
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
+	if (override.toolBudget !== undefined) next.toolBudget = override.toolBudget === false ? undefined : override.toolBudget;
 
 	return next;
 }
@@ -927,6 +944,9 @@ function applyCustomAgentOverride(
 	if (override.completionGuard !== undefined) {
 		fill("completionGuard", ["completionGuard"], override.completionGuard);
 	}
+	if (override.toolBudget !== undefined) {
+		fill("toolBudget", ["toolBudget"], override.toolBudget === false ? undefined : override.toolBudget);
+	}
 
 	if (!anyFilled || !next) return agent;
 	next.override = { ...meta, base: cloneOverrideBase(agent) };
@@ -957,7 +977,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "subagentOnlyExtensions" | "completionGuard">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -981,6 +1001,7 @@ export function buildBuiltinOverrideConfig(
 	if ((draft.completionGuard !== false) !== (base.completionGuard !== false)) {
 		override.completionGuard = draft.completionGuard !== false;
 	}
+	if (JSON.stringify(draft.toolBudget) !== JSON.stringify(base.toolBudget)) override.toolBudget = draft.toolBudget ?? false;
 
 	return Object.keys(override).length > 0 ? override : undefined;
 }
@@ -1239,6 +1260,14 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		}
 
 		const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+		let toolBudget: ToolBudgetConfig | undefined;
+		if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
+			const parsed = JSON.parse(frontmatter.toolBudget) as unknown;
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+				throw new Error(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`);
+			}
+			toolBudget = parsed as ToolBudgetConfig;
+		}
 		const completionGuard = frontmatter.completionGuard === "false"
 			? false
 			: frontmatter.completionGuard === "true"
@@ -1274,6 +1303,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 					? parsedMaxSubagentDepth
 					: undefined,
 			completionGuard,
+			toolBudget,
 			memory: parseMemoryFrontmatter(frontmatter.memory),
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
 		};

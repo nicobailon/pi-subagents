@@ -190,6 +190,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
 		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
+		const toolBudgetSchema = SubagentParams?.properties?.toolBudget;
 		assert.ok(timeoutSchema, "timeoutMs schema should exist");
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
@@ -200,6 +201,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and async\/background/i);
 		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
 		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
+		assert.equal(toolBudgetSchema?.properties?.soft?.minimum, 1);
+		assert.equal(toolBudgetSchema?.properties?.hard?.minimum, 1);
 	});
 
 	it("includes subagent control fields", () => {
@@ -506,6 +509,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1 } },
 			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1 } },
 			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 3, graceTurns: 0 } },
+			{ agent: "worker", task: "Fix", toolBudget: { soft: 5, hard: 8, block: ["read", "grep"] } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 8, block: "*" } },
+			{ tasks: [{ agent: "worker", task: "Fix", toolBudget: { hard: 3 } }] },
+			{ chain: [{ agent: "worker", toolBudget: { hard: 3 } }] },
+			{ chain: [{ parallel: [{ agent: "worker", toolBudget: { hard: 3 } }] }] },
 		];
 		const invalidValues = [
 			{ skill: 123 },
@@ -532,6 +540,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1.5 } },
 			{ agent: "worker", task: "Fix", turnBudget: { graceTurns: 1 } },
 			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1, extra: true } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 0 } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, soft: 0 } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: [123] } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: [] } },
+			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: "read" } },
 		];
 
 		for (const value of validValues) {

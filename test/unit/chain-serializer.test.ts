@@ -48,6 +48,38 @@ Review the diff
 		assert.match(serialized, /outputSchema: \.\/schemas\/finding\.schema\.json/);
 	});
 
+	it("round-trips markdown chain toolBudget", () => {
+		const parsed = parseChain(`---
+name: review-chain
+description: Review chain
+---
+
+## reviewer
+toolBudget: {"soft":3,"hard":5,"block":["read","grep"]}
+
+Review the diff
+`, "project", "/tmp/review-chain.md");
+
+		assert.deepEqual(parsed.steps[0]?.toolBudget, { soft: 3, hard: 5, block: ["read", "grep"] });
+		assert.match(serializeChain(parsed), /toolBudget: \{"soft":3,"hard":5,"block":\["read","grep"\]\}/);
+	});
+
+	it("rejects invalid markdown chain toolBudget", () => {
+		assert.throws(
+			() => parseChain(`---
+name: review-chain
+description: Review chain
+---
+
+## reviewer
+toolBudget: {"soft":6,"hard":5}
+
+Review the diff
+`, "project", "/tmp/review-chain.md"),
+			/toolBudget for step 'reviewer'\.soft must be <= toolBudget for step 'reviewer'\.hard/,
+		);
+	});
+
 	it("rejects inline outputSchema values in markdown chains", () => {
 		assert.throws(
 			() => parseChain(`---
@@ -107,6 +139,46 @@ Review the diff
 		assert.equal(reparsed.name, "dynamic-review");
 		assert.equal(reparsed.package, "code-analysis");
 		assert.equal(reparsed.chain?.[1]?.collect?.as, "reviews");
+	});
+
+	it("parses declarative JSON chains with dynamic fanout toolBudget", () => {
+		const parsed = parseJsonChain(JSON.stringify({
+			name: "dynamic-review",
+			description: "Review dynamic targets",
+			chain: [
+				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" }, toolBudget: { hard: 4 } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" }, toolBudget: { soft: 3, hard: 5 } },
+					collect: { as: "reviews" },
+				},
+			],
+		}), "project", "/tmp/dynamic-review.chain.json");
+
+		assert.deepEqual((parsed.steps[0] as { toolBudget?: unknown }).toolBudget, { hard: 4 });
+		assert.deepEqual((parsed.steps[1] as { parallel?: { toolBudget?: unknown } }).parallel?.toolBudget, { soft: 3, hard: 5 });
+	});
+
+	it("rejects invalid JSON chain toolBudget", () => {
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({
+				name: "bad-tool-budget",
+				description: "Bad tool budget",
+				chain: [{ agent: "worker", toolBudget: { hard: 0 } }],
+			}), "project", "/tmp/bad-tool-budget.chain.json"),
+			/step 1 toolBudget\.hard must be an integer >= 1/,
+		);
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({
+				name: "bad-dynamic-tool-budget",
+				description: "Bad dynamic tool budget",
+				chain: [
+					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+					{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", toolBudget: { hard: 3, block: [] } }, collect: { as: "reviews" } },
+				],
+			}), "project", "/tmp/bad-dynamic-tool-budget.chain.json"),
+			/step 2 dynamic template toolBudget\.block must contain at least one tool name/,
+		);
 	});
 
 	it("parses declarative JSON chains with dynamic fanout", () => {

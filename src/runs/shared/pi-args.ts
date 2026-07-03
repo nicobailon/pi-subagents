@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from "./nested-path.ts";
 import { resolveMcpDirectToolNames } from "./mcp-direct-tool-allowlist.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
-import { TEMP_ROOT_DIR, type JsonSchemaObject } from "../../shared/types.ts";
+import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
+import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 const TASK_ARG_LIMIT = 8000;
@@ -69,6 +70,7 @@ interface BuildPiArgsInput {
 		schemaPath: string;
 		outputPath: string;
 	};
+	toolBudget?: ResolvedToolBudget;
 }
 
 interface BuildPiArgsResult {
@@ -249,6 +251,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.steerInboxDir) {
 		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
 	}
+	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
+	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 
 	env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 

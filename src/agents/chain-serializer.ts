@@ -3,6 +3,7 @@ import { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./
 import { parseFrontmatter } from "./frontmatter.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../runs/shared/chain-outputs.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import type { ChainStep } from "../shared/settings.ts";
 import type { AgentSource } from "./agents.ts";
 
@@ -78,6 +79,19 @@ function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 		if (key === "progress") {
 			if (rawValue === "true") step.progress = true;
 			else if (rawValue === "false") step.progress = false;
+			continue;
+		}
+		if (key === "toolbudget") {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(rawValue);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				throw new Error(`Invalid toolBudget in .chain.md step '${agent}': ${message}`);
+			}
+			const validation = validateToolBudgetConfig(parsed, `toolBudget for step '${agent}'`);
+			if (validation.error) throw new Error(validation.error);
+			step.toolBudget = parsed as ChainStepConfig["toolBudget"];
 		}
 	}
 
@@ -125,6 +139,11 @@ export function parseChain(content: string, source: AgentSource, filePath: strin
 	};
 }
 
+function validateJsonChainToolBudget(value: unknown, label: string): void {
+	const validation = validateToolBudgetConfig(value, label);
+	if (validation.error) throw new Error(validation.error);
+}
+
 export function parseJsonChain(content: string, source: AgentSource, filePath: string): ChainConfig {
 	let parsed: unknown;
 	try {
@@ -152,6 +171,7 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 			throw new Error(`JSON chain '${filePath}' step ${i + 1} must be an object.`);
 		}
 		const stepRecord = step as Record<string, unknown>;
+		if (stepRecord.toolBudget !== undefined) validateJsonChainToolBudget(stepRecord.toolBudget, `step ${i + 1} toolBudget`);
 		const acceptanceErrors = validateAcceptanceInput(stepRecord.acceptance, `step ${i + 1} acceptance`);
 		if (acceptanceErrors.length > 0) {
 			throw new Error(`Invalid JSON chain '${filePath}': ${acceptanceErrors.join(" ")}`);
@@ -161,13 +181,17 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 			for (let taskIndex = 0; taskIndex < parallel.length; taskIndex++) {
 				const task = parallel[taskIndex];
 				if (!task || typeof task !== "object" || Array.isArray(task)) continue;
-				const taskErrors = validateAcceptanceInput((task as Record<string, unknown>).acceptance, `step ${i + 1} parallel task ${taskIndex + 1} acceptance`);
+				const taskRecord = task as Record<string, unknown>;
+				if (taskRecord.toolBudget !== undefined) validateJsonChainToolBudget(taskRecord.toolBudget, `step ${i + 1} parallel task ${taskIndex + 1} toolBudget`);
+				const taskErrors = validateAcceptanceInput(taskRecord.acceptance, `step ${i + 1} parallel task ${taskIndex + 1} acceptance`);
 				if (taskErrors.length > 0) {
 					throw new Error(`Invalid JSON chain '${filePath}': ${taskErrors.join(" ")}`);
 				}
 			}
 		} else if (parallel && typeof parallel === "object") {
-			const templateErrors = validateAcceptanceInput((parallel as Record<string, unknown>).acceptance, `step ${i + 1} dynamic template acceptance`);
+			const parallelRecord = parallel as Record<string, unknown>;
+			if (parallelRecord.toolBudget !== undefined) validateJsonChainToolBudget(parallelRecord.toolBudget, `step ${i + 1} dynamic template toolBudget`);
+			const templateErrors = validateAcceptanceInput(parallelRecord.acceptance, `step ${i + 1} dynamic template acceptance`);
 			if (templateErrors.length > 0) {
 				throw new Error(`Invalid JSON chain '${filePath}': ${templateErrors.join(" ")}`);
 			}
@@ -243,6 +267,7 @@ export function serializeChain(config: ChainConfig): string {
 		if (step.skills === false) lines.push("skills: false");
 		else if (Array.isArray(step.skills) && step.skills.length > 0) lines.push(`skills: ${step.skills.join(", ")}`);
 		if (step.progress !== undefined) lines.push(`progress: ${step.progress ? "true" : "false"}`);
+		if (step.toolBudget !== undefined) lines.push(`toolBudget: ${JSON.stringify(step.toolBudget)}`);
 		lines.push("");
 		lines.push(step.task ?? "");
 		if (i < config.steps.length - 1) lines.push("");

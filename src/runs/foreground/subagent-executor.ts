@@ -42,6 +42,7 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.ts";
+import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -87,7 +88,9 @@ import {
 	type NestedRunSummary,
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
+	type ResolvedToolBudget,
 	type SingleResult,
+	type ToolBudgetConfig,
 	type TurnBudgetConfig,
 	type SubagentRunMode,
 	type SubagentState,
@@ -120,6 +123,7 @@ interface TaskParam {
 	model?: string;
 	skill?: string | string[] | boolean;
 	acceptance?: AcceptanceInput;
+	toolBudget?: ToolBudgetConfig;
 }
 
 export interface SubagentParamsLike {
@@ -142,6 +146,7 @@ export interface SubagentParamsLike {
 	timeoutMs?: number;
 	maxRuntimeMs?: number;
 	turnBudget?: TurnBudgetConfig;
+	toolBudget?: ToolBudgetConfig;
 	clarify?: boolean;
 	share?: boolean;
 	control?: ControlConfig;
@@ -199,6 +204,8 @@ interface ExecutionContextData {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	toolBudget?: ResolvedToolBudget;
+	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
 	modelScope?: ModelScopeConfig;
 }
@@ -1515,6 +1522,18 @@ function resolveTurnBudget(params: SubagentParamsLike, config: ExtensionConfig):
 	return { turnBudget: { maxTurns: raw.maxTurns, graceTurns } };
 }
 
+function resolveToolBudget(raw: unknown, label = "toolBudget"): { toolBudget?: ResolvedToolBudget; error?: string } {
+	const resolved = validateToolBudgetConfig(raw, label);
+	return { toolBudget: resolved.budget, error: resolved.error };
+}
+
+function resolveEffectiveToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
+	if (input.stepBudget !== undefined) return resolveToolBudget(input.stepBudget, "toolBudget");
+	if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
+	if (input.agentBudget !== undefined) return resolveToolBudget(input.agentBudget, "agent.toolBudget");
+	return resolveToolBudget(input.configBudget, "config.toolBudget");
+}
+
 function expandTopLevelTaskCounts(tasks: TaskParam[]): { tasks?: TaskParam[]; error?: string } {
 	const expanded: TaskParam[] = [];
 	for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
@@ -1818,6 +1837,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
 			...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
 			...(task.progress !== undefined ? { progress: task.progress } : {}),
+			...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
 			...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
 		}));
 		return executeAsyncChain(id, {
@@ -1849,6 +1869,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			nestedRoute,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
+			toolBudget: data.toolBudget,
+			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		});
 	}
@@ -1883,6 +1905,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			nestedRoute,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
+			toolBudget: data.toolBudget,
+			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		});
 	}
@@ -1933,6 +1957,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
+			toolBudget: data.toolBudget,
+			configToolBudget: data.configToolBudget,
 		});
 	}
 
@@ -2003,6 +2029,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		deadlineAt: data.deadlineAt,
 		turnBudget: data.turnBudget,
 		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, index, result }),
+		toolBudget: data.toolBudget,
+		configToolBudget: data.configToolBudget,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 	});
 
@@ -2051,6 +2079,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			nestedRoute: data.nestedRoute,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
+			toolBudget: data.toolBudget,
+			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		});
 	}
@@ -2124,6 +2154,7 @@ interface ForegroundParallelRunInput {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	toolBudgets: (ResolvedToolBudget | undefined)[];
 }
 
 function buildParallelModeError(message: string): AgentToolResult<Details> {
@@ -2306,6 +2337,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			timeoutMs: input.timeoutMs,
 			deadlineAt: input.deadlineAt,
 			turnBudget: input.turnBudget,
+			toolBudget: input.toolBudgets[index],
 			onUpdate: input.onUpdate
 				? (progressUpdate) => {
 					const stepResults = progressUpdate.details?.results || [];
@@ -2402,6 +2434,12 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	const maxSubagentDepths = agentConfigs.map((config) =>
 		resolveChildMaxSubagentDepth(currentMaxSubagentDepth, config.maxSubagentDepth),
 	);
+	const toolBudgets: (ResolvedToolBudget | undefined)[] = [];
+	for (let index = 0; index < tasks.length; index++) {
+		const resolved = resolveEffectiveToolBudget({ stepBudget: tasks[index]?.toolBudget, runBudget: data.toolBudget, agentBudget: agentConfigs[index]?.toolBudget, configBudget: data.configToolBudget });
+		if (resolved.error) return buildParallelModeError(resolved.error);
+		toolBudgets.push(resolved.toolBudget);
+	}
 
 	if (params.worktree) {
 		const worktreeTaskCwdError = buildParallelWorktreeTaskCwdError(tasks, effectiveCwd);
@@ -2501,6 +2539,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 					...(behaviorOverrides[i]?.outputMode !== undefined ? { outputMode: behaviorOverrides[i]!.outputMode } : {}),
 					...(behaviorOverrides[i]?.reads !== undefined ? { reads: behaviorOverrides[i]!.reads } : {}),
 					...(progress !== undefined ? { progress } : {}),
+					...(t.toolBudget !== undefined ? { toolBudget: t.toolBudget } : {}),
 					...(t.acceptance !== undefined ? { acceptance: t.acceptance } : {}),
 				};
 			});
@@ -2616,6 +2655,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			timeoutMs: data.timeoutMs,
 			deadlineAt,
 			turnBudget: data.turnBudget,
+			toolBudgets,
 		});
 		for (let i = 0; i < results.length; i++) {
 			const run = results[i]!;
@@ -2732,6 +2772,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			details: { mode: "single", results: [] },
 		};
 	}
+	const effectiveToolBudget = resolveEffectiveToolBudget({ runBudget: data.toolBudget, agentBudget: agentConfig.toolBudget, configBudget: data.configToolBudget });
+	if (effectiveToolBudget.error) return toExecutionErrorResult(params, new Error(effectiveToolBudget.error));
 
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
@@ -2828,6 +2870,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
+				toolBudget: effectiveToolBudget.toolBudget,
 			});
 		}
 	}
@@ -2922,6 +2965,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		timeoutMs: data.timeoutMs,
 		deadlineAt,
 		turnBudget: data.turnBudget,
+		toolBudget: effectiveToolBudget.toolBudget,
 	});
 	if (foregroundControl?.currentIndex === 0) {
 		foregroundControl.interrupt = undefined;
@@ -2960,6 +3004,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		runId,
 		results: [r],
 		...(data.turnBudget ? { turnBudget: data.turnBudget } : {}),
+		...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
 		progress: params.includeProgress ? allProgress : undefined,
 		artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		truncation: r.truncation,
@@ -3279,6 +3324,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
 		const turnBudget = resolveTurnBudget(effectiveParams, deps.config);
 		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
+		const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
+		if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
+		const configToolBudget = resolveToolBudget(deps.config.toolBudget, "config.toolBudget");
+		if (configToolBudget.error) return buildRequestedModeError(effectiveParams, configToolBudget.error);
 
 		const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
 		const effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
@@ -3414,6 +3463,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			nestedRoute,
 			timeoutMs: foregroundTimeout.timeoutMs,
 			turnBudget: turnBudget.turnBudget,
+			toolBudget: runToolBudget.toolBudget,
+			configToolBudget: configToolBudget.toolBudget,
 			contextPolicy,
 			modelScope,
 		};

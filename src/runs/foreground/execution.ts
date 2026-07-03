@@ -70,6 +70,7 @@ import {
 } from "../shared/long-running-guard.ts";
 import { acceptanceFailureMessage, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
+import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -216,6 +217,7 @@ async function runSingleAttempt(
 		parentCapabilityToken: options.nestedRoute?.capabilityToken,
 		parentSessionId: options.parentSessionId,
 		structuredOutput: options.structuredOutput,
+		toolBudget: options.toolBudget,
 	});
 
 	const result: SingleResult = {
@@ -230,6 +232,7 @@ async function runSingleAttempt(
 		skills: shared.resolvedSkillNames,
 		skillsWarning: shared.skillsWarning,
 		...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
+		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 	};
 	const startTime = Date.now();
 	if (options.structuredOutput) {
@@ -592,6 +595,9 @@ async function runSingleAttempt(
 						|| (evt.toolName === "contact_supervisor" && (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
 				}
 				progress.toolCount++;
+				if (options.toolBudget) {
+					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
+				}
 				progress.currentTool = evt.toolName;
 				progress.currentToolArgs = extractToolArgsPreview(toolArgs);
 				progress.currentToolStartedAt = now;
@@ -657,6 +663,10 @@ async function runSingleAttempt(
 			if (evt.type === "tool_result_end" && evt.message) {
 				result.messages.push(evt.message);
 				const resultText = extractTextFromContent(evt.message.content);
+				if (options.toolBudget && pendingToolResult && resultText.includes("Tool budget hard limit reached")) {
+					result.toolBudgetBlocked = true;
+					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, pendingToolResult.tool);
+				}
 				appendRecentOutput(progress, resultText.split("\n").slice(-10));
 				const toolSnapshot = pendingToolResult;
 				pendingToolResult = undefined;

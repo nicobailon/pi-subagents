@@ -57,7 +57,9 @@ import {
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
+	type ResolvedToolBudget,
 	type SingleResult,
+	type ToolBudgetConfig,
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
@@ -70,6 +72,7 @@ import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
+import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -146,6 +149,8 @@ interface ParallelChainRunInput {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
+	toolBudget?: ResolvedToolBudget;
+	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
 }
 
@@ -207,6 +212,20 @@ function appendParallelWorktreeSummary(
 	return `${output}\n\n${diffSummary}`;
 }
 
+function resolveChainToolBudget(input: { stepBudget?: ToolBudgetConfig; runBudget?: ResolvedToolBudget; agentBudget?: ToolBudgetConfig; configBudget?: ToolBudgetConfig }): { toolBudget?: ResolvedToolBudget; error?: string } {
+	if (input.stepBudget !== undefined) {
+		const resolved = validateToolBudgetConfig(input.stepBudget, "toolBudget");
+		return { toolBudget: resolved.budget, error: resolved.error };
+	}
+	if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
+	if (input.agentBudget !== undefined) {
+		const resolved = validateToolBudgetConfig(input.agentBudget, "agent.toolBudget");
+		return { toolBudget: resolved.budget, error: resolved.error };
+	}
+	const resolved = validateToolBudgetConfig(input.configBudget, "config.toolBudget");
+	return { toolBudget: resolved.budget, error: resolved.error };
+}
+
 async function runParallelChainTasks(input: ParallelChainRunInput): Promise<SingleResult[]> {
 	const concurrency = input.step.concurrency ?? MAX_CONCURRENCY;
 	const failFast = input.step.failFast ?? false;
@@ -253,6 +272,8 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				{ scope: input.modelScope, source: task.model ? "explicit" : "inherited" },
 			);
 			const maxSubagentDepth = resolveChildMaxSubagentDepth(input.maxSubagentDepth, taskAgentConfig?.maxSubagentDepth);
+			const toolBudget = resolveChainToolBudget({ stepBudget: task.toolBudget, runBudget: input.toolBudget, agentBudget: taskAgentConfig?.toolBudget, configBudget: input.configToolBudget });
+			if (toolBudget.error) throw new Error(toolBudget.error);
 
 			const taskCwd = input.worktreeSetup
 				? input.worktreeSetup.worktrees[taskIndex]!.agentCwd
@@ -317,6 +338,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				onDetachedExit: input.onDetachedExit
 					? (result) => input.onDetachedExit?.(input.globalTaskIndex + taskIndex, result)
 					: undefined,
+				toolBudget: toolBudget.toolBudget,
 				onUpdate: input.onUpdate
 					? (progressUpdate) => {
 						const stepResults = progressUpdate.details?.results || [];
@@ -427,6 +449,8 @@ interface ChainExecutionParams {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
+	toolBudget?: ResolvedToolBudget;
+	configToolBudget?: ToolBudgetConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
 }
@@ -718,6 +742,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					deadlineAt,
 					turnBudget: params.turnBudget,
 					onDetachedExit,
+					toolBudget: params.toolBudget,
+					configToolBudget: params.configToolBudget,
 					globalSemaphore,
 				});
 				globalTaskIndex += step.parallel.length;
@@ -935,6 +961,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				deadlineAt,
 				turnBudget: params.turnBudget,
 				onDetachedExit,
+				toolBudget: params.toolBudget,
+				configToolBudget: params.configToolBudget,
 				globalSemaphore,
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
@@ -1117,6 +1145,23 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const structuredRuntime = seqStep.outputSchema
 				? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
 				: undefined;
+			const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
+			if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
+				results,
+				includeProgress,
+				allProgress,
+				allArtifactPaths,
+				artifactsDir: params.artifactsDir,
+				chainAgents,
+				chainSteps,
+				totalSteps,
+				currentStepIndex: stepIndex,
+				runId: params.runId,
+				outputs,
+				currentFlatIndex: globalTaskIndex,
+				dynamicChildren,
+				dynamicGroupStatuses,
+			});
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
@@ -1155,6 +1200,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				onDetachedExit: onDetachedExit
 					? (result) => onDetachedExit(childIndex, result)
 					: undefined,
+				toolBudget: toolBudget.toolBudget,
 				onUpdate: onUpdate
 					? (p) => {
 						const stepResults = p.details?.results || [];

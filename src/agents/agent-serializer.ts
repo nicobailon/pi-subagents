@@ -23,6 +23,7 @@ export const KNOWN_FIELDS = new Set([
 	"interactive",
 	"maxSubagentDepth",
 	"completionGuard",
+	"toolBudget",
 	"memory",
 ]);
 
@@ -87,6 +88,9 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (config.completionGuard === false || preserve("completionGuard")) {
 		lines.push(`completionGuard: ${config.completionGuard === undefined ? "" : config.completionGuard ? "true" : "false"}`);
+	}
+	if (config.toolBudget || preserve("toolBudget")) {
+		lines.push(`toolBudget: ${config.toolBudget ? JSON.stringify(config.toolBudget) : ""}`);
 	}
 
 	if (config.memory) {

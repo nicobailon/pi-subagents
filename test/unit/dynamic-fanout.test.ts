@@ -139,6 +139,16 @@ describe("dynamic fanout helpers", () => {
 		);
 	});
 
+	it("accepts toolBudget on dynamic parallel templates", () => {
+		const step = {
+			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
+			parallel: { agent: "reviewer", task: "Review {item.path}", toolBudget: { hard: 3 } },
+			collect: { as: "reviews" },
+		} as unknown as Parameters<typeof validateDynamicStepShape>[0];
+
+		assert.doesNotThrow(() => validateDynamicStepShape(step, 1));
+	});
+
 	it("validates source ordering and collect name collisions", () => {
 		const chain: ChainStep[] = [
 			{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },

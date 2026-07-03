@@ -34,6 +34,7 @@ import {
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
 	type ResolvedTurnBudget,
+	type ResolvedToolBudget,
 	type SubagentRunMode,
 	ASYNC_DIR,
 	RESULTS_DIR,
@@ -45,6 +46,7 @@ import {
 } from "../../shared/types.ts";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
 import { initialTurnBudgetState } from "../shared/turn-budget.ts";
+import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 
 const require = createRequire(import.meta.url);
@@ -138,6 +140,8 @@ interface AsyncChainParams {
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
+	toolBudget?: ResolvedToolBudget;
+	configToolBudget?: ResolvedToolBudget;
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
 }
@@ -172,6 +176,8 @@ interface AsyncSingleParams {
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
+	toolBudget?: ResolvedToolBudget;
+	configToolBudget?: ResolvedToolBudget;
 }
 
 interface AsyncExecutionResult {
@@ -199,6 +205,8 @@ export interface AsyncRunnerStepBuildParams {
 	asyncDir: string;
 	outputBaseDir?: string;
 	validateOutputBindings?: boolean;
+	toolBudget?: ResolvedToolBudget;
+	configToolBudget?: ResolvedToolBudget;
 }
 
 export type AsyncRunnerStepBuildResult =
@@ -412,6 +420,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number) => {
 		const a = agents.find((x) => x.name === s.agent)!;
+		const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget ?? params.configToolBudget;
+		const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "config.toolBudget");
+		if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
 		const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
@@ -485,6 +496,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			}),
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
 			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) } : {}),
+			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 		};
 	};
 
@@ -650,6 +662,8 @@ export function executeAsyncChain(
 		maxSubagentDepth,
 		worktreeBaseDir,
 		asyncDir,
+		toolBudget: params.toolBudget,
+		configToolBudget: params.configToolBudget,
 	});
 	if ("error" in built) {
 		try {
@@ -701,6 +715,7 @@ export function executeAsyncChain(
 				worktreeBaseDir,
 				controlConfig,
 				turnBudget: params.turnBudget,
+				toolBudget: params.toolBudget,
 				controlIntercomTarget,
 				childIntercomTargets,
 				resultMode,
@@ -825,7 +840,7 @@ export function executeAsyncChain(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`) }],
-		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}) },
+		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
 	};
 }
 
@@ -903,6 +918,9 @@ export function executeAsyncSingle(
 	);
 	const effectiveThinking = params.thinkingOverride ?? agentConfig.thinking;
 	const model = applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
+	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
+	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
+	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
 	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	let spawnResult: { pid?: number; error?: string } = {};
@@ -942,6 +960,7 @@ export function executeAsyncSingle(
 							mode: "single",
 							async: true,
 						}),
+						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 					},
 				],
 				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
@@ -963,6 +982,7 @@ export function executeAsyncSingle(
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
+				toolBudget: params.toolBudget,
 				controlIntercomTarget,
 				childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
 				resultMode: "single",
@@ -1040,6 +1060,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}) },
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
 	};
 }

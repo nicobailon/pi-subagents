@@ -29,7 +29,8 @@ import {
 import { parseFrontmatter } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
-import type { Details, ExtensionConfig } from "../shared/types.ts";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
+import type { Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
@@ -267,6 +268,7 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 		changed("completionGuard");
 		if (cfg.completionGuard === true) fields.add("completionGuard");
 	}
+	if (hasKey(cfg, "toolBudget")) changed("toolBudget");
 
 	return fields;
 }
@@ -323,6 +325,11 @@ function parseStepList(raw: unknown): { steps?: ChainStepConfig[]; error?: strin
 		if (hasKey(s, "progress")) {
 			if (typeof s.progress === "boolean") step.progress = s.progress;
 			else return { error: `config.steps[${i}].progress must be a boolean.` };
+		}
+		if (hasKey(s, "toolBudget")) {
+			const validation = validateToolBudgetConfig(s.toolBudget, `config.steps[${i}].toolBudget`);
+			if (validation.error) return { error: validation.error };
+			step.toolBudget = s.toolBudget as ChainStepConfig["toolBudget"];
 		}
 		steps.push(step);
 	}
@@ -435,6 +442,14 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (typeof cfg.completionGuard !== "boolean") return "config.completionGuard must be a boolean when provided.";
 		target.completionGuard = cfg.completionGuard;
 	}
+	if (hasKey(cfg, "toolBudget")) {
+		if (cfg.toolBudget === false || cfg.toolBudget === "") target.toolBudget = undefined;
+		else {
+			const validation = validateToolBudgetConfig(cfg.toolBudget, "config.toolBudget");
+			if (validation.error) return validation.error;
+			target.toolBudget = cfg.toolBudget as ToolBudgetConfig;
+		}
+	}
 	return undefined;
 }
 
@@ -506,6 +521,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultProgress) lines.push("Progress: true");
 	if (agent.maxSubagentDepth !== undefined) lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
 	if (agent.completionGuard === false) lines.push("Completion guard: false");
+	if (agent.toolBudget) lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
 	if (agent.memory) lines.push(`Memory: ${agent.memory.scope} scope, path: ${agent.memory.path}`);
 	if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);
 	return lines.join("\n");
@@ -527,6 +543,7 @@ function formatChainStepDetail(step: ChainStepConfig, index: number): string[] {
 		if (typeof parallel?.label === "string") lines.push(`   Label: ${parallel.label}`);
 		if (typeof parallel?.task === "string" && parallel.task.trim()) lines.push(`   Task: ${parallel.task}`);
 		if (parallel?.outputSchema) lines.push("   Structured output: true");
+		if (parallel && "toolBudget" in parallel) lines.push(`   Tool budget: ${JSON.stringify((parallel as { toolBudget?: unknown }).toolBudget)}`);
 		if (collect?.outputSchema) lines.push("   Collect schema: true");
 		if (step.concurrency !== undefined) lines.push(`   Concurrency: ${step.concurrency}`);
 		if (step.failFast !== undefined) lines.push(`   Fail fast: ${step.failFast ? "true" : "false"}`);
@@ -537,6 +554,7 @@ function formatChainStepDetail(step: ChainStepConfig, index: number): string[] {
 	if (step.output === false) lines.push("   Output: false");
 	else if (step.output) lines.push(`   Output: ${step.output}`);
 	if (step.outputMode) lines.push(`   Output mode: ${step.outputMode}`);
+	if (step.toolBudget) lines.push(`   Tool budget: ${JSON.stringify(step.toolBudget)}`);
 	if (step.reads === false) lines.push("   Reads: false");
 	else if (Array.isArray(step.reads) && step.reads.length > 0) lines.push(`   Reads: ${step.reads.join(", ")}`);
 	if (step.model) lines.push(`   Model: ${step.model}`);

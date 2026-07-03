@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added optional `toolBudget` limits for child subagent tool calls. Runs, steps, and agents can set `{ soft?, hard, block? }`; the child runtime nudges at the soft limit and blocks configured tools after the hard limit so runaway browsing can still finish with final text.
 - Added a stable v1 in-process event-bus RPC for other Pi extensions, with `ping`, `status`, async-only `spawn`, `interrupt`, and async `stop` over versioned request/reply envelopes.
 - Added `toolDescriptionMode` with `full`, `compact`, and `custom` modes for the parent-facing `subagent` tool description. Compact mode reduces prompt bloat while keeping safety-critical orchestration guidance, and invalid custom descriptions fall back to full mode.
 - Added an optional read-only subagent fleet/status view with `/subagents-fleet` and `subagent({ action: "status", view: "fleet" })`, plus `view: "transcript"` to tail active async child output/session artifacts.

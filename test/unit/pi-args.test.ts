@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -311,6 +312,19 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env.PI_SUBAGENT_CHILD, "1");
 		assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
 		assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
+	});
+
+	it("passes tool budget through env", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			toolBudget: { soft: 2, hard: 3, block: ["read"] },
+		});
+
+		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "{}"), { soft: 2, hard: 3, block: ["read"] });
 	});
 
 	it("passes child intercom and orchestrator metadata through env", () => {

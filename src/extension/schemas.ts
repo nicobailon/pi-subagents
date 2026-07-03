@@ -74,6 +74,24 @@ const AcceptanceOverride = Type.Unsafe({
 	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands.",
 });
 
+const TurnBudgetOverride = Type.Object({
+	maxTurns: Type.Integer({ minimum: 1 }),
+	graceTurns: Type.Optional(Type.Integer({ minimum: 0 })),
+}, { additionalProperties: false, description: "Optional assistant-turn budget. At maxTurns the child is asked to wrap up; after graceTurns additional assistant turns it is aborted and partial output is returned." });
+
+const ToolBudgetBlock = Type.Unsafe({
+	anyOf: [
+		{ type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+		{ type: "string", enum: ["*"] },
+	],
+});
+
+const ToolBudgetOverride = Type.Object({
+	soft: Type.Optional(Type.Integer({ minimum: 1 })),
+	hard: Type.Integer({ minimum: 1 }),
+	block: Type.Optional(ToolBudgetBlock),
+}, { additionalProperties: false, description: "Optional child tool-call budget. soft nudges the child; after hard, block tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
+
 const TaskItem = Type.Object({
 	agent: Type.String(), 
 	task: Type.String(), 
@@ -85,6 +103,7 @@ const TaskItem = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking for this task" })),
 	model: Type.Optional(Type.String({ description: "Override model for this task (e.g. 'google/gemini-3-pro')" })),
 	skill: Type.Optional(SkillOverride),
+	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 });
 
@@ -104,6 +123,7 @@ const ParallelTaskSchema = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 });
 
@@ -131,6 +151,7 @@ const DynamicParallelTemplateSchema = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this task" })),
+	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 }, { additionalProperties: false });
 
@@ -156,6 +177,7 @@ const ChainItem = Type.Object({
 	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking in {chain_dir}" })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for this step" })),
+	toolBudget: Type.Optional(ToolBudgetOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	parallel: Type.Optional(Type.Unsafe({
 		anyOf: [
@@ -175,11 +197,6 @@ const ChainItem = Type.Object({
 	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
 	additionalProperties: false,
 });
-
-const TurnBudgetOverride = Type.Object({
-	maxTurns: Type.Integer({ minimum: 1 }),
-	graceTurns: Type.Optional(Type.Integer({ minimum: 0 })),
-}, { additionalProperties: false, description: "Optional assistant-turn budget. At maxTurns the child is asked to wrap up; after graceTurns additional assistant turns it is aborted and partial output is returned." });
 
 const ControlOverrides = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ description: "Enable/disable subagent control attention tracking for this run" })),
@@ -248,6 +265,7 @@ const SubagentParamsSchema = Type.Object({
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional run-level timeout in ms for foreground and async/background runs. Alias of maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias of timeoutMs for optional run-level timeout in foreground and async/background runs." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
+	toolBudget: Type.Optional(ToolBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String()),
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),

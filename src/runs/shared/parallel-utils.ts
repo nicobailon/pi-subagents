@@ -38,6 +38,7 @@ export interface RunnerSubagentStep {
 	};
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+	toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
 }
 
 export interface ParallelStepGroup {
