@@ -171,17 +171,27 @@ describe("fuzzyResolveModel / normalizeModelSegment", () => {
 
 	it("fuzzy-matches a bare id with an optional trailing date stamp", () => {
 		assert.equal(fuzzyResolveModel("claude-haiku-4-5-20251001", registry), "anthropic/claude-haiku-4-5");
+		assert.equal(fuzzyResolveModel("claude-haiku-4-5-2025-10-01", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("does not strip arbitrary trailing 8-digit numbers as date stamps", () => {
+		const numbered = [{ provider: "test", id: "model", fullId: "test/model" }];
+		assert.equal(fuzzyResolveModel("model-12345678", numbered), undefined);
 	});
 
 	it("fuzzy-matches an undated query against a dated registry id", () => {
 		const dated = [
 			{ provider: "anthropic", id: "claude-3-5-sonnet-20241022", fullId: "anthropic/claude-3-5-sonnet-20241022" },
+			{ provider: "openai", id: "gpt-5-2025-10-01", fullId: "openai/gpt-5-2025-10-01" },
 		];
 		assert.equal(fuzzyResolveModel("claude-3-5-sonnet", dated), "anthropic/claude-3-5-sonnet-20241022");
+		assert.equal(fuzzyResolveModel("gpt-5", dated), "openai/gpt-5-2025-10-01");
 	});
 
 	it("fuzzy-matches a qualified provider/id with case/separator differences", () => {
 		assert.equal(fuzzyResolveModel("Anthropic/Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+		assert.equal(fuzzyResolveModel("Anthropic:Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+		assert.equal(fuzzyResolveModel("anthropic.claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
 		assert.equal(fuzzyResolveModel("anthropic/claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
 	});
 
@@ -222,10 +232,12 @@ describe("resolveModelCandidate fuzzy fallback", () => {
 
 	it("resolves a qualified provider/id with case differences via fuzzy fallback", () => {
 		assert.equal(resolveModelCandidate("Anthropic/Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
+		assert.equal(resolveModelCandidate("Anthropic:Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
 	});
 
 	it("preserves the thinking suffix through fuzzy resolution", () => {
 		assert.equal(resolveModelCandidate("claude.haiku.4.5:high", registry), "anthropic/claude-haiku-4-5:high");
+		assert.equal(resolveModelCandidate("anthropic:claude.sonnet.4:high", registry), "anthropic/claude-sonnet-4:high");
 	});
 
 	it("still prefers exact registry matches over fuzzy", () => {
@@ -319,5 +331,16 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		});
 		assert.equal(resolved, "openai/gpt-5-mini:high");
 		assert.equal(warnings.length, 0);
+	});
+
+	it("warns for out-of-scope fallback models while keeping them available", () => {
+		const warnings: string[] = [];
+		const candidates = buildModelCandidates("gpt-5-mini", ["deepseek/deepseek-v4"], availableModels, undefined, {
+			scope,
+			onWarn: (v) => warnings.push(v.message),
+		});
+		assert.deepEqual(candidates, ["openai/gpt-5-mini", "deepseek/deepseek-v4"]);
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0]!, /deepseek\/deepseek-v4/);
 	});
 });

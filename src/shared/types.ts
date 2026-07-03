@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 
 // ============================================================================
 // Basic Types
@@ -828,6 +829,8 @@ export interface RunSyncOptions {
 	availableModels?: Array<{ provider: string; id: string; fullId: string }>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
+	/** Optional subagent model-scope enforcement for fallback candidates */
+	modelScope?: ModelScopeConfig;
 	/** Skills to make available (overrides agent default if provided) */
 	skills?: string[];
 	structuredOutput?: {

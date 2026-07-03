@@ -39,6 +39,11 @@ describe("matchesScopePattern", () => {
 		assert.equal(matchesScopePattern("anthropic/claude-sonnet-4:high", "anthropic/*"), true);
 	});
 
+	it("does not treat arbitrary colon text as a thinking suffix", () => {
+		assert.equal(matchesScopePattern("anthropic:claude-opus", "anthropic"), false);
+		assert.equal(matchesScopePattern("anthropic/claude-sonnet-4:experimental", "anthropic/claude-sonnet-4"), false);
+	});
+
 	it("requires a full match, not a substring", () => {
 		assert.equal(matchesScopePattern("anthropic/claude-sonnet-4", "anthropic/claude"), false);
 		assert.equal(matchesScopePattern("anthropic/claude-sonnet-4", "*claude*"), true);

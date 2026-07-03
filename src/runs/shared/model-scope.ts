@@ -12,6 +12,8 @@
  * inputs so it can be unit-tested without touching the filesystem or config.
  */
 
+import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
+
 export interface ModelScopeConfig {
 	enforce?: boolean;
 	/** Glob-style allow patterns (only `*` is special), matched against `provider/id`. */
@@ -29,15 +31,8 @@ export interface ModelScopeViolation {
 	allowedPatterns: string[];
 }
 
-/**
- * Strip a trailing `:suffix` (e.g. a thinking level) so scope patterns match
- * against the canonical `provider/id`. Mirrors `splitThinkingSuffix` in
- * `model-fallback.ts` without importing it, keeping this module dependency-free.
- */
 function stripThinkingSuffix(model: string): string {
-	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx === -1) return model;
-	return model.substring(0, colonIdx);
+	return splitKnownThinkingSuffix(model).baseModel;
 }
 
 /** Escape RegExp specials except `*`, then turn `*` into `.*`. */

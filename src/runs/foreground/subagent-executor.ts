@@ -894,7 +894,9 @@ async function resumeAsyncRun(input: {
 	input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
 	const effectiveCwd = target.cwd ?? input.requestCwd;
 	const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
-	const discoveredAgents = input.deps.discoverAgents(effectiveCwd, scope).agents;
+	const discovered = input.deps.discoverAgents(effectiveCwd, scope);
+	const discoveredAgents = discovered.agents;
+	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const intercomBridge = resolveIntercomBridge({
 		config: input.deps.config.intercomBridge,
@@ -954,6 +956,7 @@ async function resumeAsyncRun(input: {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				currentModelProvider: input.ctx.model?.provider,
 				currentModel: input.ctx.model,
+				modelScope,
 			},
 			availableModels,
 			cwd: effectiveCwd,
@@ -1000,6 +1003,7 @@ async function resumeAsyncRun(input: {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			currentModelProvider: input.ctx.model?.provider,
 			currentModel: input.ctx.model,
+			modelScope,
 		},
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput,
@@ -1929,6 +1933,7 @@ interface ForegroundParallelRunInput {
 	progressDir: string;
 	maxSubagentDepths: number[];
 	availableModels: ModelInfo[];
+	modelScope?: ModelScopeConfig;
 	modelOverrides: (string | undefined)[];
 	behaviors: Array<ReturnType<typeof resolveStepBehavior>>;
 	firstProgressIndex: number;
@@ -2119,6 +2124,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
 			availableModels: input.availableModels,
 			preferredModelProvider: input.ctx.model?.provider,
+			modelScope: input.modelScope,
 			skills: effectiveSkills === false ? [] : effectiveSkills,
 			acceptance: task.acceptance,
 			acceptanceContext: { mode: "parallel" },
@@ -2304,6 +2310,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
+				modelScope: data.modelScope,
 			};
 			const parallelTasks = tasks.map((t, i) => {
 				const taskText = shouldForkAgent(contextPolicy, t.agent) ? wrapForkTask(taskTexts[i]!) : taskTexts[i]!;
@@ -2412,6 +2419,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			paramsCwd: effectiveCwd,
 			progressDir: parallelProgressDir,
 			availableModels,
+			modelScope: data.modelScope,
 			modelOverrides,
 			behaviors,
 			firstProgressIndex: parallelProgressPrecreated ? -1 : firstProgressIndex,
@@ -2611,6 +2619,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
+				modelScope: data.modelScope,
 			};
 			return executeAsyncSingle(id, {
 				agent: params.agent!,
@@ -2725,6 +2734,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
 		availableModels,
 		preferredModelProvider: currentProvider,
+		modelScope: data.modelScope,
 		skills: effectiveSkills,
 		acceptance: params.acceptance,
 		acceptanceContext: { mode: "single" },

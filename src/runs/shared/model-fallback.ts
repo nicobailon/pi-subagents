@@ -43,9 +43,40 @@ export function normalizeModelSegment(segment: string): string {
 		.replace(/^-|-$/g, "");
 }
 
-/** Drop a trailing 8-digit date stamp (e.g. `-20251001`) so dated and undated ids match. Pure. */
+function isPlausibleDateStamp(year: string, month: string, day: string): boolean {
+	const yyyy = Number(year);
+	const mm = Number(month);
+	const dd = Number(day);
+	return yyyy >= 1900 && yyyy <= 2099 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
+}
+
+/** Drop a trailing date stamp (`-20251001` or `-2025-10-01`) so dated and undated ids match. Pure. */
 function stripTrailingDateStamp(segment: string): string {
-	return segment.replace(/-?\d{8}$/, "");
+	const dashed = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(segment);
+	if (dashed && isPlausibleDateStamp(dashed[2]!, dashed[3]!, dashed[4]!)) return dashed[1]!;
+	const compact = /^(.*)-(\d{4})(\d{2})(\d{2})$/.exec(segment);
+	if (compact && isPlausibleDateStamp(compact[2]!, compact[3]!, compact[4]!)) return compact[1]!;
+	return segment;
+}
+
+function resolveBaseModelCandidate(
+	baseModel: string,
+	availableModels: AvailableModelInfo[],
+	preferredProvider?: string,
+): string | undefined {
+	if (baseModel.includes("/")) {
+		const exact = availableModels.find((entry) => entry.fullId === baseModel);
+		if (exact) return exact.fullId;
+	} else {
+		const exactMatches = availableModels.filter((entry) => entry.id === baseModel);
+		if (preferredProvider) {
+			const preferredMatch = exactMatches.find((entry) => entry.provider === preferredProvider);
+			if (preferredMatch) return preferredMatch.fullId;
+		}
+		if (exactMatches.length === 1) return exactMatches[0]!.fullId;
+	}
+
+	return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
 }
 
 /**
@@ -62,9 +93,25 @@ export function fuzzyResolveModel(
 	availableModels: AvailableModelInfo[],
 	preferredProvider?: string,
 ): string | undefined {
+	let queryProvider: string | undefined;
+	let queryIdRaw = baseModel;
 	const slashIdx = baseModel.indexOf("/");
-	const queryProvider = slashIdx === -1 ? undefined : normalizeModelSegment(baseModel.slice(0, slashIdx));
-	const queryId = normalizeModelSegment(slashIdx === -1 ? baseModel : baseModel.slice(slashIdx + 1));
+	if (slashIdx !== -1) {
+		queryProvider = normalizeModelSegment(baseModel.slice(0, slashIdx));
+		queryIdRaw = baseModel.slice(slashIdx + 1);
+	} else {
+		const providerSeparators = [":", "."];
+		for (const separator of providerSeparators) {
+			const separatorIdx = baseModel.indexOf(separator);
+			if (separatorIdx <= 0) continue;
+			const providerPart = normalizeModelSegment(baseModel.slice(0, separatorIdx));
+			if (!availableModels.some((entry) => normalizeModelSegment(entry.provider) === providerPart)) continue;
+			queryProvider = providerPart;
+			queryIdRaw = baseModel.slice(separatorIdx + 1);
+			break;
+		}
+	}
+	const queryId = normalizeModelSegment(queryIdRaw);
 	const queryIdNoDate = stripTrailingDateStamp(queryId);
 
 	const candidates = availableModels.filter((entry) => {
@@ -98,25 +145,13 @@ export function resolveModelCandidate(
 	if (!model) return undefined;
 	if (!availableModels || availableModels.length === 0) return model;
 
+	const resolvedWhole = resolveBaseModelCandidate(model, availableModels, preferredProvider);
+	if (resolvedWhole) return resolvedWhole;
+
 	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
-
-	if (baseModel.includes("/")) {
-		const exact = availableModels.find((entry) => entry.fullId === baseModel);
-		if (exact) return `${exact.fullId}${thinkingSuffix}`;
-		const fuzzy = fuzzyResolveModel(baseModel, availableModels, preferredProvider);
-		if (fuzzy) return `${fuzzy}${thinkingSuffix}`;
-		return model;
-	}
-
-	const matches = availableModels.filter((entry) => entry.id === baseModel);
-	if (preferredProvider) {
-		const preferredMatch = matches.find((entry) => entry.provider === preferredProvider);
-		if (preferredMatch) return `${preferredMatch.fullId}${thinkingSuffix}`;
-	}
-	if (matches.length === 1) return `${matches[0]!.fullId}${thinkingSuffix}`;
-
-	const fuzzy = fuzzyResolveModel(baseModel, availableModels, preferredProvider);
-	if (fuzzy) return `${fuzzy}${thinkingSuffix}`;
+	if (!thinkingSuffix) return model;
+	const resolvedBase = resolveBaseModelCandidate(baseModel, availableModels, preferredProvider);
+	if (resolvedBase) return `${resolvedBase}${thinkingSuffix}`;
 	return model;
 }
 
@@ -176,18 +211,31 @@ export function resolveSubagentModelOverride(
 	return resolved;
 }
 
+export interface BuildModelCandidatesOptions {
+	/** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
+	scope?: ModelScopeConfig;
+	onWarn?: (violation: ModelScopeViolation) => void;
+}
+
 export function buildModelCandidates(
 	primaryModel: string | undefined,
 	fallbackModels: string[] | undefined,
 	availableModels: AvailableModelInfo[] | undefined,
 	preferredProvider?: string,
+	options?: BuildModelCandidatesOptions,
 ): string[] {
 	const seen = new Set<string>();
 	const candidates: string[] = [];
-	for (const raw of [primaryModel, ...(fallbackModels ?? [])]) {
+	const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
+	for (let index = 0; index < rawCandidates.length; index++) {
+		const raw = rawCandidates[index];
 		if (!raw) continue;
 		const normalized = resolveModelCandidate(raw.trim(), availableModels, preferredProvider);
 		if (!normalized || seen.has(normalized)) continue;
+		if (index > 0 && options?.scope?.enforce) {
+			const violation = checkModelScope(normalized, options.scope, "inherited");
+			if (violation) (options.onWarn ?? defaultScopeWarn)(violation);
+		}
 		seen.add(normalized);
 		candidates.push(normalized);
 	}

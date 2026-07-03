@@ -958,6 +958,7 @@ export async function runSync(
 		agent.fallbackModels,
 		options.availableModels,
 		options.preferredModelProvider,
+		{ scope: options.modelScope },
 	);
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
