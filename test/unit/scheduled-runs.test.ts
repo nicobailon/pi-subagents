@@ -150,11 +150,15 @@ describe("scheduled-runs helpers", () => {
 		assert.equal(parseScheduledRunTime("+2d", base), base + 2 * 86_400_000);
 		assert.equal(parseScheduledRunTime("+30s", base), base + 30_000);
 		assert.equal(parseScheduledRunTime("2030-01-01T00:00:00Z", base), new Date("2030-01-01T00:00:00Z").getTime());
+		assert.equal(parseScheduledRunTime("2030-01-01T09:00:00+05:30", base), new Date("2030-01-01T09:00:00+05:30").getTime());
 	});
 
-	it("parseScheduledRunTime rejects past, zero, and malformed schedules", () => {
+	it("parseScheduledRunTime rejects past, zero, malformed, and ambiguous schedules", () => {
 		assert.throws(() => parseScheduledRunTime("+0m", 1_000_000), /positive/);
+		assert.throws(() => parseScheduledRunTime("+9000000000000d", 1_000_000), /too large/);
 		assert.throws(() => parseScheduledRunTime("2020-01-01T00:00:00Z", Date.now() + 60_000), /in the past/);
+		assert.throws(() => parseScheduledRunTime("2030-01-01T00:00:00", 1_000_000), /must include a timezone/);
+		assert.throws(() => parseScheduledRunTime("2030-02-30T00:00:00Z", 1_000_000), /valid future ISO/);
 		assert.throws(() => parseScheduledRunTime("next tuesday", 1_000_000), /Invalid schedule/);
 		assert.throws(() => parseScheduledRunTime("+5w", 1_000_000), /Invalid schedule/);
 	});
@@ -267,6 +271,29 @@ describe("ScheduledRunManager create/list/status/cancel", () => {
 		await harness.manager.handleToolCall({ action: "schedule-cancel", id }, harness.ctx);
 		const again = await harness.manager.handleToolCall({ action: "schedule-cancel", id }, harness.ctx);
 		assert.match(again.content[0]!.text, /already canceled/);
+	});
+
+	it("reports malformed persisted job records instead of dropping them", async () => {
+		const harness = freshHarness();
+		const sessionId = harness.ctx.sessionManager.getSessionFile()!;
+		const storePath = scheduledRunStorePath(harness.ctx.cwd, sessionId, harness.storeRoot);
+		fs.mkdirSync(path.dirname(storePath), { recursive: true });
+		fs.writeFileSync(storePath, JSON.stringify({ version: 1, cwd: harness.ctx.cwd, sessionId, jobs: [{ id: "bad" }] }), "utf-8");
+		const result = await harness.manager.handleToolCall({ action: "schedule-list" }, harness.ctx);
+		assert.equal(isError(result), true);
+		assert.match(result.content[0]!.text, /job 0 has invalid string fields/);
+	});
+
+	it("reports JSON parse errors from a corrupted persisted store", async () => {
+		const harness = freshHarness();
+		const sessionId = harness.ctx.sessionManager.getSessionFile()!;
+		const storePath = scheduledRunStorePath(harness.ctx.cwd, sessionId, harness.storeRoot);
+		fs.mkdirSync(path.dirname(storePath), { recursive: true });
+		fs.writeFileSync(storePath, "{ not-json", "utf-8");
+		const result = await harness.manager.handleToolCall({ action: "schedule-list" }, harness.ctx);
+		assert.equal(isError(result), true);
+		assert.match(result.content[0]!.text, /Failed to parse scheduled subagent store/);
+		assert.match(result.content[0]!.text, /JSON/);
 	});
 });
 

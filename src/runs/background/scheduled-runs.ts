@@ -79,16 +79,33 @@ export function parseScheduledRunTime(schedule: string, now = Date.now()): numbe
 		const amount = Number(relative[1]);
 		if (!Number.isSafeInteger(amount) || amount < 1) throw new Error(`Invalid schedule "${schedule}". Relative schedules must be positive, such as "+10m".`);
 		const unitMs = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[relative[2] as "s" | "m" | "h" | "d"];
-		return now + amount * unitMs;
+		const runAt = now + amount * unitMs;
+		if (!Number.isSafeInteger(runAt) || Number.isNaN(new Date(runAt).getTime())) throw new Error(`Invalid schedule "${schedule}". Relative delay is too large.`);
+		return runAt;
 	}
 	if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+		const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/);
+		if (!iso) throw new Error(`Invalid schedule "${schedule}". Absolute ISO timestamps must include a timezone, such as "2030-01-01T09:00:00Z".`);
+		const year = Number(iso[1]);
+		const month = Number(iso[2]);
+		const day = Number(iso[3]);
+		const hour = Number(iso[4]);
+		const minute = Number(iso[5]);
+		const second = iso[6] === undefined ? 0 : Number(iso[6]);
+		const offset = iso[7]!;
+		const offsetHour = offset === "Z" ? 0 : Number(offset.slice(1, 3));
+		const offsetMinute = offset === "Z" ? 0 : Number(offset.slice(4, 6));
+		const daysInMonth = month >= 1 && month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 0;
+		if (month < 1 || month > 12 || day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+			throw new Error(`Invalid schedule "${schedule}". Use a valid future ISO timestamp.`);
+		}
 		const parsed = new Date(trimmed).getTime();
 		if (!Number.isNaN(parsed)) {
 			if (parsed <= now) throw new Error(`Scheduled time ${new Date(parsed).toISOString()} is in the past.`);
 			return parsed;
 		}
 	}
-	throw new Error(`Invalid schedule "${schedule}". Use a one-shot relative delay like "+10m" or a future ISO timestamp.`);
+	throw new Error(`Invalid schedule "${schedule}". Use a one-shot relative delay like "+10m" or a future ISO timestamp with timezone.`);
 }
 
 function readStoreData(filePath: string, cwd: string, sessionId: string): ScheduledRunStoreData {
@@ -106,11 +123,27 @@ function readStoreData(filePath: string, cwd: string, sessionId: string): Schedu
 	const data = parsed as Partial<ScheduledRunStoreData>;
 	if (data.version !== 1) throw new Error(`Unsupported scheduled subagent store version in '${filePath}'.`);
 	if (!Array.isArray(data.jobs)) throw new Error(`Scheduled subagent store '${filePath}' must contain a jobs array.`);
+	const jobs: ScheduledRunJob[] = [];
+	const validStates = new Set<ScheduledRunState>(["scheduled", "running", "fired", "canceled", "missed", "failed"]);
+	for (const [index, job] of data.jobs.entries()) {
+		if (!job || typeof job !== "object" || Array.isArray(job)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} must be an object.`);
+		const candidate = job as Partial<ScheduledRunJob>;
+		if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || typeof candidate.schedule !== "string" || typeof candidate.cwd !== "string" || typeof candidate.sessionId !== "string") {
+			throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid string fields.`);
+		}
+		const timestamps = [candidate.runAt, candidate.createdAt, candidate.updatedAt];
+		if (timestamps.some((value) => typeof value !== "number" || !Number.isFinite(value) || Number.isNaN(new Date(value).getTime()))) {
+			throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid timestamps.`);
+		}
+		if (!candidate.state || !validStates.has(candidate.state)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid state.`);
+		if (!candidate.params || typeof candidate.params !== "object" || Array.isArray(candidate.params)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid params.`);
+		jobs.push(candidate as ScheduledRunJob);
+	}
 	return {
 		version: 1,
 		cwd: typeof data.cwd === "string" ? data.cwd : cwd,
 		sessionId: typeof data.sessionId === "string" ? data.sessionId : sessionId,
-		jobs: data.jobs.filter((job): job is ScheduledRunJob => !!job && typeof job === "object" && typeof (job as { id?: unknown }).id === "string"),
+		jobs,
 	};
 }
 
