@@ -458,7 +458,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			timeoutMs: 1_000,
 		});
 
-		await waitForMockPiCall(mockPi, 0, 5_000);
+		await waitForMockPiCall(mockPi, 0);
 		const resultPath = await waitForAsyncResultFile(id, 8_000);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
