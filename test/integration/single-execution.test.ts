@@ -247,6 +247,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
+	it("treats action='single' with execution fields as single execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "single alias finished" });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-alias",
+			{ action: "single", agent: "echo", task: "Run through alias" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /single alias finished/);
+	});
+
+	it("rejects unknown action strings at runtime", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"unknown-action",
+			{ action: "not-a-real-action" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Unknown action: not-a-real-action/);
+		assert.match(result.content[0]?.text ?? "", /Valid:/);
+	});
+
 	it("rejects duplicate concurrent subagent execution calls", async () => {
 		mockPi.onCall({ output: "first call completed", delay: 100 });
 		const executor = makeExecutor([makeAgent("echo")]);

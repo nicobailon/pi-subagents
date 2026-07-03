@@ -3,7 +3,6 @@
  */
 
 import { Type } from "typebox";
-import { SUBAGENT_ACTIONS } from "../shared/types.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
 	return pruneNestedDescriptions(schema, []) as T;
@@ -202,8 +201,7 @@ const SubagentParamsSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
-		enum: [...SUBAGENT_ACTIONS],
-		description: "Management/control action. Omit for execution mode."
+		description: "Management/control action only. Must be omitted for execution mode (single, parallel, or chain)."
 	})),
 	id: Type.Optional(Type.String({
 		description: "Run id or prefix for action='status', action='interrupt', action='resume', action='steer', or action='append-step'."

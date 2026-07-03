@@ -171,6 +171,26 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(ok, 2);
 	});
 
+	it("treats parallel action aliases with tasks as top-level parallel execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		for (const action of ["parallel", "PARALLEL", "tasks"]) {
+			mockPi.reset();
+			mockPi.onCall({ output: `${action} alias finished` });
+			const executor = makeExecutor();
+
+			const result = await executor.execute(
+				`parallel-alias-${action}`,
+				{ action, tasks: [{ agent: "echo", task: `Run ${action}` }] },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details?.mode, "parallel");
+			assert.match(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
+		}
+	});
+
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Saved report" });
 		const executor = makeExecutor();

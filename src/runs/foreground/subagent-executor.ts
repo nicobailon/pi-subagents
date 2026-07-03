@@ -2973,6 +2973,21 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 	};
 }
 
+function omitExecutionModeActionAlias(params: SubagentParamsLike): SubagentParamsLike {
+	const action = params.action?.toLowerCase();
+	if (action === "single" && (params.agent !== undefined || params.task !== undefined)) {
+		const rest = { ...params };
+		delete rest.action;
+		return rest;
+	}
+	if ((action === "parallel" || action === "tasks") && (params.tasks?.length ?? 0) > 0) {
+		const rest = { ...params };
+		delete rest.action;
+		return rest;
+	}
+	return params;
+}
+
 export function createSubagentExecutor(deps: ExecutorDeps): {
 	execute: (
 		id: string,
@@ -2993,10 +3008,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
 		deps.state.lastForegroundControlId ??= null;
-		const requestCwd = resolveRequestedCwd(ctx.cwd, params.cwd);
-		const paramsWithResolvedCwd = params.cwd === undefined ? params : { ...params, cwd: requestCwd };
-		if (params.action) {
-			if (params.action === "doctor") {
+		const requestParams = omitExecutionModeActionAlias(params);
+		const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
+		const paramsWithResolvedCwd = requestParams.cwd === undefined ? requestParams : { ...requestParams, cwd: requestCwd };
+		const action = paramsWithResolvedCwd.action;
+		if (action) {
+			if (action === "doctor") {
 				let currentSessionFile: string | null = null;
 				let currentSessionId = deps.state.currentSessionId;
 				let sessionError: string | undefined;
@@ -3031,7 +3048,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "management", results: [] },
 				};
 			}
-			if (params.action === "status") {
+			if (action === "status") {
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
@@ -3069,10 +3086,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots });
 			}
-			if (params.action === "resume") {
+			if (action === "resume") {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
 			}
-			if (params.action === "steer") {
+			if (action === "steer") {
 				const message = (paramsWithResolvedCwd.message ?? paramsWithResolvedCwd.task ?? "").trim();
 				if (!message) return { content: [{ type: "text", text: "action='steer' requires message." }], isError: true, details: { mode: "management", results: [] } };
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
@@ -3099,20 +3116,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
 				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location });
 			}
-			if (params.action === "append-step") {
+			if (action === "append-step") {
 				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
 			}
-			if (params.action === "schedule" || params.action === "schedule-list" || params.action === "schedule-status" || params.action === "schedule-cancel") {
+			if (action === "schedule" || action === "schedule-list" || action === "schedule-status" || action === "schedule-cancel") {
 				if (!deps.handleScheduledRunAction) {
 					return {
-						content: [{ type: "text", text: `Action '${params.action}' is not available in this subagent context.` }],
+						content: [{ type: "text", text: `Action '${action}' is not available in this subagent context.` }],
 						isError: true,
 						details: { mode: "management", results: [] },
 					};
 				}
 				return deps.handleScheduledRunAction(paramsWithResolvedCwd, ctx);
 			}
-			if (params.action === "interrupt") {
+			if (action === "interrupt") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
 				let resolved: ResolvedSubagentRunId | undefined;
 				if (targetRunId) {
@@ -3154,21 +3171,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "management", results: [] },
 				};
 			}
-			if (!(SUBAGENT_ACTIONS as readonly string[]).includes(params.action)) {
+			if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
 				return {
-					content: [{ type: "text", text: `Unknown action: ${params.action}. Valid: ${SUBAGENT_ACTIONS.join(", ")}` }],
+					content: [{ type: "text", text: `Unknown action: ${action}. Valid: ${SUBAGENT_ACTIONS.join(", ")}` }],
 					isError: true,
 					details: { mode: "management" as const, results: [] },
 				};
 			}
-			if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(params.action)) {
+			if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 				return {
-					content: [{ type: "text", text: `Action '${params.action}' is not available from child-safe subagent fanout mode.` }],
+					content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
 					isError: true,
 					details: { mode: "management" as const, results: [] },
 				};
 			}
-			return handleManagementAction(params.action, paramsWithResolvedCwd, {
+			return handleManagementAction(action, paramsWithResolvedCwd, {
 				...ctx,
 				cwd: requestCwd,
 				config: deps.config,
@@ -3473,11 +3490,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
-		if (params.action) return execute(id, params, signal, onUpdate, ctx);
-		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(params);
+		const requestParams = omitExecutionModeActionAlias(params);
+		if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
+		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;
 		try {
-			return await execute(id, params, signal, onUpdate, ctx);
+			return await execute(id, requestParams, signal, onUpdate, ctx);
 		} finally {
 			deps.state.subagentInProgress = false;
 		}

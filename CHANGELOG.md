@@ -22,6 +22,7 @@
 
 ### Fixed
 - Let foreground sequential chain tool calls launch directly when `clarify` is omitted; use `clarify: true` to opt into the clarify UI. Addresses #385.
+- Tolerate execution-mode action aliases such as `single`, `parallel`, `PARALLEL`, and `tasks` when the matching execution fields are present, while preserving clear runtime errors for unknown management actions, addressing #382.
 - Removed companion-package recommendation messages from session start, `subagent({ action: "list" })`, and `/subagents-doctor`, addressing #381.
 - Scope async subagent completion notifications to the exact owning Pi session so another session in the same repo no longer receives result notices.
 - Harden scheduled-run timestamp parsing and persisted store validation so ambiguous absolute times and corrupted job records fail clearly instead of being normalized or dropped.
