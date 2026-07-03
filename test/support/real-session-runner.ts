@@ -171,6 +171,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		["PI_SUBAGENT_MAX_DEPTH", process.env.PI_SUBAGENT_MAX_DEPTH],
 		["PI_SUBAGENT_PARENT_SESSION", process.env.PI_SUBAGENT_PARENT_SESSION],
 		["PI_SUBAGENT_PI_BINARY", process.env.PI_SUBAGENT_PI_BINARY],
+		["PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT", process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT],
 	]);
 	const uninstallChildPi = installChildPiShim(options.childText);
 	let session: AgentSession | undefined;
@@ -208,6 +209,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		delete process.env.PI_SUBAGENT_MAX_DEPTH;
 		delete process.env.PI_SUBAGENT_PARENT_SESSION;
 		delete process.env.PI_SUBAGENT_PI_BINARY;
+		delete process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
 
 		faux = registerFauxProvider({
 			provider: "faux-e2e-parent",

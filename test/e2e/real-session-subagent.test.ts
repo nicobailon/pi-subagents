@@ -28,6 +28,7 @@ const CHILD_MARKER = "CHILD_REAL_SESSION_OK";
 // bogus sentinels (nonexistent paths) so a leaked value would break spawning.
 const BOGUS_EXTRA_DIRS = path.join(os.tmpdir(), "nonexistent-pi-subagents-e2e-extra-dirs");
 const BOGUS_PI_BINARY = path.join(os.tmpdir(), "nonexistent-pi-binary-e2e");
+const BOGUS_PI_PACKAGE_ROOT = path.join(os.tmpdir(), "nonexistent-pi-coding-agent-package-root-e2e");
 const ISOLATED_ENV_KEYS = [
 	"PI_SUBAGENT_CHILD",
 	"PI_SUBAGENT_FANOUT_CHILD",
@@ -36,6 +37,7 @@ const ISOLATED_ENV_KEYS = [
 	"PI_SUBAGENT_EXTRA_AGENT_DIRS",
 	"PI_SUBAGENT_PARENT_SESSION",
 	"PI_SUBAGENT_PI_BINARY",
+	"PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT",
 ] as const;
 
 describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packages not available" : undefined }, () => {
@@ -57,6 +59,7 @@ describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packag
 		process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = BOGUS_EXTRA_DIRS;
 		process.env.PI_SUBAGENT_PARENT_SESSION = "polluted-parent";
 		process.env.PI_SUBAGENT_PI_BINARY = BOGUS_PI_BINARY;
+		process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT = BOGUS_PI_PACKAGE_ROOT;
 
 		try {
 			run = await runRealSubagentSession({

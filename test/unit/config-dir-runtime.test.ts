@@ -2,13 +2,24 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { getConfigDirName, resolveConfigDirName } from "../../src/shared/utils.ts";
+import { getConfigDirName, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName } from "../../src/shared/utils.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+let previousPackageRootEnv: string | undefined;
 
 describe("config directory resolution", () => {
+	beforeEach(() => {
+		previousPackageRootEnv = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	});
+
+	afterEach(() => {
+		if (previousPackageRootEnv === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = previousPackageRootEnv;
+	});
+
 	it("falls back without importing the Pi peer package at runtime", () => {
 		assert.equal(resolveConfigDirName(), ".pi");
 		assert.equal(getConfigDirName(), ".pi");
