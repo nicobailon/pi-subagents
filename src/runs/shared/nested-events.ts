@@ -8,6 +8,7 @@ import {
 	type AsyncJobState,
 	type AsyncStatus,
 	type NestedRouteInfo,
+	type TurnBudgetState,
 	type NestedRunSummary,
 	type NestedRunState,
 	type NestedStepSummary,
@@ -195,6 +196,24 @@ function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined
 		: undefined;
 }
 
+function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Record<string, unknown>;
+	const maxTurns = clampNumber(raw.maxTurns);
+	const graceTurns = clampNumber(raw.graceTurns);
+	const turnCount = clampNumber(raw.turnCount);
+	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded" ? raw.outcome : undefined;
+	if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome) return undefined;
+	return {
+		maxTurns,
+		graceTurns,
+		turnCount,
+		outcome,
+		...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) } : {}),
+		...(clampNumber(raw.exceededAtTurn) !== undefined ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) } : {}),
+	};
+}
+
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
 	return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "paused"
 		? value
@@ -224,6 +243,9 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
 		...(raw.timedOut === true ? { timedOut: true } : {}),
+		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
+		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
+		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
 	};
 }
@@ -276,6 +298,9 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
 		...(clampNumber(raw.deadlineAt) !== undefined ? { deadlineAt: clampNumber(raw.deadlineAt) } : {}),
 		...(raw.timedOut === true ? { timedOut: true } : {}),
+		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
+		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
+		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
 		...(steps && steps.length > 0 ? { steps } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
@@ -834,6 +859,9 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
 		...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
 		...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
+		...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
+		...(status.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: status.turnBudgetExceeded } : {}),
+		...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
 		...(status.error ? { error: status.error } : {}),
 		...(status.startedAt !== undefined ? { startedAt: status.startedAt } : { startedAt: fallback.ts }),
 		...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
@@ -854,6 +882,9 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 			...(step.error ? { error: step.error } : {}),
 			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
+			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
+			...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
+			...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
 		})).slice(0, MAX_STEPS) } : {}),
 	};
 }

@@ -167,6 +167,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			})}\n`, "utf-8");
 
 			const state = createState();
+			state.currentSessionId = "session-restored";
 			const ui = createUiContext();
 			const recorder = createEventRecorder();
 			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
@@ -196,6 +197,71 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("restores only active async runs for the current session", () => {
+		const asyncRoot = createTempDir("pi-async-job-restore-scope-");
+		try {
+			const ownerDir = path.join(asyncRoot, "run-owner");
+			const otherDir = path.join(asyncRoot, "run-other");
+			fs.mkdirSync(ownerDir, { recursive: true });
+			fs.mkdirSync(otherDir, { recursive: true });
+			fs.writeFileSync(path.join(ownerDir, "status.json"), JSON.stringify({
+				runId: "run-owner",
+				mode: "single",
+				state: "running",
+				sessionId: "session-owner",
+				startedAt: 1000,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
+				runId: "run-other",
+				mode: "single",
+				state: "running",
+				sessionId: "session-other",
+				startedAt: 1000,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+
+			const state = createState();
+			state.currentSessionId = "session-owner";
+			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.restoreActiveJobs();
+
+			assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
+			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("ignores started and complete events without the current session id", async () => {
+		const asyncRoot = createTempDir("pi-async-job-event-scope-");
+		try {
+			const state = createState();
+			state.currentSessionId = "session-owner";
+			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				completionRetentionMs: 5,
+				pollIntervalMs: 10,
+			});
+
+			tracker.handleStarted({ id: "run-sessionless", asyncDir: path.join(asyncRoot, "run-sessionless"), agent: "worker" });
+			tracker.handleStarted({ id: "run-other", asyncDir: path.join(asyncRoot, "run-other"), agent: "worker", sessionId: "session-other" });
+			tracker.handleStarted({ id: "run-owner", asyncDir: path.join(asyncRoot, "run-owner"), agent: "worker", sessionId: "session-owner" });
+
+			assert.deepEqual([...state.asyncJobs.keys()], ["run-owner"]);
+
+			tracker.handleComplete({ id: "run-owner", success: true });
+			tracker.handleComplete({ id: "run-owner", success: true, sessionId: "session-other" });
+			assert.equal(state.asyncJobs.get("run-owner")?.status, "queued");
+
+			tracker.handleComplete({ id: "run-owner", success: true, sessionId: "session-owner" });
+			await waitForCondition(() => !state.asyncJobs.has("run-owner"), "owned job cleanup after matching completion", 1000);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("does not throw during restore when a persisted async status is malformed", () => {
 		const asyncRoot = createTempDir("pi-async-job-restore-bad-status-");
 		const originalError = console.error;
@@ -205,6 +271,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			fs.writeFileSync(path.join(runDir, "status.json"), "{bad json", "utf-8");
 
 			const state = createState();
+			state.currentSessionId = "session-bad";
 			const ui = createUiContext();
 			const recorder = createEventRecorder();
 			const errors: unknown[][] = [];

@@ -13,13 +13,26 @@ type AtomicJsonWriterOptions = {
 	wait?: (delayMs: number) => void;
 };
 
-const DEFAULT_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200] as const;
+const DEFAULT_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 500, 1000, 2000, 4000] as const;
 const RETRYABLE_RENAME_ERROR_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
+const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
+const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
 
 function waitSync(delayMs: number): void {
+	if (delayMs <= 0) return;
+	if (WAIT_VIEW) {
+		try {
+			// writeAtomicJson is synchronous because callers often update status from sync callbacks.
+			// Atomics.wait gives Windows rename locks time to clear without burning CPU.
+			Atomics.wait(WAIT_VIEW, 0, 0, delayMs);
+			return;
+		} catch {
+			// Fall through to the portable busy wait below.
+		}
+	}
 	const end = Date.now() + delayMs;
 	while (Date.now() < end) {
-		// writeAtomicJson is synchronous because callers often update status from sync callbacks.
+		// Portable fallback for runtimes where Atomics.wait is unavailable.
 	}
 }
 

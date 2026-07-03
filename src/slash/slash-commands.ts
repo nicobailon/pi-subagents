@@ -1088,6 +1088,13 @@ export function registerSlashCommands(
 		},
 	});
 
+	pi.registerCommand("subagents-fleet", {
+		description: "Show active subagent fleet status and transcript commands",
+		handler: async (_args, ctx) => {
+			await runSlashSubagent(pi, ctx, { action: "status", view: "fleet" });
+		},
+	});
+
 	pi.registerCommand("subagents-models", {
 		description: "Show runtime-loaded builtin subagent models",
 		getArgumentCompletions: makeBuiltinAgentNameCompletions(),

@@ -21,7 +21,7 @@ Use this skill when the parent orchestrator needs to launch a specialized subage
 - **Recon and planning**: use `scout` or `context-builder`, then `planner`
 - **Parallel exploration**: run multiple non-conflicting tasks concurrently
 - **Regular skill specialists**: when discovery shows proactive skill subagent suggestions and the current work is broad enough, launch a small fresh-context fanout that asks one subagent per relevant regularly used skill to apply that skill's perspective to the task
-- **Long-running work**: launch async/background runs and inspect them later; use `timeoutMs` or `maxRuntimeMs` when a foreground or async run needs a hard max runtime
+- **Long-running work**: launch async/background runs and inspect them later; use `timeoutMs` or `maxRuntimeMs` when a foreground or async run needs a hard max runtime, or `turnBudget: { maxTurns, graceTurns }` for a soft assistant-turn budget that warns the child to wrap up before aborting
 - **Subagent control**: watch needs-attention signals and soft-interrupt only when a delegated run is genuinely blocked
 - **Agent authoring**: create, update, or override agents and chains for a project
 
@@ -241,6 +241,8 @@ If a provider rejects model IDs with thinking suffixes, use
 builtin thinking defaults globally. A higher-precedence per-agent `thinking`
 override can opt one builtin back in.
 
+Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. Set `toolDescriptionMode` to `compact` to reduce tool-description prompt cost while keeping the execution, async/wait, child-safety, one-writer, management/action, and artifact/status guardrails. Set it to `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.
+
 ## Discovery and Scope Rules
 
 Agent files can live in:
@@ -364,7 +366,7 @@ const run = subagent({
 // Continue local inspection, then later call status with the returned id.
 ```
 
-Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
+Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
 Use `resume` for follow-up work after a delegated run:
 
@@ -388,6 +390,27 @@ Use diagnostics when setup or child startup looks wrong:
 ```typescript
 subagent({ action: "doctor" })
 ```
+
+### Scheduled subagent runs
+
+Scheduled runs defer a subagent launch until a future time. They are opt-in and require `{ "scheduledRuns": { "enabled": true } }` in `~/.pi/agent/extensions/subagent/config.json`. Only schedule explicit delayed runs the user asked for; do not schedule runs speculatively.
+
+```typescript
+// Launch a reviewer in 30 minutes
+subagent({ action: "schedule", agent: "reviewer", task: "Review the diff for correctness issues.", schedule: "+30m", scheduleName: "evening review" })
+
+// Schedule a parallel fanout
+subagent({ action: "schedule", tasks: [{ agent: "scout", task: "Map the auth module" }, { agent: "scout", task: "Map the billing module" }], schedule: "+1h" })
+
+// Inspect, list, and cancel
+subagent({ action: "schedule-list" })
+subagent({ action: "schedule-status", id: "ab12" })
+subagent({ action: "schedule-cancel", id: "ab12" })
+```
+
+`schedule` accepts the same execution fields as a normal async run (`agent`/`tasks`/`chain`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `wait()`, and delivers the normal completion notification.
+
+Schedules are persisted per session and restored after a Pi restart. A job whose scheduled time passed by more than `scheduledRuns.maxLatenessMs` (default 5 minutes) while Pi was unavailable is marked `missed` instead of firing late. `scheduledRuns.maxPending` (default 20) caps pending or running scheduled jobs per session.
 
 Humans can use `/subagents-doctor` for the same read-only report. It checks runtime paths, discovery counts, async support, current session context, and intercom bridge state.
 
@@ -640,6 +663,12 @@ If `subagent({ action: "list" })`, `/subagents-doctor`, or a startup message rec
 `pi-intercom` or `pi-prompt-template-model`, offer to run the shown `pi install npm:<package>`
 command only after user approval. To hide future recommendations, use
 `/subagents-companions hide <package> workspace` or `... user`.
+
+## Extension RPC
+
+Other Pi extensions can call `pi-subagents` through the in-process event bus. The stable v1 channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`.
+
+Methods: `ping`, `status`, `spawn`, `interrupt`, and `stop`. `spawn` is async-only and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, spawn limits, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status` and `interrupt` map to the normal control actions. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.
 
 ## Important Constraints
 

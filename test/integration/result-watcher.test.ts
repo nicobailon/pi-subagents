@@ -70,6 +70,92 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("delivers result files only to the exact owning session when another watcher shares the same repo", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scope-"));
+		const createPi = () => {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const listeners = new Map<string, Set<(payload: unknown) => void>>();
+			const pi = {
+				events: {
+					on(event: string, handler: (payload: unknown) => void) {
+						const eventListeners = listeners.get(event) ?? new Set();
+						eventListeners.add(handler);
+						listeners.set(event, eventListeners);
+						return () => eventListeners.delete(handler);
+					},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+						for (const handler of listeners.get(event) ?? []) handler(data);
+						if (event === "subagent:result-intercom") {
+							const requestId = data && typeof data === "object" ? (data as { requestId?: unknown }).requestId : undefined;
+							if (typeof requestId === "string") {
+								setImmediate(() => pi.events.emit("subagent:result-intercom-delivery", { requestId, delivered: true }));
+							}
+						}
+					},
+				},
+			};
+			return { pi, emitted };
+		};
+		try {
+			const owner = createPi();
+			const other = createPi();
+			const ownerState = createState();
+			ownerState.currentSessionId = "session-owner";
+			const otherState = createState();
+			otherState.currentSessionId = "session-other";
+			const ownerWatcher = createResultWatcher(owner.pi, ownerState, resultsDir, 60_000);
+			const otherWatcher = createResultWatcher(other.pi, otherState, resultsDir, 60_000);
+			const ownerResultPath = path.join(resultsDir, "owner-run.json");
+			const sessionlessResultPath = path.join(resultsDir, "sessionless-run.json");
+			try {
+				fs.writeFileSync(ownerResultPath, JSON.stringify({
+					id: "owner-run",
+					agent: "worker",
+					mode: "single",
+					success: true,
+					state: "complete",
+					summary: "owner output",
+					results: [{ agent: "worker", output: "owner output", success: true }],
+					sessionId: "session-owner",
+					cwd: "/repo",
+					intercomTarget: "owner-target",
+				}), "utf-8");
+				fs.writeFileSync(sessionlessResultPath, JSON.stringify({
+					id: "sessionless-run",
+					agent: "worker",
+					mode: "single",
+					success: true,
+					state: "complete",
+					summary: "legacy cwd-scoped output",
+					results: [{ agent: "worker", output: "legacy cwd-scoped output", success: true }],
+					cwd: "/repo",
+					intercomTarget: "sessionless-target",
+				}), "utf-8");
+
+				otherWatcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				ownerWatcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				ownerWatcher.stopResultWatcher();
+				otherWatcher.stopResultWatcher();
+			}
+
+			const ownerCompletions = owner.emitted.filter((entry) => entry.event === "subagent:async-complete");
+			const ownerIntercom = owner.emitted.filter((entry) => entry.event === "subagent:result-intercom");
+			assert.equal(ownerCompletions.length, 1);
+			assert.equal((ownerCompletions[0]?.data as { id?: string } | undefined)?.id, "owner-run");
+			assert.equal(ownerIntercom.length, 1);
+			assert.equal(other.emitted.some((entry) => entry.event === "subagent:async-complete"), false);
+			assert.equal(other.emitted.some((entry) => entry.event === "subagent:result-intercom"), false);
+			assert.equal(fs.existsSync(ownerResultPath), false);
+			assert.equal(fs.existsSync(sessionlessResultPath), true);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("logs malformed result files instead of swallowing them silently", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
 		try {

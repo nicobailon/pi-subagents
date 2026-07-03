@@ -38,7 +38,7 @@ class FakeFs {
 
 function createWriter(fakeFs: FakeFs, waits: number[]) {
 	return createAtomicJsonWriter({
-		fs: fakeFs,
+		fs: fakeFs as any,
 		now: () => 12345,
 		pid: 678,
 		random: () => 0.5,
@@ -63,6 +63,25 @@ describe("writeAtomicJson", () => {
 		assert.deepEqual(fakeFs.madeDirs, [path.dirname(targetPath)]);
 		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ state: "running" }, null, 2));
 		assert.equal(fakeFs.files.size, 1);
+	});
+
+	it("uses longer default retries for transient Windows rename locks", () => {
+		const fakeFs = new FakeFs();
+		fakeFs.failRenameCodes = ["EPERM", "EPERM", "EPERM", "EPERM", "EPERM", "EPERM"];
+		const waits: number[] = [];
+		const writeAtomicJson = createAtomicJsonWriter({
+			fs: fakeFs as any,
+			now: () => 12345,
+			pid: 678,
+			random: () => 0.5,
+			retryRenameErrors: true,
+			wait: (delayMs) => waits.push(delayMs),
+		});
+
+		writeAtomicJson(path.join("/tmp", "status.json"), { state: "running" });
+
+		assert.equal(fakeFs.renameCalls, 7);
+		assert.deepEqual(waits, [10, 25, 50, 100, 200, 500]);
 	});
 
 	it("throws non-retryable rename failures without retrying", () => {

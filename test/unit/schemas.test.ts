@@ -32,6 +32,12 @@ interface SubagentParamsSchema {
 			minimum?: number;
 			description?: string;
 		};
+		turnBudget?: {
+			properties?: {
+				maxTurns?: { minimum?: number };
+				graceTurns?: { minimum?: number };
+			};
+		};
 		id?: {
 			type?: string;
 			description?: string;
@@ -47,6 +53,16 @@ interface SubagentParamsSchema {
 		action?: {
 			type?: string;
 			enum?: string[];
+			description?: string;
+		};
+		view?: {
+			type?: string;
+			enum?: string[];
+			description?: string;
+		};
+		lines?: {
+			minimum?: number;
+			maximum?: number;
 			description?: string;
 		};
 		control?: {
@@ -162,16 +178,17 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const actionSchema = SubagentParams?.properties?.action;
 		assert.ok(actionSchema, "action schema should exist");
 		assert.equal(actionSchema.type, "string");
-		assert.deepEqual(actionSchema.enum, ["list", "get", "models", "create", "update", "delete", "status", "interrupt", "resume", "append-step", "doctor"]);
+		assert.deepEqual(actionSchema.enum, ["list", "get", "models", "create", "update", "delete", "status", "interrupt", "resume", "steer", "append-step", "doctor", "schedule", "schedule-list", "schedule-status", "schedule-cancel"]);
 		const description = String(actionSchema.description ?? "");
 		assert.match(description, /Management\/control action/);
 		assert.match(description, /Omit for execution mode/);
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
-	it("includes foreground timeout aliases", () => {
+	it("includes foreground timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
+		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
 		assert.ok(timeoutSchema, "timeoutMs schema should exist");
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
@@ -180,6 +197,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /timeoutMs/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /foreground and async\/background/i);
+		assert.equal(turnBudgetSchema?.properties?.maxTurns?.minimum, 1);
+		assert.equal(turnBudgetSchema?.properties?.graceTurns?.minimum, 0);
 	});
 
 	it("includes subagent control fields", () => {
@@ -188,18 +207,34 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(idSchema.type, "string");
 		assert.match(String(idSchema.description ?? ""), /status/i);
 		assert.match(String(idSchema.description ?? ""), /interrupt/i);
+		assert.match(String(idSchema.description ?? ""), /steer/i);
 		assert.match(String(idSchema.description ?? ""), /append-step/i);
 
 		const runIdSchema = SubagentParams?.properties?.runId;
 		assert.ok(runIdSchema, "runId schema should exist");
 		assert.equal(runIdSchema.type, "string");
 		assert.match(String(runIdSchema.description ?? ""), /interrupt/i);
+		assert.match(String(runIdSchema.description ?? ""), /steer/i);
 		assert.match(String(runIdSchema.description ?? ""), /append-step/i);
 
 		const dirSchema = SubagentParams?.properties?.dir;
 		assert.ok(dirSchema, "dir schema should exist");
 		assert.equal(dirSchema.type, "string");
 		assert.match(String(dirSchema.description ?? ""), /status/i);
+		assert.match(String(dirSchema.description ?? ""), /steer/i);
+
+		const viewSchema = SubagentParams?.properties?.view;
+		assert.ok(viewSchema, "view schema should exist");
+		assert.equal(viewSchema.type, "string");
+		assert.deepEqual(viewSchema.enum, ["fleet", "transcript"]);
+		assert.match(String(viewSchema.description ?? ""), /status view/i);
+		assert.match(String(viewSchema.description ?? ""), /transcript/i);
+
+		const linesSchema = SubagentParams?.properties?.lines;
+		assert.ok(linesSchema, "lines schema should exist");
+		assert.equal(linesSchema.minimum, 1);
+		assert.equal(linesSchema.maximum, 500);
+		assert.match(String(linesSchema.description ?? ""), /transcript/i);
 
 		const controlSchema = SubagentParams?.properties?.control;
 		assert.ok(controlSchema, "control schema should exist");
@@ -452,6 +487,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 }, parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } }, collect: { as: "reviews" } }] },
 			{ agent: "worker", task: "Fix", acceptance: false },
 			{ agent: "worker", task: "Fix", timeoutMs: 1000 },
+			{ action: "steer", id: "run-1", message: "focus on tests" },
+			{ action: "steer", id: "run-1", index: 0, message: "focus on tests" },
 			{ tasks: [{ agent: "worker", task: "Fix" }], maxRuntimeMs: 1000 },
 			{ chain: [{ agent: "worker", task: "Fix" }], timeoutMs: 1000, maxRuntimeMs: 1000 },
 			{ agent: "worker", task: "Fix", acceptance: "checked" },
@@ -462,6 +499,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", acceptance: { level: "checked", review: false } }, collect: { as: "reviews" } }] },
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 3, graceTurns: 0 } },
 		];
 		const invalidValues = [
 			{ skill: 123 },
@@ -483,6 +523,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", acceptance: true }, collect: { as: "reviews" } }] },
 			{ config: [] },
 			{ config: null },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 0 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: -1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 1.5 } },
+			{ agent: "worker", task: "Fix", turnBudget: { graceTurns: 1 } },
+			{ agent: "worker", task: "Fix", turnBudget: { maxTurns: 5, graceTurns: 1, extra: true } },
 		];
 
 		for (const value of validValues) {

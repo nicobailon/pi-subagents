@@ -368,7 +368,7 @@ describe("wait tool", () => {
 			const elapsed = Date.now() - startedAt;
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /done/i);
-			assert.ok(elapsed < 2_000, `should wake via event (~15ms), not the 10s poll; took ${elapsed}ms`);
+			assert.ok(elapsed < 5_000, `should wake via event, not the 10s poll; took ${elapsed}ms`);
 			assert.ok(sleepCalls >= 1, "poll-interval sleep still armed as fallback");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

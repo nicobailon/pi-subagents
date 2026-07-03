@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { SUBAGENT_FANOUT_CHILD_ENV } from "./pi-args.ts";
+import { consumeSteerRequestsFromDir, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
+import { SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 
@@ -155,7 +156,86 @@ export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] 
 	return changed ? filtered : messages;
 }
 
+export function formatSteerMessage(request: SteerRequest): string {
+	return [
+		"Mid-run steering from the parent orchestrator:",
+		"",
+		request.message,
+		"",
+		"Incorporate this guidance at the next safe point. Do not restart the task unless the guidance explicitly asks you to.",
+	].join("\n");
+}
+
+function registerSteeringInbox(pi: ExtensionAPI): void {
+	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
+	if (!steerInbox) return;
+	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
+	if (typeof sendUserMessage !== "function") return;
+
+	let canSteer = false;
+	let disposed = false;
+	let flushing = false;
+	let started = false;
+	let watcher: fs.FSWatcher | undefined;
+	let interval: NodeJS.Timeout | undefined;
+	const flush = (): void => {
+		if (disposed || flushing || !canSteer) return;
+		flushing = true;
+		try {
+			const requests = consumeSteerRequestsFromDir(steerInbox);
+			for (let index = 0; index < requests.length; index++) {
+				const request = requests[index]!;
+				try {
+					sendUserMessage(formatSteerMessage(request), { deliverAs: "steer" });
+				} catch {
+					for (const pending of requests.slice(index)) writeSteerRequestToDir(steerInbox, pending);
+					break;
+				}
+			}
+		} finally {
+			flushing = false;
+		}
+	};
+	const start = (): void => {
+		if (started || disposed) return;
+		try {
+			fs.mkdirSync(steerInbox, { recursive: true });
+		} catch {
+			return;
+		}
+		started = true;
+		try {
+			watcher = fs.watch(steerInbox, () => flush());
+			watcher.on("error", () => {});
+		} catch {
+			watcher = undefined;
+		}
+		interval = setInterval(flush, 250);
+		interval.unref?.();
+	};
+	const activate = (): undefined => {
+		start();
+		canSteer = true;
+		flush();
+		return undefined;
+	};
+
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
+	onRuntimeEvent("session_start", () => start());
+	for (const eventName of ["message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_end", "turn_end"] as const) {
+		onRuntimeEvent(eventName, activate);
+	}
+	onRuntimeEvent("session_shutdown", () => {
+		disposed = true;
+		try {
+			watcher?.close();
+		} catch {}
+		if (interval) clearInterval(interval);
+	});
+}
+
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
+	registerSteeringInbox(pi);
 	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 	if (structuredOutputPath && structuredSchemaPath) {

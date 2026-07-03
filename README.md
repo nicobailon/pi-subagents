@@ -95,7 +95,7 @@ Those are ordinary Pi requests. Pi decides whether to call `subagent`, which age
 | Run in the background | “Run this in the background.” |
 | Browse agents | “Show me the available subagents.” |
 | Use a saved workflow | “Run the review chain on this branch.” |
-| See running work | “Show active async runs.” |
+| See running work | “Show active async runs.” or “Show the subagent fleet.” |
 | Check setup | “Check whether subagents are configured correctly.” |
 
 The extension ships with builtin agents you can use immediately.
@@ -172,7 +172,7 @@ That reports the live runtime mapping, which can differ from settings on disk un
 
 Foreground runs stream progress in the conversation while they run.
 
-Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`.
+Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`. For a read-only fleet view across active foreground and background work, use `/subagents-fleet` or `subagent({ action: "status", view: "fleet" })`. To inspect what a background child is saying without hunting through artifact directories, tail its live transcript with `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
 
 They also show a compact async widget and send completion notifications. Parallel background runs show per-agent progress instead of fake chain steps. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
@@ -185,6 +185,26 @@ Show me the current async runs.
 Async runs also write machine-readable lifecycle artifacts for observability and workflow gates. For a top-level async run, `details.asyncDir` points at a directory containing `status.json`, `events.jsonl`, `output-<index>.log`, and `subagent-log-<runId>.md`; the final summary is written to Pi's subagent results directory as `<runId>.json`. Nested async runs use the same shape under the nested async root and are discoverable through status projections that read the nested-run registry. These files are append/update artifacts only; interactive foreground behavior is unchanged.
 
 The stable v1 status/result fields are `lifecycleArtifactVersion`, `runId`/`id`, `sessionId`, `mode`, `state`, `startedAt`, `lastUpdate`, `endedAt`, `durationMs`, `cwd`, `asyncDir`, `sessionFile`, `outputFile`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `model`/`attemptedModels`/`modelAttempts`, `toolCount`, `turnCount`, and nested `children` when a child is allowed to launch subagents. `events.jsonl` records lifecycle transitions such as `subagent.run.started`, `subagent.step.started`, `subagent.step.completed`/`failed`/`paused`, control attention events, nested interrupt failures, and `subagent.run.completed`; run boundary events include the lifecycle artifact version. Consumers should read these JSON files instead of scraping terminal output; unknown fields and event types should be ignored for forward compatibility.
+
+Other Pi extensions can use the versioned in-process event-bus RPC instead of scraping slash output or calling internal modules. Listen for `subagents:rpc:v1:ready`, send requests on `subagents:rpc:v1:request`, and read replies from `subagents:rpc:v1:reply:<requestId>`.
+
+```typescript
+const requestId = crypto.randomUUID();
+pi.events.on(`subagents:rpc:v1:reply:${requestId}`, (reply) => {
+  // { version: 1, requestId, success: true, data } or
+  // { version: 1, requestId, success: false, error: { code, message } }
+});
+pi.events.emit("subagents:rpc:v1:request", {
+  version: 1,
+  requestId,
+  method: "spawn",
+  params: { agent: "reviewer", task: "Review the current diff", context: "fresh" }
+});
+```
+
+The v1 methods are `ping`, `status`, `spawn`, `interrupt`, and `stop`. `status` and `interrupt` reuse the normal control actions. `spawn` is async-only: omit `async` or set `async: true`, omit `clarify` or set `clarify: false`, and do not pass management `action` values. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, spawn limits, child-safety depth, artifacts, and async status all behave the same. `stop` targets running async runs through the existing timeout control channel.
+
+`pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
 If something feels misconfigured, run:
 
@@ -1001,7 +1021,7 @@ Agent definitions are not loaded into context by default. Management actions let
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent name for single mode, or target for management actions. |
 | `task` | string | - | Task string for single mode. |
-| `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `resume`, `append-step`, or `doctor`. |
+| `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `resume`, `steer`, `append-step`, or `doctor`. |
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or chain config for create/update. |
 | `output` | `string \| false` | agent default | Override single-agent output file. |
@@ -1014,10 +1034,13 @@ Agent definitions are not loaded into context by default. Management actions let
 | `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, and `oracle` default to `fork`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. |
+| `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
+| `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `clarify` | boolean | true for chains | Show TUI preview/edit flow. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
 | `timeoutMs` / `maxRuntimeMs` | number | none | Optional run-level max runtime in milliseconds for foreground and async/background runs. |
+| `turnBudget` | object | none | Optional assistant-turn budget `{ maxTurns, graceTurns }`. At `maxTurns` the child is warned to wrap up; after `graceTurns` (default 1) more assistant turns the run is aborted and partial output is returned. |
 | `cwd` | string | runtime cwd | Override working directory. |
 | `maxOutput` | object | 200KB, 5000 lines | Final output truncation limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
@@ -1036,20 +1059,26 @@ Status and control actions:
 
 ```ts
 subagent({ action: "status" })
+subagent({ action: "status", view: "fleet" })
 subagent({ action: "status", id: "<run-id>" })
+subagent({ action: "status", id: "<run-id>", view: "transcript", index: 0, lines: 80 })
 subagent({ action: "status", id: "<nested-run-id>" })
 subagent({ action: "interrupt", id: "<run-id>" })
 subagent({ action: "interrupt", id: "<nested-run-id>" })
 subagent({ action: "resume", id: "<run-id>", message: "follow-up question" })
 subagent({ action: "resume", id: "<run-id>", index: 1, message: "follow-up for child 2" })
 subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a nested child" })
+subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
+subagent({ action: "steer", id: "<run-id>", index: 1, message: "guidance for child 2" })
 subagent({ action: "append-step", id: "<run-id>", chain: [{ agent: "worker", task: "Continue from {previous}" }] })
 subagent({ action: "doctor" })
 ```
 
-`status` resolves exact foreground ids, top-level async ids, and nested run ids before falling back to prefix matching. Nested status shows the root/parent path, nested children, session/artifact paths when known, and nested control commands. Inside child-safe fanout mode, bare `status` requires an id when no local foreground run is active, so children cannot enumerate unrelated top-level async runs. Bare `interrupt` still targets only the visible top-level run; interrupting a nested run requires its explicit nested id.
+`status` resolves exact foreground ids, top-level async ids, and nested run ids before falling back to prefix matching. `view: "fleet"` is an optional read-only active-run surface with transcript commands; it does not add steering or stop controls. `view: "transcript"` tails the selected run's live `output-<index>.log` or persisted session transcript, with `lines` capped at 500. Nested status shows the root/parent path, nested children, session/artifact paths when known, and nested control commands. Inside child-safe fanout mode, bare `status` requires an id when no local foreground run is active, so children cannot enumerate unrelated top-level async runs. Bare `interrupt` still targets only the visible top-level run; interrupting a nested run requires its explicit nested id.
 
 `resume` sends the follow-up directly when an async child is still reachable over intercom. After completion, it revives the child by starting a new async child from the stored child session file. Multi-child async runs and remembered foreground single, parallel, or chain runs can be revived by passing `index` to choose the child. Nested runs can be resumed by nested id when their live route or persisted session metadata is available. Revive starts a new child process from the old session context; it does not restart the same OS process, and it requires the chosen child to have a persisted `.jsonl` session file.
+
+`steer` queues non-terminal guidance for a running async Pi child, or for a pending indexed child that will start later in the same async run. It does not interrupt, pause, or revive a child. Delivery requires the spawned Pi session to support mid-run `sendUserMessage(..., { deliverAs: "steer" })`; unsupported runtimes keep the request visible in control artifacts but cannot receive it live. Use `index` for multi-child runs when you want to steer one child; without `index`, steering targets the currently running child or children.
 
 `append-step` accepts exactly one sequential, static parallel, or dynamic fanout chain step for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish; completed, failed, paused, foreground, single, and top-level parallel runs reject appends.
 
@@ -1089,6 +1118,16 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
 
+### `toolDescriptionMode`
+
+```json
+{ "toolDescriptionMode": "compact" }
+```
+
+Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/wait guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
+
+`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
+
 ### `asyncByDefault`
 
 ```json
@@ -1120,6 +1159,14 @@ Caps simultaneously running subagent tasks within a single run across top-level 
 ```
 
 Caps the total number of child subagent launches allowed during one parent session, including single runs, parallel task counts, static chain steps, and bounded dynamic fanout children. Set `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` to override the config for a process. The default is `40`; `0` blocks new subagent launches for that session.
+
+### `scheduledRuns`
+
+```json
+{ "scheduledRuns": { "enabled": true, "maxPending": 20, "maxLatenessMs": 300000 } }
+```
+
+Enables optional one-shot scheduled subagent runs. When enabled, `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` defers a subagent launch until a future time. Absolute ISO timestamps must include a timezone (`Z` or an offset such as `+05:30`). The scheduled run launches as a normal tracked async run with fresh context once it fires, and joins the existing async widget, status, `wait`, and completion-notification paths. `schedule-list`, `schedule-status`, and `schedule-cancel` manage pending jobs. Schedules are persisted per session and restored after a Pi restart; a job missed by more than `maxLatenessMs` while Pi is unavailable is marked `missed` instead of firing late. `maxPending` caps the number of pending or running scheduled jobs per session (default `20`). The feature is opt-in: leave `enabled` unset to keep scheduling out of the tool surface and prompt. Only schedule explicit delayed runs the user asked for.
 
 ### `parallel`
 
@@ -1237,6 +1284,25 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 `syntheticPaths` must be relative to the worktree root. They are removed before diff capture so helper files do not pollute patches. Tracked files are never excluded; marking a tracked path as synthetic fails setup. Default timeout is `30000` ms.
 
+### `completionBatch`
+
+```json
+{
+  "completionBatch": {
+    "enabled": true,
+    "debounceMs": 150,
+    "maxWaitMs": 1000,
+    "stragglerDebounceMs": 75,
+    "stragglerMaxWaitMs": 400,
+    "stragglerWindowMs": 2000
+  }
+}
+```
+
+Controls smart batching of async-completion notifications. When several background subagents finish within a short window, their successful completions are held briefly and delivered as a single grouped message instead of separate notifications. A hard `maxWaitMs` cap (measured from the first completion in a group) guarantees nothing is held indefinitely, and late-finishing siblings that arrive within `stragglerWindowMs` of a group emit join a shorter straggler group governed by `stragglerDebounceMs` and `stragglerMaxWaitMs`.
+
+Failed and paused completions bypass batching and fire immediately, flushing any held successes first, so failure and needs-attention signals are never delayed. Set `enabled` to `false` to restore the original one-notification-per-completion behavior. Changes apply on the next session start.
+
 ## Files, logs, and observability
 
 Each chain run creates a user-scoped temp directory like:
@@ -1258,7 +1324,7 @@ Metadata records timing, usage, exit code, final model, attempted models, and fa
 
 Session files are stored under a per-run session directory. With `context: "fork"`, each child starts with `--session <branched-session-file>` produced from the parent’s current leaf. That is a real session fork, not an injected summary.
 
-Async completions notify only the originating session. The result watcher emits `subagent:async-complete`, and the extension consumes that event to render completion notifications.
+Async completions notify only the originating session. The result watcher emits `subagent:async-complete`, and the extension consumes that event to render completion notifications. Successful sibling completions are held briefly and delivered as a single grouped message when they finish within a short window (see `completionBatch`); failed and paused completions always fire immediately.
 
 Async runs write:
 
@@ -1270,7 +1336,7 @@ Async runs write:
   subagent-log-<id>.md
 ```
 
-`status.json` powers the widget and `subagent({ action: "status" })` output. `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata. Nested fanout status is stored as compact sidecar event/registry metadata and merged into parent status views and result/intercom payloads; full recursive status snapshots are not embedded in parent result files. `output-<n>.log` is a live human-readable tail. Fallback information is persisted so background runs are debuggable after completion.
+`status.json` powers the widget and `subagent({ action: "status" })` output. `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata, including `subagent.steer.requested` when live async steering is queued. Nested fanout status is stored as compact sidecar event/registry metadata and merged into parent status views and result/intercom payloads; full recursive status snapshots are not embedded in parent result files. `output-<n>.log` is a live human-readable tail. Fallback information is persisted so background runs are debuggable after completion.
 
 ## Acceptance Gates
 
@@ -1394,4 +1460,4 @@ The main runtime files are:
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
-| `test/unit/` / `test/integration/` | Unit and loader-based integration tests. |
+| `test/unit/` / `test/integration/` / `test/e2e/` | Unit, loader-based integration, and real-session E2E tests. |
