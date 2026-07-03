@@ -224,6 +224,7 @@ async function runSingleAttempt(
 		usage: emptyUsage(),
 		model: modelArg,
 		artifactPaths: shared.artifactPaths,
+		transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
 		skills: shared.resolvedSkillNames,
 		skillsWarning: shared.skillsWarning,
 	};
@@ -1065,6 +1066,7 @@ export async function runSync(
 		}
 	}
 
+	if (transcriptWriter) result.transcriptPath = artifactPathsResult?.transcriptPath;
 	if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
 
 	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
@@ -1085,7 +1087,7 @@ export async function runSync(
 				durationMs: result.progressSummary?.durationMs,
 				toolCount: result.progressSummary?.toolCount,
 				error: result.error,
-				transcriptPath: artifactPathsResult.transcriptPath,
+				...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
 				transcriptError: result.transcriptError,
 				skills: result.skills,
 				skillsWarning: result.skillsWarning,

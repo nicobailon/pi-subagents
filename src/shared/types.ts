@@ -424,6 +424,7 @@ export interface SingleResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	transcriptPath?: string;
 	transcriptError?: string;
 	children?: NestedRunSummary[];
 }

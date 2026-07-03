@@ -58,6 +58,8 @@ interface ProgressSummary {
 
 interface ArtifactPaths {
 	outputPath: string;
+	transcriptPath?: string;
+	metadataPath?: string;
 }
 
 interface RunSyncResult {
@@ -74,6 +76,8 @@ interface RunSyncResult {
 	progress: ProgressSummary;
 	controlEvents?: Array<{ type?: string; message: string; reason?: string; turns?: number; tokens?: number; currentPath?: string; recentFailureSummary?: string }>;
 	artifactPaths?: ArtifactPaths;
+	transcriptPath?: string;
+	transcriptError?: string;
 	finalOutput?: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
@@ -997,7 +1001,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.exitCode, 0);
 		assert.ok(result.artifactPaths, "should have artifact paths");
+		assert.ok(result.transcriptPath, "should expose transcript path on the result");
+		assert.equal(result.transcriptPath, result.artifactPaths.transcriptPath);
+		assert.ok(fs.existsSync(result.transcriptPath), "transcript should be written");
+		const transcript = fs.readFileSync(result.transcriptPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { recordType?: string; source?: string; text?: string });
+		assert.equal(transcript[0]?.recordType, "message");
+		assert.equal(transcript[0]?.source, "foreground");
+		assert.match(transcript.at(-1)?.text ?? "", /^Result text/);
+		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
+	});
+
+	it("does not surface transcript paths when transcript artifacts are disabled", async () => {
+		mockPi.onCall({ output: "Result text" });
+		const agents = makeAgentConfigs(["echo"]);
+		const artifactsDir = path.join(tempDir, "artifacts-disabled-transcript");
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "test-run-no-transcript",
+			artifactsDir,
+			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeTranscript: false, includeMetadata: true },
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.transcriptPath, undefined);
+		assert.equal(result.transcriptError, undefined);
+		assert.ok(result.artifactPaths?.metadataPath, "should have metadata path");
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { transcriptPath?: string; transcriptError?: string };
+		assert.equal(metadata.transcriptPath, undefined);
+		assert.equal(metadata.transcriptError, undefined);
+		assert.equal(fs.existsSync(result.artifactPaths.transcriptPath!), false);
 	});
 
 	it("preserves agent-written output files instead of overwriting them with the final receipt", async () => {

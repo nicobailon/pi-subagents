@@ -94,25 +94,40 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 		};
 	};
 
+	const writeTruncatedMarker = () => {
+		truncated = true;
+		const marker = `${JSON.stringify({
+			...baseRecord("truncated"),
+			maxBytes,
+			message: `Child transcript exceeded ${maxBytes} bytes; further records were omitted.`,
+		})}\n`;
+		const markerBytes = Buffer.byteLength(marker, "utf-8");
+		if (bytesWritten + markerBytes > maxBytes) return false;
+		try {
+			fs.appendFileSync(input.transcriptPath, marker, "utf-8");
+			bytesWritten += markerBytes;
+			return true;
+		} catch (error) {
+			writeError = `Failed to write child transcript '${input.transcriptPath}': ${errorMessage(error)}`;
+			return false;
+		}
+	};
+
 	const writeRecord = (record: Record<string, unknown>) => {
 		if (writeError || truncated) return;
 		const line = `${JSON.stringify(record)}\n`;
 		const bytes = Buffer.byteLength(line, "utf-8");
 		if (bytesWritten + bytes > maxBytes) {
-			truncated = true;
-			const marker = `${JSON.stringify({
-				...baseRecord("truncated"),
-				maxBytes,
-				message: `Child transcript exceeded ${maxBytes} bytes; further records were omitted.`,
-			})}\n`;
-			if (bytesWritten + Buffer.byteLength(marker, "utf-8") <= maxBytes) {
-				try {
-					fs.appendFileSync(input.transcriptPath, marker, "utf-8");
-					bytesWritten += Buffer.byteLength(marker, "utf-8");
-				} catch (error) {
-					writeError = `Failed to write child transcript '${input.transcriptPath}': ${errorMessage(error)}`;
-				}
-			}
+			writeTruncatedMarker();
+			return;
+		}
+		const markerProbe = `${JSON.stringify({
+			...baseRecord("truncated"),
+			maxBytes,
+			message: `Child transcript exceeded ${maxBytes} bytes; further records were omitted.`,
+		})}\n`;
+		if (bytesWritten + bytes + Buffer.byteLength(markerProbe, "utf-8") > maxBytes) {
+			writeTruncatedMarker();
 			return;
 		}
 		try {

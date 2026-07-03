@@ -178,6 +178,29 @@ describe("createChildTranscriptWriter", () => {
 		assert.ok(!types.includes("stdout"), "no stdout records should be written once truncated");
 	});
 
+	it("reserves space for a truncation marker before accepting another record", () => {
+		const dir = tmpDir();
+		const transcriptPath = path.join(dir, "transcript.jsonl");
+		const writer = createChildTranscriptWriter({
+			transcriptPath,
+			source: "foreground",
+			runId: "r",
+			agent: "a",
+			cwd: "/repo",
+			maxBytes: 420,
+		});
+		writer.writeStdoutLine("a");
+		writer.writeStdoutLine("b");
+		writer.writeStdoutLine("after truncation");
+
+		assert.equal(writer.getError(), undefined);
+		const records = readRecords(transcriptPath);
+		assert.deepEqual(records.map((record) => record.recordType), ["stdout", "truncated"]);
+		assert.equal(records[0]!.text, "a");
+		assert.equal(records[1]!.maxBytes, 420);
+		assert.ok(fs.statSync(transcriptPath).size <= 420);
+	});
+
 	it("reports an init error and drops subsequent writes when the transcript path cannot be created", () => {
 		const dir = tmpDir();
 		// Precreate a regular file where a directory is expected so mkdirSync fails deterministically.
