@@ -305,25 +305,70 @@ function foregroundStatusResult(control: SubagentState["foregroundControls"] ext
 	return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "management", results: [] } };
 }
 
-function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; results: SingleResult[] }): void {
-	state.foregroundRuns ??= new Map();
-	state.foregroundRuns.set(input.runId, {
-		runId: input.runId,
-		mode: input.mode,
-		cwd: input.cwd,
-		updatedAt: Date.now(),
-		children: input.results.map((result, index) => ({
-			agent: result.agent,
-			index,
-			status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
-			...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
-		})),
-	});
+function trimRememberedForegroundRuns(state: SubagentState): void {
+	if (!state.foregroundRuns) return;
 	while (state.foregroundRuns.size > 50) {
 		const oldest = [...state.foregroundRuns.values()].sort((left, right) => left.updatedAt - right.updatedAt)[0];
 		if (!oldest) break;
 		state.foregroundRuns.delete(oldest.runId);
 	}
+}
+
+function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; results: SingleResult[] }): void {
+	state.foregroundRuns ??= new Map();
+	const previous = state.foregroundRuns.get(input.runId);
+	const updatedAt = Date.now();
+	state.foregroundRuns.set(input.runId, {
+		runId: input.runId,
+		mode: input.mode,
+		cwd: input.cwd,
+		updatedAt,
+		children: input.results.map((result, index) => {
+			const child = {
+				agent: result.agent,
+				index,
+				status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
+				updatedAt,
+				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+				...(result.finalOutput ? { finalOutput: result.finalOutput } : {}),
+				...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
+				...(result.artifactPaths ? { artifactPaths: result.artifactPaths } : {}),
+				...(result.transcriptPath ? { transcriptPath: result.transcriptPath } : {}),
+				...(result.transcriptError ? { transcriptError: result.transcriptError } : {}),
+				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
+			};
+			const recovered = previous?.children[index];
+			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
+		}),
+	});
+	trimRememberedForegroundRuns(state);
+}
+
+function updateRememberedForegroundChild(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; index: number; result: SingleResult }): void {
+	state.foregroundRuns ??= new Map();
+	const updatedAt = Date.now();
+	let run = state.foregroundRuns.get(input.runId);
+	if (!run) {
+		run = { runId: input.runId, mode: input.mode, cwd: input.cwd, updatedAt, children: [] };
+		state.foregroundRuns.set(input.runId, run);
+	}
+	run.updatedAt = updatedAt;
+	const child = run.children[input.index] ?? { agent: input.result.agent, index: input.index, status: "detached" as const };
+	run.children[input.index] = {
+		...child,
+		agent: input.result.agent,
+		index: input.index,
+		status: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
+		updatedAt,
+		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
+		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
+		...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
+		...(input.result.artifactPaths ? { artifactPaths: input.result.artifactPaths } : {}),
+		...(input.result.transcriptPath ? { transcriptPath: input.result.transcriptPath } : {}),
+		...(input.result.transcriptError ? { transcriptError: input.result.transcriptError } : {}),
+		...(input.result.detachedReason ? { detachedReason: input.result.detachedReason } : {}),
+	};
+	trimRememberedForegroundRuns(state);
 }
 
 function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; intercomTarget: string; cwd: string; sessionFile: string } | undefined {
@@ -924,7 +969,14 @@ async function resumeAsyncRun(input: {
 	const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
 	try {
 		const requestedId = input.params.id ?? input.params.runId;
-		const resolved = requestedId ? resolveSubagentRunId(requestedId, { state: input.deps.state, nested: nestedResolutionScopeForExecutor(input.deps) }) : undefined;
+		let resolved: ResolvedSubagentRunId | undefined;
+		try {
+			resolved = requestedId ? resolveSubagentRunId(requestedId, { state: input.deps.state, nested: nestedResolutionScopeForExecutor(input.deps) }) : undefined;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "";
+			const asyncMatches = message.match(/async:/g)?.length ?? 0;
+			if (!isResumeAmbiguity(error) || !message.includes("foreground:") || asyncMatches !== 1) throw error;
+		}
 		if (resolved?.kind === "nested") {
 			if (attachChain) {
 				return {
@@ -1950,6 +2002,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		timeoutMs: data.timeoutMs,
 		deadlineAt: data.deadlineAt,
 		turnBudget: data.turnBudget,
+		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, index, result }),
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 	});
 
@@ -2036,6 +2089,7 @@ interface ForegroundParallelRunInput {
 	taskTexts: string[];
 	agents: AgentConfig[];
 	ctx: ExtensionContext;
+	state: SubagentState;
 	intercomEvents: IntercomEventBus;
 	signal: AbortSignal;
 	runId: string;
@@ -2237,6 +2291,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			maxSubagentDepth: input.maxSubagentDepths[index],
 			controlConfig: input.controlConfig,
 			onControlEvent: input.onControlEvent,
+			onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, index, result }),
 			intercomSessionName: input.childIntercomTarget?.(task.agent, index),
 			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 			nestedRoute: input.foregroundControl?.nestedRoute,
@@ -2526,6 +2581,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			taskTexts,
 			agents,
 			ctx,
+			state: deps.state,
 			intercomEvents: deps.pi.events,
 			signal,
 			runId,
@@ -2862,6 +2918,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		skills: effectiveSkills,
 		acceptance: params.acceptance,
 		acceptanceContext: { mode: "single" },
+		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, index: 0, result }),
 		timeoutMs: data.timeoutMs,
 		deadlineAt,
 		turnBudget: data.turnBudget,

@@ -777,6 +777,13 @@ export interface ForegroundResumeChild {
 	index: number;
 	sessionFile?: string;
 	status: SubagentResultStatus;
+	exitCode?: number;
+	finalOutput?: string;
+	artifactPaths?: ArtifactPaths;
+	transcriptPath?: string;
+	transcriptError?: string;
+	detachedReason?: string;
+	updatedAt?: number;
 }
 
 export interface ForegroundResumeRun {
@@ -877,6 +884,7 @@ export interface RunSyncOptions {
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
+	onDetachedExit?: (result: SingleResult) => void;
 	controlConfig?: ResolvedControlConfig;
 	intercomSessionName?: string;
 	orchestratorIntercomTarget?: string;

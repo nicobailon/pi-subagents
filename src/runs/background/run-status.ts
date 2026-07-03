@@ -6,7 +6,7 @@ import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunT
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
@@ -78,6 +78,80 @@ function formatSteeringSummary(input: { steerCount?: number; lastSteerAt?: numbe
 	if (input.steerCount !== undefined) parts.push(`${input.steerCount} steer${input.steerCount === 1 ? "" : "s"}`);
 	if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt)) parts.push(`last ${new Date(input.lastSteerAt).toISOString()}`);
 	return parts.length ? parts.join(", ") : undefined;
+}
+
+function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][number]): string {
+	const outputPath = child.artifactPaths?.outputPath;
+	if (outputPath && fs.existsSync(outputPath)) {
+		try {
+			const artifactOutput = fs.readFileSync(outputPath, "utf-8").trim();
+			if (artifactOutput) return artifactOutput;
+		} catch {
+			// Fall back to the remembered snapshot below.
+		}
+	}
+	return child.finalOutput ?? "";
+}
+
+function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
+	const lines = [
+		`Run: ${run.runId}`,
+		"State: remembered foreground",
+		`Mode: ${run.mode}`,
+		`Updated: ${new Date(run.updatedAt).toISOString()}`,
+		`Cwd: ${run.cwd}`,
+	];
+	for (const child of run.children) {
+		const output = rememberedForegroundChildOutput(child).trim().split(/\r?\n/).find((line) => line.trim());
+		const parts = [
+			`${child.index + 1}. ${child.agent} ${child.status}`,
+			child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
+			child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
+			output ? `output: ${output.slice(0, 160)}` : undefined,
+		].filter(Boolean);
+		lines.push(parts.join(", "));
+		if (child.sessionFile) lines.push(`  Session: ${child.sessionFile}`);
+		if (child.transcriptPath) lines.push(`  Transcript: ${child.transcriptPath}`);
+		if (child.artifactPaths?.outputPath) lines.push(`  Output: ${child.artifactPaths.outputPath}`);
+		if (child.transcriptError) lines.push(`  Transcript warning: ${child.transcriptError}`);
+	}
+	lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
+	if (run.children.length === 1) lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", view: "transcript" })`);
+	else lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", index: 0, view: "transcript" })`);
+	const resumable = run.children.find((child) => child.status !== "detached" && hasExistingSessionFile(child.sessionFile));
+	if (resumable) {
+		lines.push(run.children.length === 1
+			? `Revive: subagent({ action: "resume", id: "${run.runId}", message: "..." })`
+			: `Revive child: subagent({ action: "resume", id: "${run.runId}", index: ${resumable.index}, message: "..." })`);
+	} else if (run.children.some((child) => child.status === "detached")) {
+		lines.push("Recovery: child detached for intercom coordination; status will show recovered output after the child exits when Pi can observe it.");
+	} else {
+		lines.push("Resume: unavailable; no child session file was persisted.");
+	}
+	return lines.join("\n");
+}
+
+function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options: { index?: number; lines?: number }): string {
+	let index = options.index;
+	if (index !== undefined && !Number.isInteger(index)) throw new Error("Transcript index must be an integer.");
+	if (index === undefined && run.children.length === 1) index = 0;
+	if (index === undefined) return `Transcript view requires index for foreground run '${run.runId}' with ${run.children.length} children.`;
+	if (index < 0 || index >= run.children.length) throw new Error(`Transcript index ${index} is out of range for ${run.children.length} foreground children.`);
+	const child = run.children[index]!;
+	const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
+	const outputLines = rememberedForegroundChildOutput(child).split(/\r?\n/).filter((line) => line.trim()).slice(-lineLimit);
+	const lines = [
+		`Run: ${run.runId}`,
+		`State: ${child.status}`,
+		`Child: ${index} (${child.agent})`,
+		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
+		child.transcriptPath ? `Transcript: ${child.transcriptPath}` : undefined,
+		child.artifactPaths?.outputPath ? `Output: ${child.artifactPaths.outputPath}` : undefined,
+	].filter((line): line is string => Boolean(line));
+	lines.push("Result transcript tail:");
+	if (outputLines.length === 0) lines.push("  (no recovered final output available yet)");
+	else for (const line of outputLines) lines.push(`  ${line}`);
+	return lines.join("\n");
 }
 
 function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): string {
@@ -163,6 +237,20 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const requestedId = params.id ?? params.runId;
 		if (!params.dir && requestedId) {
 			const resolved = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
+			if (resolved?.kind === "foreground") {
+				const run = deps.state?.foregroundRuns?.get(resolved.id);
+				if (run) {
+					try {
+						return {
+							content: [{ type: "text", text: params.view === "transcript" ? formatRememberedForegroundTranscript(run, { index: params.index, lines: params.lines }) : formatRememberedForegroundStatus(run) }],
+							details: { mode: "single", results: [] },
+						};
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+					}
+				}
+			}
 			if (resolved?.kind === "nested") {
 				reconcileNestedAsyncDescendants(resolved.match.route, { resultsDir, kill: deps.kill, now: deps.now });
 				const refreshed = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });

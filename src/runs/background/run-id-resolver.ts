@@ -28,7 +28,8 @@ function exactAsyncLocation(id: string, asyncDirRoot: string, resultsDir: string
 }
 
 function foregroundIds(state: SubagentState | undefined): string[] {
-	return state ? [...state.foregroundControls.keys()] : [];
+	if (!state) return [];
+	return [...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])])];
 }
 
 function nestedScopeFromState(state: SubagentState | undefined): NestedRunResolutionScope | undefined {
@@ -57,7 +58,7 @@ export function resolveSubagentRunId(id: string, deps: ResolveSubagentRunIdDeps 
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
 
 	const nestedScope = deps.nested ?? nestedScopeFromState(deps.state);
-	if (deps.state?.foregroundControls.has(id)) return { kind: "foreground", id };
+	if (deps.state?.foregroundControls.has(id) || deps.state?.foregroundRuns?.has(id)) return { kind: "foreground", id };
 	const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
 	if (exactAsync) return { kind: "async", id, location: exactAsync };
 	const exactNested = findNestedRunMatchesById(id, nestedScope ? { scope: nestedScope } : {});

@@ -744,11 +744,6 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			cleanupTempDir(tempDir);
-			if (detached) {
-				finish(-2);
-				return;
-			}
-			processClosed = true;
 			if (buf.trim()) processLine(buf);
 			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
 			if (!result.error && assistantError) result.error = assistantError;
@@ -757,6 +752,30 @@ async function runSingleAttempt(
 				result.error = stderrBuf.trim();
 			}
 			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			if (detached) {
+				result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
+				progress.status = result.exitCode === 0 ? "completed" : "failed";
+				progress.durationMs = Date.now() - startTime;
+				if (result.error) progress.error = result.error;
+				result.progressSummary = {
+					toolCount: progress.toolCount,
+					tokens: progress.tokens,
+					durationMs: progress.durationMs,
+				};
+				const finalOutput = getFinalOutput(result.messages);
+				result.finalOutput = finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+				if (result.artifactPaths && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
+					try {
+						writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
+					} catch {
+						// Detached children may outlive test/temp cleanup; recovered status is best-effort.
+					}
+				}
+				options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
+				finish(-2);
+				return;
+			}
+			processClosed = true;
 			finish(finalCode);
 		});
 		proc.on("error", (error) => {

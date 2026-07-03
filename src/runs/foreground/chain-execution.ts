@@ -145,6 +145,7 @@ interface ParallelChainRunInput {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	onDetachedExit?: (index: number, result: SingleResult) => void;
 	globalSemaphore?: Semaphore;
 }
 
@@ -313,6 +314,9 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
+				onDetachedExit: input.onDetachedExit
+					? (result) => input.onDetachedExit?.(input.globalTaskIndex + taskIndex, result)
+					: undefined,
 				onUpdate: input.onUpdate
 					? (progressUpdate) => {
 						const stepResults = progressUpdate.details?.results || [];
@@ -422,6 +426,7 @@ interface ChainExecutionParams {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	onDetachedExit?: (index: number, result: SingleResult) => void;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
 }
@@ -460,6 +465,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		onUpdate,
 		onControlEvent,
 		controlConfig,
+		onDetachedExit,
 		childIntercomTarget,
 		orchestratorIntercomTarget,
 		foregroundControl,
@@ -711,6 +717,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					timeoutMs: params.timeoutMs,
 					deadlineAt,
 					turnBudget: params.turnBudget,
+					onDetachedExit,
 					globalSemaphore,
 				});
 				globalTaskIndex += step.parallel.length;
@@ -927,6 +934,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
+				onDetachedExit,
 				globalSemaphore,
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
@@ -1090,10 +1098,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
 			}
 			const maxSubagentDepth = resolveChildMaxSubagentDepth(params.maxSubagentDepth, agentConfig.maxSubagentDepth);
+			const childIndex = globalTaskIndex;
 			const interruptController = new AbortController();
 			if (foregroundControl) {
 				foregroundControl.currentAgent = seqStep.agent;
-				foregroundControl.currentIndex = globalTaskIndex;
+				foregroundControl.currentIndex = childIndex;
 				foregroundControl.currentActivityState = undefined;
 				foregroundControl.updatedAt = Date.now();
 				foregroundControl.interrupt = () => {
@@ -1116,11 +1125,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 				intercomEvents,
 				runId,
-				index: globalTaskIndex,
-				sessionDir: sessionDirForIndex(globalTaskIndex),
-				sessionFile: sessionFileForTask?.(seqStep.agent, globalTaskIndex)
-					?? sessionFileForIndex?.(globalTaskIndex),
-				thinkingOverride: thinkingOverrideForTask?.(seqStep.agent, globalTaskIndex),
+				index: childIndex,
+				sessionDir: sessionDirForIndex(childIndex),
+				sessionFile: sessionFileForTask?.(seqStep.agent, childIndex)
+					?? sessionFileForIndex?.(childIndex),
+				thinkingOverride: thinkingOverrideForTask?.(seqStep.agent, childIndex),
 				share: shareEnabled,
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
@@ -1129,7 +1138,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				maxSubagentDepth,
 				controlConfig,
 				onControlEvent,
-				intercomSessionName: childIntercomTarget?.(seqStep.agent, globalTaskIndex),
+				intercomSessionName: childIntercomTarget?.(seqStep.agent, childIndex),
 				orchestratorIntercomTarget,
 				nestedRoute: params.nestedRoute,
 				modelOverride: effectiveModel,
@@ -1143,6 +1152,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
+				onDetachedExit: onDetachedExit
+					? (result) => onDetachedExit(childIndex, result)
+					: undefined,
 				onUpdate: onUpdate
 					? (p) => {
 						const stepResults = p.details?.results || [];
@@ -1150,7 +1162,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						if (foregroundControl && stepProgress.length > 0) {
 							const current = stepProgress[0];
 							foregroundControl.currentAgent = seqStep.agent;
-							foregroundControl.currentIndex = globalTaskIndex;
+							foregroundControl.currentIndex = childIndex;
 							foregroundControl.currentActivityState = current?.activityState;
 							foregroundControl.lastActivityAt = current?.lastActivityAt;
 							foregroundControl.currentTool = current?.currentTool;
@@ -1178,7 +1190,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 									steps: chainSteps,
 									results: results.concat(stepResults),
 									currentStepIndex: stepIndex,
-									currentFlatIndex: globalTaskIndex,
+									currentFlatIndex: childIndex,
 									dynamicChildren,
 									dynamicGroupStatuses,
 								}),
@@ -1187,7 +1199,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					}
 					: undefined,
 			});
-			if (foregroundControl?.currentIndex === globalTaskIndex) {
+			if (foregroundControl?.currentIndex === childIndex) {
 				foregroundControl.interrupt = undefined;
 				foregroundControl.updatedAt = Date.now();
 			}
@@ -1201,13 +1213,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			if (r.interrupted) {
 				return {
 					content: [{ type: "text", text: `Chain paused after interrupt at step ${stepIndex + 1} (${r.agent}). Waiting for explicit next action.` }],
-					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - 1 })),
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
 				};
 			}
 			if (r.detached) {
 				return {
 					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${r.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
-					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - 1 })),
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
 				};
 			}
 
@@ -1218,7 +1230,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				});
 				return {
 					content: [{ type: "text", text: summary }],
-					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - 1 })),
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
 					isError: true,
 				};
 			}
