@@ -21,6 +21,7 @@
 - Added native prompt workflow commands: `/prompt-workflow` runs a prompt template through a subagent, and `/chain-prompts` turns prompt templates into native subagent chain steps.
 
 ### Fixed
+- Let foreground sequential chain tool calls launch directly when `clarify` is omitted; use `clarify: true` to opt into the clarify UI. Addresses #385.
 - Removed companion-package recommendation messages from session start, `subagent({ action: "list" })`, and `/subagents-doctor`, addressing #381.
 - Scope async subagent completion notifications to the exact owning Pi session so another session in the same repo no longer receives result notices.
 - Harden scheduled-run timestamp parsing and persisted store validation so ambiguous absolute times and corrupted job records fail clearly instead of being normalized or dropped.

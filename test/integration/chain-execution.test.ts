@@ -223,6 +223,69 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(result.details.totalCost, { inputTokens: 200, outputTokens: 100, costUsd: 0.002 });
 	});
 
+	it("runs a foreground sequential chain without clarify UI when clarify is omitted", async () => {
+		mockPi.onCall({ output: "Analysis complete" });
+		const agents = [makeAgent("analyst"), makeAgent("reporter")];
+		let customCalls = 0;
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			hasUI: true,
+			ui: {
+				custom: async () => {
+					customCalls += 1;
+					return undefined;
+				},
+			},
+		};
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "analyst", task: "Analyze the code" }, { agent: "reporter" }],
+				agents,
+				{ ctx, clarify: undefined },
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Chain cancelled/);
+		assert.equal(result.details.results.length, 2);
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(customCalls, 0);
+	});
+
+	it("uses clarify UI for a foreground sequential chain when clarify is true", async () => {
+		mockPi.onCall({ output: "Analysis complete" });
+		const agents = [makeAgent("analyst"), makeAgent("reporter")];
+		let customCalls = 0;
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			hasUI: true,
+			ui: {
+				custom: async () => {
+					customCalls += 1;
+					return {
+						confirmed: true,
+						templates: ["Clarified analysis", "Report on {previous}"],
+						behaviorOverrides: [],
+					};
+				},
+			},
+		};
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "analyst", task: "Analyze the code" }, { agent: "reporter" }],
+				agents,
+				{ ctx, clarify: true },
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.equal(customCalls, 1);
+		assert.equal(mockPi.callCount(), 2);
+		assert.match(readCallArgs(0).at(-1) ?? "", /Clarified analysis/);
+	});
+
 	it("preserves completed chain results and marks the timed-out current step", async () => {
 		mockPi.onCall({ matchArgIncludes: "Quick first step", output: "first done" });
 		mockPi.onCall({ matchArgIncludes: "Slow second step", delay: 10000 });

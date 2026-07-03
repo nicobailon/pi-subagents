@@ -541,7 +541,7 @@ The `oracle` and `worker` builtins are designed for an explicit decision loop. A
 
 ## Clarify and launch UI
 
-Chains open a clarify UI by default so you can preview and edit the workflow before it runs. Single and parallel tool calls can opt into the same flow with `clarify: true`; slash commands launch directly.
+Tool calls launch directly by default. Set `clarify: true` on single, parallel, or chain runs when you want to preview and edit the workflow before it runs; slash commands launch directly.
 
 Common clarify keys:
 
@@ -1053,7 +1053,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
-| `clarify` | boolean | true for chains | Show TUI preview/edit flow. |
+| `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
 | `timeoutMs` / `maxRuntimeMs` | number | none | Optional run-level max runtime in milliseconds for foreground and async/background runs. |
