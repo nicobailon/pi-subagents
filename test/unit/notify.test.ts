@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
-function createPi() {
+function createPi(currentSessionId = "session-1") {
 	const events = new EventEmitter();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
 	const pi = {
@@ -14,7 +14,7 @@ function createPi() {
 		},
 	};
 
-	registerSubagentNotify(pi as never);
+	registerSubagentNotify(pi as never, { currentSessionId });
 
 	return { events, sent };
 }
@@ -30,6 +30,7 @@ describe("registerSubagentNotify", () => {
 			summary: "",
 			exitCode: 0,
 			timestamp: 123,
+			sessionId: "session-1",
 		});
 
 		assert.equal(sent.length, 1);
@@ -56,6 +57,7 @@ describe("registerSubagentNotify", () => {
 			timestamp: 456,
 			taskIndex: 1,
 			totalTasks: 3,
+			sessionId: "session-1",
 		});
 
 		assert.equal(sent.length, 1);
@@ -80,6 +82,7 @@ describe("registerSubagentNotify", () => {
 			exitCode: 0,
 			timestamp: 456,
 			sessionFile: "/tmp/session.jsonl",
+			sessionId: "session-1",
 		});
 
 		assert.deepEqual(sent, [{
@@ -102,6 +105,7 @@ describe("registerSubagentNotify", () => {
 			state: "paused",
 			summary: "Paused after interrupt. Waiting for explicit next action.",
 			timestamp: 789,
+			sessionId: "session-1",
 		});
 
 		assert.equal(sent.length, 1);
@@ -113,5 +117,28 @@ describe("registerSubagentNotify", () => {
 			},
 			options: { triggerTurn: true },
 		});
+	});
+
+	it("ignores completions for other or missing session ids", () => {
+		const { events, sent } = createPi("session-owner");
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "notify-other-session",
+			agent: "worker",
+			success: true,
+			summary: "Other done",
+			timestamp: 100,
+			sessionId: "session-other",
+		});
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "notify-sessionless",
+			agent: "worker",
+			success: true,
+			summary: "Legacy cwd-scoped done",
+			timestamp: 101,
+			cwd: "/repo",
+		});
+
+		assert.deepEqual(sent, []);
 	});
 });

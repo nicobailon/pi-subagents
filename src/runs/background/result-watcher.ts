@@ -118,8 +118,7 @@ export function createResultWatcher(
 		if (!fsApi.existsSync(resultPath)) return;
 		try {
 			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
-			if (data.sessionId && data.sessionId !== state.currentSessionId) return;
-			if (!data.sessionId && data.cwd && (!state.baseCwd || data.cwd !== state.baseCwd)) return;
+			if (typeof data.sessionId !== "string" || data.sessionId !== state.currentSessionId) return;
 
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 			const hasExplicitNestedChildren = data.nestedChildren !== undefined;
