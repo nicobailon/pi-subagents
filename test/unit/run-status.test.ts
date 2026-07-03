@@ -320,6 +320,128 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("scopes fleet active-run discovery to the current session", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-fleet-session-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const currentDir = path.join(asyncRoot, "run-current");
+			const otherDir = path.join(asyncRoot, "run-other");
+			fs.mkdirSync(currentDir, { recursive: true });
+			fs.mkdirSync(otherDir, { recursive: true });
+			fs.writeFileSync(path.join(currentDir, "status.json"), JSON.stringify({
+				runId: "run-current",
+				sessionId: "session-current",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			fs.writeFileSync(path.join(otherDir, "status.json"), JSON.stringify({
+				runId: "run-other",
+				sessionId: "session-other",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "reviewer", status: "running", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			const state = {
+				currentSessionId: "session-current",
+				asyncJobs: new Map(),
+				foregroundControls: new Map(),
+			} as unknown as SubagentState;
+
+			const result = inspectSubagentStatus({ view: "fleet" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				state,
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /run-current/);
+			assert.doesNotMatch(text, /run-other/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses transcript reads for async runs owned by another session", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-session-scope-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-other-session");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "OTHER_SESSION_SENTINEL", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-other-session",
+				sessionId: "session-other",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				currentStep: 0,
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			const state = {
+				currentSessionId: "session-current",
+				asyncJobs: new Map(),
+				foregroundControls: new Map(),
+			} as unknown as SubagentState;
+
+			const result = inspectSubagentStatus({ id: "run-other-session", view: "transcript" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				state,
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, true);
+			assert.match(text, /owned by the current session/);
+			assert.doesNotMatch(text, /OTHER_SESSION_SENTINEL/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not fall back to aggregate result output for an explicit completed child index", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-index-fallback-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(path.join(asyncRoot, "run-result-index-fallback"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(path.join(resultsDir, "run-result-index-fallback.json"), JSON.stringify({
+				id: "run-result-index-fallback",
+				success: true,
+				summary: "AGGREGATE_SENTINEL",
+				results: [
+					{ agent: "worker", output: "first child" },
+					{ agent: "reviewer" },
+				],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-result-index-fallback", view: "transcript", index: 1 }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /Child: 1 \(reviewer\)/);
+			assert.match(text, /\(no transcript lines available yet\)/);
+			assert.doesNotMatch(text, /AGGREGATE_SENTINEL/);
+			assert.doesNotMatch(text, /first child/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shows nested runs under owning steps with exact status hints", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-nested-root-"));
 		const route = createNestedRoute("run-nested-root");

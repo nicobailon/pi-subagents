@@ -305,6 +305,7 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 	try {
 		asyncRuns = listAsyncRuns(deps.asyncDirRoot ?? ASYNC_DIR, {
 			states: ["queued", "running"],
+			sessionId: deps.state?.currentSessionId ?? undefined,
 			resultsDir: deps.resultsDir ?? RESULTS_DIR,
 			kill: deps.kill,
 			now: deps.now,
@@ -497,7 +498,9 @@ export function formatAsyncResultTranscript(data: {
 	if (index === undefined && children.length === 1) index = 0;
 	if (index !== undefined && (index < 0 || index >= children.length)) throw new Error(`Transcript index ${index} is out of range for ${children.length} result child${children.length === 1 ? "" : "ren"}.`);
 	const child = index !== undefined ? children[index] : undefined;
-	const output = child?.output ?? child?.summary ?? data.output ?? data.summary ?? "";
+	const output = index !== undefined
+		? child?.output ?? child?.summary ?? (children.length === 1 ? data.output ?? data.summary : undefined) ?? ""
+		: data.output ?? data.summary ?? "";
 	const transcriptLines = output.split(/\r?\n/).slice(-lineLimit);
 	const sessionFile = child?.sessionFile ?? data.sessionFile;
 	const lines = [

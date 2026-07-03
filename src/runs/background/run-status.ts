@@ -106,6 +106,7 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDeps = {}): AgentToolResult<Details> {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const currentSessionId = deps.state?.currentSessionId ?? undefined;
 	if (params.view && params.view !== "fleet" && params.view !== "transcript") {
 		return {
 			content: [{ type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` }],
@@ -125,7 +126,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			};
 		}
 		try {
-			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], resultsDir, kill: deps.kill, now: deps.now });
+			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now });
 			if (params.view === "transcript") {
 				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
 				return {
@@ -208,6 +209,13 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
 			if (params.view === "transcript") {
+				if (currentSessionId && status.sessionId !== currentSessionId) {
+					return {
+						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
+						isError: true,
+						details: { mode: "single", results: [] },
+					};
+				}
 				try {
 					return { content: [{ type: "text", text: formatAsyncRunTranscript(status, asyncDir, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
 				} catch (error) {
