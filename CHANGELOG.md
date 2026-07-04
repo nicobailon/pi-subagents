@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Suppress stale native supervisor-channel asks after replies, expiry, or inactive child runs, and clean cancelled child requests so `subagent_supervisor` and visible intercom notices stay aligned.
+
 ## [0.33.1] - 2026-07-03
 
 ### Fixed
