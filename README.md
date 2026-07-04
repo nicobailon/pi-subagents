@@ -1154,6 +1154,14 @@ Controls the parent-facing `subagent` tool description registered at startup. `f
 
 Makes top-level calls use background execution when the request does not explicitly set `async`. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
+### `waitTool`
+
+```json
+{ "waitTool": { "enabled": false } }
+```
+
+Keeps the `wait` tool registered but makes it return immediately instead of blocking on active async runs. Use this in interactive sessions where background completions should arrive as notifications while the main conversation stays steerable. The default is enabled. You can also set `"waitTool": false`; set `PI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. Invalid `waitTool` config or env values fail instead of being coerced.
+
 ### `forceTopLevelAsync`
 
 ```json

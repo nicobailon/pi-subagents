@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { waitForSubagents, type WaitDeps } from "../../src/runs/background/wait.ts";
+import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type WaitDeps } from "../../src/runs/background/wait.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: string, extra: object = {}): void {
@@ -62,6 +62,41 @@ function baseDeps(root: string, state: SubagentState, overrides: Partial<WaitDep
 }
 
 describe("wait tool", () => {
+	it("resolves waitTool config and environment overrides strictly", () => {
+		assert.deepEqual(resolveWaitToolConfig(undefined, {}), { enabled: true });
+		assert.deepEqual(resolveWaitToolConfig(false, {}), { enabled: false });
+		assert.deepEqual(resolveWaitToolConfig({ enabled: false }, {}), { enabled: false });
+		assert.deepEqual(resolveWaitToolConfig({ enabled: false }, { [WAIT_TOOL_ENABLED_ENV]: "true" }), { enabled: true });
+		assert.deepEqual(resolveWaitToolConfig(true, { [WAIT_TOOL_ENABLED_ENV]: "off" }), { enabled: false });
+		assert.throws(() => resolveWaitToolConfig("false" as never, {}), /config\.waitTool/);
+		assert.throws(() => resolveWaitToolConfig({ enabled: "false" } as never, {}), /config\.waitTool\.enabled/);
+		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_ENABLED_ENV]: "maybe" }), /PI_SUBAGENT_WAIT_TOOL_ENABLED/);
+	});
+
+	it("returns immediately without polling when waitTool is disabled", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-disabled-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+			let slept = false;
+			const result = await waitForSubagents({}, undefined, baseDeps(root, state, {
+				enabled: false,
+				sleep: async () => {
+					slept = true;
+					throw new Error("disabled wait should not sleep");
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /disabled/i);
+			assert.match(textOf(result), /without blocking/i);
+			assert.equal(slept, false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("returns immediately when there is nothing to wait for", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-empty-"));
 		try {

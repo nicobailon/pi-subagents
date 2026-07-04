@@ -47,6 +47,7 @@ import {
 	SUBAGENT_RESULT_INTERCOM_EVENT,
 	type Details,
 	type SubagentState,
+	type WaitToolConfig,
 } from "../../shared/types.ts";
 import { formatDuration } from "../../shared/formatters.ts";
 
@@ -56,6 +57,41 @@ const ACTIVE_STATES: ReadonlyArray<AsyncRunSummary["state"]> = ["queued", "runni
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const MIN_POLL_INTERVAL_MS = 250;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+
+export const WAIT_TOOL_ENABLED_ENV = "PI_SUBAGENT_WAIT_TOOL_ENABLED";
+
+export interface ResolvedWaitToolConfig {
+	enabled: boolean;
+}
+
+const WAIT_TOOL_TRUE_VALUES = new Set(["1", "true", "yes", "on", "enabled"]);
+const WAIT_TOOL_FALSE_VALUES = new Set(["0", "false", "no", "off", "disabled"]);
+
+function parseWaitToolEnabledEnv(value: string | undefined): boolean | undefined {
+	if (value === undefined) return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (WAIT_TOOL_TRUE_VALUES.has(normalized)) return true;
+	if (WAIT_TOOL_FALSE_VALUES.has(normalized)) return false;
+	throw new Error(`${WAIT_TOOL_ENABLED_ENV} must be one of true/false, 1/0, yes/no, on/off, or enabled/disabled.`);
+}
+
+function configWaitToolEnabled(config: unknown): boolean | undefined {
+	if (config === undefined) return undefined;
+	if (typeof config === "boolean") return config;
+	if (!config || typeof config !== "object" || Array.isArray(config)) {
+		throw new Error("config.waitTool must be a boolean or an object with optional enabled boolean.");
+	}
+	const enabled = (config as { enabled?: unknown }).enabled;
+	if (enabled === undefined) return undefined;
+	if (typeof enabled !== "boolean") throw new Error("config.waitTool.enabled must be a boolean.");
+	return enabled;
+}
+
+export function resolveWaitToolConfig(config?: WaitToolConfig, env: Record<string, string | undefined> = process.env): ResolvedWaitToolConfig {
+	return {
+		enabled: parseWaitToolEnabledEnv(env[WAIT_TOOL_ENABLED_ENV]) ?? configWaitToolEnabled(config) ?? true,
+	};
+}
 
 export interface WaitParams {
 	/** Optional run id/prefix to wait for. When omitted, waits across every active run in this session. */
@@ -83,6 +119,8 @@ export interface WaitDeps {
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	pollIntervalMs?: number;
+	/** False makes the tool return immediately without blocking active async runs. */
+	enabled?: boolean;
 	/** Injectable sleep for tests. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	/**
@@ -228,6 +266,9 @@ export async function waitForSubagents(
 	signal: AbortSignal | undefined,
 	deps: WaitDeps,
 ): Promise<AgentToolResult<Details>> {
+	if (deps.enabled === false) {
+		return result("Wait tool is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background subagent runs. Active runs keep going, and you can inspect them with subagent({ action: \"status\" }) or wait for completion notifications.");
+	}
 	const now = deps.now ?? Date.now;
 	const pollIntervalMs = Math.max(MIN_POLL_INTERVAL_MS, deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
 	const timeoutMs = params.timeoutMs !== undefined && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;

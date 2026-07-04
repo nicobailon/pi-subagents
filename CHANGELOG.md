@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added `waitTool` config and `PI_SUBAGENT_WAIT_TOOL_ENABLED` so interactive users can keep the `wait` tool registered while making it return immediately instead of blocking on background subagents.
+
 ### Fixed
 - Suppress stale native supervisor-channel asks after replies, expiry, or inactive child runs, and clean cancelled child requests so `subagent_supervisor` and visible intercom notices stay aligned.
 

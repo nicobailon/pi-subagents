@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -11,6 +14,7 @@ function parentToolEnv(): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
 	delete env[SUBAGENT_FANOUT_CHILD_ENV];
+	delete env[WAIT_TOOL_ENABLED_ENV];
 	return env;
 }
 
@@ -109,6 +113,57 @@ describe("subagent extension child mode", () => {
 			],
 			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
 		);
+	});
+
+	it("honors waitTool disabled config for the registered wait tool", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
+		try {
+			const configDir = path.join(agentDir, "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ waitTool: { enabled: false } }), "utf-8");
+
+			const script = String.raw`
+				import registerSubagentExtension from "./src/extension/index.ts";
+				const events = { on() { return () => {}; }, emit() {} };
+				let waitTool;
+				const fakePi = new Proxy({
+					events,
+					registerTool(tool) { if (tool.name === "wait") waitTool = tool; },
+					registerCommand() {},
+					registerShortcut() {},
+					registerMessageRenderer() {},
+					sendMessage() {},
+					getSessionName() { return undefined; },
+				}, {
+					get(target, prop) {
+						if (prop in target) return target[prop];
+						return () => undefined;
+					},
+				});
+				registerSubagentExtension(fakePi);
+				if (!waitTool) throw new Error("wait tool not registered");
+				const result = await waitTool.execute("wait-disabled", {}, new AbortController().signal, undefined, {});
+				process.stdout.write(JSON.stringify(result.content[0].text));
+			`;
+
+			const env = parentToolEnv();
+			env.PI_CODING_AGENT_DIR = agentDir;
+			const output = execFileSync(
+				process.execPath,
+				[
+					"--experimental-transform-types",
+					"--import",
+					"./test/support/register-loader.mjs",
+					"--input-type=module",
+					"--eval",
+					script,
+				],
+				{ cwd: projectRoot, env, encoding: "utf-8" },
+			);
+			assert.match(JSON.parse(output) as string, /disabled/i);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
 	});
 
 	it("returns before registering anything for non-fanout children", () => {
