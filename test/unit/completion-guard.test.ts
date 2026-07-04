@@ -52,6 +52,27 @@ test("declared read-only builtin tools suppress implementation-word false positi
 	});
 });
 
+test("read-only issue drafting tasks do not trigger on suggested fix wording", () => {
+	const task = "Draft GitHub issue for pi-subagents bug from current conversation. Include title, environment/context, reproduction steps, actual/expected, logs excerpt, suspected cause, suggested fix. Terse but complete. No tools needed.";
+	const result = evaluateCompletionMutationGuard({
+		agent: "delegate",
+		task,
+		messages: [assistantText("Title: completionGuard false positive\n\nSuggested fix: model read-only intent.")],
+		tools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+	});
+	assert.equal(expectsImplementationMutation("worker", task), false);
+	assert.equal(
+		expectsImplementationMutation("worker", "Draft GitHub issue for a bug. Include suspected cause and suggested fix."),
+		false,
+	);
+});
+
 test("omitted, empty, bash, unknown, write, and MCP tool capabilities stay conservative", () => {
 	const base = {
 		agent: "architect",
@@ -109,7 +130,19 @@ test("worker implementation verbs win over investigative wording", () => {
 	assert.equal(expectsImplementationMutation("worker", "Investigate why the worker did not edit files and fix it"), true);
 	assert.equal(expectsImplementationMutation("worker", "Research the current code path and patch the bug"), true);
 	assert.equal(expectsImplementationMutation("worker", "Fix the bug where no edits were made"), true);
+	assert.equal(expectsImplementationMutation("worker", "Fix lint"), true);
+	assert.equal(expectsImplementationMutation("worker", "Fix the build"), true);
+	assert.equal(expectsImplementationMutation("worker", "Fix TypeScript errors"), true);
+	assert.equal(expectsImplementationMutation("worker", "Fix CI"), true);
+	assert.equal(expectsImplementationMutation("worker", "Fix the failing test"), true);
+	assert.equal(expectsImplementationMutation("worker", "Patch the cold start test"), true);
 	assert.equal(expectsImplementationMutation("worker", "Implement the fix and return findings."), true);
+});
+
+test("non-worker implementation tasks still expect mutation", () => {
+	assert.equal(expectsImplementationMutation("delegate", "Fix the bug where no edits were made"), true);
+	assert.equal(expectsImplementationMutation("delegate", "Apply the suggested fix to src/runs/shared/completion-guard.ts"), true);
+	assert.equal(expectsImplementationMutation("worker", "Draft a GitHub issue, then implement the fix"), true);
 });
 
 test("worker edit intent covers common docs, config, and source tasks", () => {

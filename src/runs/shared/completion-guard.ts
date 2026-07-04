@@ -32,23 +32,41 @@ const SCOPED_NO_EDIT_CONSTRAINT_PATTERNS = [
 	/\bdo not modify\s+unrelated files?\b/i,
 ];
 
+const NO_TOOL_INTENT_PATTERNS = [
+	/\bno tools? needed\b/i,
+	/\bno tools? required\b/i,
+	/\bwithout using tools\b/i,
+	/\bdo not use tools\b/i,
+	/\bdon't use tools\b/i,
+];
+
+const READ_ONLY_DELIVERABLE_PATTERNS = [
+	/\b(?:draft|write|compose|prepare|produce)\s+(?:(?:a|an|the)\s+)?(?:github\s+)?(?:issue|bug report|issue draft|issue body|proposal|plan|report|summary|findings?|analysis|recommendations?)\b/i,
+	/\b(?:issue|bug report)\s+(?:draft|body|template)\b/i,
+	/\b(?:return|provide|produce)\s+(?:text|markdown|answer|findings?|recommendations?)\s+only\b/i,
+];
+
 const RESEARCH_AGENT_PATTERNS = [
 	/\binvestigate\b/i,
 	/\bscout\b/i,
 	/\bresearch(?:er)?\b/i,
 ];
 
+const FIX_OR_PATCH_IMPLEMENTATION_PATTERN = /\b(?:fix|patch)\s+(?:(?:it|this|that|them|each|any|all|these|those)\b|(?:(?:a|an|the|any|all)\s+)?(?:(?:failing|failed|broken|flaky|red|cold|start|current|existing|reported|approved|known|regression|unit|integration|e2e|source|typescript|type-?script|ts|type-?check|compiler)\s+)*(?:bug|defect|issues?|problems?|failures?|regressions?|tests?|errors?|items?|typos?|code|source|implementation|component|function|module|class|method|logic|file|files|readme|docs?|changelog|package\.json|config|manifest|extension|prompt|command|lint(?:ing)?|build|ci|type-?check|type\s+checking)\b)/i;
+
 const WORKER_IMPLEMENTATION_PATTERNS = [
-	/\b(?:implement|fix|edit|modify|patch|refactor|delete)\b/i,
+	/\b(?:implement|edit|modify|refactor|delete)\b/i,
+	FIX_OR_PATCH_IMPLEMENTATION_PATTERN,
 	/\b(?:update|add|remove|replace|create)\b(?!\s+(?:(?:a|an|the)\s+)?(?:report|summary|findings?)(?:\b|$))/i,
-	/\bapply\s+(?:the\s+)?(?:changes?|fix(?:es)?|patch)\b/i,
+	/\bapply\s+(?:the\s+)?(?:(?:suggested|proposed|recommended)\s+)?(?:changes?|fix(?:es)?|patch)\b/i,
 	/\bmake\s+(?:the\s+)?changes\b/i,
 	/\bdo those fixes\b/i,
 ];
 
 const GENERAL_IMPLEMENTATION_PATTERNS = [
-	/\b(?:implement|fix|edit|modify|patch|refactor)\b/i,
-	/\bapply\s+(?:the\s+)?(?:changes?|fix(?:es)?|patch)\b/i,
+	/\b(?:implement|edit|modify|refactor)\b/i,
+	FIX_OR_PATCH_IMPLEMENTATION_PATTERN,
+	/\bapply\s+(?:the\s+)?(?:(?:suggested|proposed|recommended)\s+)?(?:changes?|fix(?:es)?|patch)\b/i,
 	/\bmake\s+(?:the\s+)?changes\b/i,
 	/\bdo those fixes\b/i,
 	/\b(?:update|add|remove|replace|delete|create)\s+(?:the\s+)?(?:file|files|code|source|implementation|test|tests|component|function|module|class|method|logic|import|imports|readme|docs?|changelog|package\.json|config|manifest|extension|prompt|command)\b/i,
@@ -80,6 +98,10 @@ interface CompletionMutationGuardResult {
 	triggered: boolean;
 }
 
+type TaskMutationIntent = { kind: "implementation" } | { kind: "read-only" } | { kind: "unknown" };
+
+type ToolMutationCapability = { kind: "mutation-capable" } | { kind: "read-only" };
+
 function stripFrameworkInstructions(task: string): string {
 	return task
 		.split("\n")
@@ -96,26 +118,40 @@ function stripScopedNoEditConstraints(task: string): string {
 	return stripped;
 }
 
-function declaresOnlyReadOnlyTools(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {
-	return tools !== undefined
-		&& tools.length > 0
-		&& (mcpDirectTools?.length ?? 0) === 0
-		&& tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
+function taskHasExplicitReadOnlyIntent(taskText: string): boolean {
+	return REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText))
+		|| EXPLICIT_NO_EDIT_PATTERNS.some((pattern) => pattern.test(taskText))
+		|| NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
+}
+
+function taskHasReadOnlyDeliverable(taskText: string): boolean {
+	return READ_ONLY_DELIVERABLE_PATTERNS.some((pattern) => pattern.test(taskText));
+}
+
+function toolMutationCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): ToolMutationCapability {
+	if (tools === undefined || tools.length === 0 || (mcpDirectTools?.length ?? 0) > 0) return { kind: "mutation-capable" };
+	return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool)) ? { kind: "read-only" } : { kind: "mutation-capable" };
+}
+
+function classifyTaskMutationIntent(agent: string, task: string): TaskMutationIntent {
+	const taskText = stripFrameworkInstructions(task);
+	const taskTextWithoutScopedConstraints = stripScopedNoEditConstraints(taskText);
+	if (taskHasExplicitReadOnlyIntent(taskTextWithoutScopedConstraints)) return { kind: "read-only" };
+
+	if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent))) return { kind: "read-only" };
+	if (/\breviewer\b/i.test(agent)) {
+		return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText)) ? { kind: "implementation" } : { kind: "read-only" };
+	}
+
+	const workerIntent = agent === "worker" && WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
+	if (workerIntent) return { kind: "implementation" };
+
+	if (GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText))) return { kind: "implementation" };
+	return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints) ? { kind: "read-only" } : { kind: "unknown" };
 }
 
 export function expectsImplementationMutation(agent: string, task: string): boolean {
-	const taskText = stripFrameworkInstructions(task);
-	const taskTextWithoutScopedConstraints = stripScopedNoEditConstraints(taskText);
-	if (REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskTextWithoutScopedConstraints))) return false;
-	if (EXPLICIT_NO_EDIT_PATTERNS.some((pattern) => pattern.test(taskTextWithoutScopedConstraints))) return false;
-
-	if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent))) return false;
-	if (/\breviewer\b/i.test(agent)) return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText));
-
-	const workerIntent = agent === "worker" && WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
-	if (workerIntent) return true;
-
-	return GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
+	return classifyTaskMutationIntent(agent, task).kind === "implementation";
 }
 
 export function hasMutationToolCall(messages: Message[]): boolean {
@@ -135,7 +171,7 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = declaresOnlyReadOnlyTools(input.tools, input.mcpDirectTools)
+	const expectedMutation = toolMutationCapability(input.tools, input.mcpDirectTools).kind === "read-only"
 		? false
 		: expectsImplementationMutation(input.agent, input.task);
 	const attemptedMutation = hasMutationToolCall(input.messages);

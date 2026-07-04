@@ -423,7 +423,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.finalOutput, "Validation report after the patch");
 	});
 
-	it("keeps bash-enabled agents conservative unless completion guard is disabled", async () => {
+	it("keeps bash-enabled implementation tasks conservative unless completion guard is disabled", async () => {
 		mockPi.onCall({ output: "cold start test after patch" });
 		mockPi.onCall({ output: "cold start test after patch" });
 		const agents = [
@@ -431,13 +431,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeAgent("test-runner-optout", { tools: ["read", "grep", "bash", "ls"], completionGuard: false }),
 		];
 
-		const withoutOptOut = await runSync(tempDir, agents, "test-runner", "Run cold start test after patch", {
+		const withoutOptOut = await runSync(tempDir, agents, "test-runner", "Patch the cold start test", {
 			runId: "guard-bash-conservative",
 		});
 		assert.equal(withoutOptOut.exitCode, 1);
 		assert.match(withoutOptOut.error ?? "", /completed without making edits/);
 
-		const withOptOut = await runSync(tempDir, agents, "test-runner-optout", "Run cold start test after patch", {
+		const withOptOut = await runSync(tempDir, agents, "test-runner-optout", "Patch the cold start test", {
 			runId: "guard-bash-optout",
 		});
 		assert.equal(withOptOut.exitCode, 0);
