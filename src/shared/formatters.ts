@@ -4,10 +4,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Usage, SingleResult } from "./types.ts";
+import type { Usage, SingleResult, Details, ToolCallSummary } from "./types.ts";
 import type { ChainStep } from "./settings.ts";
 import { isDynamicParallelStep, isParallelStep } from "./settings.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
+import { getSingleResultOutput } from "./utils.ts";
 
 /**
  * Format token count with k suffix for large numbers
@@ -130,4 +131,138 @@ export function shortenPath(p: string): string {
 		return `~${p.slice(home.length)}`;
 	}
 	return p;
+}
+
+export interface RichReportInput {
+	details: Details;
+	runId?: string;
+	artifactsDir?: string;
+}
+
+function escapeCodeBlock(text: string): string {
+	return text.replace(/```/g, "\\`\\`\\`");
+}
+
+function renderToolCalls(toolCalls?: ToolCallSummary[]): string {
+	if (!toolCalls || toolCalls.length === 0) return "";
+	const lines = toolCalls.map((tc) => `- \`${tc.expandedText || tc.text}\``);
+	return `**Tool calls**:\n${lines.join("\n")}`;
+}
+
+function renderResultSection(
+	result: SingleResult,
+	label: string,
+): string {
+	const parts: string[] = [];
+
+	const statusIcon = result.exitCode === 0 ? "✅" : "❌";
+	const model = result.model || "(no model)";
+	const progress = result.progress || result.progressSummary;
+	const duration = progress ? formatDuration(progress.durationMs) : "?";
+	const toolCount = progress ? `${progress.toolCount} tools` : "?";
+	const usageStr = formatUsage(result.usage);
+
+	parts.push(`### ${label}`);
+	parts.push(`**Status**: ${statusIcon} | **Model**: ${model} | ${duration} | ${toolCount}${usageStr ? ` | ${usageStr}` : ""}`);
+	parts.push("");
+
+	if (result.task) {
+		parts.push("**Task**:");
+		parts.push("```");
+		parts.push(result.task);
+		parts.push("```");
+		parts.push("");
+	}
+
+	const output = getSingleResultOutput(result);
+	if (output) {
+		parts.push("**Output**:");
+		parts.push("```");
+		parts.push(escapeCodeBlock(output));
+		parts.push("```");
+		parts.push("");
+	}
+
+	const toolCallsSection = renderToolCalls(result.toolCalls);
+	if (toolCallsSection) {
+		parts.push(toolCallsSection);
+		parts.push("");
+	}
+
+	const meta: string[] = [];
+	if (result.savedOutputPath) meta.push(`**Saved to**: \`${shortenPath(result.savedOutputPath)}\``);
+	if (result.sessionFile) meta.push(`**Session**: \`${result.sessionFile}\``);
+	if (result.artifactPaths?.outputPath) meta.push(`**Artifact**: \`${result.artifactPaths.outputPath}\``);
+	if (result.skills?.length) meta.push(`**Skills**: ${result.skills.join(", ")}`);
+	if (meta.length > 0) {
+		parts.push(meta.join("  \n"));
+	}
+
+	return parts.join("\n");
+}
+
+export function buildRichReportMarkdown(input: RichReportInput): string {
+	const { details, runId, artifactsDir } = input;
+	const results = details.results || [];
+	const mode = details.mode;
+
+	const parts: string[] = [];
+	parts.push(`# Subagent report: ${mode}`);
+	parts.push("");
+
+	// Summary
+	const totalDuration = results.reduce((sum, r) => {
+		const p = r.progress || r.progressSummary;
+		if (mode === "chain") return sum + (p?.durationMs || 0);
+		return Math.max(sum, p?.durationMs || 0);
+	}, 0);
+
+	const allOk = results.every((r) => r.exitCode === 0);
+	const summaryIcon = allOk ? "✅" : "❌";
+	const taskWord = results.length === 1 ? "task" : "tasks";
+	const chainVis = details.chainAgents?.length
+		? `: ${details.chainAgents.join(" → ")}`
+		: "";
+
+	parts.push("## Summary");
+	parts.push(`${summaryIcon} ${mode} completed${chainVis} (${results.length} ${taskWord}, ${formatDuration(totalDuration)})`);
+	const summaryMeta: string[] = [];
+	if (runId) summaryMeta.push(`Run ID: \`${runId}\``);
+	if (artifactsDir) summaryMeta.push(`Artifacts: \`${artifactsDir}\``);
+	if (summaryMeta.length > 0) parts.push(summaryMeta.join(" · "));
+	parts.push("");
+	parts.push("---");
+	parts.push("");
+
+	// Per-result sections
+	for (let i = 0; i < results.length; i++) {
+		const r = results[i];
+		const agentName = details.chainAgents?.[i] || r.agent || `Task ${i + 1}`;
+		let label: string;
+		if (mode === "chain") {
+			label = `Step ${i + 1}: ${agentName}`;
+		} else if (mode === "parallel") {
+			label = `Task ${i + 1}: ${agentName}`;
+		} else {
+			label = agentName;
+		}
+		parts.push(renderResultSection(r, label));
+		if (i < results.length - 1) {
+			parts.push("---");
+			parts.push("");
+		}
+	}
+
+	// Artifacts section
+	if (details.artifacts?.files) {
+		parts.push("");
+		parts.push("---");
+		parts.push("");
+		parts.push("## Artifacts");
+		for (const f of details.artifacts.files) {
+			if (f.outputPath) parts.push(`- \`${f.outputPath}\``);
+		}
+	}
+
+	return parts.join("\n");
 }
