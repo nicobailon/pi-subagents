@@ -7,6 +7,7 @@ import { discoverAgents, discoverAgentsAll, type ChainConfig } from "../agents/a
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { isDynamicParallelStep, isParallelStep, type ChainStep } from "../shared/settings.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
+import { buildRichReportMarkdown } from "../shared/formatters.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import {
 	applySlashUpdate,
@@ -15,12 +16,14 @@ import {
 	finalizeSlashResult,
 } from "./slash-live-state.ts";
 import {
+	RICH_REPORT_TYPE,
 	SLASH_RESULT_TYPE,
 	SLASH_SUBAGENT_CANCEL_EVENT,
 	SLASH_SUBAGENT_REQUEST_EVENT,
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
+	type Details,
 	type JsonSchemaObject,
 	type SingleResult,
 	type SubagentState,
@@ -334,6 +337,23 @@ async function runSlashSubagent(
 			details: finalDetails,
 		});
 		persistSlashSessionSnapshot(ctx);
+
+		// Rich markdown report for readable session replay
+		const responseDetails = response.result.details;
+		if (responseDetails && responseDetails.results.length > 0) {
+			const richReport = buildRichReportMarkdown({
+				details: responseDetails,
+				runId: responseDetails.runId,
+				artifactsDir: responseDetails.artifacts?.dir,
+			});
+			pi.sendMessage({
+				customType: RICH_REPORT_TYPE,
+				content: richReport,
+				display: true,
+			});
+			persistSlashSessionSnapshot(ctx);
+		}
+
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("subagent-slash", undefined);
 		}
