@@ -80,6 +80,20 @@ function replyFile(runId: string, requestId: string, agent = "worker", index = 0
 	return path.join(resolveSupervisorChannelDir(runId, agent, index), "replies", `${requestId}.json`);
 }
 
+function makeEmptyChannel(runId: string): string {
+	const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+	createdChannels.push(channelDir);
+	ensureSupervisorChannelDir(channelDir);
+	return channelDir;
+}
+
+function ageChannel(channelDir: string, ageMs: number): void {
+	const timestamp = new Date(Date.now() - ageMs);
+	for (const dir of [path.join(channelDir, "requests"), path.join(channelDir, "replies"), channelDir]) {
+		fs.utimesSync(dir, timestamp, timestamp);
+	}
+}
+
 function restoreEnv(): void {
 	for (const [key, value] of Object.entries(savedEnv)) {
 		if (value === undefined) delete process.env[key];
@@ -126,6 +140,65 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent.map((message) => message.details?.id), [matchingId]);
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
 		assert.equal(sent.some((message) => message.details?.id === otherId), false);
+	});
+
+	it("prunes stale empty supervisor channel directories before polling", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const staleEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		ageChannel(staleEmptyChannel, 2 * 60 * 1000);
+		const sent: Array<{ details?: { id?: string } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(fs.existsSync(staleEmptyChannel), false);
+		assert.deepEqual(sent, []);
+	});
+
+	it("preserves fresh empty and stale non-empty supervisor channel directories", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const freshEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		const staleWithReply = makeEmptyChannel(`run-${randomUUID()}`);
+		fs.writeFileSync(path.join(staleWithReply, "replies", "reply.json"), "{}");
+		ageChannel(staleWithReply, 2 * 60 * 1000);
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(fs.existsSync(freshEmptyChannel), true);
+		assert.equal(fs.existsSync(staleWithReply), true);
 	});
 
 	it("matches supervisor requests against the runtime session id instead of persisted session file path", () => {

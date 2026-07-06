@@ -22,6 +22,8 @@ export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
+const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
+const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
 
@@ -359,6 +361,77 @@ function listRequestFiles(): Array<{ channelDir: string; file: string }> {
 	return files;
 }
 
+function readDirectoryEntries(dir: string): fs.Dirent[] | undefined {
+	try {
+		return fs.readdirSync(dir, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		return undefined;
+	}
+}
+
+function directoryMtimeMs(dir: string): number {
+	try {
+		return fs.statSync(dir).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+function removeEmptyDirectory(dir: string): boolean {
+	try {
+		fs.rmdirSync(dir);
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT") return true;
+		if (code === "ENOTEMPTY" || code === "EEXIST" || code === "EPERM" || code === "EBUSY") return false;
+		throw error;
+	}
+}
+
+function removeStaleEmptySupervisorChannel(channelDir: string, nowMs: number): boolean {
+	const requestsDir = path.join(channelDir, REQUESTS_DIR);
+	const repliesDir = path.join(channelDir, REPLIES_DIR);
+	const newestKnownMtimeMs = Math.max(
+		directoryMtimeMs(channelDir),
+		directoryMtimeMs(requestsDir),
+		directoryMtimeMs(repliesDir),
+	);
+	if (nowMs - newestKnownMtimeMs < STALE_EMPTY_CHANNEL_AGE_MS) return false;
+
+	const requestEntries = readDirectoryEntries(requestsDir);
+	if (!requestEntries || requestEntries.length > 0) return false;
+	const replyEntries = readDirectoryEntries(repliesDir);
+	if (!replyEntries || replyEntries.length > 0) return false;
+
+	if (!removeEmptyDirectory(requestsDir)) return false;
+	if (!removeEmptyDirectory(repliesDir)) return false;
+	if (!removeEmptyDirectory(channelDir)) return false;
+	return true;
+}
+
+function cleanupStaleEmptySupervisorChannels(nowMs = Date.now()): number {
+	let channelEntries: fs.Dirent[];
+	try {
+		channelEntries = fs.readdirSync(SUPERVISOR_CHANNEL_ROOT, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+		throw error;
+	}
+
+	let removed = 0;
+	for (const entry of channelEntries) {
+		if (!entry.isDirectory()) continue;
+		try {
+			if (removeStaleEmptySupervisorChannel(path.join(SUPERVISOR_CHANNEL_ROOT, entry.name), nowMs)) removed++;
+		} catch {
+			// Cleanup is opportunistic; active writers can race with us and will be picked up by a later pass.
+		}
+	}
+	return removed;
+}
+
 function currentContextSessionId(state: Pick<SubagentState, "currentSessionId">, ctx: ExtensionContext): string | undefined {
 	try {
 		const sessionId = ctx.sessionManager.getSessionId();
@@ -521,13 +594,26 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	const pending = new Map<string, PendingSupervisorRequest>();
 	const seenFiles = new Set<string>();
 	let poller: ReturnType<typeof setInterval> | undefined;
+	let lastStaleCleanupAt = 0;
 
 	const registerParentTools = (): void => {
 		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
 		if (!hasTool(pi, "intercom")) pi.registerTool(buildParentIntercomTool(pending, state));
 	};
 
+	const cleanupStaleChannelsIfDue = (): void => {
+		const nowMs = Date.now();
+		if (nowMs - lastStaleCleanupAt < STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS) return;
+		lastStaleCleanupAt = nowMs;
+		try {
+			cleanupStaleEmptySupervisorChannels(nowMs);
+		} catch {
+			// Supervisor delivery must not fail because best-effort temp cleanup failed.
+		}
+	};
+
 	const poll = (): void => {
+		cleanupStaleChannelsIfDue();
 		const ctx = state.lastUiContext;
 		if (!ctx) return;
 		refreshPendingRequests(pending, state, ctx);
