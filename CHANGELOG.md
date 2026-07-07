@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- Updated the bundled `pi-subagents` skill so Fable mode is the default orchestration posture for complex work, and refreshed recent command/config guidance.
+- Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
+
 ### Fixed
 - Gate foreground `contact_supervisor`/intercom detaches on delivered supervisor handoff events, keep detached foreground runs visible through status/fleet, and mark detached placeholders as non-successful so missing explicit outputs are not mistaken for completed work.
 

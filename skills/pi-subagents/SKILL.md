@@ -16,6 +16,7 @@ Use this skill when the parent orchestrator needs to launch a specialized subage
 
 ## When to Use
 
+- **Complex work orchestration**: use Fable mode as the default parent-agent loop for complex work. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
 - **Advisory review**: use fresh-context `reviewer` agents for adversarial code review, or fork to `oracle` when inherited decisions and drift matter
 - **Implementation handoff**: have `oracle` advise, then `worker` implement only after an approved direction
 - **Recon and planning**: use `scout` or `context-builder`, then `planner`
@@ -34,7 +35,12 @@ Humans often use the slash-command layer instead:
 - `/chain` — launch a chain of steps
 - `/parallel` — launch top-level parallel tasks
 - `/run-chain` — launch a saved `.chain.md` or `.chain.json` workflow
+- `/subagent-cost` — show parent plus child token usage and cost for the session
+- `/subagents-fleet` — show the read-only active foreground/background fleet view
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
+- `/subagents-models [agent]` — show the live runtime-loaded builtin model mapping
+- `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile` — manage model profiles and provider catalogs
+- `/prompt-workflow` and `/chain-prompts` — run prompt templates through native subagent single/chain workflows
 
 Prefer the tool when you are writing agent logic. Prefer the slash commands when
 you are guiding a human through an interactive flow.
@@ -184,7 +190,7 @@ and user/project agents override builtins with the same name.
 | `delegate` | Lightweight generic delegate | inherits default | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
 
-Builtin agents inherit the current Pi default model unless a run, user setting, or project setting overrides `model`. Override builtin defaults before copying full agent files when a small tweak is enough.
+Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
 
 For one run, use inline config:
 
@@ -192,9 +198,11 @@ For one run, use inline config:
 /run reviewer[model=anthropic/claude-sonnet-4] "Review this diff"
 ```
 
-For persistent tweaks, edit `subagents.agentOverrides` in user or project settings. User overrides apply everywhere. Project overrides apply only in that repo and win over user overrides.
+For persistent tweaks, edit `subagents.agentOverrides` in user or project settings. User overrides apply everywhere. Project overrides apply only in that repo and win over user overrides. Use `/subagents-models` or `subagent({ action: "models" })` to inspect the live mapping after settings and overrides load.
 
-Model ids do not have to be exact. Separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case (`Claude-Sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001`) all resolve to the same registry model. Exact `provider/id` wins; a qualified `provider/model` never switches providers. To constrain subagents to a budget or compliance profile, set `subagents.modelScope: { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }` in user or project settings. Out-of-scope models you pass explicitly error and abort; models inherited from frontmatter, `defaultModel`, or the parent session only warn.
+Model ids do not have to be exact. Separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case (`Claude-Sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001`) all resolve to the same registry model. Exact `provider/id` wins; a qualified `provider/model` never switches providers. To constrain subagents to a budget or compliance profile, set `subagents.modelScope: { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }` in user or project settings. Out-of-scope models you pass explicitly error and abort; models inherited from frontmatter, `subagents.defaultModel`, agent frontmatter, or the parent session only warn.
+
+For model fleets, use the profile commands instead of hand-editing repeated overrides: `/subagents-refresh-provider-models <provider>`, `/subagents-generate-profiles <provider>`, `/subagents-load-profile <name>`, and `/subagents-check-profile <name>`. Profiles live under `~/.pi/agent/profiles/pi-subagents/` and replace only `settings.subagents` when loaded.
 
 ## Prompting role subagents
 
@@ -529,6 +537,8 @@ Use `contact_supervisor` with `reason: "need_decision"` when:
 - a child needs clarification instead of guessing
 - an approval, product, API, or scope choice is required before continuing safely
 
+Use `contact_supervisor` with `reason: "interview_request"` when the child needs structured supervisor input rather than a freeform answer. The request waits for a parent reply, so the child should stay alive and continue only after the reply arrives.
+
 Do not use `contact_supervisor` just to resolve review-only/no-project-edit versus progress-writing or output-artifact instructions. The child must not modify project/source files, but returning findings through its normal response or configured output artifact is allowed unless the parent explicitly set `output: false`.
 
 Use `contact_supervisor` with `reason: "progress_update"` when:
@@ -537,7 +547,7 @@ Use `contact_supervisor` with `reason: "progress_update"` when:
 - a long-running child needs to report a blocked/progress checkpoint without waiting for normal tool return flow
 
 Message conventions:
-- `reason: "need_decision"` waits for the parent reply and returns it to the child.
+- `reason: "need_decision"` and `reason: "interview_request"` wait for the parent reply and return it to the child.
 - `reason: "progress_update"` is non-blocking and should stay concise.
 - Child-side routine completion handoffs are not expected. Native supervisor messages are for decisions, structured input, and meaningful progress updates while a child is still running.
 
@@ -658,7 +668,11 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 - `defaultReads`
 - `output`
 - `fallbackModels`
+- `subagentOnlyExtensions`
+- `memory`
 - `maxSubagentDepth`
+
+Use `subagentOnlyExtensions` when a custom tool should exist only inside child sessions for that agent. Use `memory: { scope: "project" | "user", path: "<name>" }` for opt-in role-specific durable memory under the dedicated `agent-memory/` namespace; it is separate from parent/session project memory.
 
 For many customizations, builtin overrides in settings are lower-friction than
 copying a full builtin file.
@@ -700,6 +714,8 @@ Methods: `ping`, `status`, `spawn`, `interrupt`, and `stop`. `spawn` is async-on
 - **Keep conversational authority clear.** Advisory subagents should not silently
   become second decision-makers.
 
+Runtime config can change orchestration behavior. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make `wait()` return immediately; `globalConcurrencyLimit` and `maxSubagentSpawnsPerSession` bound fanout; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. Per-run `artifacts: false` disables artifact capture for that launch. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Prefer these artifacts and `status` views over scraping terminal output.
+
 ## Best Practices
 
 ### Prefer async orchestration
@@ -716,6 +732,8 @@ When you have launched async runs and have no independent work left but must kee
 - `wait({ timeoutMs })` — cap the block; the runs keep going if it elapses.
 
 `wait()` is the correct way to keep N workers in flight: launch N, call `wait()`, react to the result, launch a replacement if needed, then call `wait()` again. Use `wait({ all: true })` only when you intentionally want to drain the fleet to zero. Reserve ending-the-turn-to-wait for interactive sessions where the user will prompt you again; in a skill that must complete or a non-interactive `pi -p` run there is no next turn, so `wait()` is required to avoid abandoning live children.
+
+If `config.waitTool` or `PI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking behavior, the `wait` tool stays registered but returns immediately. In that case, inspect status, continue independent work, or rely on normal completion notifications instead of building sleep/status polling loops.
 
 ### Keep writes single-threaded by default
 
@@ -737,7 +755,7 @@ Give subagents specific tasks rather than vague mandates.
 ### Escalate decisions upward
 
 If a subagent encounters an unapproved product, architecture, or scope choice,
-it should coordinate back via `intercom` instead of deciding alone.
+it should use `contact_supervisor` and wait for the reply instead of deciding alone. Generic `intercom` is a fallback only when the bridge-provided supervisor tool is unavailable.
 
 ### Intervene only on clear control signals
 
@@ -761,9 +779,23 @@ subagent({
 })
 ```
 
+### Fable mode for complex work
+
+Fable mode is the default orchestration posture for complex work. It is not a separate runtime mode; it is how the parent session uses `subagent`, `interview`, `wait`, acceptance contracts, artifacts, and fresh-context review when the work has real complexity. Use it for complex features, broad refactors, migrations, ambiguous goals, multi-system changes, expensive validation, user-visible behavior changes, or any request to plan/orchestrate end to end. Do not force it onto tiny one-shot delegation.
+
+Run the work through seven gated phases:
+
+1. **Understand** — use `scout` or `context-builder` fanout for breadth, but the parent personally reads the load-bearing files and lets direct source reading decide disagreements. Gate: the parent can quote the exact code or behavior being changed and knows the repo's verification harness.
+2. **Decide** — separate user-owned decisions from implementation judgments. Use `interview` for product, naming, cost, taste, or risk decisions; decide routine engineering details in the parent and state them. Gate: every user-owned decision needed for design is answered.
+3. **Design** — use `planner`, `context-builder`, or read-only design/review children for parallel perspectives. Before parallel workstreams, write seam contracts: ownership boundaries, composition points, assumptions, and validation handoffs. Gate: one parent-synthesized plan and written seams for parallel work.
+4. **Implement** — capture a baseline first, then launch one async `worker` as the sole writer for the active worktree unless isolated worktrees were intentionally requested. Break large work into serial milestones instead of concurrent writes. Gate: build/typecheck is green and every output or diff delta is characterized as intended or fixed.
+5. **Verify** — climb the spend ladder: static checks, free end-to-end/dry-run, cheapest live probe, targeted changed-path live test, then full realistic run when warranted. Observe the artifact itself, not only exit codes or scores, and confirm the changed code actually executed. Gate: the highest necessary rung has directly observed evidence matching intent.
+6. **Iterate** — when a gate or reviewer finds a defect, the parent names the failure class, searches for siblings, synthesizes fixes, and sends exactly one fix worker for accepted changes. For LLM judges, gates, or detectors, trigger on concrete findings rather than scores, record pass/violations/error verdicts, cache nondeterministic verdicts by input hash, budget enough output tokens, and sanitize judge text before reusing it downstream. Gate: the class is fixed or explicitly bounded, and recurrence detection exists when feasible.
+7. **Ship** — run adversarial fresh-context review/validation outside the implementation path, disposition every finding, rerun affected gates, then have the parent inspect the final diff. Commit, push, release, or open PRs only inside user-approved boundaries. Gate: findings are dispositioned, gates re-pass, and the final summary names evidence, artifacts, residual risks, and output paths.
+
 ### Clarify → Plan → Implement → Review (self-orchestrated workflow)
 
-When you are the orchestrating agent for a new feature or non-trivial change, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents.
+For straightforward non-trivial work, this sequence is the lightweight version of the parent-owned loop. When the task is complex, use Fable mode above. In either case, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents.
 
 Keep builtin agent defaults unless the user explicitly asks for a different model, thinking level, skills, output behavior, context mode, or other override. Do not add overrides just because you are orchestrating; the defaults encode the intended role behavior. In particular, packaged `planner`, `worker`, and `oracle` default to forked context.
 
