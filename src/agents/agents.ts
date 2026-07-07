@@ -57,7 +57,7 @@ export function defaultInheritSkills(): boolean {
 export interface BuiltinAgentOverrideBase {
 	model?: string;
 	fallbackModels?: string[];
-	thinking?: string;
+	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
@@ -111,7 +111,7 @@ export interface AgentConfig {
 	mcpDirectTools?: string[];
 	model?: string;
 	fallbackModels?: string[];
-	thinking?: string;
+	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
@@ -1283,7 +1283,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			mcpDirectTools: mcpDirectTools.length > 0 ? mcpDirectTools : undefined,
 			model: frontmatter.model,
 			fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
-			thinking: frontmatter.thinking,
+			thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
 			systemPromptMode,
 			inheritProjectContext,
 			inheritSkills,

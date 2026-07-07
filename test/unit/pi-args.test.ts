@@ -251,6 +251,27 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(args.includes("anthropic/claude-haiku-4-5:off"));
 	});
 
+	it("does not append a thinking suffix for boolean false", () => {
+		const model = "glm-5.2-short-fast";
+		const once = applyThinkingSuffix(model, false);
+		assert.equal(once, model);
+		assert.equal(applyThinkingSuffix(once, false), model);
+
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			model,
+			thinking: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(args.includes("--model"));
+		assert.ok(args.includes(model));
+		assert.ok(!args.some((arg) => arg.includes(":false")));
+	});
+
 	it("leaves provider-specific model suffixes untouched when thinking is disabled", () => {
 		const model = "openai-compatible/qwen2.5-coder:7b";
 		const { args } = buildPiArgs({

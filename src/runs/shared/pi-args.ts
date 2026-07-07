@@ -39,7 +39,7 @@ interface BuildPiArgsInput {
 	sessionDir?: string;
 	sessionFile?: string;
 	model?: string;
-	thinking?: string;
+	thinking?: string | false;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
@@ -87,7 +87,7 @@ function supervisorChannelDir(runId: string, agent: string, childIndex: number):
 	return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
 }
 
-export function applyThinkingSuffix(model: string | undefined, thinking: string | undefined, replaceExisting = false): string | undefined {
+export function applyThinkingSuffix(model: string | undefined, thinking: string | false | undefined, replaceExisting = false): string | undefined {
 	if (!model || !thinking) return model;
 	const colonIdx = model.lastIndexOf(":");
 	if (colonIdx !== -1 && THINKING_LEVELS.includes(model.substring(colonIdx + 1))) {
