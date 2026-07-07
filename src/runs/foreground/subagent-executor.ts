@@ -338,6 +338,9 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				updatedAt,
 				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
 				...(result.finalOutput ? { finalOutput: result.finalOutput } : {}),
+				...(result.outputMode ? { outputMode: result.outputMode } : {}),
+				...(result.savedOutputPath ? { savedOutputPath: result.savedOutputPath } : {}),
+				...(result.outputSaveError ? { outputSaveError: result.outputSaveError } : {}),
 				...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
 				...(result.artifactPaths ? { artifactPaths: result.artifactPaths } : {}),
 				...(result.transcriptPath ? { transcriptPath: result.transcriptPath } : {}),
@@ -369,6 +372,9 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
+		outputMode: input.result.outputMode,
+		savedOutputPath: input.result.savedOutputPath,
+		outputSaveError: input.result.outputSaveError,
 		...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
 		...(input.result.artifactPaths ? { artifactPaths: input.result.artifactPaths } : {}),
 		...(input.result.transcriptPath ? { transcriptPath: input.result.transcriptPath } : {}),
@@ -2692,7 +2698,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const detached = detachedIndex >= 0 ? results[detachedIndex] : undefined;
 		if (detached) {
 			return {
-				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
 				details,
 			};
 		}
@@ -3034,7 +3040,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	if (r.detached) {
 		return {
-			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
 			details,
 		};
 	}
@@ -3493,10 +3499,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const details = result?.details;
 			const state = type === "subagent.nested.started"
 				? "running"
-				: result?.isError || details?.results.some((child) => child.exitCode !== 0)
-					? "failed"
-					: details?.results.some((child) => child.interrupted)
-						? "paused"
+				: details?.results.some((child) => child.interrupted || child.detached)
+					? "paused"
+					: result?.isError || details?.results.some((child) => child.exitCode !== 0)
+						? "failed"
 						: "complete";
 			const errorText = result?.isError
 				? result.content.find((item) => item.type === "text")?.text
@@ -3536,7 +3542,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						...(errorText ? { error: errorText } : {}),
 						...(details?.results.length ? { steps: details.results.map((child) => ({
 							agent: child.agent,
-							status: child.interrupted ? "paused" : child.exitCode === 0 ? "complete" : "failed",
+							status: child.interrupted || child.detached ? "paused" : child.exitCode === 0 ? "complete" : "failed",
 							...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
 							...(child.error ? { error: child.error } : {}),
 						})) } : {}),

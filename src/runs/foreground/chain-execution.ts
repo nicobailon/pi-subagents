@@ -768,7 +768,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				const detached = detachedIndexInStep >= 0 ? parallelResults[detachedIndexInStep] : undefined;
 				if (detached) {
 					return {
-						content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+						content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
 						details: buildChainExecutionDetails(makeDetailsInput({
 							currentStepIndex: stepIndex,
 							currentFlatIndex: globalTaskIndex - step.parallel.length + detachedIndexInStep,
@@ -988,7 +988,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const detached = detachedIndexInStep >= 0 ? parallelResults[detachedIndexInStep] : undefined;
 			if (detached) {
 				return {
-					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${detached.agent}). Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
 					details: buildChainExecutionDetails(makeDetailsInput({
 						currentStepIndex: stepIndex,
 						currentFlatIndex: dynamicStartIndex + detachedIndexInStep,
@@ -1264,7 +1264,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			}
 			if (r.detached) {
 				return {
-					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${r.agent}). Reply to the supervisor request first. After the child exits, start a fresh follow-up if needed.` }],
+					content: [{ type: "text", text: `Chain detached for intercom coordination at step ${stepIndex + 1} (${r.agent}). Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
 					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
 				};
 			}

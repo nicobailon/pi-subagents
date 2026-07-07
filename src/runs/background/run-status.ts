@@ -81,7 +81,7 @@ function formatSteeringSummary(input: { steerCount?: number; lastSteerAt?: numbe
 }
 
 function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][number]): string {
-	const outputPath = child.artifactPaths?.outputPath;
+	const outputPath = child.artifactPaths?.outputPath ?? child.savedOutputPath;
 	if (outputPath && fs.existsSync(outputPath)) {
 		try {
 			const artifactOutput = fs.readFileSync(outputPath, "utf-8").trim();
@@ -113,6 +113,8 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 		if (child.sessionFile) lines.push(`  Session: ${child.sessionFile}`);
 		if (child.transcriptPath) lines.push(`  Transcript: ${child.transcriptPath}`);
 		if (child.artifactPaths?.outputPath) lines.push(`  Output: ${child.artifactPaths.outputPath}`);
+		if (child.savedOutputPath && child.savedOutputPath !== child.artifactPaths?.outputPath) lines.push(`  Saved output: ${child.savedOutputPath}`);
+		if (child.outputSaveError) lines.push(`  Output warning: ${child.outputSaveError}`);
 		if (child.transcriptError) lines.push(`  Transcript warning: ${child.transcriptError}`);
 	}
 	lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
@@ -147,6 +149,8 @@ function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options:
 		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
 		child.transcriptPath ? `Transcript: ${child.transcriptPath}` : undefined,
 		child.artifactPaths?.outputPath ? `Output: ${child.artifactPaths.outputPath}` : undefined,
+		child.savedOutputPath && child.savedOutputPath !== child.artifactPaths?.outputPath ? `Saved output: ${child.savedOutputPath}` : undefined,
+		child.outputSaveError ? `Output warning: ${child.outputSaveError}` : undefined,
 	].filter((line): line is string => Boolean(line));
 	lines.push("Result transcript tail:");
 	if (outputLines.length === 0) lines.push("  (no recovered final output available yet)");

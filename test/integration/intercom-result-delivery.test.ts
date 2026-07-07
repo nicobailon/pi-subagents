@@ -821,6 +821,18 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
 
+		const fleet = await executor.execute(
+			"foreground-detached-fleet",
+			{ action: "status", view: "fleet" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const fleetText = fleet.content[0]?.text ?? "";
+		assert.match(fleetText, /Detached foreground runs:/);
+		assert.ok(fleetText.includes(runId));
+		assert.match(fleetText, /recovery: reply to the supervisor request first/);
+
 		const resumed = await executor.execute(
 			"foreground-detached-resume",
 			{ action: "resume", id: runId, message: "Follow up" },

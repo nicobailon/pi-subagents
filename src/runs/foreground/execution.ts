@@ -390,11 +390,18 @@ async function runSingleAttempt(
 		};
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
-			if (!options.allowIntercomDetach || detached || processClosed || !intercomStarted) return;
+			if (!options.allowIntercomDetach || detached || processClosed) return;
 			if (!payload || typeof payload !== "object") return;
-			const requestId = (payload as { requestId?: unknown }).requestId;
+			const event = payload as { requestId?: unknown; runId?: unknown; agent?: unknown; childIndex?: unknown };
+			const requestId = event.requestId;
 			if (typeof requestId !== "string" || requestId.length === 0) return;
-			options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true });
+			const hasRoute = event.runId !== undefined || event.agent !== undefined || event.childIndex !== undefined;
+			if (hasRoute) {
+				if (typeof event.runId === "string" && event.runId !== options.runId) return;
+				if (typeof event.agent === "string" && event.agent !== agent.name) return;
+				if (typeof event.childIndex === "number" && event.childIndex !== (options.index ?? 0)) return;
+			} else if (!intercomStarted) return;
+			options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
 			detachForIntercom();
 		});
 
@@ -588,11 +595,8 @@ async function runSingleAttempt(
 				const toolArgs = evt.args && typeof evt.args === "object" && !Array.isArray(evt.args)
 					? evt.args as Record<string, unknown>
 					: {};
-				let shouldDetachForBlockingIntercom = false;
 				if (options.allowIntercomDetach && (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
 					intercomStarted = true;
-					shouldDetachForBlockingIntercom = (evt.toolName === "intercom" && toolArgs.action === "ask")
-						|| (evt.toolName === "contact_supervisor" && (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
 				}
 				progress.toolCount++;
 				if (options.toolBudget) {
@@ -606,9 +610,6 @@ async function runSingleAttempt(
 				observedMutationAttempt = observedMutationAttempt || mutates;
 				pendingToolResult = { tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now };
 				fireUpdate();
-				if (shouldDetachForBlockingIntercom && !detached && !processClosed) {
-					detachForIntercom();
-				}
 			}
 
 			if (evt.type === "tool_execution_end") {
@@ -772,11 +773,29 @@ async function runSingleAttempt(
 					tokens: progress.tokens,
 					durationMs: progress.durationMs,
 				};
-				const finalOutput = getFinalOutput(result.messages);
-				result.finalOutput = finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+				let fullOutput = stripAcceptanceReport(getFinalOutput(result.messages));
+				fullOutput = fullOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+				result.outputMode = options.outputMode ?? "inline";
+				if (options.outputPath && result.exitCode === 0) {
+					const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
+					fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
+					result.savedOutputPath = resolvedOutput.savedPath;
+					result.outputSaveError = resolvedOutput.saveError;
+					if (resolvedOutput.savedPath) {
+						result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
+					} else {
+						result.exitCode = 1;
+						result.error = `Output file was not finalized after detached child exit: ${resolvedOutput.saveError ?? options.outputPath}`;
+						progress.status = "failed";
+						progress.error = result.error;
+					}
+				}
+				result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
+					? result.outputReference.message
+					: fullOutput;
 				if (result.artifactPaths && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
 					try {
-						writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
+						writeArtifact(result.artifactPaths.outputPath, fullOutput);
 					} catch {
 						// Detached children may outlive test/temp cleanup; recovered status is best-effort.
 					}
@@ -805,10 +824,6 @@ async function runSingleAttempt(
 		if (options.signal) {
 			const kill = () => {
 				if (processClosed || detached) return;
-				if (options.allowIntercomDetach && intercomStarted && !detached) {
-					detachForIntercom();
-					return;
-				}
 				proc.kill("SIGTERM");
 				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
 			};
@@ -861,8 +876,12 @@ async function runSingleAttempt(
 		return result;
 	}
 	if (result.detached) {
-		result.exitCode = 0;
-		result.finalOutput = "Detached for intercom coordination.";
+		result.exitCode = -2;
+		result.finalOutput = "Detached for intercom coordination before task completion.";
+		result.outputMode = options.outputMode ?? "inline";
+		if (options.outputPath) {
+			result.outputSaveError = "Output file was not finalized because the subagent detached for intercom coordination.";
+		}
 		return result;
 	}
 
@@ -1132,7 +1151,7 @@ export async function runSync(
 			usage: { ...result.usage },
 		};
 		modelAttempts.push(attempt);
-		if (result.timedOut || result.turnBudgetExceeded) {
+		if (result.detached || result.timedOut || result.turnBudgetExceeded) {
 			break;
 		}
 		if (attemptSucceeded) {
@@ -1215,9 +1234,11 @@ export async function runSync(
 		if (sessionFile) result.sessionFile = sessionFile;
 	}
 
-	result.acceptance = result.timedOut
-		? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." })
-		: result.turnBudgetExceeded
+	result.acceptance = result.detached
+		? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "detached", message: "Acceptance was not evaluated because the subagent detached for intercom coordination before task completion." })
+		: result.timedOut
+			? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." })
+			: result.turnBudgetExceeded
 			? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "turn-budget", message: "Acceptance was not evaluated because the subagent exceeded its turn budget." })
 			: await evaluateAcceptance({
 			acceptance: effectiveAcceptance,

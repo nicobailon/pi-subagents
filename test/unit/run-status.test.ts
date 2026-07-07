@@ -308,7 +308,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Subagent fleet: 2 active/);
+			assert.match(text, /Subagent fleet: 2 tracked/);
 			assert.match(text, /Foreground runs:/);
 			assert.match(text, /fg-run \| running \| scout/);
 			assert.match(text, /Async runs:/);

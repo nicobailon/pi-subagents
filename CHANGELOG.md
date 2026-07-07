@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Gate foreground `contact_supervisor`/intercom detaches on delivered supervisor handoff events, keep detached foreground runs visible through status/fleet, and mark detached placeholders as non-successful so missing explicit outputs are not mistaken for completed work.
+
 ## [0.34.0] - 2026-07-07
 
 ### Added

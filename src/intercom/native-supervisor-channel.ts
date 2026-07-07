@@ -12,7 +12,7 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../runs/shared/pi-args.ts";
-import { POLL_INTERVAL_MS, TEMP_ROOT_DIR, type SubagentState } from "../shared/types.ts";
+import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
@@ -646,6 +646,14 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					childIndex: request.childIndex,
 				},
 			});
+			if (request.expectsReply) {
+				(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
+					requestId: request.id,
+					runId: request.runId,
+					agent: request.agent,
+					childIndex: request.childIndex,
+				});
+			}
 		}
 	};
 

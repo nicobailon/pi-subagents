@@ -820,6 +820,9 @@ export interface ForegroundResumeChild {
 	status: SubagentResultStatus;
 	exitCode?: number;
 	finalOutput?: string;
+	outputMode?: OutputMode;
+	savedOutputPath?: string;
+	outputSaveError?: string;
 	artifactPaths?: ArtifactPaths;
 	transcriptPath?: string;
 	transcriptError?: string;

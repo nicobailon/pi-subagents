@@ -19,7 +19,7 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import { INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
 
 const createdChannels: string[] = [];
 const savedEnv = {
@@ -199,6 +199,48 @@ describe("native supervisor channel", () => {
 
 		assert.equal(fs.existsSync(freshEmptyChannel), true);
 		assert.equal(fs.existsSync(staleWithReply), true);
+	});
+
+	it("emits foreground detach only after displaying a pending supervisor request", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId, agent: "worker", index: 2 });
+		const log: string[] = [];
+		const emitted: Array<{ channel: string; payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => { log.push("send"); },
+			events: {
+				emit: (channel: string, payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number }) => {
+					log.push("emit");
+					emitted.push({ channel, payload });
+				},
+			},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		try {
+			assert.deepEqual(log, ["send", "emit"]);
+			assert.deepEqual(emitted, [{
+				channel: INTERCOM_DETACH_REQUEST_EVENT,
+				payload: { requestId, runId, agent: "worker", childIndex: 2 },
+			}]);
+			assert.equal(channel.pending.has(requestId), true);
+		} finally {
+			channel.dispose();
+		}
 	});
 
 	it("matches supervisor requests against the runtime session id instead of persisted session file path", () => {

@@ -1422,7 +1422,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		assert.match(result.content[0]?.text ?? "", /Chain detached for intercom coordination/);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /resume/);
 		assert.equal(detachEmitted, true);
-		assert.equal(result.details.results.some((entry) => entry.detached === true && entry.exitCode === 0), true);
+		assert.equal(result.details.results.some((entry) => entry.detached === true && entry.exitCode === -2), true);
 	});
 
 	it("stops a sequential chain when a child detaches for intercom coordination", async () => {

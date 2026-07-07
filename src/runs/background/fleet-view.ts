@@ -23,6 +23,7 @@ const MAX_TRANSCRIPT_LINES = 500;
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
 
 type ForegroundControl = SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never;
+type ForegroundRun = NonNullable<SubagentState["foregroundRuns"]> extends Map<string, infer T> ? T : never;
 
 interface FleetViewParams {
 	lines?: number;
@@ -254,6 +255,20 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
 	return lines;
 }
 
+function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
+	if (runs.length === 0) return [];
+	const lines = ["Detached foreground runs:"];
+	const ordered = [...runs].sort((left, right) => right.updatedAt - left.updatedAt);
+	for (const run of ordered) {
+		const detachedChildren = run.children.filter((child) => child.status === "detached");
+		const childSummary = detachedChildren.map((child) => `${child.agent} #${child.index}`).join(", ");
+		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
+		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
+		lines.push(`  recovery: reply to the supervisor request first; status will recover output after the child exits.`);
+	}
+	return lines;
+}
+
 function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 	if (runs.length === 0) return [];
 	const lines = ["Async runs:"];
@@ -316,7 +331,11 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 	}
 
 	const foregroundControls = deps.state ? [...deps.state.foregroundControls.values()] : [];
-	const total = foregroundControls.length + asyncRuns.length;
+	const activeForegroundIds = new Set(foregroundControls.map((control) => control.runId));
+	const detachedForegroundRuns = deps.state?.foregroundRuns
+		? [...deps.state.foregroundRuns.values()].filter((run) => !activeForegroundIds.has(run.runId) && run.children.some((child) => child.status === "detached"))
+		: [];
+	const total = foregroundControls.length + detachedForegroundRuns.length + asyncRuns.length;
 	if (total === 0) {
 		return {
 			content: [{ type: "text", text: "No active subagent fleet. Background runs that already finished are available through completion notifications or subagent({ action: \"status\", id: \"...\" })." }],
@@ -324,9 +343,11 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 		};
 	}
 
-	const lines = [`Subagent fleet: ${total} active`, ""];
+	const lines = [`Subagent fleet: ${total} tracked`, ""];
 	const foregroundLines = formatForegroundFleetLines(foregroundControls);
 	if (foregroundLines.length) lines.push(...foregroundLines, "");
+	const detachedForegroundLines = formatDetachedForegroundFleetLines(detachedForegroundRuns);
+	if (detachedForegroundLines.length) lines.push(...detachedForegroundLines, "");
 	const asyncLines = formatAsyncFleetLines(asyncRuns);
 	if (asyncLines.length) lines.push(...asyncLines, "");
 	lines.push("Commands:");

@@ -1699,25 +1699,132 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 			const result = await runPromise;
 
-			assert.equal(result.exitCode, 0);
+			assert.equal(result.exitCode, -2);
 			assert.equal(result.detached, true);
 			assert.equal(result.detachedReason, "intercom coordination");
-			assert.equal(result.finalOutput, "Detached for intercom coordination.");
+			assert.equal(result.finalOutput, "Detached for intercom coordination before task completion.");
 			assert.equal(result.progress?.status, "detached");
 			assert.equal(accepted, true);
 		});
 	}
+
+	it("does not save a detached placeholder to an explicit file-only output", async () => {
+		const eventBus = createEventBus();
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 1000, jsonl: [events.assistantMessage("after reply")] },
+			],
+		});
+		const agents = makeAgentConfigs(["echo"]);
+		const outputPath = path.join(tempDir, "detached-output.md");
+		let detachEmitted = false;
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "detached-file-only-output",
+			allowIntercomDetach: true,
+			intercomEvents: eventBus,
+			outputPath,
+			outputMode: "file-only",
+			onUpdate: (update) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((p) => p?.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "file-only-detach" });
+			},
+		});
+
+		assert.equal(result.exitCode, -2);
+		assert.equal(result.detached, true);
+		assert.equal(result.savedOutputPath, undefined);
+		assert.equal(fs.existsSync(outputPath), false);
+		assert.match(result.outputSaveError ?? "", /not finalized/);
+	});
+
+	it("finalizes explicit output before reporting detached child post-exit success", async () => {
+		const eventBus = createEventBus();
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 100, jsonl: [events.assistantMessage("after reply")] },
+			],
+		});
+		const agents = makeAgentConfigs(["echo"]);
+		const outputPath = path.join(tempDir, "detached-final-output.md");
+		let detachEmitted = false;
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "detached-file-only-post-exit-output",
+			allowIntercomDetach: true,
+			intercomEvents: eventBus,
+			outputPath,
+			outputMode: "file-only",
+			onUpdate: (update) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((p) => p?.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "file-only-post-exit-detach" });
+			},
+		});
+
+		assert.equal(result.exitCode, -2);
+		assert.equal(result.detached, true);
+		assert.equal(fs.existsSync(outputPath), false);
+
+		for (let attempt = 0; attempt < 100 && !fs.existsSync(outputPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "after reply");
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.progress?.status, "completed");
+		assert.equal(result.savedOutputPath, outputPath);
+		assert.equal(result.outputSaveError, undefined);
+		assert.match(result.finalOutput ?? "", /^Output saved to:/);
+	});
+
+	it("aborts a foreground coordination tool start instead of detaching without a delivered handoff", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 10000, jsonl: [events.assistantMessage("after abort")] },
+			],
+		});
+		const agents = makeAgentConfigs(["echo"]);
+		const controller = new AbortController();
+		let aborted = false;
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "contact-supervisor-abort-without-handoff",
+			allowIntercomDetach: true,
+			signal: controller.signal,
+			onUpdate: (update) => {
+				if (aborted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((p) => p?.currentTool === "contact_supervisor")) return;
+				aborted = true;
+				controller.abort();
+			},
+		});
+
+		assert.equal(aborted, true);
+		assert.notEqual(result.exitCode, -2);
+		assert.equal(result.detached, undefined);
+		assert.notEqual(result.progress?.status, "detached");
+	});
 
 	for (const testCase of [
 		{ name: "intercom ask", toolName: "intercom", args: { action: "ask", to: "orchestrator" } },
 		{ name: "contact_supervisor need_decision", toolName: "contact_supervisor", args: { reason: "need_decision", message: "Need a decision" } },
 		{ name: "contact_supervisor interview_request", toolName: "contact_supervisor", args: { reason: "interview_request", message: "Need input", interview: { questions: [] } } },
 	]) {
-		it(`proactively detaches foreground children on blocking ${testCase.name}`, async () => {
+		it(`does not detach foreground children on blocking ${testCase.name} before a delivered handoff`, async () => {
 			mockPi.onCall({
 				steps: [
 					{ jsonl: [events.toolStart(testCase.toolName, testCase.args)] },
-					{ delay: 1000, jsonl: [events.assistantMessage("received pong")] },
+					{ delay: 50, jsonl: [events.assistantMessage("received pong")] },
 				],
 			});
 			const agents = makeAgentConfigs(["echo"]);
@@ -1728,10 +1835,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			});
 
 			assert.equal(result.exitCode, 0);
-			assert.equal(result.detached, true);
-			assert.equal(result.detachedReason, "intercom coordination");
-			assert.equal(result.finalOutput, "Detached for intercom coordination.");
-			assert.equal(result.progress?.status, "detached");
+			assert.equal(result.detached, undefined);
+			assert.equal(result.finalOutput, "received pong");
+			assert.equal(result.progress?.status, "completed");
 		});
 	}
 
@@ -1807,7 +1913,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(quietResult.exitCode, 0);
 		assert.equal(quietResult.detached, undefined);
-		assert.equal(intercomResult.exitCode, 0);
+		assert.equal(intercomResult.exitCode, -2);
 		assert.equal(intercomResult.detached, true);
 		assert.equal(firstDetachResponse, true);
 	});
