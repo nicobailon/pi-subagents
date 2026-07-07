@@ -133,6 +133,40 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("rejects malformed result model metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-result-model-"));
+		try {
+			const resultsDir = path.join(root, "results");
+			writeJson(path.join(resultsDir, "run-result-model.json"), {
+				id: "run-result-model",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				results: [{ agent: "worker", model: { id: "bad" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-result-model" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }, { requireSessionFile: false }),
+				/results\[0\].model must be a string/,
+			);
+
+			writeJson(path.join(resultsDir, "run-result-model.json"), {
+				id: "run-result-model",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				results: [{ agent: "worker", thinking: { level: "high" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-result-model" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }, { requireSessionFile: false }),
+				/results\[0\].thinking must be a string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed status session ids", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-session-id-"));
 		try {
@@ -149,6 +183,40 @@ describe("async resume lookup", () => {
 			assert.throws(
 				() => resolveAsyncResumeTarget({ id: "run-session-id" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
 				/sessionId must be a string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects malformed status model metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-status-model-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), {
+				runId: "run-status-model",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running", model: { id: "bad" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/steps\[0\].model must be a string/,
+			);
+
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), {
+				runId: "run-status-model",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running", thinking: { level: "high" } }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/steps\[0\].thinking must be a string/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -261,6 +329,44 @@ describe("async resume lookup", () => {
 			assert.equal(target.kind, "revive");
 			assert.equal(target.agent, "b");
 			assert.equal(target.index, 1);
+			assert.equal(target.sessionFile, secondSession);
+			assert.equal(target.model, "anthropic/claude-sonnet-4");
+			assert.equal(target.thinking, "high");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves a completed result-only child with per-child model metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-only-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const firstSession = path.join(root, "a.jsonl");
+			const secondSession = path.join(root, "b.jsonl");
+			fs.writeFileSync(firstSession, "", "utf-8");
+			fs.writeFileSync(secondSession, "", "utf-8");
+			writeJson(path.join(resultsDir, "run-result-only.json"), {
+				id: "run-result-only",
+				mode: "parallel",
+				success: true,
+				state: "complete",
+				cwd: root,
+				results: [
+					{ agent: "a", success: true, sessionFile: firstSession, model: "openai/gpt-4.1" },
+					{ agent: "b", success: true, sessionFile: secondSession, model: "anthropic/claude-sonnet-4", thinking: "high" },
+				],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-result-only" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/Provide index to choose one/,
+			);
+			const target = resolveAsyncResumeTarget({ id: "run-result-only", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(target.kind, "revive");
+			assert.equal(target.agent, "b");
+			assert.equal(target.index, 1);
+			assert.equal(target.cwd, root);
 			assert.equal(target.sessionFile, secondSession);
 			assert.equal(target.model, "anthropic/claude-sonnet-4");
 			assert.equal(target.thinking, "high");

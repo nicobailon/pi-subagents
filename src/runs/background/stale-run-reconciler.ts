@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
+import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
 
@@ -109,6 +110,7 @@ interface ResultChildOutcome {
 	error?: string;
 	sessionFile?: string;
 	model?: string;
+	thinking?: string;
 	attemptedModels?: string[];
 	modelAttempts?: NonNullable<AsyncStatus["steps"]>[number]["modelAttempts"];
 }
@@ -120,9 +122,18 @@ interface ResultRepairData {
 
 function readResultRepairData(resultPath: string): ResultRepairData | undefined {
 	try {
-		const data = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { success?: boolean; state?: string; exitCode?: number; results?: ResultChildOutcome[] };
+		const data = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { success?: boolean; state?: string; exitCode?: number; results?: unknown };
 		const state = data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
-		return { state, ...(Array.isArray(data.results) ? { results: data.results } : {}) };
+		const results = Array.isArray(data.results)
+			? data.results.map((entry, index) => {
+				if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
+				const child = entry as ResultChildOutcome;
+				if (child.model !== undefined && typeof child.model !== "string") throw new Error(`Invalid async result file '${resultPath}': results[${index}].model must be a string.`);
+				if (child.thinking !== undefined && typeof child.thinking !== "string") throw new Error(`Invalid async result file '${resultPath}': results[${index}].thinking must be a string.`);
+				return child;
+			})
+			: undefined;
+		return { state, ...(results ? { results } : {}) };
 	} catch (error) {
 		if (isNotFoundError(error)) return undefined;
 		throw new Error(`Failed to read async result file '${resultPath}': ${getErrorMessage(error)}`, {
@@ -144,6 +155,8 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 		if (step.status !== "running" && step.status !== "pending") return step;
 		const child = repair.results?.[index];
 		const state = childState(repair.state, child);
+		const model = child?.model ?? step.model;
+		const thinking = resolveEffectiveThinking(model, child?.thinking ?? step.thinking);
 		return {
 			...step,
 			status: state === "complete" ? "complete" as const : state,
@@ -152,9 +165,10 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			exitCode: step.exitCode ?? (state === "complete" || state === "paused" ? 0 : 1),
 			error: state === "failed" ? step.error ?? child?.error : step.error,
 			sessionFile: step.sessionFile ?? child?.sessionFile,
-			model: step.model ?? child?.model,
-			attemptedModels: step.attemptedModels ?? child?.attemptedModels,
-			modelAttempts: step.modelAttempts ?? child?.modelAttempts,
+			model,
+			thinking,
+			attemptedModels: child?.attemptedModels ?? step.attemptedModels,
+			modelAttempts: child?.modelAttempts ?? step.modelAttempts,
 		};
 	});
 	return {
@@ -330,6 +344,12 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	const startedStatus = !status && options.startedRun ? buildStartedStatus(asyncDir, options.startedRun, now) : undefined;
 	const effectiveStatus = status ?? startedStatus;
 	if (!effectiveStatus) return { status: null, repaired: false };
+	const statusPath = path.join(asyncDir, "status.json");
+	for (const [index, step] of (effectiveStatus.steps ?? []).entries()) {
+		const stepRecord = step as Record<string, unknown>;
+		if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status file '${statusPath}': steps[${index}].model must be a string.`);
+		if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status file '${statusPath}': steps[${index}].thinking must be a string.`);
+	}
 
 	const runId = effectiveStatus.runId || path.basename(asyncDir);
 	const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
