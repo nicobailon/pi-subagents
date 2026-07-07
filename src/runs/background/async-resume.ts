@@ -35,6 +35,8 @@ export type AsyncResumeTarget = {
 	intercomTarget: string;
 	cwd?: string;
 	sessionFile?: string;
+	model?: string;
+	thinking?: string;
 };
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -322,6 +324,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
 					cwd: status?.cwd ?? result?.cwd,
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+					model: selectedStep.model,
+					thinking: selectedStep.thinking,
 				};
 			}
 			if (selectedStep?.status === "pending") throw new Error(`Async run '${runId}' child ${requestedIndex} is pending and has not started yet. Wait for it to run or complete before resuming.`);
@@ -344,6 +348,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
 				cwd: status?.cwd ?? result?.cwd,
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+				model: selected.step.model,
+				thinking: selected.step.thinking,
 			};
 		}
 	}
@@ -361,6 +367,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
 	if (!sessionFile && requireSessionFile) throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
 	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
+	const stepModel = statusSteps[index]?.model;
+	const stepThinking = statusSteps[index]?.thinking;
 
 	return {
 		kind: "revive",
@@ -372,6 +380,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
 		cwd: status?.cwd ?? result?.cwd,
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+		...(stepModel ? { model: stepModel } : {}),
+		...(stepThinking ? { thinking: stepThinking } : {}),
 	};
 }
 

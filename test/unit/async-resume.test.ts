@@ -165,13 +165,15 @@ describe("async resume lookup", () => {
 				state: "running",
 				startedAt: 100,
 				lastUpdate: 100,
-				steps: [{ agent: "scout", status: "running" }],
+				steps: [{ agent: "scout", status: "running", model: "openai/gpt-4.1", thinking: "off" }],
 			});
 
 			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 
 			assert.equal(target.kind, "live");
 			assert.equal(target.intercomTarget, "subagent-scout-run-live-1");
+			assert.equal(target.model, "openai/gpt-4.1");
+			assert.equal(target.thinking, "off");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -247,7 +249,7 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				steps: [
 					{ agent: "a", status: "complete", sessionFile: firstSession },
-					{ agent: "b", status: "complete", sessionFile: secondSession },
+					{ agent: "b", status: "complete", sessionFile: secondSession, model: "anthropic/claude-sonnet-4", thinking: "high" },
 				],
 			});
 
@@ -260,6 +262,8 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "b");
 			assert.equal(target.index, 1);
 			assert.equal(target.sessionFile, secondSession);
+			assert.equal(target.model, "anthropic/claude-sonnet-4");
+			assert.equal(target.thinking, "high");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
