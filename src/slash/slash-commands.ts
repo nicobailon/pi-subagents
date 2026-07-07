@@ -1096,6 +1096,18 @@ export function registerSlashCommands(
 		},
 	});
 
+	pi.registerCommand("subagents-stop", {
+		description: "Hard-stop a running async subagent (not resumable): /subagents-stop [id] (defaults to most recently active run)",
+		handler: async (args, ctx) => {
+			const trimmed = args.trim();
+			if (trimmed && trimmed.split(/\s+/).length > 1) {
+				ctx.ui.notify("Usage: /subagents-stop [id]", "error");
+				return;
+			}
+			await runSlashSubagent(pi, ctx, trimmed ? { action: "stop", id: trimmed } : { action: "stop" });
+		},
+	});
+
 	registerPromptWorkflowCommands({
 		pi,
 		run: (params, ctx) => runSlashSubagent(pi, ctx, params),

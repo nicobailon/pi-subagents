@@ -56,7 +56,7 @@ import {
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
 import { buildRevivedAsyncTask, interruptLiveAsyncResumeTarget, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
-import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
+import { deliverInterruptRequest, deliverTimeoutRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
@@ -567,6 +567,43 @@ function interruptAsyncRun(
 		const message = error instanceof Error ? error.message : String(error);
 		return {
 			content: [{ type: "text", text: `Failed to interrupt async run ${target.asyncId}: ${message}` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
+}
+
+function stopAsyncRun(
+	state: SubagentState,
+	runId: string | undefined,
+	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean,
+	location?: { asyncDir: string | null; resolvedId?: string },
+): AgentToolResult<Details> | null {
+	const target = getAsyncInterruptTarget(state, runId, location);
+	if (!target) return null;
+	const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
+	if (!status || status.state !== "running") {
+		return {
+			content: [{ type: "text", text: `No running async run was found for '${runId ?? "current"}'.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
+	try {
+		deliverTimeoutRequest({ asyncDir: target.asyncDir, pid: status.pid, kill, source: "stop-action" });
+		const tracked = state.asyncJobs.get(target.asyncId);
+		if (tracked) {
+			tracked.activityState = undefined;
+			tracked.updatedAt = Date.now();
+		}
+		return {
+			content: [{ type: "text", text: `Stop requested for async run ${target.asyncId}. This run will not be resumable.` }],
+			details: { mode: "management", results: [] },
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			content: [{ type: "text", text: `Failed to stop async run ${target.asyncId}: ${message}` }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -3277,6 +3314,40 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (asyncInterruptResult) return asyncInterruptResult;
 				return {
 					content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
+					isError: true,
+					details: { mode: "management", results: [] },
+				};
+			}
+			if (action === "stop") {
+				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				let resolved: ResolvedSubagentRunId | undefined;
+				if (targetRunId) {
+					try {
+						resolved = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+					}
+				}
+				if (resolved?.kind === "nested") {
+					return { content: [{ type: "text", text: "action='stop' does not support nested runs; use action='interrupt' instead." }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (resolved?.kind === "foreground") {
+					return { content: [{ type: "text", text: `Foreground run ${resolved.id} cannot be force-stopped; use action='interrupt' instead.` }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (targetRunId && !resolved) {
+					// Stop is a non-resumable kill: an unresolved id must error, not silently fall back to the newest running run.
+					return { content: [{ type: "text", text: `No run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+				}
+				const asyncStopResult = stopAsyncRun(
+					deps.state,
+					resolved?.kind === "async" ? resolved.id : targetRunId,
+					deps.kill,
+					resolved?.kind === "async" ? resolved.location : undefined,
+				);
+				if (asyncStopResult) return asyncStopResult;
+				return {
+					content: [{ type: "text", text: "No stoppable async run found in this session." }],
 					isError: true,
 					details: { mode: "management", results: [] },
 				};

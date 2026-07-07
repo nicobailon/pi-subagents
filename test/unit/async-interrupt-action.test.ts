@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { consumeSteerRequests } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 
 function createState(): SubagentState {
@@ -216,6 +217,110 @@ describe("async interrupt action", () => {
 			assert.equal(status.state, "failed");
 		} finally {
 			cleanup(runId, asyncDir);
+		}
+	});
+});
+
+function stateWithNestedRun(id: string): { state: SubagentState; root: string } {
+	const route = createNestedRoute("root-control");
+	const root = path.dirname(route.eventSink);
+	writeNestedEvent(route, {
+		type: "subagent.nested.updated",
+		ts: 100,
+		parentRunId: "root-control",
+		parentStepIndex: 0,
+		child: { id, parentRunId: "root-control", parentStepIndex: 0, depth: 1, path: [{ runId: "root-control", stepIndex: 0 }], state: "running", agent: "worker", ownerState: "live" },
+	});
+	const state = createState();
+	state.foregroundControls.set(route.rootRunId, { runId: route.rootRunId, mode: "single", startedAt: 1, updatedAt: 1, nestedRoute: route } as any);
+	state.lastForegroundControlId = route.rootRunId;
+	return { state, root };
+}
+
+describe("async stop action", () => {
+	it("hard-stops a running async run via the timeout control channel", async () => {
+		const state = createState();
+		const runId = `stop-disk-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false });
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("stop", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), new RegExp(`Stop requested for async run ${runId}`));
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "timeout.json")), true);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("does not report success for stale running status with a dead pid", async () => {
+		const state = createState();
+		const runId = `stop-esrch-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId);
+		try {
+			const result = await executorWithKill(state, () => {
+				const error = new Error("missing process") as NodeJS.ErrnoException;
+				error.code = "ESRCH";
+				throw error;
+			}).execute("stop", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /No running async run was found/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "timeout.json")), false);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("refuses to force-stop a foreground run", async () => {
+		const state = createState();
+		const runId = "foreground-run-1";
+		state.foregroundControls.set(runId, { runId, mode: "single", startedAt: 0, updatedAt: 0 } as any);
+
+		const result = await executorWithKill(state, () => true)
+			.execute("stop", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+		assert.equal(result.isError, true);
+		assert.match(text(result), /cannot be force-stopped; use action='interrupt' instead/);
+	});
+
+	it("reports no stoppable run when nothing is running", async () => {
+		const state = createState();
+		const result = await executorWithKill(state, () => true)
+			.execute("stop", { action: "stop" }, new AbortController().signal, undefined, ctx());
+
+		assert.equal(result.isError, true);
+		assert.match(text(result), /No stoppable async run found in this session/);
+	});
+
+	it("errors instead of falling back to the newest run when the given id does not resolve", async () => {
+		const state = createState();
+		const runId = `stop-newest-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId);
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("stop", { action: "stop", id: "no-such-run" }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /No run found for 'no-such-run'/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "timeout.json")), false);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("refuses to hard-stop a nested run", async () => {
+		const { state, root } = stateWithNestedRun("nested-live");
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("stop", { action: "stop", id: "nested-live" }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /action='stop' does not support nested runs; use action='interrupt' instead/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 });

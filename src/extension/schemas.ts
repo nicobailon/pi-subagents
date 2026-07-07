@@ -221,10 +221,10 @@ const SubagentParamsSchema = Type.Object({
 		description: "Management/control action only. Must be omitted for execution mode (single, parallel, or chain)."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', action='resume', action='steer', or action='append-step'."
+		description: "Run id or prefix for action='status', action='interrupt', action='resume', action='steer', action='stop', or action='append-step'."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt', action='resume', action='steer', or action='append-step'. Defaults to the most recently active controllable run for interrupt. Prefer id for new calls."
+		description: "Target run ID for action='interrupt', action='resume', action='steer', action='stop', or action='append-step'. Defaults to the most recently active controllable run for interrupt/stop. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for action='status', action='resume', or action='steer'."
