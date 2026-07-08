@@ -16,7 +16,10 @@ export function formatActivityLabel(lastActivityAt: number | undefined, activity
 	}
 	const age = formatActivityAge(Math.max(0, now - lastActivityAt));
 	if (activityState === "needs_attention") return `no activity for ${age}`;
-	if (activityState === "active_long_running") return `active but long-running · last activity ${age} ago`;
+	if (activityState === "active_long_running") {
+		const activityAge = age === "now" ? "now" : `${age} ago`;
+		return `active but long-running · last activity ${activityAge}`;
+	}
 	return age === "now" ? "active now" : `active ${age} ago`;
 }
 
