@@ -184,6 +184,7 @@ describe("subagent prompt runtime", () => {
 			watchdogTailTimeoutMs: 1000,
 			agentEndTimeoutMs: 500,
 			maxWarnings: null,
+			lsp: { enabled: false, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 },
 			autoFollowBlockers: false,
 			autoFollowMaxAttempts: 3,
 			stalemateRepeats: 2,

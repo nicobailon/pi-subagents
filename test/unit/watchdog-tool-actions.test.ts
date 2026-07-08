@@ -67,6 +67,18 @@ describe("watchdog tool actions", () => {
 		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, "high");
 	});
 
+	it("preserves omitted session model fields when configuring thinking", () => {
+		const runtime = new MainWatchdogRuntime({ cwd: tempProject });
+		const ctx = createCtx({ provider: "openai-codex", id: "gpt-5.5" });
+
+		handleWatchdogToolAction("watchdog.configure", { model: "recommended" }, ctx, runtime);
+		const result = handleWatchdogToolAction("watchdog.configure", { thinking: "low" }, ctx, runtime);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(runtime.getSnapshot(tempProject).config.main.model, "anthropic/claude-opus-4-8");
+		assert.equal(runtime.getSnapshot(tempProject).config.main.thinking, "low");
+	});
+
 	it("persists the recommended model when user scope is explicit", () => {
 		const runtime = new MainWatchdogRuntime({ cwd: tempProject });
 		const result = handleWatchdogToolAction("watchdog.configure", { scope: "user", model: "recommended" }, createCtx({ provider: "anthropic", id: "claude-opus-4-8" }), runtime);

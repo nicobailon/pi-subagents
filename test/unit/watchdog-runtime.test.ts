@@ -517,6 +517,56 @@ describe("main watchdog runtime", () => {
 		assert.equal(snapshot.lsp.freshDiagnosticCount, 1);
 	});
 
+	it("records LSP info and hints without sending them to model review", async () => {
+		const repo = createRepo();
+		const displayed: unknown[] = [];
+		let reviewedDelta = "";
+		const runtime = new MainWatchdogRuntime({
+			cwd: repo,
+			reviewChangesOnly: true,
+			resolveConfig: () => configResult(enabledConfig({ lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp, enabled: true } })),
+			lspDiagnostics: () => ({
+				status: "ok",
+				provider: "stub-lsp",
+				checkedPaths: ["src/file.ts"],
+				skippedPaths: [],
+				diagnostics: [{
+					path: "src/file.ts",
+					line: 1,
+					column: 14,
+					severity: "info",
+					source: "typescript",
+					message: "Helpful note.",
+				}, {
+					path: "src/file.ts",
+					line: 2,
+					column: 4,
+					severity: "hint",
+					source: "typescript",
+					message: "Suggestion.",
+				}],
+			}),
+			review: (request) => {
+				reviewedDelta = request.delta;
+				return { stopReason: "stop" };
+			},
+			displayWarning: (details) => displayed.push(details),
+		});
+
+		runtime.handleBeforeAgentStart({ prompt: "Patch the feature." }, { cwd: repo });
+		fs.writeFileSync(path.join(repo, "src", "file.ts"), "export const value = 7;\n", "utf-8");
+		runtime.enqueueDelta("Assistant:\nEdited the file.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: repo });
+
+		assert.match(reviewedDelta, /Changed repo paths:/);
+		assert.doesNotMatch(reviewedDelta, /LSP diagnostics:/);
+		assert.equal(displayed.length, 0);
+		const snapshot = runtime.getSnapshot(repo);
+		assert.equal(snapshot.lsp.diagnosticCount, 2);
+		assert.equal(snapshot.lsp.freshDiagnosticCount, 2);
+		assert.deepEqual(snapshot.lsp.diagnostics.map((diagnostic) => diagnostic.severity), ["info", "hint"]);
+	});
+
 	it("aborts and ignores stale LSP diagnostics after reset", async () => {
 		const repo = createRepo();
 		const displayed: unknown[] = [];

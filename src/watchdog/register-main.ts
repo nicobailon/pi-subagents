@@ -300,7 +300,7 @@ async function handleWatchdogCommand(
 			const value = resolveModelCommandValue(ctx, rawModel);
 			const snapshot = value.model === null
 				? runtime.clearSessionModel(ctx.cwd)
-				: runtime.setSessionModel(value.model, value.thinking === null ? undefined : value.thinking, ctx.cwd);
+				: runtime.setSessionModel({ model: value.model, thinking: value.thinking ?? null }, ctx.cwd);
 			sendSlashText(pi, [
 				`Subagent watchdog session model: ${value.description}.`,
 				"No settings files were changed.",

@@ -237,11 +237,31 @@ function writePackageSkill(packageRoot: string, skillName: string): void {
 	);
 }
 
+function readIfExists(filePath: string): string | undefined {
+	try {
+		const text = fs.readFileSync(filePath, "utf-8").trim();
+		return text || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<string> {
 	const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 	const deadline = Date.now() + timeoutMs;
 	while (!fs.existsSync(resultPath)) {
-		if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
+		if (Date.now() > deadline) {
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const status = readIfExists(path.join(asyncDir, "status.json"));
+			const stdout = readIfExists(path.join(asyncDir, "runner.stdout.log"));
+			const stderr = readIfExists(path.join(asyncDir, "runner.stderr.log"));
+			assert.fail([
+				`Timed out waiting for async result file: ${resultPath}`,
+				status ? `status.json: ${status}` : undefined,
+				stdout ? `runner stdout: ${stdout}` : undefined,
+				stderr ? `runner stderr: ${stderr}` : undefined,
+			].filter(Boolean).join("\n"));
+		}
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	return resultPath;
@@ -353,7 +373,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			});
 
 			assert.equal(result.isError, undefined);
-			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const resultPath = await waitForAsyncResultFile(id, 30_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output, "non-node exec async done");

@@ -832,53 +832,57 @@ async function runSingleAttempt(
 			cleanupTempDir(tempDir);
 			if (buf.trim()) processLine(buf);
 			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
-			if (!result.error && assistantError) result.error = assistantError;
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
-			if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
-				result.error = stderrBuf.trim();
+			let closeError = result.error ?? assistantError;
+			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !closeError;
+			if (code !== 0 && stderrBuf.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
+				closeError = stderrBuf.trim();
 			}
 			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			if (detached) {
-				result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
-				progress.status = result.exitCode === 0 ? "completed" : "failed";
-				progress.durationMs = Date.now() - startTime;
-				if (result.error) progress.error = result.error;
-				result.progressSummary = {
-					toolCount: progress.toolCount,
-					tokens: progress.tokens,
-					durationMs: progress.durationMs,
+				const recoveredProgress = snapshotProgress(progress);
+				const recoveredResult = snapshotResult(result, recoveredProgress);
+				if (!recoveredResult.error && closeError) recoveredResult.error = closeError;
+				recoveredResult.exitCode = recoveredResult.error && finalCode === 0 ? 1 : finalCode;
+				recoveredProgress.status = recoveredResult.exitCode === 0 ? "completed" : "failed";
+				recoveredProgress.durationMs = Date.now() - startTime;
+				if (recoveredResult.error) recoveredProgress.error = recoveredResult.error;
+				recoveredResult.progressSummary = {
+					toolCount: recoveredProgress.toolCount,
+					tokens: recoveredProgress.tokens,
+					durationMs: recoveredProgress.durationMs,
 				};
-				let fullOutput = stripAcceptanceReport(getFinalOutput(result.messages));
-				fullOutput = fullOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
-				result.outputMode = options.outputMode ?? "inline";
-				if (options.outputPath && result.exitCode === 0) {
+				let fullOutput = stripAcceptanceReport(getFinalOutput(recoveredResult.messages ?? []));
+				fullOutput = fullOutput.trim() || recoveredResult.error || recoveredResult.finalOutput || "Detached child exited without final output.";
+				recoveredResult.outputMode = options.outputMode ?? "inline";
+				if (options.outputPath && recoveredResult.exitCode === 0) {
 					const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
 					fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
-					result.savedOutputPath = resolvedOutput.savedPath;
-					result.outputSaveError = resolvedOutput.saveError;
+					recoveredResult.savedOutputPath = resolvedOutput.savedPath;
+					recoveredResult.outputSaveError = resolvedOutput.saveError;
 					if (resolvedOutput.savedPath) {
-						result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
+						recoveredResult.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
 					} else {
-						result.exitCode = 1;
-						result.error = `Output file was not finalized after detached child exit: ${resolvedOutput.saveError ?? options.outputPath}`;
-						progress.status = "failed";
-						progress.error = result.error;
+						recoveredResult.exitCode = 1;
+						recoveredResult.error = `Output file was not finalized after detached child exit: ${resolvedOutput.saveError ?? options.outputPath}`;
+						recoveredProgress.status = "failed";
+						recoveredProgress.error = recoveredResult.error;
 					}
 				}
-				result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
-					? result.outputReference.message
+				recoveredResult.finalOutput = options.outputMode === "file-only" && recoveredResult.savedOutputPath && recoveredResult.outputReference
+					? recoveredResult.outputReference.message
 					: fullOutput;
-				if (result.artifactPaths && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
+				if (recoveredResult.artifactPaths && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
 					try {
-						writeArtifact(result.artifactPaths.outputPath, fullOutput);
+						writeArtifact(recoveredResult.artifactPaths.outputPath, fullOutput);
 					} catch {
 						// Detached children may outlive test/temp cleanup; recovered status is best-effort.
 					}
 				}
-				options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
+				options.onDetachedExit?.(recoveredResult);
 				finish(-2);
 				return;
 			}
+			if (!result.error && closeError) result.error = closeError;
 			processClosed = true;
 			finish(finalCode);
 		});

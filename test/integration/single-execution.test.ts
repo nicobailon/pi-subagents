@@ -1909,6 +1909,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const agents = makeAgentConfigs(["echo"]);
 		const outputPath = path.join(tempDir, "detached-final-output.md");
 		let detachEmitted = false;
+		let recoveredResult: RunSyncResult | undefined;
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
 			runId: "detached-file-only-post-exit-output",
@@ -1923,22 +1924,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				detachEmitted = true;
 				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "file-only-post-exit-detach" });
 			},
+			onDetachedExit: (postExit) => {
+				recoveredResult = postExit as RunSyncResult;
+			},
 		});
 
 		assert.equal(result.exitCode, -2);
 		assert.equal(result.detached, true);
 		assert.equal(fs.existsSync(outputPath), false);
 
-		for (let attempt = 0; attempt < 100 && !fs.existsSync(outputPath); attempt++) {
+		for (let attempt = 0; attempt < 100 && (!fs.existsSync(outputPath) || !recoveredResult); attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "after reply");
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.progress?.status, "completed");
-		assert.equal(result.savedOutputPath, outputPath);
-		assert.equal(result.outputSaveError, undefined);
-		assert.match(result.finalOutput ?? "", /^Output saved to:/);
+		assert.ok(recoveredResult);
+		assert.equal(recoveredResult.exitCode, 0);
+		assert.equal(recoveredResult.progress?.status, "completed");
+		assert.equal(recoveredResult.savedOutputPath, outputPath);
+		assert.equal(recoveredResult.outputSaveError, undefined);
+		assert.match(recoveredResult.finalOutput ?? "", /^Output saved to:/);
 	});
 
 	it("aborts a foreground coordination tool start instead of detaching without a delivered handoff", async () => {

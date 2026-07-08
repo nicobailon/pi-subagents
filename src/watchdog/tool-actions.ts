@@ -124,8 +124,7 @@ export function handleWatchdogToolAction(action: string, params: WatchdogToolPar
 		if (scope === "session") {
 			if (!runtime) return result("Subagent watchdog runtime is unavailable.", true);
 			if (target.kind !== "main") return result("Session-scoped watchdog.configure currently supports target='main' only.", true);
-			if (value.model === null && value.thinking === null) runtime.clearSessionModel(ctx.cwd);
-			else runtime.setSessionModel(value.model === null ? undefined : value.model, value.thinking === null ? undefined : value.thinking, ctx.cwd);
+			runtime.setSessionModel({ model: value.model, thinking: value.thinking }, ctx.cwd);
 			return result([
 				`Subagent watchdog session model configured: ${value.description}.`,
 				"No settings files were changed.",

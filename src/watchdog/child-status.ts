@@ -1,4 +1,3 @@
-import { DEFAULT_WATCHDOG_CONFIG } from "./settings.ts";
 import type { ResolvedWatchdogConfig, WatchdogLspConfig } from "./types.ts";
 
 export const CHILD_WATCHDOG_CONFIG_ENV = "PI_SUBAGENT_WATCHDOG_CHILD_CONFIG";
@@ -77,56 +76,91 @@ export function encodeChildWatchdogConfig(config: ChildWatchdogConfig | undefine
 	return config ? JSON.stringify(config) : undefined;
 }
 
-function optionalString(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim() ? value : undefined;
+function childConfigObject(value: unknown, field: string): Record<string, unknown> {
+	if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+	throw new Error(`Invalid child watchdog config: ${field} must be an object.`);
 }
 
-function optionalIndex(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+function childConfigOptionalString(input: Record<string, unknown>, field: string): string | undefined {
+	if (!(field in input)) return undefined;
+	const value = input[field];
+	if (typeof value === "string" && value.trim()) return value;
+	throw new Error(`Invalid child watchdog config: ${field} must be a non-empty string.`);
+}
+
+function childConfigOptionalIndex(input: Record<string, unknown>, field: string): number | undefined {
+	if (!(field in input)) return undefined;
+	const value = input[field];
+	if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
+	throw new Error(`Invalid child watchdog config: ${field} must be a non-negative integer.`);
+}
+
+function childConfigPositiveInteger(input: Record<string, unknown>, field: string): number {
+	const value = input[field];
+	if (typeof value === "number" && Number.isInteger(value) && value >= 1) return value;
+	throw new Error(`Invalid child watchdog config: ${field} must be a positive integer.`);
+}
+
+function childConfigNullableNonNegativeInteger(input: Record<string, unknown>, field: string): number | null {
+	const value = input[field];
+	if (value === null) return null;
+	if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
+	throw new Error(`Invalid child watchdog config: ${field} must be null or a non-negative integer.`);
+}
+
+function childConfigBoolean(input: Record<string, unknown>, field: string): boolean {
+	const value = input[field];
+	if (typeof value === "boolean") return value;
+	throw new Error(`Invalid child watchdog config: ${field} must be a boolean.`);
+}
+
+function childConfigLsp(value: unknown): WatchdogLspConfig {
+	const input = childConfigObject(value, "lsp");
+	if (typeof input.enabled !== "boolean") throw new Error("Invalid child watchdog config: lsp.enabled must be a boolean.");
+	if (typeof input.timeoutMs !== "number" || !Number.isInteger(input.timeoutMs) || input.timeoutMs < 1) {
+		throw new Error("Invalid child watchdog config: lsp.timeoutMs must be a positive integer.");
+	}
+	if (typeof input.maxFiles !== "number" || !Number.isInteger(input.maxFiles) || input.maxFiles < 1) {
+		throw new Error("Invalid child watchdog config: lsp.maxFiles must be a positive integer.");
+	}
+	if (typeof input.maxDiagnostics !== "number" || !Number.isInteger(input.maxDiagnostics) || input.maxDiagnostics < 0) {
+		throw new Error("Invalid child watchdog config: lsp.maxDiagnostics must be a non-negative integer.");
+	}
+	return {
+		enabled: input.enabled,
+		timeoutMs: input.timeoutMs,
+		maxFiles: input.maxFiles,
+		maxDiagnostics: input.maxDiagnostics,
+	};
 }
 
 export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdogConfig | undefined {
 	if (!raw) return undefined;
-	const parsed = JSON.parse(raw) as Record<string, unknown>;
-	if (!parsed || typeof parsed !== "object" || parsed.enabled !== true) return undefined;
-	if (typeof parsed.watchdogTailTimeoutMs !== "number" || !Number.isInteger(parsed.watchdogTailTimeoutMs) || parsed.watchdogTailTimeoutMs < 1) {
-		throw new Error("Invalid child watchdog config: watchdogTailTimeoutMs must be a positive integer.");
+	const parsed = childConfigObject(JSON.parse(raw), "root");
+	if (parsed.enabled === false) return undefined;
+	if (parsed.enabled !== true) throw new Error("Invalid child watchdog config: enabled must be true or false.");
+	const thinking = parsed.thinking;
+	if (thinking !== undefined && typeof thinking !== "string" && thinking !== false) {
+		throw new Error("Invalid child watchdog config: thinking must be a string or false.");
 	}
-	if (typeof parsed.agentEndTimeoutMs !== "number" || !Number.isInteger(parsed.agentEndTimeoutMs) || parsed.agentEndTimeoutMs < 1) {
-		throw new Error("Invalid child watchdog config: agentEndTimeoutMs must be a positive integer.");
-	}
-	if (parsed.maxWarnings !== null && (typeof parsed.maxWarnings !== "number" || !Number.isInteger(parsed.maxWarnings) || parsed.maxWarnings < 0)) {
-		throw new Error("Invalid child watchdog config: maxWarnings must be null or a non-negative integer.");
-	}
-	if (parsed.autoFollowMaxAttempts !== null && (typeof parsed.autoFollowMaxAttempts !== "number" || !Number.isInteger(parsed.autoFollowMaxAttempts) || parsed.autoFollowMaxAttempts < 0)) {
-		throw new Error("Invalid child watchdog config: autoFollowMaxAttempts must be null or a non-negative integer.");
-	}
-	const runId = optionalString(parsed.runId);
-	const agent = optionalString(parsed.agent);
-	const childIndex = optionalIndex(parsed.childIndex);
-	const model = optionalString(parsed.model);
-	const rawLsp = parsed.lsp && typeof parsed.lsp === "object" ? parsed.lsp as Record<string, unknown> : undefined;
-	const lsp = {
-		...DEFAULT_WATCHDOG_CONFIG.lsp,
-		...(typeof rawLsp?.enabled === "boolean" ? { enabled: rawLsp.enabled } : {}),
-		...(typeof rawLsp?.timeoutMs === "number" && Number.isInteger(rawLsp.timeoutMs) && rawLsp.timeoutMs >= 1 ? { timeoutMs: rawLsp.timeoutMs } : {}),
-		...(typeof rawLsp?.maxFiles === "number" && Number.isInteger(rawLsp.maxFiles) && rawLsp.maxFiles >= 1 ? { maxFiles: rawLsp.maxFiles } : {}),
-		...(typeof rawLsp?.maxDiagnostics === "number" && Number.isInteger(rawLsp.maxDiagnostics) && rawLsp.maxDiagnostics >= 0 ? { maxDiagnostics: rawLsp.maxDiagnostics } : {}),
-	};
+	const runId = childConfigOptionalString(parsed, "runId");
+	const agent = childConfigOptionalString(parsed, "agent");
+	const childIndex = childConfigOptionalIndex(parsed, "childIndex");
+	const model = childConfigOptionalString(parsed, "model");
 	return {
 		enabled: true,
 		...(runId ? { runId } : {}),
 		...(agent ? { agent } : {}),
 		...(childIndex !== undefined ? { childIndex } : {}),
-		watchdogTailTimeoutMs: parsed.watchdogTailTimeoutMs,
-		agentEndTimeoutMs: parsed.agentEndTimeoutMs,
-		maxWarnings: parsed.maxWarnings as number | null,
+		watchdogTailTimeoutMs: childConfigPositiveInteger(parsed, "watchdogTailTimeoutMs"),
+		agentEndTimeoutMs: childConfigPositiveInteger(parsed, "agentEndTimeoutMs"),
+		maxWarnings: childConfigNullableNonNegativeInteger(parsed, "maxWarnings"),
 		...(model ? { model } : {}),
-		...(typeof parsed.thinking === "string" || parsed.thinking === false ? { thinking: parsed.thinking as string | false } : {}),
-		lsp,
-		autoFollowBlockers: parsed.autoFollowBlockers === true,
-		autoFollowMaxAttempts: parsed.autoFollowMaxAttempts as number | null,
-		stalemateRepeats: typeof parsed.stalemateRepeats === "number" && Number.isInteger(parsed.stalemateRepeats) && parsed.stalemateRepeats >= 1 ? parsed.stalemateRepeats : 1,
+		...(thinking !== undefined ? { thinking: thinking as string | false } : {}),
+		lsp: childConfigLsp(parsed.lsp),
+		autoFollowBlockers: childConfigBoolean(parsed, "autoFollowBlockers"),
+		autoFollowMaxAttempts: childConfigNullableNonNegativeInteger(parsed, "autoFollowMaxAttempts"),
+		stalemateRepeats: childConfigPositiveInteger(parsed, "stalemateRepeats"),
 	};
 }
 
@@ -156,10 +190,10 @@ export function acceptChildWatchdogEvent(input: {
 	agent?: string;
 	childIndex?: number;
 }): ChildWatchdogStateSnapshot | undefined {
-	if (input.event.runId !== undefined && input.runId !== undefined && input.event.runId !== input.runId) return undefined;
-	if (input.event.agent !== undefined && input.agent !== undefined && input.event.agent !== input.agent) return undefined;
+	if (input.runId !== undefined && input.event.runId !== input.runId) return undefined;
+	if (input.agent !== undefined && input.event.agent !== input.agent) return undefined;
 	const eventIndex = input.event.childIndex ?? input.event.stepIndex;
-	if (eventIndex !== undefined && input.childIndex !== undefined && eventIndex !== input.childIndex) return undefined;
+	if (input.childIndex !== undefined && eventIndex !== input.childIndex) return undefined;
 	if (input.current && input.event.seq <= input.current.seq) return undefined;
 	return {
 		phase: input.event.phase,

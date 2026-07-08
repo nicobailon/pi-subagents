@@ -1384,10 +1384,10 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("intercom", { action: "send", to: "orchestrator" })] },
-				{ delay: 1000, jsonl: [events.assistantMessage("after handoff")] },
+				{ delay: 25, jsonl: [events.assistantMessage("after handoff")] },
 			],
 		});
-		mockPi.onCall({ output: "Other task done" });
+		mockPi.onCall({ delay: 150, output: "Other task done" });
 		const agents = [
 			makeAgent("a", { systemPrompt: "Intercom orchestration channel:" }),
 			makeAgent("b", { systemPrompt: "Intercom orchestration channel:" }),

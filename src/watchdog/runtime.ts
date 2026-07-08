@@ -199,11 +199,13 @@ export class MainWatchdogRuntime {
 		return this.getSnapshot();
 	}
 
-	setSessionModel(model: string | undefined, thinking: WatchdogEndpointConfig["thinking"] | undefined, cwd = this.cwd): WatchdogRuntimeSnapshot {
-		this.sessionModelOverride = {
-			...(model ? { model } : {}),
-			...(thinking !== undefined ? { thinking } : {}),
-		};
+	setSessionModel(patch: { model?: string | null; thinking?: WatchdogEndpointConfig["thinking"] | null }, cwd = this.cwd): WatchdogRuntimeSnapshot {
+		const next = { ...(this.sessionModelOverride ?? {}) };
+		if (patch.model === null) delete next.model;
+		else if (patch.model !== undefined) next.model = patch.model;
+		if (patch.thinking === null) delete next.thinking;
+		else if (patch.thinking !== undefined) next.thinking = patch.thinking;
+		this.sessionModelOverride = next.model === undefined && next.thinking === undefined ? undefined : next;
 		this.reset("session model override");
 		this.refreshConfig(cwd);
 		return this.getSnapshot();

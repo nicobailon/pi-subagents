@@ -196,10 +196,11 @@ function formatDiagnostic(diagnostic: WatchdogLspDiagnostic): string {
 }
 
 export function formatWatchdogLspDiagnosticsBlock(result: WatchdogLspResult): string {
-	if (!result.diagnostics.length) return "";
+	const actionable = result.diagnostics.filter((diagnostic) => diagnostic.severity === "error" || diagnostic.severity === "warning");
+	if (!actionable.length) return "";
 	return [
 		"LSP diagnostics:",
-		...result.diagnostics.map((diagnostic) => `- ${formatDiagnostic(diagnostic)}`),
+		...actionable.map((diagnostic) => `- ${formatDiagnostic(diagnostic)}`),
 	].join("\n");
 }
 
@@ -259,6 +260,7 @@ class JsonRpcLspClient {
 	private readonly child: ChildProcessWithoutNullStreams;
 	private stderr = "";
 	private exited = false;
+	private readonly exitWaiters: Array<() => void> = [];
 
 	constructor(child: ChildProcessWithoutNullStreams) {
 		this.child = child;
@@ -266,10 +268,15 @@ class JsonRpcLspClient {
 		child.stderr.on("data", (chunk: Buffer) => {
 			this.stderr = `${this.stderr}${chunk.toString("utf-8")}`.slice(-MAX_STDERR_LENGTH);
 		});
-		child.on("error", (error) => this.rejectPending(error));
+		child.on("error", (error) => {
+			this.exited = true;
+			this.rejectPending(error);
+			this.resolveExitWaiters();
+		});
 		child.on("exit", (code, signal) => {
 			this.exited = true;
 			this.rejectPending(new Error(`language server exited${code === null ? "" : ` with code ${code}`}${signal ? ` signal ${signal}` : ""}`));
+			this.resolveExitWaiters();
 		});
 	}
 
@@ -294,6 +301,7 @@ class JsonRpcLspClient {
 		} catch {
 			this.child.kill("SIGTERM");
 		}
+		await this.waitForExit(SHUTDOWN_TIMEOUT_MS);
 	}
 
 	kill(): void {
@@ -327,7 +335,13 @@ class JsonRpcLspClient {
 			if (this.stdoutBuffer.length < bodyEnd) return;
 			const body = this.stdoutBuffer.slice(bodyStart, bodyEnd).toString("utf-8");
 			this.stdoutBuffer = this.stdoutBuffer.slice(bodyEnd);
-			this.handleMessage(JSON.parse(body) as JsonRpcMessage);
+			try {
+				this.handleMessage(JSON.parse(body) as JsonRpcMessage);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this.failProtocol(new Error(`Invalid LSP JSON-RPC response: ${message}`));
+				return;
+			}
 		}
 	}
 
@@ -348,6 +362,27 @@ class JsonRpcLspClient {
 		} else {
 			pending.resolve(message.result);
 		}
+	}
+
+	private failProtocol(error: Error): void {
+		if (this.exited) return;
+		this.rejectPending(error);
+		this.child.kill("SIGTERM");
+	}
+
+	private waitForExit(timeoutMs: number): Promise<void> {
+		if (this.exited) return Promise.resolve();
+		return new Promise((resolve) => {
+			const timer = setTimeout(resolve, timeoutMs);
+			this.exitWaiters.push(() => {
+				clearTimeout(timer);
+				resolve();
+			});
+		});
+	}
+
+	private resolveExitWaiters(): void {
+		for (const resolve of this.exitWaiters.splice(0)) resolve();
 	}
 
 	private rejectPending(error: Error): void {
@@ -407,6 +442,7 @@ async function collectWithTypeScriptLanguageServer(input: {
 		cwd: input.root,
 		stdio: "pipe",
 		env: { ...process.env, NO_COLOR: "1" },
+		shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(input.command.command),
 	});
 	const client = new JsonRpcLspClient(child);
 	const remaining = () => Math.max(1, input.config.timeoutMs - (Date.now() - started));
