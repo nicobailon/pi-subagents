@@ -18,8 +18,14 @@ export type WatchdogCategory = typeof WATCHDOG_WARNING_CATEGORIES[number];
 export const WATCHDOG_WARNING_CONFIDENCES = ["medium", "high"] as const;
 export type WatchdogConfidence = typeof WATCHDOG_WARNING_CONFIDENCES[number];
 
-export const WATCHDOG_WARNING_SOURCES = ["main", "child", "async-completion"] as const;
+export const WATCHDOG_WARNING_SOURCES = ["main", "child", "async-completion", "lsp"] as const;
 export type WatchdogWarningSource = typeof WATCHDOG_WARNING_SOURCES[number];
+
+export const WATCHDOG_LSP_DIAGNOSTIC_SEVERITIES = ["error", "warning", "info", "hint"] as const;
+export type WatchdogLspDiagnosticSeverity = typeof WATCHDOG_LSP_DIAGNOSTIC_SEVERITIES[number];
+
+export const WATCHDOG_LSP_STATUSES = ["disabled", "ok", "skipped", "unavailable", "timeout", "failed"] as const;
+export type WatchdogLspStatus = typeof WATCHDOG_LSP_STATUSES[number];
 
 export const WATCHDOG_RUNTIME_STATUSES = ["idle", "queued", "reviewing", "waiting-at-agent-end", "stale", "failed"] as const;
 export type WatchdogRuntimeStatus = typeof WATCHDOG_RUNTIME_STATUSES[number];
@@ -109,6 +115,39 @@ export interface WatchdogAsyncCompletionConfig {
 	autoFollowBlockers: boolean;
 }
 
+export interface WatchdogLspConfig {
+	enabled: boolean;
+	timeoutMs: number;
+	maxFiles: number;
+	maxDiagnostics: number;
+}
+
+export interface WatchdogLspDiagnostic {
+	path: string;
+	line: number;
+	column: number;
+	severity: WatchdogLspDiagnosticSeverity;
+	source: string;
+	code?: string;
+	message: string;
+}
+
+export interface WatchdogLspResult {
+	status: WatchdogLspStatus;
+	provider?: string;
+	checkedPaths: string[];
+	skippedPaths: string[];
+	diagnostics: WatchdogLspDiagnostic[];
+	message?: string;
+}
+
+export interface WatchdogLspRuntimeSnapshot extends WatchdogLspResult {
+	enabled: boolean;
+	diagnosticCount: number;
+	freshDiagnosticCount: number;
+	updatedAt?: string;
+}
+
 export interface ResolvedWatchdogConfig {
 	enabled: boolean;
 	delivery: WatchdogDeliveryMode;
@@ -123,6 +162,7 @@ export interface ResolvedWatchdogConfig {
 	main: WatchdogEndpointConfig;
 	children: WatchdogChildrenConfig;
 	asyncCompletion: WatchdogAsyncCompletionConfig;
+	lsp: WatchdogLspConfig;
 	compactAtPercent: number;
 	reviewRetryDelayMs: number;
 	maxReviewFailures: number;

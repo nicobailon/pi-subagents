@@ -15,6 +15,7 @@ import {
 	type WatchdogEndpointConfig,
 	type WatchdogGuidanceConfig,
 	type WatchdogLateWarningPolicy,
+	type WatchdogLspConfig,
 	type WatchdogSettingsError,
 	type WatchdogSettingsResult,
 	type WatchdogSettingsSource,
@@ -31,6 +32,7 @@ type WatchdogChildrenPatch = Partial<Omit<WatchdogChildrenConfig, "autoFollow" |
 	overrides?: Record<string, WatchdogChildOverridePatch>;
 };
 type WatchdogAsyncCompletionPatch = Partial<WatchdogAsyncCompletionConfig>;
+type WatchdogLspPatch = Partial<WatchdogLspConfig>;
 
 export type WatchdogSettingsWriteScope = "user" | "project";
 export type WatchdogModelSettingsTarget =
@@ -46,12 +48,13 @@ export interface WatchdogModelSettingsWrite {
 	thinking?: ThinkingLevel | false | null;
 }
 
-type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "autoFollow" | "main" | "children" | "asyncCompletion">> & {
+type WatchdogConfigPatch = Partial<Omit<ResolvedWatchdogConfig, "guidance" | "autoFollow" | "main" | "children" | "asyncCompletion" | "lsp">> & {
 	guidance?: WatchdogGuidancePatch;
 	autoFollow?: WatchdogAutoFollowPatch;
 	main?: WatchdogEndpointPatch;
 	children?: WatchdogChildrenPatch;
 	asyncCompletion?: WatchdogAsyncCompletionPatch;
+	lsp?: WatchdogLspPatch;
 };
 
 interface ParseMeta {
@@ -94,6 +97,12 @@ export const DEFAULT_WATCHDOG_CONFIG: ResolvedWatchdogConfig = {
 		enabled: false,
 		autoFollowBlockers: false,
 	},
+	lsp: {
+		enabled: true,
+		timeoutMs: 3_000,
+		maxFiles: 20,
+		maxDiagnostics: 50,
+	},
 	compactAtPercent: 80,
 	reviewRetryDelayMs: 1_000,
 	maxReviewFailures: 3,
@@ -113,6 +122,7 @@ const WATCHDOG_FIELDS = new Set([
 	"main",
 	"children",
 	"asyncCompletion",
+	"lsp",
 	"compactAtPercent",
 	"reviewRetryDelayMs",
 	"maxReviewFailures",
@@ -123,6 +133,7 @@ const ENDPOINT_FIELDS = new Set(["enabled", "model", "thinking"]);
 const CHILDREN_FIELDS = new Set(["enabled", "model", "thinking", "watchdogTailTimeoutMs", "autoFollow", "overrides"]);
 const CHILD_OVERRIDE_FIELDS = new Set(["enabled", "model", "thinking"]);
 const ASYNC_COMPLETION_FIELDS = new Set(["enabled", "autoFollowBlockers"]);
+const LSP_FIELDS = new Set(["enabled", "timeoutMs", "maxFiles", "maxDiagnostics"]);
 
 function cloneDefaultConfig(): ResolvedWatchdogConfig {
 	return {
@@ -136,6 +147,7 @@ function cloneDefaultConfig(): ResolvedWatchdogConfig {
 			overrides: {},
 		},
 		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
+		lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp },
 	};
 }
 
@@ -280,6 +292,17 @@ function parseAsyncCompletionPatch(value: unknown, field: string, meta: ParseMet
 	return patch;
 }
 
+function parseLspPatch(value: unknown, field: string, meta: ParseMeta): WatchdogLspPatch {
+	const input = parseObject(value, field, meta);
+	assertKnownFields(input, LSP_FIELDS, field, meta);
+	const patch: WatchdogLspPatch = {};
+	if ("enabled" in input) patch.enabled = parseBoolean(input.enabled, `${field}.enabled`, meta);
+	if ("timeoutMs" in input) patch.timeoutMs = parseInteger(input.timeoutMs, `${field}.timeoutMs`, meta, "a positive integer", (candidate) => candidate >= 1);
+	if ("maxFiles" in input) patch.maxFiles = parseInteger(input.maxFiles, `${field}.maxFiles`, meta, "a positive integer", (candidate) => candidate >= 1);
+	if ("maxDiagnostics" in input) patch.maxDiagnostics = parseInteger(input.maxDiagnostics, `${field}.maxDiagnostics`, meta, "a non-negative integer", (candidate) => candidate >= 0);
+	return patch;
+}
+
 function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): WatchdogConfigPatch {
 	const input = parseObject(value, field, meta);
 	assertKnownFields(input, WATCHDOG_FIELDS, field, meta);
@@ -305,6 +328,7 @@ function parseWatchdogPatch(value: unknown, field: string, meta: ParseMeta): Wat
 	if ("main" in input) patch.main = parseEndpointPatch(input.main, `${field}.main`, meta);
 	if ("children" in input) patch.children = parseChildrenPatch(input.children, `${field}.children`, meta);
 	if ("asyncCompletion" in input) patch.asyncCompletion = parseAsyncCompletionPatch(input.asyncCompletion, `${field}.asyncCompletion`, meta);
+	if ("lsp" in input) patch.lsp = parseLspPatch(input.lsp, `${field}.lsp`, meta);
 	if ("compactAtPercent" in input) {
 		patch.compactAtPercent = parseInteger(input.compactAtPercent, `${field}.compactAtPercent`, meta, "an integer from 50 through 95", (candidate) => candidate >= 50 && candidate <= 95);
 	}

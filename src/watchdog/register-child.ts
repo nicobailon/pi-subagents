@@ -32,13 +32,14 @@ function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchdogConfi
 			...DEFAULT_WATCHDOG_CONFIG.children,
 			watchdogTailTimeoutMs: config.watchdogTailTimeoutMs,
 		},
+		lsp: { ...config.lsp },
 	};
 }
 
 function childWarningDetails(details: WatchdogWarningDetails, config: ChildWatchdogConfig): WatchdogWarningDetails {
 	return {
 		...details,
-		source: "child",
+		source: details.source === "lsp" ? "lsp" : "child",
 		...(config.agent ? { agent: config.agent } : {}),
 		...(config.runId ? { runId: config.runId } : {}),
 	};

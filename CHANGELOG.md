@@ -4,7 +4,7 @@
 
 ### Added
 - Added `/subagents-stop` and `subagent({ action: "stop", id })` for current-session top-level async runs. The slash command opens a confirmation selector when no id is provided, falls back to exact commands without a TUI, routes scheduled jobs through `schedule-cancel`, and records manual stops as `stopped`/cancelled lifecycle events instead of timeouts. Thanks to Sean Seaman (@seans-leadsonline) for #407 and #408.
-- Added an opt-in read-only subagent watchdog that reviews actual repo edits at safe agent-end boundaries, with visible warnings, main and child watchdog coordination, strong complementary model recommendations, `/subagents-watchdog` status/model commands, and agent-facing watchdog configuration actions. Thanks to can1357/oh-my-pi for the advisor/watchdog concept.
+- Added an opt-in read-only subagent watchdog that reviews actual repo edits at safe agent-end boundaries, with visible warnings, main and child watchdog coordination, strong complementary model recommendations, changed-file TypeScript/JavaScript LSP diagnostics, `/subagents-watchdog` status/model commands, and agent-facing watchdog configuration actions. Thanks to can1357/oh-my-pi for the advisor/watchdog concept, and to apmantza/pi-lens, gjczone/pi-shazam, and can1357/oh-my-pi for LSP diagnostics patterns.
 
 ### Changed
 - Updated the bundled `pi-subagents` skill so Fable mode is the default orchestration posture for complex work, and refreshed recent command/config guidance.

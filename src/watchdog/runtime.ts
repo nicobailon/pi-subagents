@@ -2,11 +2,19 @@ import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { computeWatchdogRepoChangeSignature, eventIndicatesRepoEdit, type WatchdogRepoChangeSignature } from "./change-signature.ts";
 import { WatchdogEmissionGuard } from "./emission-guard.ts";
+import {
+	collectWatchdogLspDiagnostics,
+	formatWatchdogLspDiagnosticsBlock,
+	WatchdogLspDiagnosticsLedger,
+	watchdogWarningFromLspDiagnostics,
+	type WatchdogLspDiagnosticsFunction,
+} from "./lsp-diagnostics.ts";
 import { resolveWatchdogConfig } from "./settings.ts";
 import { formatWatchdogTurnDelta } from "./turn-delta.ts";
 import {
 	type ResolvedWatchdogConfig,
 	type WatchdogEndpointConfig,
+	type WatchdogLspRuntimeSnapshot,
 	type WatchdogRuntimeStatus,
 	type WatchdogSettingsError,
 	type WatchdogSettingsResult,
@@ -55,6 +63,7 @@ export interface WatchdogRuntimeSnapshot {
 	autoFollowQueued: false;
 	reviewTrigger: "turn-delta" | "repo-edits";
 	changedPaths?: string[];
+	lsp: WatchdogLspRuntimeSnapshot;
 }
 
 interface Waiter {
@@ -69,6 +78,7 @@ interface MainWatchdogRuntimeOptions {
 	reviewDescription?: string;
 	displayWarning?: (warning: WatchdogWarningDetails) => void;
 	reviewChangesOnly?: boolean;
+	lspDiagnostics?: WatchdogLspDiagnosticsFunction;
 }
 
 type ContextLike = Pick<ExtensionContext, "cwd">;
@@ -102,6 +112,8 @@ export class MainWatchdogRuntime {
 	private readonly reviewDescription: string;
 	private readonly displayWarning: ((warning: WatchdogWarningDetails) => void) | undefined;
 	private readonly reviewChangesOnly: boolean;
+	private readonly lspDiagnostics: WatchdogLspDiagnosticsFunction;
+	private readonly lspLedger = new WatchdogLspDiagnosticsLedger();
 	private configResult: WatchdogSettingsResult;
 	private sessionOverrideEnabled: boolean | undefined;
 	private sessionModelOverride: Partial<Pick<WatchdogEndpointConfig, "model" | "thinking">> | undefined;
@@ -112,6 +124,9 @@ export class MainWatchdogRuntime {
 	private guardMaxWarnings: number | null = null;
 	private epoch = 0;
 	private reviewIdCounter = 0;
+	private agentEndIdCounter = 0;
+	private activeAgentEndId: number | undefined;
+	private activeAgentEndAbortController: AbortController | undefined;
 	private activeReviewId: number | undefined;
 	private activeReviewWarning: WatchdogWarningDetails | undefined;
 	private reviewing = false;
@@ -126,6 +141,7 @@ export class MainWatchdogRuntime {
 	private turnStartChangeSignature: WatchdogRepoChangeSignature | undefined;
 	private lastReviewedChangeSignature: string | undefined;
 	private currentChangedPaths: string[] | undefined;
+	private lastLspSnapshot: WatchdogLspRuntimeSnapshot | undefined;
 	private observedRepoEditThisTurn = false;
 	private failedReviews = 0;
 	private staleReviews = 0;
@@ -138,6 +154,7 @@ export class MainWatchdogRuntime {
 		this.reviewDescription = options.reviewDescription ?? (options.review ? "injected seam" : "not wired");
 		this.displayWarning = options.displayWarning;
 		this.reviewChangesOnly = options.reviewChangesOnly === true;
+		this.lspDiagnostics = options.lspDiagnostics ?? collectWatchdogLspDiagnostics;
 		this.configResult = this.resolveConfig(this.cwd);
 		this.guardMaxWarnings = this.configResult.config.maxWarnings;
 		this.guard = new WatchdogEmissionGuard({ maxWarnings: this.guardMaxWarnings });
@@ -149,7 +166,7 @@ export class MainWatchdogRuntime {
 		this.cwd = ctx.cwd;
 		this.sessionOverrideEnabled = undefined;
 		this.sessionModelOverride = undefined;
-		this.reset("session_start", { clearReviewInputSignature: true, resetChangeSignature: true });
+		this.reset("session_start", { clearReviewInputSignature: true, resetChangeSignature: true, clearLspLedger: true });
 		this.refreshConfig(ctx.cwd);
 		this.resetRepoChangeBaseline();
 	}
@@ -207,7 +224,8 @@ export class MainWatchdogRuntime {
 		return this.getSnapshot();
 	}
 
-	reset(_reason = "reset", options: { clearReviewInputSignature?: boolean; resetChangeSignature?: boolean } = {}): void {
+	reset(_reason = "reset", options: { clearReviewInputSignature?: boolean; resetChangeSignature?: boolean; clearLspLedger?: boolean } = {}): void {
+		this.abortActiveAgentEnd();
 		this.epoch++;
 		this.status = "idle";
 		this.clearPendingDeltas();
@@ -220,6 +238,10 @@ export class MainWatchdogRuntime {
 		this.lastError = undefined;
 		this.currentChangedPaths = undefined;
 		this.observedRepoEditThisTurn = false;
+		if (options.clearLspLedger) {
+			this.lspLedger.reset();
+			this.lastLspSnapshot = undefined;
+		}
 		if (options.clearReviewInputSignature) this.lastReviewInputSignature = undefined;
 		if (options.resetChangeSignature) this.resetRepoChangeBaseline({ reviewed: true });
 		this.guard.reset();
@@ -228,6 +250,7 @@ export class MainWatchdogRuntime {
 
 	dispose(): void {
 		this.disposed = true;
+		this.abortActiveAgentEnd();
 		this.epoch++;
 		this.status = "idle";
 		this.clearPendingDeltas();
@@ -237,6 +260,8 @@ export class MainWatchdogRuntime {
 		this.activeReviewWarning = undefined;
 		this.lastReviewInputSignature = undefined;
 		this.currentChangedPaths = undefined;
+		this.lastLspSnapshot = undefined;
+		this.lspLedger.reset();
 		this.observedRepoEditThisTurn = false;
 		this.resolveWaiters(false);
 	}
@@ -285,42 +310,63 @@ export class MainWatchdogRuntime {
 			this.resolveWaiters(true);
 			return;
 		}
-		const delta = this.buildReviewInput(changeSignature);
-		this.clearPendingDeltas();
-		if (!delta.trim()) {
-			if (this.status === "queued") this.status = "idle";
-			this.resolveWaiters(true);
-			return;
-		}
-		const signature = reviewInputSignature(delta);
 		if (changeSignature && changeSignature.key === this.lastReviewedChangeSignature) {
-			this.status = "idle";
-			this.resolveWaiters(true);
-			return;
-		}
-		if (!this.reviewChangesOnly && signature === this.lastReviewInputSignature) {
+			this.clearPendingDeltas();
 			this.status = "idle";
 			this.resolveWaiters(true);
 			return;
 		}
 		this.waitingAtAgentEnd = true;
-		const outcome = await this.reviewDelta(delta, this.configResult.config.agentEndTimeoutMs);
-		this.waitingAtAgentEnd = false;
-		if (outcome === "timeout") {
-			this.staleReviews++;
-			this.invalidateActiveReview("agent-end timeout");
-			this.status = "stale";
-			this.markLastWarningStale();
+		const agentEndEpoch = this.epoch;
+		const agentEndId = ++this.agentEndIdCounter;
+		const lspAbortController = new AbortController();
+		this.activeAgentEndId = agentEndId;
+		this.activeAgentEndAbortController = lspAbortController;
+		try {
+			this.guard.startModelUpdate();
+			const lspBlock = await this.collectLspDiagnostics(changeSignature, {
+				epoch: agentEndEpoch,
+				agentEndId,
+				signal: lspAbortController.signal,
+			});
+			if (this.activeAgentEndAbortController === lspAbortController) this.activeAgentEndAbortController = undefined;
+			if (!this.isAgentEndCurrent(agentEndEpoch, agentEndId)) return;
+			const delta = this.buildReviewInput(changeSignature, lspBlock);
+			this.clearPendingDeltas();
+			if (!delta.trim()) {
+				this.waitingAtAgentEnd = false;
+				if (this.status === "queued") this.status = "idle";
+				this.resolveWaiters(true);
+				return;
+			}
+			const signature = reviewInputSignature(delta);
+			if (!this.reviewChangesOnly && signature === this.lastReviewInputSignature) {
+				this.waitingAtAgentEnd = false;
+				this.status = "idle";
+				this.resolveWaiters(true);
+				return;
+			}
+			const outcome = await this.reviewDelta(delta, this.configResult.config.agentEndTimeoutMs);
+			this.waitingAtAgentEnd = false;
+			if (outcome === "timeout") {
+				this.staleReviews++;
+				this.invalidateActiveReview("agent-end timeout");
+				this.status = "stale";
+				this.markLastWarningStale();
+				this.resolveWaiters(true);
+				return;
+			}
+			if (outcome === "completed" && this.status !== "failed" && this.status !== "stale") {
+				this.lastReviewInputSignature = signature;
+				if (changeSignature) this.lastReviewedChangeSignature = changeSignature.key;
+				this.currentChangedPaths = changeSignature?.changedPaths;
+				this.status = "idle";
+			}
 			this.resolveWaiters(true);
-			return;
+		} finally {
+			if (this.activeAgentEndAbortController === lspAbortController) this.activeAgentEndAbortController = undefined;
+			if (this.activeAgentEndId === agentEndId) this.activeAgentEndId = undefined;
 		}
-		if (outcome === "completed" && this.status !== "failed" && this.status !== "stale") {
-			this.lastReviewInputSignature = signature;
-			if (changeSignature) this.lastReviewedChangeSignature = changeSignature.key;
-			this.currentChangedPaths = changeSignature?.changedPaths;
-			this.status = "idle";
-		}
-		this.resolveWaiters(true);
 	}
 
 	recordDisplayedWarning(warning: WatchdogWarning): WatchdogWarningDetails {
@@ -352,6 +398,7 @@ export class MainWatchdogRuntime {
 			autoFollowQueued: false,
 			reviewTrigger: this.reviewChangesOnly ? "repo-edits" : "turn-delta",
 			...(this.currentChangedPaths?.length ? { changedPaths: [...this.currentChangedPaths] } : {}),
+			lsp: this.lspSnapshot(),
 		};
 	}
 
@@ -361,6 +408,16 @@ export class MainWatchdogRuntime {
 
 	private isEnabled(): boolean {
 		return this.configResult.ok && this.configResult.config.main.enabled;
+	}
+
+	private abortActiveAgentEnd(): void {
+		this.activeAgentEndAbortController?.abort();
+		this.activeAgentEndAbortController = undefined;
+		this.activeAgentEndId = undefined;
+	}
+
+	private isAgentEndCurrent(epoch: number, agentEndId: number): boolean {
+		return !this.disposed && this.epoch === epoch && this.activeAgentEndId === agentEndId && this.waitingAtAgentEnd && this.isEnabled();
 	}
 
 	private isCurrent(epoch: number, reviewId: number): boolean {
@@ -381,7 +438,23 @@ export class MainWatchdogRuntime {
 		return true;
 	}
 
+	private displayBoundaryWarning(warning: WatchdogWarning): boolean {
+		if (!this.isEnabled()) return false;
+		const decision = this.guard.evaluate(warning);
+		if (!decision.accepted) return false;
+		const details = normalizeWatchdogWarningDetails(warning, {
+			state: "displayed",
+			source: warning.source ?? "main",
+			identity: decision.identity,
+			displayedAt: new Date().toISOString(),
+		});
+		this.lastWarning = details;
+		this.displayWarning?.(details);
+		return true;
+	}
+
 	private invalidateActiveReview(_reason: string): void {
+		this.abortActiveAgentEnd();
 		this.epoch++;
 		this.status = "idle";
 		this.clearPendingDeltas();
@@ -399,7 +472,6 @@ export class MainWatchdogRuntime {
 		this.activeReviewId = reviewId;
 		this.activeReviewWarning = undefined;
 		this.status = "reviewing";
-		this.guard.startModelUpdate();
 		let timeout: ReturnType<typeof setTimeout> | undefined;
 		const abortController = new AbortController();
 		const reviewPromise = Promise.resolve().then(() => this.review({
@@ -483,6 +555,78 @@ export class MainWatchdogRuntime {
 			: undefined;
 	}
 
+	private async collectLspDiagnostics(changeSignature: WatchdogRepoChangeSignature | undefined, current: { epoch: number; agentEndId: number; signal: AbortSignal }): Promise<string> {
+		const config = this.configResult.config.lsp;
+		if (!config.enabled || !changeSignature?.changedPaths.length) {
+			this.lastLspSnapshot = {
+				enabled: config.enabled,
+				status: config.enabled ? "skipped" : "disabled",
+				checkedPaths: [],
+				skippedPaths: [],
+				diagnostics: [],
+				diagnosticCount: 0,
+				freshDiagnosticCount: 0,
+				updatedAt: new Date().toISOString(),
+			};
+			return "";
+		}
+		try {
+			const raw = await this.lspDiagnostics({
+				cwd: this.cwd,
+				root: changeSignature.root,
+				changedPaths: changeSignature.changedPaths,
+				config,
+				signal: current.signal,
+			});
+			if (!this.isAgentEndCurrent(current.epoch, current.agentEndId)) return "";
+			const diagnosticCount = raw.diagnostics.length;
+			const fresh = this.lspLedger.reduce(raw);
+			this.lastLspSnapshot = {
+				...fresh,
+				enabled: true,
+				diagnosticCount,
+				freshDiagnosticCount: fresh.diagnostics.length,
+				updatedAt: new Date().toISOString(),
+			};
+			const warning = watchdogWarningFromLspDiagnostics(fresh);
+			if (warning) this.displayBoundaryWarning(warning);
+			return formatWatchdogLspDiagnosticsBlock(fresh);
+		} catch (error) {
+			if (!this.isAgentEndCurrent(current.epoch, current.agentEndId)) return "";
+			this.lastLspSnapshot = {
+				enabled: true,
+				status: "failed",
+				checkedPaths: [],
+				skippedPaths: changeSignature.changedPaths,
+				diagnostics: [],
+				diagnosticCount: 0,
+				freshDiagnosticCount: 0,
+				message: `LSP diagnostics failed: ${errorMessage(error)}`,
+				updatedAt: new Date().toISOString(),
+			};
+			return "";
+		}
+	}
+
+	private lspSnapshot(): WatchdogLspRuntimeSnapshot {
+		if (this.lastLspSnapshot) return {
+			...this.lastLspSnapshot,
+			checkedPaths: [...this.lastLspSnapshot.checkedPaths],
+			skippedPaths: [...this.lastLspSnapshot.skippedPaths],
+			diagnostics: [...this.lastLspSnapshot.diagnostics],
+		};
+		const enabled = this.isEnabled() && this.configResult.config.lsp.enabled;
+		return {
+			enabled,
+			status: enabled ? "skipped" : "disabled",
+			checkedPaths: [],
+			skippedPaths: [],
+			diagnostics: [],
+			diagnosticCount: 0,
+			freshDiagnosticCount: 0,
+		};
+	}
+
 	private appendBoundedDelta(delta: string): void {
 		let entry = delta.trim();
 		if (!entry) return;
@@ -495,25 +639,27 @@ export class MainWatchdogRuntime {
 		}
 	}
 
-	private buildReviewInput(changeSignature?: WatchdogRepoChangeSignature): string {
+	private buildReviewInput(changeSignature?: WatchdogRepoChangeSignature, lspBlock = ""): string {
 		const input = this.pendingDeltas.join(REVIEW_DELTA_SEPARATOR);
 		const changes = changeSignature?.changedPaths.length
 			? ["Changed repo paths:", ...changeSignature.changedPaths.slice(0, 200).map((file) => `- ${file}`)].join("\n")
 			: "";
-		if (!changes) return input.length > MAX_REVIEW_INPUT_CHARS ? input.slice(-MAX_REVIEW_INPUT_CHARS) : input;
+		const contextPieces = [changes, lspBlock].filter(Boolean);
+		if (!contextPieces.length) return input.length > MAX_REVIEW_INPUT_CHARS ? input.slice(-MAX_REVIEW_INPUT_CHARS) : input;
 
-		const maxChangesLength = Math.floor(MAX_REVIEW_INPUT_CHARS / 3);
-		const boundedChanges = changes.length > maxChangesLength
-			? `${changes.slice(0, maxChangesLength - 6)}\n- ...`
-			: changes;
+		const maxContextLength = Math.floor(MAX_REVIEW_INPUT_CHARS / 2);
+		const maxPieceLength = Math.max(1_000, Math.floor(maxContextLength / contextPieces.length));
+		const boundedContext = contextPieces.map((piece) => piece.length > maxPieceLength
+			? `${piece.slice(0, maxPieceLength - 6)}\n- ...`
+			: piece).join(REVIEW_DELTA_SEPARATOR);
 		const separatorLength = input ? REVIEW_DELTA_SEPARATOR.length : 0;
-		const inputBudget = MAX_REVIEW_INPUT_CHARS - boundedChanges.length - separatorLength;
+		const inputBudget = MAX_REVIEW_INPUT_CHARS - boundedContext.length - separatorLength;
 		const boundedInput = inputBudget <= 0
 			? ""
 			: input.length > inputBudget
 				? input.slice(-inputBudget)
 				: input;
-		return [boundedChanges, boundedInput].filter(Boolean).join(REVIEW_DELTA_SEPARATOR);
+		return [boundedContext, boundedInput].filter(Boolean).join(REVIEW_DELTA_SEPARATOR);
 	}
 
 	private clearPendingDeltas(): void {
@@ -530,7 +676,7 @@ export class MainWatchdogRuntime {
 	}
 
 	private markLastWarningStale(): void {
-		if (!this.lastWarning) return;
+		if (!this.lastWarning || this.lastWarning.state === "displayed") return;
 		this.lastWarning = { ...this.lastWarning, stale: true, state: "stale" };
 	}
 

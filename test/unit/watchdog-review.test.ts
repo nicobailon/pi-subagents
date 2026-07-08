@@ -43,6 +43,7 @@ function cloneConfig(): ResolvedWatchdogConfig {
 			overrides: { ...DEFAULT_WATCHDOG_CONFIG.children.overrides },
 		},
 		asyncCompletion: { ...DEFAULT_WATCHDOG_CONFIG.asyncCompletion },
+		lsp: { ...DEFAULT_WATCHDOG_CONFIG.lsp },
 	};
 }
 

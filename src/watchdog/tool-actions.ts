@@ -98,6 +98,7 @@ function buildCheckText(runtime: MainWatchdogRuntime | undefined, ctx: Extension
 	} else {
 		lines.push("Main model: current session");
 	}
+	lines.push(`LSP diagnostics: ${snapshot.lsp.enabled ? "on" : "off"} · ${snapshot.lsp.status}`);
 	try {
 		const recommendation = recommendStrongWatchdogModel(ctx);
 		lines.push(`Recommended strong watchdog: ${recommendation.model}:${recommendation.thinking}`);

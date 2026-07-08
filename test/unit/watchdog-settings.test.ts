@@ -57,6 +57,7 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.agentEndTimeoutMs, 30_000);
 		assert.equal(result.config.children.watchdogTailTimeoutMs, 120_000);
 		assert.equal(result.config.autoFollow.maxAttempts, 3);
+		assert.deepEqual(result.config.lsp, { enabled: true, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 });
 	});
 
 	it("lets root enabled opt the main watchdog in while children stay default-off", () => {
@@ -95,6 +96,7 @@ describe("watchdog settings", () => {
 			subagents: {
 				watchdog: {
 					autoFollow: { stalemateRepeats: 2 },
+					lsp: { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 },
 					main: { model: "openai/gpt-test" },
 					children: {
 						autoFollow: { blockers: false },
@@ -123,6 +125,7 @@ describe("watchdog settings", () => {
 		assert.equal(result.config.main.model, "openai/gpt-test");
 		assert.deepEqual(result.config.autoFollow, { blockers: true, maxAttempts: null, stalemateRepeats: 2 });
 		assert.equal(result.config.guidance.systemPromptPath, "/tmp/user-watchdog.md");
+		assert.deepEqual(result.config.lsp, { enabled: false, timeoutMs: 1500, maxFiles: 4, maxDiagnostics: 7 });
 		assert.deepEqual(result.config.children.autoFollow, { blockers: false, maxAttempts: 4, stalemateRepeats: 3 });
 		assert.deepEqual(result.config.children.overrides.worker, {
 			enabled: false,
@@ -167,6 +170,22 @@ describe("watchdog settings", () => {
 			(error: unknown) => error instanceof Error
 				&& error.message === `Watchdog settings in '${userSettingsPath()}' have unknown field 'subagents.watchdog.children.overrides.worker.mode'.`,
 		);
+	});
+
+	it("rejects invalid LSP config at settings load", () => {
+		writeJson(userSettingsPath(), {
+			subagents: {
+				watchdog: {
+					lsp: { timeoutMs: 0 },
+				},
+			},
+		});
+
+		const result = resolveWatchdogConfig(tempProject);
+
+		assert.equal(result.ok, false);
+		assert.equal(result.config.main.enabled, false);
+		assert.match(result.errors[0]?.message ?? "", /invalid 'subagents\.watchdog\.lsp\.timeoutMs'/);
 	});
 
 	it("rejects unsupported watchdog thinking values at settings load", () => {

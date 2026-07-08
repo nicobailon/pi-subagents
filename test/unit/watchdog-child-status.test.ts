@@ -36,6 +36,7 @@ describe("child watchdog status helpers", () => {
 
 		assert.equal(config?.model, "anthropic/claude-test-worker");
 		assert.equal(config?.thinking, false);
+		assert.deepEqual(config?.lsp, DEFAULT_WATCHDOG_CONFIG.lsp);
 	});
 
 	it("decodes child watchdog config and rejects malformed numeric fields", () => {
@@ -47,6 +48,7 @@ describe("child watchdog status helpers", () => {
 			watchdogTailTimeoutMs: 100,
 			agentEndTimeoutMs: 200,
 			maxWarnings: null,
+			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
 			autoFollowBlockers: true,
 			autoFollowMaxAttempts: 2,
 			stalemateRepeats: 3,
@@ -60,6 +62,7 @@ describe("child watchdog status helpers", () => {
 			watchdogTailTimeoutMs: 100,
 			agentEndTimeoutMs: 200,
 			maxWarnings: null,
+			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
 			autoFollowBlockers: true,
 			autoFollowMaxAttempts: 2,
 			stalemateRepeats: 3,

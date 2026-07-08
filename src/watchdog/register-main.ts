@@ -95,12 +95,23 @@ function recommendationLine(ctx: ExtensionContext): string {
 	}
 }
 
+function lspLine(snapshot: ReturnType<MainWatchdogRuntime["getSnapshot"]>): string {
+	const lsp = snapshot.lsp;
+	const provider = lsp.provider ? ` · ${lsp.provider}` : "";
+	const counts = lsp.diagnosticCount > 0 || lsp.freshDiagnosticCount > 0
+		? ` · ${lsp.freshDiagnosticCount} new/${lsp.diagnosticCount} total`
+		: "";
+	const message = lsp.message ? ` · ${lsp.message}` : "";
+	return `LSP diagnostics: ${lsp.enabled ? "on" : "off"} · ${lsp.status}${provider}${counts}${message}`;
+}
+
 export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["getSnapshot"]>, ctx: ExtensionContext): string {
 	const lines = [
 		"Subagent watchdog",
 		`Main: ${boolLabel(snapshot.enabled)}${!snapshot.config.enabled && snapshot.sessionOverride === undefined ? " (default off)" : ""}`,
 		`Runtime: ${statusLabel(snapshot.status)}${snapshot.bufferedDeltas > 0 ? ` · buffered deltas ${snapshot.bufferedDeltas}` : ""}`,
 		`Review trigger: ${snapshot.reviewTrigger === "repo-edits" ? "repo edits only" : "every non-empty turn delta"}`,
+		lspLine(snapshot),
 		`Session override: ${snapshot.sessionOverride === undefined ? "none" : boolLabel(snapshot.sessionOverride)}`,
 		mainModelLine(snapshot, ctx),
 		`Main thinking: ${mainThinkingLine(snapshot, ctx)}`,
@@ -205,6 +216,7 @@ function buildCheckText(runtime: MainWatchdogRuntime, ctx: ExtensionCommandConte
 		lines.push(`Main model: ${currentSessionModelLine(ctx as ExtensionContext)}`);
 	}
 	lines.push(`Main thinking: ${mainThinkingLine(snapshot, ctx as ExtensionContext)}`);
+	lines.push(lspLine(snapshot));
 	try {
 		const recommendation = recommendStrongWatchdogModel(ctx as ExtensionContext);
 		lines.push(`Recommended strong watchdog: ${recommendation.model}:${recommendation.thinking}`);
@@ -409,8 +421,8 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		rememberContext(ctx);
 		return runtime.handleAgentEnd(event, ctx);
 	});
-	pi.on("session_before_switch", () => runtime.reset("session switch", { clearReviewInputSignature: true }));
-	pi.on("session_before_fork", () => runtime.reset("session fork", { clearReviewInputSignature: true }));
+	pi.on("session_before_switch", () => runtime.reset("session switch", { clearReviewInputSignature: true, clearLspLedger: true }));
+	pi.on("session_before_fork", () => runtime.reset("session fork", { clearReviewInputSignature: true, clearLspLedger: true }));
 	pi.on("session_compact", () => runtime.reset("session compact"));
 	pi.on("session_shutdown", () => {
 		currentContext = undefined;

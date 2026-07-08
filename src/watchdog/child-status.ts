@@ -1,4 +1,5 @@
-import type { ResolvedWatchdogConfig } from "./types.ts";
+import { DEFAULT_WATCHDOG_CONFIG } from "./settings.ts";
+import type { ResolvedWatchdogConfig, WatchdogLspConfig } from "./types.ts";
 
 export const CHILD_WATCHDOG_CONFIG_ENV = "PI_SUBAGENT_WATCHDOG_CHILD_CONFIG";
 export const CHILD_WATCHDOG_STATUS_EVENT = "subagent.watchdog.status";
@@ -16,6 +17,7 @@ export interface ChildWatchdogConfig {
 	maxWarnings: number | null;
 	model?: string;
 	thinking?: string | false;
+	lsp: WatchdogLspConfig;
 	autoFollowBlockers: boolean;
 	autoFollowMaxAttempts: number | null;
 	stalemateRepeats: number;
@@ -64,6 +66,7 @@ export function resolveChildWatchdogConfig(input: {
 		maxWarnings: input.config.maxWarnings,
 		...(model ? { model } : {}),
 		...(thinking !== undefined ? { thinking } : {}),
+		lsp: { ...input.config.lsp },
 		autoFollowBlockers: input.config.children.autoFollow.blockers,
 		autoFollowMaxAttempts: input.config.children.autoFollow.maxAttempts,
 		stalemateRepeats: input.config.children.autoFollow.stalemateRepeats,
@@ -102,6 +105,14 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 	const agent = optionalString(parsed.agent);
 	const childIndex = optionalIndex(parsed.childIndex);
 	const model = optionalString(parsed.model);
+	const rawLsp = parsed.lsp && typeof parsed.lsp === "object" ? parsed.lsp as Record<string, unknown> : undefined;
+	const lsp = {
+		...DEFAULT_WATCHDOG_CONFIG.lsp,
+		...(typeof rawLsp?.enabled === "boolean" ? { enabled: rawLsp.enabled } : {}),
+		...(typeof rawLsp?.timeoutMs === "number" && Number.isInteger(rawLsp.timeoutMs) && rawLsp.timeoutMs >= 1 ? { timeoutMs: rawLsp.timeoutMs } : {}),
+		...(typeof rawLsp?.maxFiles === "number" && Number.isInteger(rawLsp.maxFiles) && rawLsp.maxFiles >= 1 ? { maxFiles: rawLsp.maxFiles } : {}),
+		...(typeof rawLsp?.maxDiagnostics === "number" && Number.isInteger(rawLsp.maxDiagnostics) && rawLsp.maxDiagnostics >= 0 ? { maxDiagnostics: rawLsp.maxDiagnostics } : {}),
+	};
 	return {
 		enabled: true,
 		...(runId ? { runId } : {}),
@@ -112,6 +123,7 @@ export function decodeChildWatchdogConfig(raw: string | undefined): ChildWatchdo
 		maxWarnings: parsed.maxWarnings as number | null,
 		...(model ? { model } : {}),
 		...(typeof parsed.thinking === "string" || parsed.thinking === false ? { thinking: parsed.thinking as string | false } : {}),
+		lsp,
 		autoFollowBlockers: parsed.autoFollowBlockers === true,
 		autoFollowMaxAttempts: parsed.autoFollowMaxAttempts as number | null,
 		stalemateRepeats: typeof parsed.stalemateRepeats === "number" && Number.isInteger(parsed.stalemateRepeats) && parsed.stalemateRepeats >= 1 ? parsed.stalemateRepeats : 1,

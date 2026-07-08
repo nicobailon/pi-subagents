@@ -176,6 +176,8 @@ The subagent watchdog is not the `reviewer` subagent. `subagents.defaultModel` a
 
 The watchdog reviews repo edits, not ordinary conversation. It runs at the safe `agent_end` boundary only when the current agent or child writer changed the final repo state since the start of that turn. Multiple edits in one turn are coalesced into one review of the final changed state, unchanged/reverted diffs are skipped, and generated `.pi-subagents/` or `tmp/` artifacts do not trigger review. In orchestrated runs, each writing child can review its own edited worktree, and the parent can still review the aggregate repo diff after child changes are applied.
 
+When the watchdog is enabled, it also checks changed TypeScript and JavaScript files for fresh language-server diagnostics before the model review. It auto-detects `typescript-language-server` from the project `node_modules/.bin` or `PATH`; it never installs tools or scans the whole workspace. LSP errors surface as watchdog blockers, warnings as concerns, and info/hints stay in status details. Slow or missing servers are reported in `/subagents-watchdog status` without blocking the turn or emitting late mid-turn warnings. Configure the bounds with `subagents.watchdog.lsp.enabled`, `timeoutMs`, `maxFiles`, and `maxDiagnostics`.
+
 Use `/subagents-watchdog recommend-model` to ask pi-subagents for the current strong pairing. The current recommendation policy is Opus 4.8 with thinking high or GPT 5.5 with thinking high. If your main session is using one, the watchdog should use the other when that model is authenticated.
 
 ```text
