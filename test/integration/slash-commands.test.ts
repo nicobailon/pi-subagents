@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 
+import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
+import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 
 const SLASH_RESULT_TYPE = "subagent-slash-result";
@@ -1262,6 +1264,193 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 	it("routes fleet to the read-only status view", async () => {
 		const { params } = await captureSlashCommandParams("subagents-fleet", "", process.cwd());
 		assert.deepEqual(params, { action: "status", view: "fleet" });
+	});
+
+	it("routes subagents-stop with an id directly to the stop action", async () => {
+		const { params } = await captureSlashCommandParams("subagents-stop", "run-123", process.cwd());
+		assert.deepEqual(params, { action: "stop", id: "run-123" });
+	});
+
+	it("prints exact stop commands when subagents-stop has no UI", async () => {
+		await withIsolatedHome(async () => {
+			const runId = `slash-stop-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, runId);
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				sessionId: "session-test",
+				mode: "single",
+				state: "running",
+				pid: process.pid,
+				startedAt: Date.now(),
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", startedAt: Date.now() }],
+			}, null, 2));
+			try {
+				const sent: unknown[] = [];
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(message: unknown) { sent.push(message); },
+				};
+				const state = createState(process.cwd());
+				state.currentSessionId = "session-test";
+				registerSlashCommands!(pi, state);
+				await commands.get("subagents-stop")!.handler("", createCommandContext({ hasUI: false }));
+
+				const content = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(content, new RegExp(`subagent\\({ action: "stop", id: "${runId}" }\\)`));
+				assert.match(content, new RegExp(`/subagents-stop ${runId}`));
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+			}
+		});
+	});
+
+	it("prints cancel commands for scheduled subagent runs when subagents-stop has no UI", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-slash-stop-scheduled-", async (root) => {
+				const storePath = scheduledRunStorePath(root, "session-test");
+				fs.mkdirSync(path.dirname(storePath), { recursive: true });
+				fs.writeFileSync(storePath, JSON.stringify({
+					version: 1,
+					cwd: root,
+					sessionId: "session-test",
+					jobs: [{
+						id: "job-1",
+						name: "nightly scout",
+						schedule: "+10m",
+						runAt: Date.now() + 600_000,
+						state: "scheduled",
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+						cwd: root,
+						sessionId: "session-test",
+						params: { agent: "scout", task: "later", async: true },
+					}],
+				}, null, 2));
+				const sent: unknown[] = [];
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const state = createState(root);
+				state.currentSessionId = "session-test";
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(message: unknown) { sent.push(message); },
+				};
+				registerSlashCommands!(pi, state);
+				await commands.get("subagents-stop")!.handler("", createCommandContext({ cwd: root, hasUI: false }));
+
+				const content = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(content, /job-1 · nightly scout/);
+				assert.match(content, /cancel scheduled run: subagent\({ action: "schedule-cancel", id: "job-1" }\)/);
+				assert.doesNotMatch(content, /\/subagents-stop job-1/);
+			});
+		});
+	});
+
+	it("routes selected scheduled subagents-stop targets through schedule-cancel", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-slash-stop-selected-scheduled-", async (root) => {
+				const storePath = scheduledRunStorePath(root, "session-test");
+				fs.mkdirSync(path.dirname(storePath), { recursive: true });
+				fs.writeFileSync(storePath, JSON.stringify({
+					version: 1,
+					cwd: root,
+					sessionId: "session-test",
+					jobs: [{
+						id: "job-2",
+						name: "delayed worker",
+						schedule: "+10m",
+						runAt: Date.now() + 600_000,
+						state: "scheduled",
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+						cwd: root,
+						sessionId: "session-test",
+						params: { agent: "worker", task: "later", async: true },
+					}],
+				}, null, 2));
+
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const events = createEventBus();
+				let requestedParams: unknown;
+				events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+					const payload = data as { requestId: string; params?: unknown };
+					requestedParams = payload.params;
+					events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+					events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+						requestId: payload.requestId,
+						result: { content: [{ type: "text", text: "cancelled" }], details: { mode: "management", results: [] } },
+						isError: false,
+					});
+				});
+				const state = createState(root);
+				state.currentSessionId = "session-test";
+				const pi = {
+					events,
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(_message: unknown) {},
+				};
+				registerSlashCommands!(pi, state);
+				await commands.get("subagents-stop")!.handler("", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					custom: async () => ({
+						confirmed: true,
+						target: { kind: "scheduled", id: "job-2", label: "job-2", detail: "scheduled", actionLabel: "cancel scheduled run" },
+					}),
+				}));
+
+				assert.deepEqual(requestedParams, { action: "schedule-cancel", id: "job-2" });
+			});
+		});
+	});
+
+	it("prints fallback text instead of opening or enumerating the selector in child-safe fanout mode", async () => {
+		await withIsolatedHome(async () => {
+			const previous = process.env[SUBAGENT_FANOUT_CHILD_ENV];
+			const runId = `slash-stop-child-safe-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, runId);
+			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				sessionId: "session-test",
+				mode: "single",
+				state: "running",
+				pid: process.pid,
+				startedAt: Date.now(),
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", startedAt: Date.now() }],
+			}, null, 2));
+			try {
+				const sent: unknown[] = [];
+				const commands = new Map<string, RegisteredSlashCommand>();
+				const pi = {
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage(message: unknown) { sent.push(message); },
+				};
+				const state = createState(process.cwd());
+				state.currentSessionId = "session-test";
+				registerSlashCommands!(pi, state);
+				await commands.get("subagents-stop")!.handler("", createCommandContext({ hasUI: true }));
+
+				const content = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(content, /Selector unavailable in child-safe fanout mode\./);
+				assert.doesNotMatch(content, new RegExp(runId));
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+				if (previous === undefined) delete process.env[SUBAGENT_FANOUT_CHILD_ENV];
+				else process.env[SUBAGENT_FANOUT_CHILD_ENV] = previous;
+			}
+		});
 	});
 
 	it("does not register the removed subagents-status overlay command", async () => {

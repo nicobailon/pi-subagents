@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
-import { consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepSteer, stepSteerInboxDir, watchAsyncControlInbox, type SteerRequest } from "./control-channel.ts";
+import { consumeInterruptRequest, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, stepSteerInboxDir, watchAsyncControlInbox, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -139,6 +139,7 @@ interface StepResult {
 	skipped?: boolean;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
@@ -347,6 +348,7 @@ interface RunPiStreamingResult {
 	finalOutput: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
@@ -369,6 +371,8 @@ function runPiStreaming(
 	transcriptWriter?: ChildTranscriptWriter,
 	registerTimeout?: (interrupt: (() => void) | undefined) => void,
 	timeoutMessage?: string,
+	registerStop?: (stop: (() => void) | undefined) => void,
+	stopMessage?: string,
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
@@ -394,6 +398,7 @@ function runPiStreaming(
 		let assistantError: string | undefined;
 		let interrupted = false;
 		let timedOut = false;
+		let stopped = false;
 		let turnBudgetExceeded = false;
 		let turnBudgetMessage: string | undefined;
 		let turnBudget: TurnBudgetState | undefined;
@@ -518,16 +523,16 @@ function runPiStreaming(
 			processStderrText(chunk.toString());
 		});
 		registerInterrupt?.(() => {
-			if (settled || timedOut) return;
+			if (settled || timedOut || stopped) return;
 			interrupted = true;
 			if (!error) error = "Interrupted. Waiting for explicit next action.";
 			trySignalChild(child, "SIGINT");
 			setTimeout(() => {
-				if (!settled && !timedOut) trySignalChild(child, "SIGTERM");
+				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGTERM");
 			}, 1000).unref?.();
 		});
 		registerTimeout?.(() => {
-			if (settled || timedOut) return;
+			if (settled || timedOut || stopped) return;
 			timedOut = true;
 			interrupted = false;
 			error = timeoutMessage ?? "Subagent timed out.";
@@ -537,8 +542,19 @@ function runPiStreaming(
 			}, TIMEOUT_HARD_KILL_MS);
 			timeoutHardKillTimer.unref?.();
 		});
+		registerStop?.(() => {
+			if (settled || timedOut || stopped) return;
+			stopped = true;
+			interrupted = false;
+			error = stopMessage ?? "Subagent stopped by user.";
+			trySignalChild(child, "SIGTERM");
+			timeoutHardKillTimer = setTimeout(() => {
+				if (!settled) trySignalChild(child, "SIGKILL");
+			}, TIMEOUT_HARD_KILL_MS);
+			timeoutHardKillTimer.unref?.();
+		});
 		registerTurnBudgetAbort?.((message, state) => {
-			if (settled || timedOut || turnBudgetExceeded) return;
+			if (settled || timedOut || stopped || turnBudgetExceeded) return;
 			turnBudgetExceeded = true;
 			turnBudgetMessage = message;
 			turnBudget = state;
@@ -546,11 +562,11 @@ function runPiStreaming(
 			error = message;
 			trySignalChild(child, "SIGINT");
 			turnBudgetTerminationTimer = setTimeout(() => {
-				if (!settled && !timedOut) trySignalChild(child, "SIGTERM");
+				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGTERM");
 			}, 1000);
 			turnBudgetTerminationTimer.unref?.();
 			turnBudgetHardKillTimer = setTimeout(() => {
-				if (!settled && !timedOut) trySignalChild(child, "SIGKILL");
+				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGKILL");
 			}, 4000);
 			turnBudgetHardKillTimer.unref?.();
 		});
@@ -602,6 +618,7 @@ function runPiStreaming(
 			settled = true;
 			registerInterrupt?.(undefined);
 			registerTimeout?.(undefined);
+			registerStop?.(undefined);
 			registerTurnBudgetAbort?.(undefined);
 			clearDrainTimers();
 			clearStdioGuard();
@@ -613,14 +630,15 @@ function runPiStreaming(
 			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !finalError;
 			resolve({
 				stderr,
-				exitCode: timedOut ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
+				exitCode: timedOut || stopped ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
 				model,
-				error: timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError,
-				finalOutput: timedOut && !finalOutput.trim() ? (timeoutMessage ?? "Subagent timed out.") : finalOutput,
+				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError,
+				finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput,
 				interrupted,
 				timedOut,
+				stopped,
 				turnBudget,
 				turnBudgetExceeded,
 				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
@@ -632,13 +650,14 @@ function runPiStreaming(
 			settled = true;
 			registerInterrupt?.(undefined);
 			registerTimeout?.(undefined);
+			registerStop?.(undefined);
 			registerTurnBudgetAbort?.(undefined);
 			clearDrainTimers();
 			clearStdioGuard();
 			outputStream.end();
 			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, finalOutput: timedOut && !finalOutput.trim() ? (timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt });
+			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt });
 		});
 	});
 }
@@ -769,9 +788,12 @@ interface SingleStepContext {
 	piArgv1?: string;
 	registerInterrupt?: (interrupt: (() => void) | undefined) => void;
 	registerTimeout?: (interrupt: (() => void) | undefined) => void;
+	registerStop?: (stop: (() => void) | undefined) => void;
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void;
 	timeoutSignal?: AbortSignal;
+	stopSignal?: AbortSignal;
 	timeoutMessage?: string;
+	stopMessage?: string;
 	turnBudget?: ResolvedTurnBudget;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
@@ -798,6 +820,7 @@ async function runSingleStep(
 	transcriptError?: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
@@ -813,6 +836,7 @@ async function runSingleStep(
 }> {
 	if (step.importAsyncRoot) {
 		let importTimedOut = false;
+		let importStopped = false;
 		ctx.registerTimeout?.(() => {
 			importTimedOut = true;
 			let pid: number | undefined;
@@ -827,36 +851,54 @@ async function runSingleStep(
 				// The parent runner's own timeout result is authoritative for the attached step.
 			}
 		});
+		ctx.registerStop?.(() => {
+			importStopped = true;
+			let pid: number | undefined;
+			try {
+				pid = readStatus(step.importAsyncRoot!.asyncDir)?.pid;
+			} catch {
+				pid = undefined;
+			}
+			try {
+				deliverStopRequest({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-stop" });
+			} catch {
+				// The parent runner's own stopped result is authoritative for the attached step.
+			}
+		});
 		try {
 			const imported = await waitForImportedAsyncRoot(step.importAsyncRoot, {
-				shouldAbort: () => importTimedOut || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true,
-				timeoutMessage: ctx.timeoutMessage,
+				shouldAbort: () => importTimedOut || importStopped || ctx.timeoutSignal?.aborted === true || ctx.stopSignal?.aborted === true || ctx.skipAcceptance?.() === true,
+				timeoutMessage: importStopped || ctx.stopSignal?.aborted === true ? ctx.stopMessage : ctx.timeoutMessage,
 			});
 			try {
 				fs.writeFileSync(ctx.outputFile, imported.output, "utf-8");
 			} catch {
 				// Output files are observability only for imported roots.
 			}
-			const timedOut = importTimedOut || imported.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true;
+			const stopped = importStopped || imported.stopped === true || ctx.stopSignal?.aborted === true;
+			const timedOut = !stopped && (importTimedOut || imported.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true);
+			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
 			return {
 				agent: imported.agent,
-				output: timedOut ? ctx.timeoutMessage ?? "Subagent timed out." : imported.output,
-				exitCode: timedOut ? 1 : imported.exitCode,
-				error: timedOut ? ctx.timeoutMessage ?? "Subagent timed out." : imported.error,
+				output: timedOut || stopped ? message : imported.output,
+				exitCode: timedOut || stopped ? 1 : imported.exitCode,
+				error: timedOut || stopped ? message : imported.error,
 				timedOut: timedOut ? true : undefined,
+				stopped: stopped ? true : undefined,
 				sessionFile: imported.sessionFile,
 				intercomTarget: imported.intercomTarget,
 				model: imported.model,
 				attemptedModels: imported.attemptedModels,
 				modelAttempts: imported.modelAttempts,
 				totalCost: imported.totalCost,
-				structuredOutput: timedOut ? undefined : imported.structuredOutput,
-				structuredOutputPath: timedOut ? undefined : imported.structuredOutputPath,
-				structuredOutputSchemaPath: timedOut ? undefined : imported.structuredOutputSchemaPath,
-				acceptance: timedOut ? undefined : imported.acceptance,
+				structuredOutput: timedOut || stopped ? undefined : imported.structuredOutput,
+				structuredOutputPath: timedOut || stopped ? undefined : imported.structuredOutputPath,
+				structuredOutputSchemaPath: timedOut || stopped ? undefined : imported.structuredOutputSchemaPath,
+				acceptance: timedOut || stopped ? undefined : imported.acceptance,
 			};
 		} finally {
 			ctx.registerTimeout?.(undefined);
+			ctx.registerStop?.(undefined);
 		}
 	}
 
@@ -970,6 +1012,8 @@ async function runSingleStep(
 			transcriptWriter,
 			ctx.registerTimeout,
 			ctx.timeoutMessage,
+			ctx.registerStop,
+			ctx.stopMessage,
 			ctx.registerTurnBudgetAbort,
 		);
 		if (run.turnBudget) turnBudget = run.turnBudget;
@@ -1057,7 +1101,7 @@ async function runSingleStep(
 		}
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput } as RunPiStreamingResult & { structuredOutput?: unknown };
 		if (run.turnBudgetExceeded) break;
-		if (run.timedOut || ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
+		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		if (attempt.success || completionGuardTriggered) break;
 		if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
@@ -1071,18 +1115,20 @@ async function runSingleStep(
 	const output = resolvedOutput.fullOutput;
 	const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, output) : undefined;
 	let outputForSummary = output;
-		if (attemptNotes.length > 0) {
-			outputForSummary = `${attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
-		}
-	if (!finalResult?.timedOut && finalResult?.turnBudgetExceeded && turnBudget) {
+	if (attemptNotes.length > 0) {
+		outputForSummary = `${attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
+	}
+	if (finalResult?.stopped && !outputForSummary.trim()) {
+		outputForSummary = ctx.stopMessage ?? "Subagent stopped by user.";
+	} else if (!finalResult?.timedOut && !finalResult?.stopped && finalResult?.turnBudgetExceeded && turnBudget) {
 		outputForSummary = formatTurnBudgetOutput(turnBudgetExceededMessage(turnBudget, turnBudget.turnCount), outputForSummary);
-	} else if (!finalResult?.timedOut && turnBudget?.outcome === "wrap-up-requested") {
+	} else if (!finalResult?.timedOut && !finalResult?.stopped && turnBudget?.outcome === "wrap-up-requested") {
 		const note = turnBudgetSoftNote(turnBudget, turnBudget.wrapUpRequestedAtTurn ?? turnBudget.turnCount);
 		outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
 	}
 	const outputForAcceptance = rawOutput;
-		const finalizedOutput = finalizeSingleOutput({
-			fullOutput: outputForSummary,
+	const finalizedOutput = finalizeSingleOutput({
+		fullOutput: outputForSummary,
 		outputPath: step.outputPath,
 		outputMode: step.outputMode,
 		exitCode: finalResult?.exitCode ?? 1,
@@ -1091,28 +1137,31 @@ async function runSingleStep(
 		saveError: resolvedOutput.saveError,
 	});
 	outputForSummary = finalizedOutput.displayOutput;
-	const acceptance = step.effectiveAcceptance && !finalResult?.turnBudgetExceeded && !ctx.timeoutSignal?.aborted && !ctx.skipAcceptance?.()
-			? await evaluateAcceptance({
-				acceptance: step.effectiveAcceptance,
-				output: outputForAcceptance,
-				cwd: step.cwd ?? ctx.cwd,
-				signal: ctx.timeoutSignal,
-				abortMessage: ctx.timeoutMessage ?? "Subagent timed out.",
-			})
+	const acceptance = step.effectiveAcceptance && !finalResult?.stopped && !finalResult?.turnBudgetExceeded && !ctx.timeoutSignal?.aborted && !ctx.stopSignal?.aborted && !ctx.skipAcceptance?.()
+		? await evaluateAcceptance({
+			acceptance: step.effectiveAcceptance,
+			output: outputForAcceptance,
+			cwd: step.cwd ?? ctx.cwd,
+			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
+			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
+		})
 		: undefined;
-	const timedOutAfterAcceptance = finalResult?.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true;
+	const stoppedAfterAcceptance = finalResult?.stopped === true || ctx.stopSignal?.aborted === true;
+	const timedOutAfterAcceptance = !stoppedAfterAcceptance && (finalResult?.timedOut === true || ctx.timeoutSignal?.aborted === true);
 	const turnBudgetExceeded = finalResult?.turnBudgetExceeded === true;
-	const effectiveAcceptance = timedOutAfterAcceptance || turnBudgetExceeded ? undefined : acceptance;
+	const effectiveAcceptance = timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : acceptance;
 	const acceptanceFailure = effectiveAcceptance ? acceptanceFailureMessage(effectiveAcceptance) : undefined;
-	const acceptanceCanFailRun = acceptanceFailure && effectiveAcceptance?.explicit && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !turnBudgetExceeded;
-	const effectiveFinalExitCode = timedOutAfterAcceptance || turnBudgetExceeded ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
-	const effectiveFinalError = timedOutAfterAcceptance
-		? ctx.timeoutMessage ?? "Subagent timed out."
-		: turnBudgetExceeded
-			? finalResult?.error ?? (turnBudget ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount) : "Subagent exceeded turn budget.")
-			: acceptanceCanFailRun
-				? (finalResult?.error ? `${finalResult.error}\n${acceptanceFailure}` : acceptanceFailure)
-				: finalResult?.error;
+	const acceptanceCanFailRun = acceptanceFailure && effectiveAcceptance?.explicit && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && !turnBudgetExceeded;
+	const effectiveFinalExitCode = timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
+	const effectiveFinalError = stoppedAfterAcceptance
+		? ctx.stopMessage ?? "Subagent stopped by user."
+		: timedOutAfterAcceptance
+			? ctx.timeoutMessage ?? "Subagent timed out."
+			: turnBudgetExceeded
+				? finalResult?.error ?? (turnBudget ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount) : "Subagent exceeded turn budget.")
+				: acceptanceCanFailRun
+					? (finalResult?.error ? `${finalResult.error}\n${acceptanceFailure}` : acceptanceFailure)
+					: finalResult?.error;
 
 	if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
 		if (ctx.artifactConfig?.includeOutput !== false) {
@@ -1153,17 +1202,18 @@ async function runSingleStep(
 		artifactPaths,
 		transcriptPath: transcriptWriter ? artifactPaths?.transcriptPath : undefined,
 		transcriptError: transcriptWriter?.getError(),
-		interrupted: timedOutAfterAcceptance || turnBudgetExceeded ? false : finalResult?.interrupted,
+		interrupted: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? false : finalResult?.interrupted,
 		timedOut: timedOutAfterAcceptance ? true : finalResult?.timedOut,
+		stopped: stoppedAfterAcceptance ? true : finalResult?.stopped,
 		turnBudget,
 		turnBudgetExceeded: turnBudgetExceeded || undefined,
 		wrapUpRequested: finalResult?.wrapUpRequested || turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
 		toolBudget,
 		toolBudgetBlocked: toolBudgetBlocked || undefined,
 		completionGuardTriggered: completionGuardTriggeredFinal,
-		structuredOutput: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : (finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
-		structuredOutputPath: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.outputPath,
-		structuredOutputSchemaPath: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.schemaPath,
+		structuredOutput: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : (finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
+		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.outputPath,
+		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
 	};
 }
@@ -1312,6 +1362,22 @@ function resolveAsyncStepTranscriptPath(input: {
 
 type SingleStepResult = Awaited<ReturnType<typeof runSingleStep>>;
 
+function combinedAbortSignal(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+	const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+	if (activeSignals.length === 0) return undefined;
+	if (activeSignals.length === 1) return activeSignals[0];
+	const controller = new AbortController();
+	const abort = (): void => controller.abort();
+	for (const signal of activeSignals) {
+		if (signal.aborted) {
+			abort();
+			break;
+		}
+		signal.addEventListener("abort", abort, { once: true });
+	}
+	return controller.signal;
+}
+
 async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
@@ -1328,6 +1394,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;
 	const activeChildInterrupts = new Map<number, () => void>();
 	const activeChildTimeouts = new Map<number, () => void>();
+	const activeChildStops = new Map<number, () => void>();
 	const activeChildTurnBudgetAborts = new Map<number, (message: string, state?: TurnBudgetState) => void>();
 	const pendingStepSteers: SteerRequest[] = [];
 	let interrupted = false;
@@ -1335,9 +1402,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	let activityTimer: NodeJS.Timeout | undefined;
 	let timeoutTimer: NodeJS.Timeout | undefined;
 	let timedOut = false;
+	let stopped = false;
 	let turnBudgetExceeded = false;
 	const timeoutMessage = config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
+	const stopMessage = "Subagent stopped by user.";
 	const timeoutAbortController = new AbortController();
+	const stopAbortController = new AbortController();
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 	let latestSessionFile: string | undefined;
 
@@ -1464,9 +1534,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const refreshWorkflowGraph = (): void => {
 		if (!config.workflowGraph) return;
 		const graph = structuredClone(statusPayload.workflowGraph ?? config.workflowGraph);
-		const normalize = (status: RunnerStatusStep["status"]): "pending" | "running" | "completed" | "failed" | "paused" | "detached" => {
+		const normalize = (status: RunnerStatusStep["status"]): "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" => {
 			if (status === "complete" || status === "completed") return "completed";
-			if (status === "running" || status === "failed" || status === "paused" || status === "pending") return status;
+			if (status === "running" || status === "failed" || status === "paused" || status === "stopped" || status === "pending") return status;
 			return "pending";
 		};
 		const updateNode = (node: NonNullable<typeof graph.nodes>[number]): void => {
@@ -1483,10 +1553,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			if (node.children?.length) {
 				if (node.children.every((child) => child.status === "completed")) node.status = "completed";
 				else if (node.children.some((child) => child.status === "running")) node.status = "running";
+				else if (node.children.some((child) => child.status === "stopped")) node.status = "stopped";
 				else if (node.children.some((child) => child.status === "failed")) node.status = "failed";
 				else if (node.children.some((child) => child.status === "paused")) node.status = "paused";
 			}
-			if (node.error) node.status = "failed";
+			if (node.error && node.status !== "stopped") node.status = "failed";
 		};
 		for (const node of graph.nodes) updateNode(node);
 		statusPayload.workflowGraph = graph;
@@ -1512,6 +1583,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		activeChildTimeouts.set(flatIndex, interrupt);
 		if (timedOut) interrupt();
 	};
+	const registerStepStop = (flatIndex: number, stop: (() => void) | undefined): void => {
+		if (!stop) {
+			activeChildStops.delete(flatIndex);
+			return;
+		}
+		activeChildStops.set(flatIndex, stop);
+		if (stopped) stop();
+	};
 	const registerStepTurnBudgetAbort = (flatIndex: number, abort: ((message: string, state?: TurnBudgetState) => void) | undefined): void => {
 		if (!abort) {
 			activeChildTurnBudgetAborts.delete(flatIndex);
@@ -1524,6 +1603,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	};
 	const timeoutActiveChildren = (): void => {
 		for (const interrupt of [...activeChildTimeouts.values()]) interrupt();
+	};
+	const stopActiveChildren = (): void => {
+		for (const stop of [...activeChildStops.values()]) stop();
 	};
 	const nestedRuns = function* (children: NestedRunSummary[] | undefined): Generator<NestedRunSummary> {
 		for (const child of children ?? []) {
@@ -1555,6 +1637,37 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			} catch (error) {
 				appendJsonl(eventsPath, JSON.stringify({
 					type: "subagent.nested.interrupt_failed",
+					ts: Date.now(),
+					runId: id,
+					targetRunId: run.id,
+					message: error instanceof Error ? error.message : String(error),
+				}));
+			}
+		}
+	};
+	const stopNestedAsyncDescendants = (): void => {
+		if (!config.nestedRoute) return;
+		let registry: ReturnType<typeof projectNestedEvents>;
+		try {
+			registry = projectNestedEvents(config.nestedRoute);
+		} catch (error) {
+			appendJsonl(eventsPath, JSON.stringify({
+				type: "subagent.nested.stop_failed",
+				ts: Date.now(),
+				runId: id,
+				message: error instanceof Error ? error.message : String(error),
+			}));
+			return;
+		}
+		for (const run of nestedRuns(registry.children)) {
+			if (run.state !== "running" && run.state !== "queued") continue;
+			const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(config.nestedRoute.rootRunId, run);
+			if (!nestedAsyncDir) continue;
+			try {
+				deliverStopRequest({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-stop" });
+			} catch (error) {
+				appendJsonl(eventsPath, JSON.stringify({
+					type: "subagent.nested.stop_failed",
 					ts: Date.now(),
 					runId: id,
 					targetRunId: run.id,
@@ -1607,6 +1720,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		exitCode: 1,
 		timedOut: true,
 	});
+	const stoppedStepResult = (agent: string): SingleStepResult => ({
+		agent,
+		output: stopMessage,
+		error: stopMessage,
+		exitCode: 1,
+		stopped: true,
+	});
 	const consumePendingAppendRequests = (): void => {
 		if (statusPayload.mode !== "chain" || statusPayload.state !== "running") return;
 		const requests = consumeChainAppendRequests(asyncDir);
@@ -1646,7 +1766,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			}));
 		}
 	};
-	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running", error?: string, acceptance?: import("../../shared/types.ts").AcceptanceLedger): void => {
+	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running" | "stopped", error?: string, acceptance?: import("../../shared/types.ts").AcceptanceLedger): void => {
 		const groupNode = statusPayload.workflowGraph?.nodes.find((node) => node.id === `step-${stepIndex}`);
 		if (!groupNode) return;
 		groupNode.status = status;
@@ -1800,7 +1920,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const updateStepTurnBudget = (flatIndex: number, turnCount: number, now: number, terminalAssistantStop: boolean): void => {
 		const budget = config.turnBudget;
 		const step = statusPayload.steps[flatIndex];
-		if (!budget || !step || timedOut || turnBudgetExceeded || step.turnBudgetExceeded) return;
+		if (!budget || !step || timedOut || stopped || turnBudgetExceeded || step.turnBudgetExceeded) return;
 		if (turnCount < budget.maxTurns) {
 			const state: TurnBudgetState = { ...budget, outcome: "within-budget", turnCount };
 			step.turnBudget = state;
@@ -2026,8 +2146,40 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		interruptNestedAsyncDescendants();
 		interruptActiveChildren();
 	};
+	const stopRunner = () => {
+		if (stopped || timedOut || interrupted || statusPayload.state !== "running") return;
+		stopped = true;
+		const now = Date.now();
+		statusPayload.state = "stopped";
+		statusPayload.stopped = true;
+		statusPayload.error = stopMessage;
+		currentActivityState = undefined;
+		statusPayload.activityState = undefined;
+		statusPayload.lastUpdate = now;
+		for (const step of statusPayload.steps) {
+			if (step.status !== "running" && step.status !== "pending") continue;
+			step.status = "stopped";
+			step.error = stopMessage;
+			step.exitCode = 1;
+			step.stopped = true;
+			step.activityState = undefined;
+			step.endedAt = now;
+			step.durationMs = step.startedAt ? now - step.startedAt : 0;
+			step.lastActivityAt = now;
+		}
+		writeStatusPayload();
+		appendJsonl(eventsPath, JSON.stringify({
+			type: "subagent.run.stopped",
+			ts: now,
+			runId: id,
+			message: stopMessage,
+		}));
+		stopAbortController.abort();
+		stopNestedAsyncDescendants();
+		stopActiveChildren();
+	};
 	const timeoutRunner = () => {
-		if (timedOut || interrupted || statusPayload.state !== "running") return;
+		if (timedOut || stopped || interrupted || statusPayload.state !== "running") return;
 		timedOut = true;
 		const now = Date.now();
 		const message = timeoutMessage ?? "Subagent timed out.";
@@ -2068,6 +2220,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const disposeControlInbox = watchAsyncControlInbox(asyncDir, {
 		onInterrupt: interruptRunner,
 		onTimeout: timeoutRunner,
+		onStop: stopRunner,
 		onSteer: (request) => {
 			const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
 			if (targetStep?.status === "pending") pendingStepSteers.push(request);
@@ -2097,7 +2250,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	let stepCursor = 0;
 
 	while (true) {
-		if (interrupted || timedOut || turnBudgetExceeded) break;
+		if (interrupted || timedOut || stopped || turnBudgetExceeded) break;
 		consumePendingAppendRequests();
 		if (stepCursor >= steps.length) break;
 		const stepIndex = stepCursor++;
@@ -2149,7 +2302,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					placeholder.durationMs = 0;
 				}
 				previousOutput = "Dynamic fanout produced 0 results.";
-				const groupAcceptance = step.effectiveAcceptance?.explicit && !timedOut
+				const groupAcceptance = step.effectiveAcceptance?.explicit && !timedOut && !stopped
 					? await evaluateAcceptance({
 						acceptance: step.effectiveAcceptance,
 						output: "",
@@ -2158,28 +2311,31 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							notes: "Dynamic fanout produced 0 results.",
 						}),
 						cwd,
-						signal: timeoutAbortController.signal,
-						abortMessage: timeoutMessage ?? "Subagent timed out.",
+						signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
+						abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? "Subagent timed out.",
 					})
 					: undefined;
-				const groupTimedOut = timedOut || timeoutAbortController.signal.aborted;
-				const effectiveGroupAcceptance = groupTimedOut ? undefined : groupAcceptance;
+				const groupStopped = stopped || stopAbortController.signal.aborted;
+				const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
+				const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
 				if (placeholder && effectiveGroupAcceptance) placeholder.acceptance = effectiveGroupAcceptance;
 				const groupAcceptanceFailure = effectiveGroupAcceptance ? acceptanceFailureMessage(effectiveGroupAcceptance) : undefined;
-				if (groupTimedOut || groupAcceptanceFailure) {
-					const errorMessage = groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure!;
-					statusPayload.state = "failed";
+				if (groupTimedOut || groupStopped || groupAcceptanceFailure) {
+					const errorMessage = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure!;
+					statusPayload.state = groupStopped ? "stopped" : "failed";
 					statusPayload.error = errorMessage;
+					statusPayload.stopped = groupStopped ? true : statusPayload.stopped;
 					if (placeholder) {
-						placeholder.status = "failed";
+						placeholder.status = groupStopped ? "stopped" : "failed";
 						placeholder.error = errorMessage;
 						placeholder.exitCode = 1;
 						placeholder.timedOut = groupTimedOut ? true : undefined;
+						placeholder.stopped = groupStopped ? true : undefined;
 					}
-					markDynamicGraphGroup(stepIndex, "failed", errorMessage, effectiveGroupAcceptance);
+					markDynamicGraphGroup(stepIndex, groupStopped ? "stopped" : "failed", errorMessage, effectiveGroupAcceptance);
 					statusPayload.lastUpdate = Date.now();
 					writeStatusPayload();
-					results.push({ agent: step.parallel.agent, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, acceptance: effectiveGroupAcceptance });
+					results.push({ agent: step.parallel.agent, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance });
 					break;
 				}
 				flatIndex++;
@@ -2276,6 +2432,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			const parallelResults = await mapConcurrent(dynamicSteps, concurrency, async (task, taskIdx) => {
 				const fi = groupStartFlatIndex + taskIdx;
 				if (timedOut) return timedOutStepResult(task.agent);
+				if (stopped) return stoppedStepResult(task.agent);
 				if (interrupted) return pausedStepResult(task.agent);
 				if (aborted && failFast) {
 					const skippedAt = Date.now();
@@ -2318,21 +2475,26 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					nestedRoute: config.nestedRoute,
 					registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
 					registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
+					registerStop: (stop) => registerStepStop(fi, stop),
 					registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(fi, abort),
 					timeoutSignal: timeoutAbortController.signal,
+					stopSignal: stopAbortController.signal,
 					timeoutMessage,
+					stopMessage,
 					turnBudget: config.turnBudget,
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
-					skipAcceptance: () => timedOut,
+					skipAcceptance: () => timedOut || stopped,
 				});
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
-				statusPayload.steps[fi].status = timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+				const childStopped = singleResult.stopped === true;
+				statusPayload.steps[fi].status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
 				statusPayload.steps[fi].endedAt = taskEndTime;
 				statusPayload.steps[fi].durationMs = taskEndTime - taskStartTime;
-				statusPayload.steps[fi].exitCode = timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+				statusPayload.steps[fi].exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
 				statusPayload.steps[fi].timedOut = timedOut || singleResult.timedOut ? true : undefined;
+				statusPayload.steps[fi].stopped = stopped || childStopped ? true : undefined;
 				statusPayload.steps[fi].turnBudget = singleResult.turnBudget;
 				statusPayload.steps[fi].turnBudgetExceeded = singleResult.turnBudgetExceeded;
 				statusPayload.steps[fi].wrapUpRequested = singleResult.wrapUpRequested;
@@ -2348,7 +2510,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 				statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 				statusPayload.steps[fi].totalCost = singleResult.totalCost;
-				statusPayload.steps[fi].error = timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
+				statusPayload.steps[fi].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 				statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
 				statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
 				statusPayload.steps[fi].structuredOutput = singleResult.structuredOutput;
@@ -2358,12 +2520,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.lastUpdate = taskEndTime;
 				writeStatusPayload();
 				appendJsonl(eventsPath, JSON.stringify({
-					type: timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+					type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
 					ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-					exitCode: timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskEndTime - taskStartTime,
+					exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskEndTime - taskStartTime,
 				}));
 				if (singleResult.exitCode !== 0 && failFast) aborted = true;
-				return timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
+				return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 			}, globalSemaphore);
 
 			flatIndex += dynamicSteps.length;
@@ -2372,11 +2534,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					agent: pr.agent,
 					output: pr.output,
 					error: pr.error,
-					success: pr.interrupted !== true && pr.exitCode === 0,
+					success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
 					exitCode: pr.interrupted === true ? 0 : pr.exitCode,
 					skipped: pr.skipped,
 					interrupted: pr.interrupted,
 					timedOut: pr.timedOut,
+					stopped: pr.stopped,
 					turnBudget: pr.turnBudget,
 					turnBudgetExceeded: pr.turnBudgetExceeded,
 					wrapUpRequested: pr.wrapUpRequested,
@@ -2409,7 +2572,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						stepIndex,
 					};
 					statusPayload.outputs = outputs;
-					const groupAcceptance = step.effectiveAcceptance && !timedOut
+					const groupAcceptance = step.effectiveAcceptance && !timedOut && !stopped
 						? await evaluateAcceptance({
 							acceptance: step.effectiveAcceptance,
 							output: "",
@@ -2418,15 +2581,16 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 								notes: `Dynamic fanout collected ${collection.length} result(s) into ${step.collect.as}.`,
 							}),
 							cwd,
-							signal: timeoutAbortController.signal,
-							abortMessage: timeoutMessage ?? "Subagent timed out.",
+							signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
+							abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? "Subagent timed out.",
 						})
 						: undefined;
-					const groupTimedOut = timedOut || timeoutAbortController.signal.aborted;
-					const effectiveGroupAcceptance = groupTimedOut ? undefined : groupAcceptance;
+					const groupStopped = stopped || stopAbortController.signal.aborted;
+					const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
+					const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
 					const groupAcceptanceFailure = effectiveGroupAcceptance ? acceptanceFailureMessage(effectiveGroupAcceptance) : undefined;
-					const groupError = groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure;
-					markDynamicGraphGroup(stepIndex, groupError ? "failed" : "completed", groupError, effectiveGroupAcceptance);
+					const groupError = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure;
+					markDynamicGraphGroup(stepIndex, groupError ? groupStopped ? "stopped" : "failed" : "completed", groupError, effectiveGroupAcceptance);
 					if (groupError) {
 						results.push({
 							agent: step.parallel.agent,
@@ -2435,10 +2599,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							success: false,
 							exitCode: 1,
 							timedOut: groupTimedOut ? true : undefined,
+							stopped: groupStopped ? true : undefined,
 							structuredOutput: collection,
 							acceptance: effectiveGroupAcceptance,
 						});
 						statusPayload.error = groupError;
+						statusPayload.stopped = groupStopped ? true : statusPayload.stopped;
 					}
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
@@ -2547,6 +2713,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					async (task, taskIdx) => {
 						const fi = groupStartFlatIndex + taskIdx;
 						if (timedOut) return timedOutStepResult(task.agent);
+						if (stopped) return stoppedStepResult(task.agent);
 						if (interrupted) return pausedStepResult(task.agent);
 						if (aborted && failFast) {
 							const skippedAt = Date.now();
@@ -2605,13 +2772,16 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							nestedRoute: config.nestedRoute,
 							registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
 							registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
+							registerStop: (stop) => registerStepStop(fi, stop),
 							registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(fi, abort),
 							timeoutSignal: timeoutAbortController.signal,
+							stopSignal: stopAbortController.signal,
 							timeoutMessage,
+							stopMessage,
 							turnBudget: config.turnBudget,
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
-							skipAcceptance: () => timedOut,
+							skipAcceptance: () => timedOut || stopped,
 						});
 						if (task.sessionFile) {
 							latestSessionFile = task.sessionFile;
@@ -2620,12 +2790,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						const taskEndTime = Date.now();
 						const taskDuration = taskEndTime - taskStartTime;
 						const childInterrupted = singleResult.interrupted === true;
+						const childStopped = singleResult.stopped === true;
 
-						statusPayload.steps[fi].status = timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+						statusPayload.steps[fi].status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
 						statusPayload.steps[fi].endedAt = taskEndTime;
 						statusPayload.steps[fi].durationMs = taskDuration;
-						statusPayload.steps[fi].exitCode = timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+						statusPayload.steps[fi].exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
 						statusPayload.steps[fi].timedOut = timedOut || singleResult.timedOut ? true : undefined;
+						statusPayload.steps[fi].stopped = stopped || childStopped ? true : undefined;
 						statusPayload.steps[fi].turnBudget = singleResult.turnBudget;
 						statusPayload.steps[fi].turnBudgetExceeded = singleResult.turnBudgetExceeded;
 						statusPayload.steps[fi].wrapUpRequested = singleResult.wrapUpRequested;
@@ -2641,7 +2813,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 						statusPayload.steps[fi].totalCost = singleResult.totalCost;
-						statusPayload.steps[fi].error = timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
+						statusPayload.steps[fi].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 						statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
 						statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
 						statusPayload.steps[fi].structuredOutput = singleResult.structuredOutput;
@@ -2652,9 +2824,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						writeStatusPayload();
 
 						appendJsonl(eventsPath, JSON.stringify({
-							type: timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+							type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
 							ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-							exitCode: timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskDuration,
+							exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskDuration,
 						}));
 						if (singleResult.completionGuardTriggered) {
 							const event = buildControlEvent({
@@ -2671,7 +2843,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						}
 
 						if (singleResult.exitCode !== 0 && failFast) aborted = true;
-						return timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
+						return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 					},
 					globalSemaphore,
 				);
@@ -2701,11 +2873,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						agent: pr.agent,
 						output: pr.output,
 						error: pr.error,
-						success: pr.interrupted !== true && pr.exitCode === 0,
+						success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
 						exitCode: pr.interrupted === true ? 0 : pr.exitCode,
 						skipped: pr.skipped,
 						interrupted: pr.interrupted,
 						timedOut: pr.timedOut,
+						stopped: pr.stopped,
 						turnBudget: pr.turnBudget,
 						turnBudgetExceeded: pr.turnBudgetExceeded,
 						wrapUpRequested: pr.wrapUpRequested,
@@ -2802,25 +2975,29 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				nestedRoute: config.nestedRoute,
 				registerInterrupt: (interrupt) => registerStepInterrupt(flatIndex, interrupt),
 				registerTimeout: (interrupt) => registerStepTimeout(flatIndex, interrupt),
+				registerStop: (stop) => registerStepStop(flatIndex, stop),
 				registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(flatIndex, abort),
 				timeoutSignal: timeoutAbortController.signal,
+				stopSignal: stopAbortController.signal,
 				timeoutMessage,
+				stopMessage,
 				turnBudget: config.turnBudget,
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
-				skipAcceptance: () => timedOut,
+				skipAcceptance: () => timedOut || stopped,
 			});
 			if (seqStep.sessionFile) {
 				latestSessionFile = seqStep.sessionFile;
 			}
 
 			previousOutput = singleResult.output;
+			const childStopped = singleResult.stopped === true;
 			results.push({
 				agent: singleResult.agent,
-				output: timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
-				error: timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
-				success: !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
-				exitCode: timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
+				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
+				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
+				success: !stopped && !childStopped && !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
+				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
 				sessionFile: singleResult.sessionFile,
 				intercomTarget: singleResult.intercomTarget,
 				model: singleResult.model,
@@ -2836,6 +3013,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				acceptance: singleResult.acceptance,
 				interrupted: singleResult.interrupted,
 				timedOut: timedOut || singleResult.timedOut ? true : undefined,
+				stopped: stopped || childStopped ? true : undefined,
 				turnBudget: singleResult.turnBudget,
 				turnBudgetExceeded: singleResult.turnBudgetExceeded,
 				wrapUpRequested: singleResult.wrapUpRequested,
@@ -2874,11 +3052,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 			const stepEndTime = Date.now();
 			const childInterrupted = singleResult.interrupted === true;
-			statusPayload.steps[flatIndex].status = timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+			statusPayload.steps[flatIndex].status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
 			statusPayload.steps[flatIndex].endedAt = stepEndTime;
 			statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
-			statusPayload.steps[flatIndex].exitCode = timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+			statusPayload.steps[flatIndex].exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
 			statusPayload.steps[flatIndex].timedOut = timedOut || singleResult.timedOut ? true : undefined;
+			statusPayload.steps[flatIndex].stopped = stopped || childStopped ? true : undefined;
 			statusPayload.steps[flatIndex].turnBudget = singleResult.turnBudget;
 			statusPayload.steps[flatIndex].turnBudgetExceeded = singleResult.turnBudgetExceeded;
 			statusPayload.steps[flatIndex].wrapUpRequested = singleResult.wrapUpRequested;
@@ -2894,7 +3073,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
 			statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
 			statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
-			statusPayload.steps[flatIndex].error = timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
+			statusPayload.steps[flatIndex].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 			statusPayload.steps[flatIndex].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
 			statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
 			statusPayload.steps[flatIndex].structuredOutput = singleResult.structuredOutput;
@@ -2909,12 +3088,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			writeStatusPayload();
 
 			appendJsonl(eventsPath, JSON.stringify({
-				type: timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+				type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
 				ts: stepEndTime,
 				runId: id,
 				stepIndex: flatIndex,
 				agent: seqStep.agent,
-				exitCode: timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
+				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
 				durationMs: stepEndTime - stepStartTime,
 				tokens: stepTokens,
 			}));
@@ -3006,8 +3185,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	disposeControlInbox();
 	const effectiveSessionFile = sessionFile ?? latestSessionFile;
 	const runEndedAt = Date.now();
-	statusPayload.state = timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
+	statusPayload.state = stopped ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
 	statusPayload.activityState = undefined;
+	if (stopped) {
+		statusPayload.stopped = true;
+		statusPayload.error = stopMessage;
+	}
 	if (timedOut) {
 		statusPayload.timedOut = true;
 		statusPayload.error = timeoutMessage ?? "Subagent timed out.";
@@ -3068,9 +3251,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			id,
 			agent: agentName,
 			mode: resultMode,
-			success: !timedOut && !turnBudgetExceeded && !interrupted && results.every((r) => r.success),
-			state: timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
-			summary: timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
+			success: !stopped && !timedOut && !turnBudgetExceeded && !interrupted && results.every((r) => r.success),
+			state: stopped ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
+			summary: stopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
 			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 			...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 			...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
@@ -3078,7 +3261,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
 			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
 			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
-			...(timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : {}),
+			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : {}),
 			results: results.map((r) => ({
 				agent: r.agent,
 				output: r.output,
@@ -3087,6 +3270,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				skipped: r.skipped || undefined,
 				interrupted: r.interrupted || undefined,
 				timedOut: r.timedOut || undefined,
+				stopped: r.stopped || undefined,
 				turnBudget: r.turnBudget,
 				turnBudgetExceeded: r.turnBudgetExceeded || undefined,
 				wrapUpRequested: r.wrapUpRequested || undefined,
@@ -3109,7 +3293,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			})),
 			outputs,
 			workflowGraph: statusPayload.workflowGraph,
-			exitCode: timedOut || turnBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
+			exitCode: stopped || timedOut || turnBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
 			timestamp: runEndedAt,
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,

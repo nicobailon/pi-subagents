@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { timeoutRequestPath } from "../../src/runs/background/control-channel.ts";
+import { stopRequestPath } from "../../src/runs/background/control-channel.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -205,7 +205,7 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("uses the existing async timeout control path for stop", async () => {
+	it("uses the async stop control path for stop", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-"));
 		try {
 			const events = new FakeEvents();
@@ -238,7 +238,7 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(reply.success, true);
 			assert.equal((reply as { data: { runId?: string; state?: string } }).data.runId, "run-stop");
 			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
-			assert.equal(fs.existsSync(timeoutRequestPath(asyncDir)), true);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), true);
 
 			bridge.dispose();
 		} finally {
@@ -283,7 +283,7 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(reply.success, false);
 			assert.equal((reply as { error: { code: string; message: string } }).error.code, "not_found");
 			assert.match((reply as { error: { message: string } }).error.message, /active session/);
-			assert.equal(fs.existsSync(timeoutRequestPath(asyncDir)), false);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
 			assert.equal(killCalls, 0);
 
 			bridge.dispose();

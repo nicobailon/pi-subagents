@@ -3,7 +3,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Compile } from "typebox/compile";
 import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
-import { deliverTimeoutRequest } from "../runs/background/control-channel.ts";
+import { deliverStopRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { type Details, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
@@ -247,7 +247,7 @@ function stopAsyncRun(
 	}
 
 	try {
-		deliverTimeoutRequest({
+		deliverStopRequest({
 			asyncDir: location.asyncDir,
 			pid: status.pid,
 			kill: options.kill,

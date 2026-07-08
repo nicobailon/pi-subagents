@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
 import { BUILTIN_AGENT_NAMES, discoverAgents, discoverAgentsAll, type ChainConfig } from "../agents/agents.ts";
 import {
 	DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS,
@@ -16,7 +16,10 @@ import {
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { isDynamicParallelStep, isParallelStep, type ChainStep } from "../shared/settings.ts";
 import { findModelInfo, toModelInfo } from "../shared/model-info.ts";
-import { formatTokens } from "../shared/formatters.ts";
+import { formatTokens, shortenPath } from "../shared/formatters.ts";
+import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from "../runs/background/async-status.ts";
+import { scheduledRunStorePath } from "../runs/background/scheduled-runs.ts";
+import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
@@ -36,6 +39,7 @@ import {
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
+	ASYNC_DIR,
 	type Details,
 	type JsonSchemaObject,
 	type SingleResult,
@@ -218,6 +222,160 @@ async function withSlashStatus<T>(
 		return await run();
 	} finally {
 		if (ctx.hasUI) ctx.ui.setStatus("subagent-slash-text", undefined);
+	}
+}
+
+type Theme = ExtensionContext["ui"]["theme"];
+
+type StopSelectorTarget = {
+	kind: "async" | "scheduled";
+	id: string;
+	label: string;
+	detail: string;
+	actionLabel: string;
+};
+
+type StopSelectorResult = { confirmed: boolean; target?: StopSelectorTarget };
+
+function commandForTarget(target: StopSelectorTarget): string {
+	return target.kind === "scheduled"
+		? `subagent({ action: "schedule-cancel", id: ${JSON.stringify(target.id)} })`
+		: `subagent({ action: "stop", id: ${JSON.stringify(target.id)} })`;
+}
+
+function formatAsyncStopTarget(run: AsyncRunSummary): StopSelectorTarget {
+	const progress = formatAsyncRunProgressLabel(run);
+	const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
+	return {
+		kind: "async",
+		id: run.id,
+		label: `${run.id} · ${run.mode} · ${progress}`,
+		detail: `${run.state} · ${cwd}`,
+		actionLabel: "stop async run",
+	};
+}
+
+function scheduledStopTargets(ctx: ExtensionContext, state: SubagentState): StopSelectorTarget[] {
+	const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId();
+	if (!sessionId) return [];
+	const storePath = scheduledRunStorePath(ctx.cwd, sessionId);
+	if (!fs.existsSync(storePath)) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(fs.readFileSync(storePath, "utf-8"));
+	} catch {
+		return [];
+	}
+	const jobs = parsed && typeof parsed === "object" && Array.isArray((parsed as { jobs?: unknown }).jobs)
+		? (parsed as { jobs: Array<Record<string, unknown>> }).jobs
+		: [];
+	return jobs
+		.filter((job) => job.state === "scheduled" && typeof job.id === "string" && typeof job.name === "string" && typeof job.runAt === "number")
+		.sort((left, right) => Number(left.runAt) - Number(right.runAt))
+		.map((job) => ({
+			kind: "scheduled" as const,
+			id: String(job.id),
+			label: `${String(job.id)} · ${String(job.name)}`,
+			detail: `scheduled · ${new Date(Number(job.runAt)).toISOString()}`,
+			actionLabel: "cancel scheduled run",
+		}));
+}
+
+function discoverStopTargets(ctx: ExtensionContext, state: SubagentState): StopSelectorTarget[] {
+	const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
+	const asyncTargets = listAsyncRuns(ASYNC_DIR, {
+		states: ["queued", "running"],
+		...(sessionId ? { sessionId } : {}),
+	}).map(formatAsyncStopTarget);
+	return [...asyncTargets, ...scheduledStopTargets(ctx, state)];
+}
+
+function stopFallbackText(targets: StopSelectorTarget[]): string {
+	if (targets.length === 0) return "No active current-session async runs or scheduled subagent runs to stop.";
+	const lines = ["Subagent stop targets:", ""];
+	for (const target of targets) {
+		lines.push(`- ${target.label}`);
+		lines.push(`  ${target.detail}`);
+		lines.push(`  ${target.actionLabel}: ${commandForTarget(target)}`);
+		if (target.kind === "async") lines.push(`  slash: /subagents-stop ${target.id}`);
+	}
+	return lines.join("\n");
+}
+
+class SubagentsStopSelector implements Component {
+	readonly width = 84;
+	private selected = 0;
+	private confirming = false;
+	private readonly tui: TUI;
+	private readonly theme: Theme;
+	private readonly targets: StopSelectorTarget[];
+	private readonly done: (result: StopSelectorResult) => void;
+
+	constructor(tui: TUI, theme: Theme, targets: StopSelectorTarget[], done: (result: StopSelectorResult) => void) {
+		this.tui = tui;
+		this.theme = theme;
+		this.targets = targets;
+		this.done = done;
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.done({ confirmed: false });
+			return;
+		}
+		if (this.confirming) {
+			if (matchesKey(data, "return") || data.toLowerCase() === "y") {
+				this.done({ confirmed: true, target: this.targets[this.selected] });
+				return;
+			}
+			if (data.toLowerCase() === "n" || matchesKey(data, "backspace")) {
+				this.confirming = false;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (matchesKey(data, "up")) {
+			this.selected = Math.max(0, this.selected - 1);
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, "down")) {
+			this.selected = Math.min(this.targets.length - 1, this.selected + 1);
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, "return")) {
+			this.confirming = true;
+			this.tui.requestRender();
+		}
+	}
+
+	render(width: number): string[] {
+		const contentWidth = Math.max(40, Math.min(this.width, width || this.width));
+		const lines = [this.theme.bold("Stop subagent run"), this.theme.fg("dim", "Select a current-session async run to stop, or a scheduled run to cancel."), ""];
+		const maxRows = 10;
+		const start = Math.max(0, Math.min(this.selected - maxRows + 1, Math.max(0, this.targets.length - maxRows)));
+		for (let index = start; index < Math.min(this.targets.length, start + maxRows); index++) {
+			const target = this.targets[index]!;
+			const selected = index === this.selected;
+			const marker = selected ? "›" : " ";
+				const actionLabel = target.actionLabel;
+			const action = target.kind === "scheduled" ? this.theme.fg("warning", actionLabel) : this.theme.fg("accent", actionLabel);
+			const labelWidth = Math.max(0, contentWidth - marker.length - actionLabel.length - 2);
+			lines.push(`${marker} ${action} ${target.label.slice(0, labelWidth)}`);
+			if (selected) lines.push(this.theme.fg("dim", `  ${target.detail}`.slice(0, contentWidth)));
+		}
+		if (this.targets.length > maxRows) lines.push(this.theme.fg("dim", `Showing ${start + 1}-${Math.min(this.targets.length, start + maxRows)} of ${this.targets.length}`));
+		lines.push("");
+		if (this.confirming) {
+			const target = this.targets[this.selected]!;
+			lines.push(this.theme.fg("warning", `Confirm: ${target.actionLabel} ${target.id}?`));
+			if (target.kind === "async") lines.push(this.theme.fg("dim", "Stop ends this run; use interrupt for a resumable pause."));
+			lines.push(this.theme.fg("dim", "Enter/Y confirms · N returns · Esc cancels"));
+		} else {
+			lines.push(this.theme.fg("dim", "↑/↓ select · Enter confirm · Esc cancel"));
+		}
+		return lines;
 	}
 }
 
@@ -1093,6 +1251,50 @@ export function registerSlashCommands(
 		description: "Show active subagent fleet status and transcript commands",
 		handler: async (_args, ctx) => {
 			await runSlashSubagent(pi, ctx, { action: "status", view: "fleet" });
+		},
+	});
+
+	pi.registerCommand("subagents-stop", {
+		description: "Stop a current-session async subagent run",
+		handler: async (args, ctx) => {
+			const id = args.trim();
+			if (id) {
+				await runSlashSubagent(pi, ctx, { action: "stop", id });
+				return;
+			}
+
+			if (process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1") {
+				sendSlashText(pi, "Selector unavailable in child-safe fanout mode. Pass an explicit current-session top-level async run id, for example `/subagents-stop <run-id>` or `subagent({ action: \"stop\", id: \"<run-id>\" })`.");
+				return;
+			}
+
+			let targets: StopSelectorTarget[];
+			try {
+				targets = discoverStopTargets(ctx, state);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(message, "error");
+				return;
+			}
+			if (!ctx.hasUI) {
+				sendSlashText(pi, stopFallbackText(targets));
+				return;
+			}
+			if (targets.length === 0) {
+				ctx.ui.notify("No active current-session async runs or scheduled subagent runs to stop.", "info");
+				return;
+			}
+
+			const result = await ctx.ui.custom<StopSelectorResult>(
+				(tui, theme, _kb, done) => new SubagentsStopSelector(tui, theme, targets, done),
+				{ overlay: true, overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" } },
+			);
+			if (!result?.confirmed || !result.target) return;
+			if (result.target.kind === "scheduled") {
+				await runSlashSubagent(pi, ctx, { action: "schedule-cancel", id: result.target.id });
+				return;
+			}
+			await runSlashSubagent(pi, ctx, { action: "stop", id: result.target.id });
 		},
 	});
 

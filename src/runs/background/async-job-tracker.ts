@@ -89,6 +89,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			timeoutMs: run.timeoutMs,
 			deadlineAt: run.deadlineAt,
 			timedOut: run.timedOut,
+			stopped: run.stopped,
 			turnBudget: run.turnBudget,
 			turnBudgetExceeded: run.turnBudgetExceeded,
 			wrapUpRequested: run.wrapUpRequested,
@@ -269,7 +270,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					if (status) {
 						const previousStatus = job.status;
 						job.status = status.state;
-						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused") cancelCleanup(job.asyncId);
+						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
 						job.activityState = status.activityState;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
@@ -308,11 +309,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.timeoutMs = status.timeoutMs ?? job.timeoutMs;
 						job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
 						job.timedOut = status.timedOut ?? job.timedOut;
+						job.stopped = status.stopped ?? job.stopped;
 						job.turnBudget = status.turnBudget ?? job.turnBudget;
 						job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
 						job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 						job.sessionFile = status.sessionFile ?? job.sessionFile;
-						if ((job.status === "complete" || job.status === "failed" || job.status === "paused") && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
+						if ((job.status === "complete" || job.status === "failed" || job.status === "paused" || job.status === "stopped") && !nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 							scheduleCleanup(job.asyncId);
 						}
 						if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
@@ -381,14 +383,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const handleComplete = (data: unknown) => {
-		const result = data as { id?: string; success?: boolean; asyncDir?: string; sessionId?: string };
+		const result = data as { id?: string; success?: boolean; state?: AsyncJobState["status"]; asyncDir?: string; sessionId?: string; stopped?: boolean };
 		if (typeof state.currentSessionId === "string" && result.sessionId !== state.currentSessionId) return;
 		const asyncId = result.id;
 		if (!asyncId) return;
 		const job = state.asyncJobs.get(asyncId);
 		let nestedRefreshFailed = false;
 		if (job) {
-			job.status = result.success ? "complete" : "failed";
+			job.status = result.state ?? (result.success ? "complete" : "failed");
+			job.stopped = result.stopped ?? job.stopped;
 			job.updatedAt = Date.now();
 			if (result.asyncDir) job.asyncDir = result.asyncDir;
 			try {

@@ -27,6 +27,7 @@ export interface ImportedAsyncRootResult {
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
 	timedOut?: boolean;
+	stopped?: boolean;
 }
 
 interface AsyncResultFile {
@@ -35,12 +36,14 @@ interface AsyncResultFile {
 	summary?: string;
 	error?: string;
 	timedOut?: boolean;
+	stopped?: boolean;
 	results?: Array<{
 		agent?: string;
 		output?: string;
 		error?: string;
 		success?: boolean;
 		timedOut?: boolean;
+		stopped?: boolean;
 		sessionFile?: string;
 		intercomTarget?: string;
 		model?: string;
@@ -54,8 +57,8 @@ interface AsyncResultFile {
 	}>;
 }
 
-const TERMINAL_STATES = new Set(["complete", "failed", "paused"]);
-const TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused"]);
+const TERMINAL_STATES = new Set(["complete", "failed", "paused", "stopped"]);
+const TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused", "stopped"]);
 
 function readResultFile(resultPath: string): AsyncResultFile | undefined {
 	try {
@@ -79,11 +82,12 @@ function isTerminalStatus(status: AsyncStatus | null, index: number): boolean {
 	return TERMINAL_STATES.has(status.state);
 }
 
-function resultState(result: AsyncResultFile | undefined, child: NonNullable<AsyncResultFile["results"]>[number] | undefined): "complete" | "failed" | "paused" | undefined {
+function resultState(result: AsyncResultFile | undefined, child: NonNullable<AsyncResultFile["results"]>[number] | undefined): "complete" | "failed" | "paused" | "stopped" | undefined {
 	if (!result) return undefined;
+	if (child?.stopped === true) return "stopped";
 	if (child?.success === true) return "complete";
-	if (child?.success === false) return result.state === "paused" ? "paused" : "failed";
-	if (result.state === "complete" || result.state === "failed" || result.state === "paused") return result.state;
+	if (child?.success === false) return result.state === "stopped" ? "stopped" : result.state === "paused" ? "paused" : "failed";
+	if (result.state === "complete" || result.state === "failed" || result.state === "paused" || result.state === "stopped") return result.state;
 	if (result.success === true) return "complete";
 	if (result.success === false) return "failed";
 	return undefined;
@@ -92,7 +96,8 @@ function resultState(result: AsyncResultFile | undefined, child: NonNullable<Asy
 function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, step: NonNullable<AsyncStatus["steps"]>[number] | undefined): ImportedAsyncRootResult {
 	const agent = step?.agent ?? status.steps?.[root.index]?.agent ?? "subagent";
 	const timedOut = step?.timedOut === true || status.timedOut === true;
-	const message = step?.error ?? status.error ?? `Attached async root ${root.runId} ended without a result file at ${root.resultPath}.`;
+	const stopped = step?.stopped === true || status.stopped === true || status.state === "stopped";
+	const message = step?.error ?? status.error ?? (stopped ? "Subagent stopped by user." : `Attached async root ${root.runId} ended without a result file at ${root.resultPath}.`);
 	return {
 		agent,
 		output: message,
@@ -100,6 +105,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		exitCode: 1,
 		error: message,
 		...(timedOut ? { timedOut: true } : {}),
+		...(stopped ? { stopped: true } : {}),
 		...(step?.sessionFile ?? status.sessionFile ? { sessionFile: step?.sessionFile ?? status.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
@@ -136,8 +142,9 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 	const agent = child?.agent ?? step?.agent ?? status?.steps?.[root.index]?.agent ?? "subagent";
 	const output = child?.output ?? result.summary ?? "";
 	const timedOut = child?.timedOut === true || step?.timedOut === true || result.timedOut === true || status?.timedOut === true;
-	const success = state === "complete" && !timedOut;
-	const error = child?.error ?? (success ? undefined : result.error ?? result.summary ?? status?.error ?? `Attached async root ${root.runId} did not complete successfully.`);
+	const stopped = child?.stopped === true || step?.stopped === true || result.stopped === true || status?.stopped === true || state === "stopped";
+	const success = state === "complete" && !timedOut && !stopped;
+	const error = child?.error ?? (success ? undefined : stopped ? "Subagent stopped by user." : result.error ?? result.summary ?? status?.error ?? `Attached async root ${root.runId} did not complete successfully.`);
 	return {
 		agent,
 		output: success ? output : (output || error || ""),
@@ -145,6 +152,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		exitCode: success ? 0 : 1,
 		...(error ? { error } : {}),
 		...(timedOut ? { timedOut: true } : {}),
+		...(stopped ? { stopped: true } : {}),
 		...(child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile ? { sessionFile: child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile } : {}),
 		...(child?.intercomTarget ? { intercomTarget: child.intercomTarget } : {}),
 		...(child?.model ?? step?.model ? { model: child?.model ?? step?.model } : {}),

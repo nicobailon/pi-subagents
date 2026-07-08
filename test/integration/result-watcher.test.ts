@@ -475,6 +475,68 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("does not mark completed siblings as stopped when the overall async result is stopped", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-stopped-siblings-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const listeners = new Map<string, Set<(payload: unknown) => void>>();
+			const pi = {
+				events: {
+					on(event: string, handler: (payload: unknown) => void) {
+						const set = listeners.get(event) ?? new Set();
+						set.add(handler);
+						listeners.set(event, set);
+						return () => set.delete(handler);
+					},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+						for (const handler of listeners.get(event) ?? []) handler(data);
+						if (event === "subagent:result-intercom") {
+							const requestId = data && typeof data === "object" ? (data as { requestId?: unknown }).requestId : undefined;
+							if (typeof requestId === "string") setImmediate(() => pi.events.emit("subagent:result-intercom-delivery", { requestId, delivered: true }));
+						}
+					},
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+			try {
+				fs.writeFileSync(path.join(resultsDir, "async-stopped.json"), JSON.stringify({
+					id: "async-stopped",
+					runId: "async-stopped",
+					agent: "parallel:a+b",
+					mode: "parallel",
+					success: false,
+					state: "stopped",
+					stopped: true,
+					summary: "Stopped by user",
+					results: [
+						{ agent: "a", output: "Result from a", success: true },
+						{ agent: "b", output: "Subagent stopped by user.", success: false, stopped: true, state: "stopped" },
+					],
+					sessionId: "session-1",
+					intercomTarget: "subagent-chat-main",
+				}, null, 2), "utf-8");
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			const intercomEvents = emitted.filter((entry) => entry.event === "subagent:result-intercom");
+			assert.equal(intercomEvents.length, 1);
+			const eventData = intercomEvents[0]?.data as { message?: string; status?: string };
+			assert.equal(eventData.status, "stopped");
+			const message = String(eventData.message ?? "");
+			assert.match(message, /Children: 1 completed, 1 stopped/);
+			assert.match(message, /1\. a — completed/);
+			assert.match(message, /2\. b — stopped/);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("enriches async completion and intercom payloads with nested registry children before deletion", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-nested-"));
 		const route = createNestedRoute("async-nested-root");

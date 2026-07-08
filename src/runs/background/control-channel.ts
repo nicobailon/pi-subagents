@@ -45,6 +45,13 @@ export interface TimeoutRequest {
 	reason?: string;
 }
 
+export interface StopRequest {
+	type: "stop";
+	ts?: number;
+	source?: string;
+	reason?: string;
+}
+
 export interface SteerRequest {
 	type: "steer";
 	id: string;
@@ -70,6 +77,11 @@ export function interruptRequestPath(asyncDir: string): string {
 /** Path of the portable timeout request file. */
 export function timeoutRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "timeout.json");
+}
+
+/** Path of the portable manual stop request file. */
+export function stopRequestPath(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), "stop.json");
 }
 
 /** Directory of parent-to-runner steering requests. */
@@ -114,6 +126,17 @@ export function requestAsyncTimeout(
 ): string {
 	const requestPath = timeoutRequestPath(asyncDir);
 	const request: TimeoutRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "timeout" };
+	writeAtomicJson(requestPath, request);
+	return requestPath;
+}
+
+export function requestAsyncStop(
+	asyncDir: string,
+	payload: Omit<StopRequest, "type"> = {},
+	deps: { now?: () => number } = {},
+): string {
+	const requestPath = stopRequestPath(asyncDir);
+	const request: StopRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "stop" };
 	writeAtomicJson(requestPath, request);
 	return requestPath;
 }
@@ -220,6 +243,20 @@ export function consumeTimeoutRequest(
 	return true;
 }
 
+export function consumeStopRequest(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
+): boolean {
+	const requestPath = stopRequestPath(asyncDir);
+	if (!fsImpl.existsSync(requestPath)) return false;
+	try {
+		fsImpl.rmSync(requestPath, { force: true, recursive: true });
+	} catch {
+		// Already removed by a concurrent check — still counts as consumed.
+	}
+	return true;
+}
+
 /**
  * Parent side: portable interrupt = authoritative file request + best-effort OS
  * signal. The signal is only a latency optimization on Unix; ENOSYS on Windows
@@ -265,6 +302,17 @@ export function deliverTimeoutRequest(input: {
 	requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
 }
 
+export function deliverStopRequest(input: {
+	asyncDir: string;
+	pid?: number;
+	kill?: KillFn;
+	signal?: NodeJS.Signals;
+	now?: () => number;
+	source?: string;
+}): void {
+	requestAsyncStop(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+}
+
 /**
  * Runner side: watch the control inbox and route interrupt requests into
  * `onInterrupt`. Uses `fs.watch` when available plus an interval poll as a
@@ -276,6 +324,7 @@ export function watchAsyncControlInbox(
 	opts: {
 		onInterrupt: () => void;
 		onTimeout?: () => void;
+		onStop?: () => void;
 		onSteer?: (request: SteerRequest) => void;
 		pollIntervalMs?: number;
 		fs?: ControlChannelFs;
@@ -295,6 +344,7 @@ export function watchAsyncControlInbox(
 	const check = (): void => {
 		if (disposed) return;
 		try {
+			if (consumeStopRequest(asyncDir, fsImpl)) opts.onStop?.();
 			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
 			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
 			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);

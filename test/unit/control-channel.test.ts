@@ -6,11 +6,14 @@ import { describe, it } from "node:test";
 import {
 	consumeInterruptRequest,
 	consumeSteerRequests,
+	consumeStopRequest,
 	deliverInterruptRequest,
 	enqueueStepSteer,
 	interruptRequestPath,
 	requestAsyncInterrupt,
 	requestAsyncSteer,
+	requestAsyncStop,
+	stopRequestPath,
 	steerRequestsDir,
 	stepSteerInboxDir,
 	watchAsyncControlInbox,
@@ -35,6 +38,23 @@ describe("control channel: request file", () => {
 			assert.equal(data.type, "interrupt");
 			assert.equal(data.ts, 999);
 			assert.equal(data.source, "test");
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("writes and consumes a stop request", () => {
+		const asyncDir = tmpAsyncDir("pi-control-stop-");
+		try {
+			const requestPath = requestAsyncStop(asyncDir, { source: "test" }, { now: () => 1234 });
+			assert.equal(requestPath, stopRequestPath(asyncDir));
+			const data = JSON.parse(fs.readFileSync(requestPath, "utf-8"));
+			assert.equal(data.type, "stop");
+			assert.equal(data.ts, 1234);
+			assert.equal(data.source, "test");
+			assert.equal(consumeStopRequest(asyncDir), true);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			assert.equal(consumeStopRequest(asyncDir), false);
 		} finally {
 			cleanup(asyncDir);
 		}
@@ -296,6 +316,27 @@ describe("control channel: watchAsyncControlInbox", () => {
 			requestAsyncInterrupt(asyncDir);
 			h.trigger();
 			assert.equal(fired, 1);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("delivers stop requests before interrupt requests", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-stop-early-");
+		try {
+			requestAsyncStop(asyncDir);
+			requestAsyncInterrupt(asyncDir);
+			const events: string[] = [];
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, {
+				onInterrupt: () => events.push("interrupt"),
+				onStop: () => events.push("stop"),
+				fs: h.fsImpl,
+				timers: h.timers,
+			});
+
+			assert.deepEqual(events, ["stop", "interrupt"]);
+			dispose();
 		} finally {
 			cleanup(asyncDir);
 		}

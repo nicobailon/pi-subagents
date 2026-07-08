@@ -40,6 +40,8 @@ type ResultFileChild = {
 	output?: string;
 	error?: string;
 	success?: boolean;
+	state?: string;
+	stopped?: boolean;
 	sessionFile?: string;
 	artifactPaths?: { outputPath?: string };
 	intercomTarget?: string;
@@ -155,11 +157,18 @@ export function createResultWatcher(
 					: output;
 				const sessionPath = result.sessionFile ?? (resultChildren.length === 1 ? data.sessionFile : undefined);
 				const childNestedChildren = sanitizeNestedResultChildren(result.children, resultPath, `results[${index}].children`);
+				const childState = result.state === "paused" || result.state === "stopped"
+					? result.state
+					: result.stopped === true
+						? "stopped"
+						: data.state === "paused" || (!hasResultChildren && (data.state === "stopped" || typeof result.success !== "boolean"))
+							? data.state
+							: undefined;
 				return {
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
 					status: resolveSubagentResultStatus({
 						success: result.success,
-						state: data.state === "paused" || typeof result.success !== "boolean" ? data.state : undefined,
+						state: childState,
 					}),
 					summary,
 					index,

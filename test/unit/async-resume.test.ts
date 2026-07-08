@@ -42,6 +42,34 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("rejects stopped runs instead of reviving them", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-stopped-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-stopped", "status.json"), {
+				runId: "run-stopped",
+				mode: "single",
+				state: "stopped",
+				stopped: true,
+				startedAt: 100,
+				endedAt: 200,
+				lastUpdate: 200,
+				cwd: root,
+				sessionFile,
+				steps: [{ agent: "worker", status: "stopped", stopped: true, sessionFile }],
+			});
+
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-stopped" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/stopped and cannot be resumed/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects ambiguous run id prefixes", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ambiguous-"));
 		try {

@@ -268,6 +268,7 @@ function firstOutputLine(text: string): string {
 
 function resultStatusLine(result: Details["results"][number], output: string): string {
 	if (result.detached) return result.detachedReason ? `Detached: ${result.detachedReason}` : "Detached";
+	if (result.stopped) return "Stopped";
 	if (result.interrupted) return "Paused";
 	if (result.exitCode !== 0) return `Error: ${result.error ?? (firstOutputLine(output) || `exit ${result.exitCode}`)}`;
 	if (result.acceptance?.status && result.acceptance.status !== "not-required") return `Done · acceptance: ${result.acceptance.status}`;
@@ -281,6 +282,7 @@ function resultGlyph(result: Details["results"][number], output: string, theme: 
 		return theme.fg("accent", runningGlyph(seed));
 	}
 	if (result.detached) return theme.fg("warning", "■");
+	if (result.stopped) return theme.fg("warning", "■");
 	if (result.interrupted) return theme.fg("warning", "■");
 	if (result.exitCode !== 0) return theme.fg("error", "✗");
 	if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return theme.fg("warning", "✓");
@@ -349,6 +351,7 @@ function widgetActivity(job: AsyncJobState): string {
 	if (job.status === "running") return "thinking…";
 	if (job.status === "queued") return "queued…";
 	if (job.status === "paused") return "Paused";
+	if (job.status === "stopped") return "Stopped";
 	if (job.status === "failed") return "Failed";
 	return "Done";
 }
@@ -397,6 +400,7 @@ function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
 	if (job.status === "queued") return theme.fg("muted", "◦");
 	if (job.status === "complete") return theme.fg("success", "✓");
 	if (job.status === "paused") return theme.fg("warning", "■");
+	if (job.status === "stopped") return theme.fg("warning", "■");
 	return theme.fg("error", "✗");
 }
 
@@ -405,6 +409,7 @@ function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: nu
 	if (status === "complete" || status === "completed") return theme.fg("success", "✓");
 	if (status === "failed") return theme.fg("error", "✗");
 	if (status === "paused") return theme.fg("warning", "■");
+	if (status === "stopped") return theme.fg("warning", "■");
 	return theme.fg("muted", "◦");
 }
 
@@ -413,6 +418,7 @@ function widgetStepStatus(status: AsyncJobStep["status"], theme: Theme): string 
 	if (status === "complete" || status === "completed") return theme.fg("success", "complete");
 	if (status === "failed") return theme.fg("error", "failed");
 	if (status === "paused") return theme.fg("warning", "paused");
+	if (status === "stopped") return theme.fg("warning", "stopped");
 	return theme.fg("dim", status);
 }
 
@@ -620,7 +626,7 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 
 	if (details.mode === "parallel") {
 		const totalCount = details.totalSteps ?? details.results.length;
-		const statuses = new Array(totalCount).fill("pending") as Array<"pending" | "running" | "completed" | "failed" | "detached">;
+		const statuses = new Array(totalCount).fill("pending") as Array<"pending" | "running" | "completed" | "failed" | "stopped" | "detached">;
 		for (const progress of details.progress ?? []) {
 			if (progress.index >= 0 && progress.index < totalCount) statuses[progress.index] = progress.status;
 		}
@@ -631,11 +637,13 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 			const index = result.progress?.index ?? progressFromArray?.index ?? i;
 			if (index < 0 || index >= totalCount) continue;
 			const status = result.progress?.status
-				?? (result.interrupted || result.detached
-					? "detached"
-					: result.exitCode === 0
-						? "completed"
-						: "failed");
+				?? (result.stopped
+					? "stopped"
+					: result.interrupted || result.detached
+						? "detached"
+						: result.exitCode === 0
+							? "completed"
+							: "failed");
 			statuses[index] = status;
 		}
 		const running = statuses.filter((status) => status === "running").length;
@@ -788,6 +796,7 @@ function nestedStatusGlyph(state: NestedRunSummary["state"] | NestedStepSummary[
 	if (state === "complete" || state === "completed") return theme.fg("success", "✓");
 	if (state === "failed") return theme.fg("error", "✗");
 	if (state === "paused") return theme.fg("warning", "■");
+	if (state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("muted", "◦");
 }
 
@@ -809,6 +818,7 @@ function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activ
 	if (state === "running") return "thinking…";
 	if (state === "queued" || state === "pending") return "queued…";
 	if (state === "paused") return "Paused";
+	if (state === "stopped") return "Stopped";
 	if (state === "failed") return "Failed";
 	return "Done";
 }
@@ -984,13 +994,14 @@ function widgetSessionMatches(expanded: boolean): boolean {
 		&& widgetLayoutSession.columns === currentTerminalColumns();
 }
 
-function widgetHeaderCounts(jobs: AsyncJobState[]): { running: AsyncJobState[]; queued: AsyncJobState[]; complete: AsyncJobState[]; failed: AsyncJobState[]; paused: AsyncJobState[] } {
+function widgetHeaderCounts(jobs: AsyncJobState[]): { running: AsyncJobState[]; queued: AsyncJobState[]; complete: AsyncJobState[]; failed: AsyncJobState[]; paused: AsyncJobState[]; stopped: AsyncJobState[] } {
 	return {
 		running: jobs.filter((job) => job.status === "running"),
 		queued: jobs.filter((job) => job.status === "queued"),
 		complete: jobs.filter((job) => job.status === "complete"),
 		failed: jobs.filter((job) => job.status === "failed"),
 		paused: jobs.filter((job) => job.status === "paused"),
+		stopped: jobs.filter((job) => job.status === "stopped"),
 	};
 }
 
@@ -1002,6 +1013,7 @@ function buildSingleLineWidgetLines(jobs: AsyncJobState[], theme: Theme, width: 
 	if (counts.running.length > 0) parts.push(`${counts.running.length}/${jobs.length} running`);
 	if (counts.queued.length > 0) parts.push(`${counts.queued.length} queued`);
 	if (counts.failed.length > 0) parts.push(`${counts.failed.length} failed`);
+	if (counts.stopped.length > 0) parts.push(`${counts.stopped.length} stopped`);
 	if (counts.paused.length > 0) parts.push(`${counts.paused.length} paused`);
 	if (!hasActive && counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
 	return [truncLine(`${theme.fg(hasActive ? "accent" : "dim", glyph)} ${theme.fg(hasActive ? "accent" : "dim", "subagents")} (${parts.join(", ") || `${jobs.length} total`})`, width)];
@@ -1065,6 +1077,7 @@ function progressiveHeaderLine(jobs: AsyncJobState[], theme: Theme, width: numbe
 	if (counts.queued.length > 0) parts.push(`${counts.queued.length} queued`);
 	if (!hasActive) {
 		if (counts.failed.length > 0) parts.push(`${counts.failed.length} failed`);
+		if (counts.stopped.length > 0) parts.push(`${counts.stopped.length} stopped`);
 		if (counts.paused.length > 0) parts.push(`${counts.paused.length} paused`);
 		if (counts.complete.length > 0) parts.push(`${counts.complete.length}/${jobs.length} done`);
 	}
@@ -1089,7 +1102,7 @@ function progressiveHiddenLine(hiddenJobs: AsyncJobState[], theme: Theme, width:
 	const parts: string[] = [];
 	if (counts.running.length > 0) parts.push(`${counts.running.length} running`);
 	if (counts.queued.length > 0) parts.push(`${counts.queued.length} queued`);
-	const finished = counts.complete.length + counts.failed.length + counts.paused.length;
+	const finished = counts.complete.length + counts.failed.length + counts.paused.length + counts.stopped.length;
 	if (finished > 0) parts.push(`${finished} finished`);
 	return truncLine(theme.fg("dim", `  +${hiddenJobs.length} more${parts.length ? ` (${parts.join(", ")})` : ""}`), width);
 }
@@ -1312,7 +1325,9 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 	const hasRunning = d.progress?.some((p) => p.status === "running")
 		|| d.results.some((r) => r.progress?.status === "running")
 		|| workflowGraphHasStatus(d, ["running"]);
-	const failed = d.results.some((r) => r.exitCode !== 0 && r.progress?.status !== "running")
+	const stopped = d.results.some((r) => r.stopped && r.progress?.status !== "running")
+		|| workflowGraphHasStatus(d, ["stopped"]);
+	const failed = d.results.some((r) => !r.stopped && r.exitCode !== 0 && r.progress?.status !== "running")
 		|| workflowGraphHasStatus(d, ["failed"]);
 	const paused = d.results.some((r) => (r.interrupted || r.detached) && r.progress?.status !== "running")
 		|| workflowGraphHasStatus(d, ["paused", "detached"]);
@@ -1335,8 +1350,10 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 	const stats = statJoin(theme, [multiLabel.headerLabel, formatProgressStats(theme, totalSummary), formatTotalCostStat(d.totalCost)]);
 	const glyph = hasRunning
 		? theme.fg("accent", runningGlyph(frame !== undefined ? (runningSeed(progressRunningSeed(totalSummary), d.currentStepIndex) ?? 0) + frame : runningSeed(progressRunningSeed(totalSummary), d.currentStepIndex)))
-		: failed
-			? theme.fg("error", "✗")
+		: stopped
+			? theme.fg("warning", "■")
+			: failed
+				? theme.fg("error", "✗")
 			: paused
 				? theme.fg("warning", "■")
 				: theme.fg("success", "✓");
@@ -1533,6 +1550,7 @@ export function renderSubagentResult(
 		&& hasEmptyTextOutputWithoutOutputTarget(r.task, getSingleResultOutput(r)),
 	);
 	const hasWorkflowFailure = workflowGraphHasStatus(d, ["failed"]);
+	const hasWorkflowStop = d.results.some((r) => r.stopped && r.progress?.status !== "running") || workflowGraphHasStatus(d, ["stopped"]);
 	const hasWorkflowPause = workflowGraphHasStatus(d, ["paused", "detached"]);
 	const icon = hasRunning
 		? theme.fg("warning", "running")
@@ -1540,8 +1558,10 @@ export function renderSubagentResult(
 			? theme.fg("warning", "warning")
 			: hasWorkflowFailure
 				? theme.fg("error", "failed")
-				: hasWorkflowPause
-					? theme.fg("warning", "paused")
+				: hasWorkflowStop
+					? theme.fg("warning", "stopped")
+					: hasWorkflowPause
+						? theme.fg("warning", "paused")
 					: ok === d.results.length
 						? theme.fg("success", "ok")
 						: theme.fg("error", "failed");

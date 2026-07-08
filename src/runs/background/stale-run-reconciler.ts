@@ -116,14 +116,14 @@ interface ResultChildOutcome {
 }
 
 interface ResultRepairData {
-	state: "complete" | "failed" | "paused";
+	state: "complete" | "failed" | "paused" | "stopped";
 	results?: ResultChildOutcome[];
 }
 
 function readResultRepairData(resultPath: string): ResultRepairData | undefined {
 	try {
 		const data = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { success?: boolean; state?: string; exitCode?: number; results?: unknown };
-		const state = data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
+		const state = data.success ? "complete" : data.state === "stopped" ? "stopped" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 		const results = Array.isArray(data.results)
 			? data.results.map((entry, index) => {
 				if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
@@ -142,7 +142,7 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
 	}
 }
 
-function childState(overallState: ResultRepairData["state"], child: ResultChildOutcome | undefined): "complete" | "failed" | "paused" {
+function childState(overallState: ResultRepairData["state"], child: ResultChildOutcome | undefined): "complete" | "failed" | "paused" | "stopped" {
 	if (child?.success === true) return "complete";
 	if (child?.success === false) return "failed";
 	return overallState;
@@ -163,7 +163,8 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			endedAt: step.endedAt ?? now,
 			durationMs: step.startedAt !== undefined && step.durationMs === undefined ? Math.max(0, now - step.startedAt) : step.durationMs,
 			exitCode: step.exitCode ?? (state === "complete" || state === "paused" ? 0 : 1),
-			error: state === "failed" ? step.error ?? child?.error : step.error,
+			error: state === "failed" || state === "stopped" ? step.error ?? child?.error : step.error,
+			stopped: state === "stopped" ? true : step.stopped,
 			sessionFile: step.sessionFile ?? child?.sessionFile,
 			model,
 			thinking,
@@ -174,6 +175,7 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 	return {
 		...status,
 		state: repair.state,
+		...(repair.state === "stopped" ? { stopped: true } : {}),
 		activityState: undefined,
 		lastUpdate: now,
 		endedAt: status.endedAt ?? now,
@@ -281,7 +283,7 @@ function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: st
 }
 
 function terminal(state: AsyncStatus["state"]): boolean {
-	return state === "complete" || state === "failed" || state === "paused";
+	return state === "complete" || state === "failed" || state === "paused" || state === "stopped";
 }
 
 function* nestedRuns(children: NestedRunSummary[] | undefined): Generator<NestedRunSummary> {

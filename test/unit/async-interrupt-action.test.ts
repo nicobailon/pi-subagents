@@ -31,13 +31,15 @@ function writeJson(filePath: string, value: object): void {
 	fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
 }
 
-function createRunningAsync(state: SubagentState, runId: string, options: { track?: boolean } = {}): string {
+function createRunningAsync(state: SubagentState, runId: string, options: { track?: boolean; sessionId?: string; state?: "queued" | "running"; pid?: number } = {}): string {
 	const asyncDir = path.join(ASYNC_DIR, runId);
+	const runState = options.state ?? "running";
 	writeJson(path.join(asyncDir, "status.json"), {
 		runId,
 		mode: "single",
-		state: "running",
-		pid: 12345,
+		state: runState,
+		...(options.sessionId ? { sessionId: options.sessionId } : {}),
+		...(options.pid !== undefined ? { pid: options.pid } : runState === "running" ? { pid: 12345 } : {}),
 		cwd: os.tmpdir(),
 		startedAt: 100,
 		lastUpdate: Date.now(),
@@ -193,6 +195,79 @@ describe("async interrupt action", () => {
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), true);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("stops a running async run resolved from disk", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-disk-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		try {
+			const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
+			const result = await executorWithKill(state, (pid, signal) => {
+				kills.push({ pid, signal });
+				return true;
+			}).execute("stop", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), new RegExp(`Stop requested for async run ${runId}`));
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), true);
+			assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("does not stop a different async run when the requested id is missing", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-existing-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { sessionId: "session" });
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("stop", { action: "stop", id: "missing-run" }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /Run not found|No stoppable async run found in this session/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), false);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("stops a queued async run by writing the portable request", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-queued-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session", state: "queued" });
+		try {
+			const result = await executorWithKill(state, () => {
+				throw new Error("queued stop should not signal a process");
+			}).execute("stop", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), new RegExp(`Stop requested for async run ${runId}`));
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), true);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects stop for async runs outside the active session", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `stop-other-session-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "other-session" });
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("stop", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /active session/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), false);
 		} finally {
 			cleanup(runId, asyncDir);
 		}

@@ -961,6 +961,40 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows stopped result-only runs without revive guidance", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-stopped-result-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(path.join(asyncRoot, "run-stopped-result"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "run-stopped-result.json"), JSON.stringify({
+				id: "run-stopped-result",
+				agent: "worker",
+				success: false,
+				state: "stopped",
+				stopped: true,
+				sessionFile,
+				summary: "Subagent stopped by user.",
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-stopped-result" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /State: stopped/);
+			assert.match(text, /Resume: unavailable; stopped runs are not resumable/);
+			assert.doesNotMatch(text, /Revive:/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("falls back to an existing result when async dir has no status file", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-fallback-"));
 		try {
