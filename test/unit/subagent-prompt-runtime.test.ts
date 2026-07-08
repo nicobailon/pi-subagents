@@ -16,6 +16,8 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
+import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -42,6 +44,7 @@ const envSnapshot = {
 	PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
 	PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT,
 	PI_SUBAGENT_CHILD_INDEX: process.env.PI_SUBAGENT_CHILD_INDEX,
+	PI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
 };
 
 const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
@@ -92,6 +95,8 @@ afterEach(() => {
 	else process.env[SUBAGENT_CHILD_AGENT_ENV] = envSnapshot.PI_SUBAGENT_CHILD_AGENT;
 	if (envSnapshot.PI_SUBAGENT_CHILD_INDEX === undefined) delete process.env[SUBAGENT_CHILD_INDEX_ENV];
 	else process.env[SUBAGENT_CHILD_INDEX_ENV] = envSnapshot.PI_SUBAGENT_CHILD_INDEX;
+	if (envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
+	else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
 });
 
 function setSupervisorEnv(): void {
@@ -160,6 +165,43 @@ describe("subagent prompt runtime", () => {
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	it("registers child watchdog lifecycle handlers only when enabled by env", () => {
+		const handlersWithout = new Map<string, unknown[]>();
+		registerSubagentPromptRuntime({
+			on(event: string, handler: unknown) {
+				handlersWithout.set(event, [...(handlersWithout.get(event) ?? []), handler]);
+			},
+		} as { on(event: string, handler: unknown): void });
+		assert.equal(handlersWithout.get("agent_end")?.length ?? 0, 0);
+
+		process.env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify({
+			enabled: true,
+			runId: "run-1",
+			agent: "worker",
+			childIndex: 0,
+			watchdogTailTimeoutMs: 1000,
+			agentEndTimeoutMs: 500,
+			maxWarnings: null,
+			autoFollowBlockers: false,
+			autoFollowMaxAttempts: 3,
+			stalemateRepeats: 2,
+		});
+		const handlersWith = new Map<string, unknown[]>();
+		registerSubagentPromptRuntime({
+			on(event: string, handler: unknown) {
+				handlersWith.set(event, [...(handlersWith.get(event) ?? []), handler]);
+			},
+			getThinkingLevel() {
+				return "off";
+			},
+			sendMessage() {},
+		} as { on(event: string, handler: unknown): void; getThinkingLevel(): string; sendMessage(): void });
+
+		assert.ok((handlersWith.get("before_agent_start")?.length ?? 0) >= 2);
+		assert.ok((handlersWith.get("turn_end")?.length ?? 0) >= 1);
+		assert.ok((handlersWith.get("agent_end")?.length ?? 0) >= 1);
 	});
 
 	it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {
@@ -310,9 +352,11 @@ describe("subagent prompt runtime", () => {
 		const slashTextResult = { role: "custom", customType: "subagent-slash-text-result", content: "Subagent profiles" };
 		const notify = { role: "custom", customType: "subagent-notify", content: "Background task completed" };
 		const control = { role: "custom", customType: "subagent_control_notice", content: "needs attention" };
+		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
+		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
-		assert.deepEqual(stripParentOnlySubagentMessages([user, instruction, slashResult, slashTextResult, notify, control, otherCustom]), [user, otherCustom]);
+		assert.deepEqual(stripParentOnlySubagentMessages([user, instruction, slashResult, slashTextResult, notify, control, watchdogWarning, childWatchdogWarning, otherCustom]), [user, otherCustom]);
 	});
 
 	it("strips prior parent subagent tool calls and results from forked child context", () => {
@@ -431,10 +475,11 @@ describe("subagent prompt runtime", () => {
 			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
 				if (event === "before_agent_start") beforeAgentStart = handler;
 			},
+			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
 			setSessionName(name: string) {
 				sessionName = name;
 			},
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; setSessionName(name: string): void });
+		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }>; setSessionName(name: string): void });
 
 		await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 
@@ -447,7 +492,8 @@ describe("subagent prompt runtime", () => {
 			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
 				if (event === "before_agent_start") beforeAgentStart = handler;
 			},
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void });
+			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
+		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }> });
 
 		assert.ok(beforeAgentStart, "expected before_agent_start handler");
 		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
@@ -466,7 +512,8 @@ describe("subagent prompt runtime", () => {
 			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
 				if (event === "before_agent_start") beforeAgentStart = handler;
 			},
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void });
+			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
+		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }> });
 
 		process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "1";
 		process.env.PI_SUBAGENT_INHERIT_SKILLS = "1";
@@ -491,9 +538,11 @@ describe("subagent prompt runtime", () => {
 		const slashResult = { role: "custom", customType: "subagent-slash-result", content: "## Orchestration" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "subagent results" };
 		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "worker" } }] };
+		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
+		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
-		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, otherCustom, currentTask] }), {
+		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, watchdogWarning, childWatchdogWarning, otherCustom, currentTask] }), {
 			messages: [priorParentTurn, otherCustom, currentTask],
 		});
 	});

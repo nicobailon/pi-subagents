@@ -269,6 +269,15 @@ export interface SubagentResultIntercomPayload {
 // Progress Tracking
 // ============================================================================
 
+export interface ChildWatchdogProgress {
+	phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed";
+	seq: number;
+	lastUpdate: number;
+	followUpPending: boolean;
+	reason?: string;
+	timedOut?: boolean;
+}
+
 export interface AgentProgress {
 	index: number;
 	agent: string;
@@ -289,6 +298,7 @@ export interface AgentProgress {
 	durationMs: number;
 	error?: string;
 	failedTool?: string;
+	watchdog?: ChildWatchdogProgress;
 }
 
 export interface ToolCallSummary {
@@ -500,6 +510,7 @@ export interface SingleResult {
 	transcriptPath?: string;
 	transcriptError?: string;
 	children?: NestedRunSummary[];
+	watchdog?: ChildWatchdogProgress;
 }
 
 export interface Details {
@@ -600,6 +611,7 @@ export interface NestedStepSummary {
 	startedAt?: number;
 	endedAt?: number;
 	error?: string;
+	watchdog?: ChildWatchdogProgress;
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
@@ -761,6 +773,7 @@ export interface AsyncStatus {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		watchdog?: ChildWatchdogProgress;
 	}>;
 	sessionDir?: string;
 	outputFile?: string;
@@ -1128,7 +1141,7 @@ export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 40;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "interrupt", "resume", "steer", "stop", "append-step", "doctor", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "interrupt", "resume", "steer", "stop", "append-step", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

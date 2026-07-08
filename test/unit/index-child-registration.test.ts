@@ -166,6 +166,45 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("registers the main watchdog command and renderer in parent mode", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./src/extension/index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			const commands = [];
+			const renderers = [];
+			const fakePi = new Proxy({
+				events,
+				registerTool() {},
+				registerCommand(name) { commands.push(name); },
+				registerShortcut() {},
+				registerMessageRenderer(type) { renderers.push(type); },
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!commands.includes("subagents-watchdog")) throw new Error("watchdog command not registered: " + commands.join(", "));
+			if (!renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer not registered: " + renderers.join(", "));
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("returns before registering anything for non-fanout children", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";

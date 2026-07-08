@@ -170,6 +170,59 @@ That reports the live runtime mapping, which can differ from settings on disk un
 
 You do not have to spell a model exactly. Model ids are matched fuzzily against the registry, so provider separator variations (`anthropic/claude-sonnet-4`, `anthropic:claude-sonnet-4`, or `anthropic.claude-sonnet-4`), id separator variations (`claude-haiku-4.5` vs `claude-haiku-4-5`), case differences (`Claude-Sonnet-4` vs `claude-sonnet-4`), and optional trailing date stamps (`claude-haiku-4-5-20251001` or `claude-haiku-4-5-2025-10-01` vs `claude-haiku-4-5`) all resolve to the same model. Exact `provider/id` matches still win, and a qualified provider query never silently switches providers — it only matches within the named provider. Ambiguous bare ids that exist under multiple providers still require a provider prefix or the current session's provider to disambiguate.
 
+### Choosing a watchdog model
+
+The subagent watchdog is not the `reviewer` subagent. `subagents.defaultModel` and `subagents.agentOverrides.reviewer` do not configure it. The watchdog is an opt-in adversarial change reviewer, so it should usually use a strong complementary model rather than a cheap/light model.
+
+The watchdog reviews repo edits, not ordinary conversation. It runs at the safe `agent_end` boundary only when the current agent or child writer changed the final repo state since the start of that turn. Multiple edits in one turn are coalesced into one review of the final changed state, unchanged/reverted diffs are skipped, and generated `.pi-subagents/` or `tmp/` artifacts do not trigger review. In orchestrated runs, each writing child can review its own edited worktree, and the parent can still review the aggregate repo diff after child changes are applied.
+
+Use `/subagents-watchdog recommend-model` to ask pi-subagents for the current strong pairing. The current recommendation policy is Opus 4.8 with thinking high or GPT 5.5 with thinking high. If your main session is using one, the watchdog should use the other when that model is authenticated.
+
+```text
+/subagents-watchdog recommend-model
+/subagents-watchdog session model recommended
+/subagents-watchdog model recommended
+```
+
+`session model recommended` changes only the current Pi session. `model recommended` saves the recommendation to `~/.pi/agent/settings.json`; it does not turn the watchdog on. Enable it separately with `/subagents-watchdog on` when you want the extra review pass.
+
+You can also set the model explicitly:
+
+```text
+/subagents-watchdog model anthropic/claude-opus-4-8:high
+/subagents-watchdog model openai-codex/gpt-5.5:high
+/subagents-watchdog model inherit
+/subagents-watchdog check
+```
+
+For settings files, use `subagents.watchdog.main.model` and `subagents.watchdog.main.thinking` for the main watchdog. If `main.model` is omitted, the main watchdog uses the current session model and thinking level. If `main.model` is set without a thinking suffix or `main.thinking`, it runs with thinking off, so prefer `:high` or `"thinking": "high"` for the strong-watchdog pairing.
+
+```json
+{
+  "subagents": {
+    "watchdog": {
+      "enabled": true,
+      "main": {
+        "model": "anthropic/claude-opus-4-8",
+        "thinking": "high"
+      }
+    }
+  }
+}
+```
+
+For child subagent watchdogs, use `subagents.watchdog.children.model` as the default child watchdog model, or `subagents.watchdog.children.overrides.<agent>.model` for a specific child role. Child watchdogs are still opt-in and follow the same edit-gated rule: read-only children do not trigger watchdog reviews, while writer children are reviewed at their own `agent_end` if their worktree changed.
+
+Agents can configure the same values through the tool when you ask them to set up the watchdog:
+
+```ts
+subagent({ action: "watchdog.recommend-model" })
+subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
+subagent({ action: "watchdog.configure", model: "recommended", scope: "project" })
+```
+
+Persistent scopes (`user` or `project`) should only be used when you ask for a lasting default. Otherwise the agent should use `scope: "session"`.
+
 To keep subagents inside a budget or compliance profile, enforce a model scope. Put `subagents.modelScope` in user or project settings (project overrides user):
 
 ```json
@@ -384,6 +437,7 @@ Skip this section until you want exact syntax.
 | `/subagent-cost` | Show parent plus child subagent token usage and cost for this session |
 | `/subagents-doctor` | Show read-only setup diagnostics |
 | `/subagents-models [agent]` | Show the runtime-loaded builtin model mapping, optionally filtered to one builtin |
+| `/subagents-watchdog [status|on|off|recommend-model|model ...|session model ...|check]` | Show or configure the opt-in watchdog; use a strong complementary model such as Opus 4.8 high or GPT 5.5 high |
 | `/subagents-profiles` | List saved subagent profiles from `~/.pi/agent/profiles/pi-subagents/` |
 | `/subagents-load-profile <name>` | Replace only `settings.subagents` with a saved profile and optionally switch this session to the profile worker model |
 | `/subagents-refresh-provider-models <provider> [--force]` | Create or refresh the cached provider model catalog |

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -183,6 +184,51 @@ describe("buildPiArgs session wiring", () => {
 		});
 
 		assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "inherited-parent");
+	});
+
+	it("passes child watchdog config only when explicitly provided", () => {
+		const withoutWatchdog = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+		assert.equal(withoutWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV], undefined);
+
+		const withWatchdog = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			childWatchdog: {
+				enabled: true,
+				runId: "run-1",
+				agent: "worker",
+				childIndex: 2,
+				watchdogTailTimeoutMs: 1234,
+				agentEndTimeoutMs: 500,
+				maxWarnings: 1,
+				autoFollowBlockers: true,
+				autoFollowMaxAttempts: 3,
+				stalemateRepeats: 2,
+			},
+		});
+		const encoded = withWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV];
+		assert.equal(typeof encoded, "string");
+		assert.deepEqual(JSON.parse(encoded ?? "{}"), {
+			enabled: true,
+			runId: "run-1",
+			agent: "worker",
+			childIndex: 2,
+			watchdogTailTimeoutMs: 1234,
+			agentEndTimeoutMs: 500,
+			maxWarnings: 1,
+			autoFollowBlockers: true,
+			autoFollowMaxAttempts: 3,
+			stalemateRepeats: 2,
+		});
 	});
 });
 

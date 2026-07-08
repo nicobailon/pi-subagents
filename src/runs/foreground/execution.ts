@@ -71,6 +71,14 @@ import {
 import { acceptanceFailureMessage, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+import {
+	acceptChildWatchdogEvent,
+	childWatchdogIsActive,
+	isChildWatchdogStatusEvent,
+	resolveChildWatchdogConfig,
+	type ChildWatchdogStateSnapshot,
+} from "../../watchdog/child-status.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -187,6 +195,15 @@ async function runSingleAttempt(
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
 	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
+	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
+	const childWatchdog = watchdogConfig.ok
+		? resolveChildWatchdogConfig({
+			config: watchdogConfig.config,
+			agent: agent.name,
+			runId: options.runId,
+			childIndex: options.index ?? 0,
+		})
+		: undefined;
 	const { args, env: sharedEnv, tempDir } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
@@ -218,6 +235,7 @@ async function runSingleAttempt(
 		parentSessionId: options.parentSessionId,
 		structuredOutput: options.structuredOutput,
 		toolBudget: options.toolBudget,
+		childWatchdog,
 	});
 
 	const result: SingleResult = {
@@ -360,6 +378,19 @@ async function runSingleAttempt(
 		let cleanTerminalAssistantStopReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
+		let watchdogTailTimer: NodeJS.Timeout | undefined;
+		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
+		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
+			childWatchdogState = snapshot;
+			result.watchdog = snapshot;
+			progress.watchdog = snapshot;
+		};
+		const clearWatchdogTailTimer = () => {
+			if (watchdogTailTimer) {
+				clearTimeout(watchdogTailTimer);
+				watchdogTailTimer = undefined;
+			}
+		};
 		const clearFinalDrainTimers = () => {
 			if (finalDrainTimer) {
 				clearTimeout(finalDrainTimer);
@@ -371,6 +402,10 @@ async function runSingleAttempt(
 			}
 		};
 		const startFinalDrain = () => {
+			if (childWatchdogIsActive(childWatchdogState)) {
+				armWatchdogTail();
+				return;
+			}
 			if (childExited || finalDrainTimer || settled || processClosed || detached) return;
 			finalDrainTimer = setTimeout(() => {
 				if (settled || processClosed || detached) return;
@@ -388,6 +423,23 @@ async function runSingleAttempt(
 			}, FINAL_STOP_GRACE_MS);
 			finalDrainTimer.unref?.();
 		};
+		function armWatchdogTail(): void {
+			if (!cleanTerminalAssistantStopReceived || watchdogTailTimer || settled || processClosed || detached) return;
+			watchdogTailTimer = setTimeout(() => {
+				watchdogTailTimer = undefined;
+				updateChildWatchdogState({
+					phase: "stale",
+					seq: (childWatchdogState?.seq ?? 0) + 1,
+					lastUpdate: Date.now(),
+					followUpPending: false,
+					reason: "child watchdog tail timeout",
+					timedOut: true,
+				});
+				startFinalDrain();
+				fireUpdate();
+			}, childWatchdog?.watchdogTailTimeoutMs ?? 120_000);
+			watchdogTailTimer.unref?.();
+		}
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || detached || processClosed) return;
@@ -409,6 +461,7 @@ async function runSingleAttempt(
 			if (settled) return;
 			settled = true;
 			clearFinalDrainTimers();
+			clearWatchdogTailTimer();
 			clearStdioGuard();
 			clearTimeoutTimers();
 			clearTurnBudgetTimers();
@@ -585,6 +638,28 @@ async function runSingleAttempt(
 				return;
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
+
+			if (isChildWatchdogStatusEvent(evt)) {
+				if (!childWatchdog) return;
+				const next = acceptChildWatchdogEvent({
+					current: childWatchdogState,
+					event: evt,
+					runId: options.runId,
+					agent: agent.name,
+					childIndex: options.index ?? 0,
+				});
+				if (!next) return;
+				updateChildWatchdogState(next);
+				if (childWatchdogIsActive(next)) {
+					clearFinalDrainTimers();
+					armWatchdogTail();
+				} else {
+					clearWatchdogTailTimer();
+					if (cleanTerminalAssistantStopReceived) startFinalDrain();
+				}
+				fireUpdate();
+				return;
+			}
 
 			const now = Date.now();
 			progress.durationMs = now - startTime;

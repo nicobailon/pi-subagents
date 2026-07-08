@@ -93,6 +93,16 @@ import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+import {
+	CHILD_WATCHDOG_CONFIG_ENV,
+	acceptChildWatchdogEvent,
+	childWatchdogIsActive,
+	decodeChildWatchdogConfig,
+	isChildWatchdogStatusEvent,
+	resolveChildWatchdogConfig,
+	type ChildWatchdogStateSnapshot,
+} from "../../watchdog/child-status.ts";
 
 interface SubagentRunConfig {
 	id: string;
@@ -159,6 +169,7 @@ interface StepResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 }
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -355,6 +366,7 @@ interface RunPiStreamingResult {
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	observedMutationAttempt?: boolean;
+	watchdog?: ChildWatchdogStateSnapshot;
 }
 
 function runPiStreaming(
@@ -404,6 +416,11 @@ function runPiStreaming(
 		let turnBudget: TurnBudgetState | undefined;
 		let observedMutationAttempt = false;
 		const rawStdoutLines: string[] = [];
+		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
+		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
+		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
+			childWatchdogState = snapshot;
+		};
 
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
@@ -449,6 +466,36 @@ function runPiStreaming(
 
 			appendChildEvent(event);
 			transcriptWriter?.writeChildEvent(event);
+
+			if (isChildWatchdogStatusEvent(event)) {
+				if (!childWatchdogConfig) return;
+				const next = acceptChildWatchdogEvent({
+					current: childWatchdogState,
+					event,
+					runId: childEventContext?.runId,
+					agent: childEventContext?.agent,
+					childIndex: childEventContext?.stepIndex,
+				});
+				if (!next) return;
+				updateChildWatchdogState(next);
+				onChildEvent?.(event);
+				if (childWatchdogIsActive(next)) {
+					if (finalDrainTimer) {
+						clearTimeout(finalDrainTimer);
+						finalDrainTimer = undefined;
+					}
+					if (finalHardKillTimer) {
+						clearTimeout(finalHardKillTimer);
+						finalHardKillTimer = undefined;
+					}
+					armWatchdogTail();
+				} else {
+					clearWatchdogTailTimer();
+					if (cleanTerminalAssistantStopReceived) startFinalDrain();
+				}
+				return;
+			}
+
 			onChildEvent?.(event);
 
 			if (event.type === "tool_execution_start" && event.toolName) {
@@ -506,6 +553,7 @@ function runPiStreaming(
 		let cleanTerminalAssistantStopReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
+		let watchdogTailTimer: NodeJS.Timeout | undefined;
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
 		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
 		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
@@ -579,6 +627,7 @@ function runPiStreaming(
 				clearTimeout(finalHardKillTimer);
 				finalHardKillTimer = undefined;
 			}
+			clearWatchdogTailTimer();
 			if (timeoutHardKillTimer) {
 				clearTimeout(timeoutHardKillTimer);
 				timeoutHardKillTimer = undefined;
@@ -593,6 +642,10 @@ function runPiStreaming(
 			}
 		};
 		function startFinalDrain(): void {
+			if (childWatchdogIsActive(childWatchdogState)) {
+				armWatchdogTail();
+				return;
+			}
 			if (childExited || finalDrainTimer || settled) return;
 			finalDrainTimer = setTimeout(() => {
 				if (settled) return;
@@ -609,6 +662,28 @@ function runPiStreaming(
 				finalHardKillTimer.unref?.();
 			}, FINAL_STOP_GRACE_MS);
 			finalDrainTimer.unref?.();
+		}
+		function clearWatchdogTailTimer(): void {
+			if (watchdogTailTimer) {
+				clearTimeout(watchdogTailTimer);
+				watchdogTailTimer = undefined;
+			}
+		}
+		function armWatchdogTail(): void {
+			if (!cleanTerminalAssistantStopReceived || watchdogTailTimer || settled) return;
+			watchdogTailTimer = setTimeout(() => {
+				watchdogTailTimer = undefined;
+				updateChildWatchdogState({
+					phase: "stale",
+					seq: (childWatchdogState?.seq ?? 0) + 1,
+					lastUpdate: Date.now(),
+					followUpPending: false,
+					reason: "child watchdog tail timeout",
+					timedOut: true,
+				});
+				startFinalDrain();
+			}, childWatchdogConfig?.watchdogTailTimeoutMs ?? 120_000);
+			watchdogTailTimer.unref?.();
 		}
 		child.on("exit", () => {
 			childExited = true;
@@ -643,6 +718,7 @@ function runPiStreaming(
 				turnBudgetExceeded,
 				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
 				observedMutationAttempt,
+				watchdog: childWatchdogState,
 			});
 		});
 
@@ -657,7 +733,7 @@ function runPiStreaming(
 			outputStream.end();
 			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt });
+			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
 		});
 	});
 }
@@ -966,6 +1042,15 @@ async function runSingleStep(
 				// Missing/stale structured-output files are handled after the child exits.
 			}
 		}
+		const watchdogConfig = resolveWatchdogConfig(step.cwd ?? ctx.cwd);
+		const childWatchdog = watchdogConfig.ok
+			? resolveChildWatchdogConfig({
+				config: watchdogConfig.config,
+				agent: step.agent,
+				runId: ctx.id,
+				childIndex: ctx.flatIndex,
+			})
+			: undefined;
 		const { args, env, tempDir } = buildPiArgs({
 			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
@@ -997,6 +1082,7 @@ async function runSingleStep(
 			steerInboxDir: ctx.steerInboxDir,
 			structuredOutput: effectiveStructuredOutput,
 			toolBudget: step.toolBudget,
+			childWatchdog,
 		});
 		const run = await runPiStreaming(
 			args,
@@ -1215,6 +1301,7 @@ async function runSingleStep(
 		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.outputPath,
 		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
+		watchdog: finalResult?.watchdog,
 	};
 }
 
@@ -1956,6 +2043,22 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		if (!step) return;
 		const now = Date.now();
 		statusPayload.currentStep = flatIndex;
+		if (isChildWatchdogStatusEvent(event)) {
+			const next = acceptChildWatchdogEvent({
+				current: step.watchdog,
+				event,
+				runId: id,
+				agent: step.agent,
+				childIndex: flatIndex,
+			});
+			if (!next) return;
+			step.watchdog = next;
+			step.lastActivityAt = now;
+			statusPayload.lastActivityAt = now;
+			statusPayload.lastUpdate = now;
+			writeStatusPayload();
+			return;
+		}
 		if (event.type === "tool_execution_start" && event.toolName) {
 			const mutates = isMutatingTool(event.toolName, event.args);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
@@ -2517,6 +2620,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.steps[fi].structuredOutputPath = singleResult.structuredOutputPath;
 				statusPayload.steps[fi].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
 				statusPayload.steps[fi].acceptance = singleResult.acceptance;
+				statusPayload.steps[fi].watchdog = singleResult.watchdog;
 				statusPayload.lastUpdate = taskEndTime;
 				writeStatusPayload();
 				appendJsonl(eventsPath, JSON.stringify({
@@ -2558,6 +2662,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					structuredOutputPath: pr.structuredOutputPath,
 					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 					acceptance: pr.acceptance,
+					watchdog: pr.watchdog,
 				});
 			}
 			const collection = collectDynamicResults(step as Parameters<typeof collectDynamicResults>[0], materialized.items, parallelResults);
@@ -2820,6 +2925,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].structuredOutputPath = singleResult.structuredOutputPath;
 						statusPayload.steps[fi].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
 						statusPayload.steps[fi].acceptance = singleResult.acceptance;
+						statusPayload.steps[fi].watchdog = singleResult.watchdog;
 						statusPayload.lastUpdate = taskEndTime;
 						writeStatusPayload();
 
@@ -2893,12 +2999,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						artifactPaths: pr.artifactPaths,
 						transcriptPath: pr.transcriptPath,
 						transcriptError: pr.transcriptError,
-							structuredOutput: pr.structuredOutput,
-							structuredOutputPath: pr.structuredOutputPath,
-							structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
-							acceptance: pr.acceptance,
-						});
-					}
+						structuredOutput: pr.structuredOutput,
+						structuredOutputPath: pr.structuredOutputPath,
+						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
+						acceptance: pr.acceptance,
+						watchdog: pr.watchdog,
+					});
+				}
 				for (let t = 0; t < group.parallel.length; t++) {
 					const outputName = group.parallel[t]?.outputName;
 					if (outputName) outputs[outputName] = outputEntryFromAsyncResult({
@@ -2911,13 +3018,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 
 				previousOutput = aggregateParallelOutputs(
 					parallelResults.map((r) => ({
-					agent: r.agent,
-					output: r.output,
-					exitCode: r.exitCode,
-					error: r.error,
-					model: r.model,
-					attemptedModels: r.attemptedModels,
-				})),
+						agent: r.agent,
+						output: r.output,
+						exitCode: r.exitCode,
+						error: r.error,
+						model: r.model,
+						attemptedModels: r.attemptedModels,
+					})),
 				);
 				previousOutput = appendParallelWorktreeSummary(previousOutput, worktreeSetup, asyncDir, stepIndex, group);
 
@@ -3011,6 +3118,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				structuredOutputPath: singleResult.structuredOutputPath,
 				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
 				acceptance: singleResult.acceptance,
+				watchdog: singleResult.watchdog,
 				interrupted: singleResult.interrupted,
 				timedOut: timedOut || singleResult.timedOut ? true : undefined,
 				stopped: stopped || childStopped ? true : undefined,
@@ -3080,6 +3188,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].structuredOutputPath = singleResult.structuredOutputPath;
 			statusPayload.steps[flatIndex].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
 			statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
+			statusPayload.steps[flatIndex].watchdog = singleResult.watchdog;
 			if (stepTokens) {
 				statusPayload.steps[flatIndex].tokens = stepTokens;
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
@@ -3290,6 +3399,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				structuredOutputPath: r.structuredOutputPath,
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,
+				watchdog: r.watchdog,
 			})),
 			outputs,
 			workflowGraph: statusPayload.workflowGraph,
