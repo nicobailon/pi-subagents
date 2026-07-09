@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { handleCreate, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
+import { handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 
 let tempDir = "";
@@ -40,6 +40,21 @@ describe("agent management config parsing", () => {
 
 		assert.equal(result.isError, true);
 		assert.match(readText(result), /config must be valid JSON:/);
+	});
+
+	it("hides lower-priority agents shadowed by project agents in list output", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "scout.md"), "---\nname: scout\ndescription: Project scout override\n---\n\nProject scout agent.\n");
+
+		const result = handleList(
+			{ agentScope: "project" },
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+
+		assert.equal(result.isError, false);
+		assert.match(readText(result), /- scout \(project\): Project scout override/);
+		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
 	it("surfaces JSON parse errors for update config strings", () => {
