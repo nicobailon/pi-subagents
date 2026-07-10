@@ -1,6 +1,24 @@
 import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
+import type { LeadershipArtifact } from "../../model-leadership/types.ts";
+import { selectModelFromLeadership, loadLeadership } from "../../model-leadership/index.ts";
 import { checkModelScope, type ModelScopeConfig, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
+
+let moduleLeadershipArtifact: LeadershipArtifact | null = null;
+
+export function setLeadershipArtifact(artifact: LeadershipArtifact | null): void {
+	moduleLeadershipArtifact = artifact;
+}
+
+export function getLeadershipArtifact(): LeadershipArtifact | null {
+	return moduleLeadershipArtifact;
+}
+
+export function loadLeadershipArtifact(path?: string): LeadershipArtifact | null {
+	const loaded = loadLeadership(path);
+	if (loaded) setLeadershipArtifact(loaded);
+	return loaded;
+}
 
 export type { AvailableModelInfo };
 
@@ -162,6 +180,8 @@ export interface ResolveSubagentModelOverrideOptions {
 	source?: ModelSource;
 	/** Called for warn-severity violations instead of `console.warn`. */
 	onWarn?: (violation: ModelScopeViolation) => void;
+	/** Optional leadership artifact to use for selection when no explicit model override is set. */
+	leadership?: LeadershipArtifact | null;
 }
 
 function defaultScopeWarn(violation: ModelScopeViolation): void {
@@ -172,18 +192,14 @@ function defaultScopeWarn(violation: ModelScopeViolation): void {
  * Resolve the `--model` override passed to a spawned subagent.
  *
  * When no model is requested (`undefined`, `false`, empty, or the `"inherit"`
- * sentinel), the child must inherit the parent session's *in-memory* model
- * (`provider/id`) instead of being left to resolve its own model. Without an
- * explicit `provider/id`, the child falls back to the global
- * `~/.pi/agent/settings.json` default, which is shared across every open PI
- * session — so a different session that last changed its model in the TUI would
- * silently contaminate this session's subagents (see issue #266). Passing an
- * explicit `provider/id` keeps each session's children isolated to that
- * session's model.
+ * sentinel), resolution follows this order:
+ * 1. explicit model override resolved through the registry
+ * 2. active model-leadership selection when a leadership artifact is available
+ * 3. parent session's in-memory model for session isolation
  *
- * An explicitly requested model string is resolved via {@link resolveModelCandidate}.
- * When `options.scope.enforce` is on, an out-of-scope resolved model throws for
- * an explicit (`source: "explicit"`) request and warns for an inherited one.
+ * This preserves explicit user/agent overrides, makes leadership the active
+ * selection strategy when enabled, and keeps parent-model inheritance as a
+ * fallback rather than the default.
  */
 export function resolveSubagentModelOverride(
 	requestedModel: string | boolean | undefined,
@@ -196,8 +212,17 @@ export function resolveSubagentModelOverride(
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
 	let resolved: string | undefined;
 	if (explicit === undefined) {
-		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+		const leadership = options?.leadership ?? getLeadershipArtifact();
+		const selected = leadership ? selectModelFromLeadership(leadership) : null;
+		if (selected) {
+			resolved = resolveModelCandidate(selected, availableModels, preferredProvider);
+		}
+		if (!resolved) {
+			resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+		}
 	} else {
+		// Explicit override always wins; leadership is never consulted for an
+		// explicit request, regardless of the reported source.
 		resolved = resolveModelCandidate(explicit, availableModels, preferredProvider);
 	}
 	if (resolved && options?.scope?.enforce) {

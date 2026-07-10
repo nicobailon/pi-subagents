@@ -59,7 +59,8 @@ import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/c
 import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
-import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
+import { formatModelAttemptNote } from "../shared/model-fallback.ts";
+import { enrichExclusionWithRateLimits, recordModelFailure } from "../shared/model-exclusions.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
@@ -317,6 +318,27 @@ function resetStepLiveDetail(step: RunnerStatusStep): void {
 	step.currentPath = undefined;
 	step.recentTools = [];
 	step.recentOutput = [];
+}
+
+function extractProviderFromModel(model?: string): string | undefined {
+	if (!model) return undefined;
+	const slashIndex = model.indexOf("/");
+	return slashIndex > 0 ? model.slice(0, slashIndex) : undefined;
+}
+
+function recordModelFailureForCurrentAttempt(candidate: string | undefined, attempt: ModelAttempt, error: string): void {
+	const provider = extractProviderFromModel(candidate ?? attempt.model);
+	const enriched = enrichExclusionWithRateLimits({
+		provider,
+		modelId: candidate ?? attempt.model,
+	});
+	recordModelFailure({
+		provider,
+		modelId: candidate ?? attempt.model,
+		reason: error,
+		retryAfterHint: enriched.retryAfterHint,
+		retryCondition: enriched.retryCondition,
+	});
 }
 
 interface ChildEventContext {
@@ -1189,7 +1211,8 @@ async function runSingleStep(
 		if (run.turnBudgetExceeded) break;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		if (attempt.success || completionGuardTriggered) break;
-		if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
+		if (index === candidates.length - 1) break;
+		recordModelFailureForCurrentAttempt(candidate, attempt, error);
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
 	}
 

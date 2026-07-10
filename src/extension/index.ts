@@ -40,6 +40,8 @@ import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "../runs/background/wait.ts";
 import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
+import { loadLeadershipArtifact, setLeadershipArtifact } from "../runs/shared/model-fallback.ts";
+import { refreshModelLeadership } from "./model-leadership-refresh.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
@@ -613,13 +615,28 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		primeExistingResults();
 	};
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		resetSessionState(ctx);
 		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
+		const loaded = loadLeadershipArtifact();
+		if (!loaded && ctx.modelRegistry) {
+			// Auto-bootstrap from bundled snapshot / existing snapshot when the
+			// leadership cache is missing on disk. This keeps leadership active
+			// without requiring the user to manually run a slash command.
+			try {
+				const config = loadConfig();
+				await refreshModelLeadership(ctx, config, false);
+			} catch (error) {
+				console.error("[model-leadership] Failed to bootstrap leadership on session start:", error);
+			}
+		}
 	});
 
 	pi.on("session_shutdown", () => {
+		// Clear the module leadership cache and session discard tracking so the
+		// next session starts from a clean state.
+		setLeadershipArtifact(null);
 		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {
 			try {

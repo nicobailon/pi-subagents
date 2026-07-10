@@ -22,6 +22,8 @@ import { scheduledRunStorePath } from "../runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+import { loadConfig } from "../extension/config.ts";
+import { refreshModelLeadership, rebuildModelLeadership } from "../extension/model-leadership-refresh.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import {
@@ -1489,6 +1491,38 @@ export function registerSlashCommands(
 					];
 					sendSlashText(pi, lines.join("\n"));
 				});
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("fetch-rankings", {
+		description: "Force-fetch fresh llm-stats rankings snapshot, then rebuild model leadership",
+		getArgumentCompletions: () => null,
+		handler: async (args, ctx) => {
+			try {
+				const config = loadConfig();
+				await withSlashStatus(ctx, "Fetching fresh rankings snapshot…", async () => {
+					await refreshModelLeadership(ctx, config, true);
+				});
+				sendSlashText(pi, "Refreshed model leadership from fresh rankings snapshot.");
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("refresh-leadership", {
+		description: "Rebuild model leadership from the existing rankings snapshot on disk",
+		getArgumentCompletions: () => null,
+		handler: async (args, ctx) => {
+			try {
+				const config = loadConfig();
+				await withSlashStatus(ctx, "Rebuilding model leadership…", async () => {
+					await rebuildModelLeadership(ctx, config);
+				});
+				sendSlashText(pi, "Rebuilt model leadership from existing snapshot.");
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 			}

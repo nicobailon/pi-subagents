@@ -337,6 +337,10 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	if (activity) parts.push(activity);
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	if (modelThinking) parts.push(modelThinking);
+	if (step.attemptedModels && step.attemptedModels.length > 1) {
+		const attempts = step.attemptedModels.map((m) => m.includes("/") ? m.split("/").slice(1).join("/") : m).join(" → ");
+		parts.push(`attempts: ${attempts}`);
+	}
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	return parts.join(" | ");

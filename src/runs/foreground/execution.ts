@@ -55,8 +55,11 @@ import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPa
 import {
 	buildModelCandidates,
 	formatModelAttemptNote,
-	isRetryableModelFailure,
 } from "../shared/model-fallback.ts";
+import {
+	enrichExclusionWithRateLimits,
+	recordModelFailure,
+} from "../shared/model-exclusions.ts";
 import {
 	createMutatingFailureState,
 	didMutatingToolFail,
@@ -94,6 +97,27 @@ function sumUsage(target: Usage, source: Usage): void {
 	target.cacheWrite += source.cacheWrite;
 	target.cost += source.cost;
 	target.turns += source.turns;
+}
+
+function extractProviderFromModel(model?: string): string | undefined {
+	if (!model) return undefined;
+	const slashIndex = model.indexOf("/");
+	return slashIndex > 0 ? model.slice(0, slashIndex) : undefined;
+}
+
+function recordModelFailureForCurrentAttempt(attempt: ModelAttempt, result: SingleResult): void {
+	const provider = extractProviderFromModel(result.model ?? attempt.model);
+	const enriched = enrichExclusionWithRateLimits({
+		provider,
+		modelId: result.model,
+	});
+	recordModelFailure({
+		provider,
+		modelId: result.model,
+		reason: result.error ?? "runtime-failure",
+		retryAfterHint: enriched.retryAfterHint,
+		retryCondition: enriched.retryCondition,
+	});
 }
 
 function formatTimeoutMessage(timeoutMs: number): string {
@@ -1236,9 +1260,10 @@ export async function runSync(
 		if (attemptSucceeded) {
 			break;
 		}
-		if (!isRetryableModelFailure(result.error) || i === modelsToTry.length - 1) {
+		if (i === modelsToTry.length - 1) {
 			break;
 		}
+		recordModelFailureForCurrentAttempt(attempt, result);
 		attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[i + 1]));
 	}
 

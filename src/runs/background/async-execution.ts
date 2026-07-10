@@ -18,7 +18,9 @@ import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
-import { buildModelCandidates, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
+import { buildModelCandidates, resolveModelCandidate, resolveSubagentModelOverride, getLeadershipArtifact, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
+import { selectModelsFromLeadership } from "../../model-leadership/index.ts";
+import { filterFallbackCandidates, getExcludedCount } from "../shared/model-exclusions.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
@@ -97,6 +99,24 @@ function resolveJitiCliPath(): string | undefined {
 }
 
 const jitiCliPath = resolveJitiCliPath();
+
+function extendModelCandidates(candidates: string[], parentModel: ParentModel | undefined): string[] {
+	const extended = [...candidates];
+	const leadership = getLeadershipArtifact();
+	if (leadership && candidates.length > 0 && !candidates.every((candidate) => candidate === undefined)) {
+		const seen = new Set(candidates.filter((candidate): candidate is string => Boolean(candidate)));
+		const remaining = selectModelsFromLeadership(leadership).filter((candidate) => !seen.has(candidate));
+		const filtered = getExcludedCount() > 0 ? filterFallbackCandidates(remaining) : remaining;
+		extended.push(...filtered);
+	}
+	if (parentModel) {
+		const parentFullId = `${parentModel.provider}/${parentModel.id}`;
+		if (!extended.includes(parentFullId)) {
+			extended.push(parentFullId);
+		}
+	}
+	return extended;
+}
 
 interface AsyncExecutionContext {
 	pi: ExtensionAPI;
