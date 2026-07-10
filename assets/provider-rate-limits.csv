@@ -1,0 +1,468 @@
+provider,rate_type,tier_rule,scope,scope_mode,endpoint,limit_mode,target,usage_profile,credit_type,credit_value,credit_period_days,credit_renew,effective_start,effective_end,last_verified,con_max,rps_max,tps_max,rpm_max,tpm_max,rph_max,tph_max,rpd_max,tpd_max,asm_max,ash_max,asd_max,ppm_max,npd_max,source_url,retry_after_hint,notes
+google-ai-studio,free,,family,,,,Antigravity,agents,,,,,,,,,,,60,100000,,,100,,,,,,,,,Agents
+google-ai-studio,free,,family,,,,Computer Use Preview,custom,,,,,,,,,,,0,0,,,0,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Deep Research Pro Preview,agents,,,,,,,,,,,0,0,,,0,,,,,,,,,Agents
+google-ai-studio,free,,family,,,,Gemini 2 Flash,text_out,,,,,,,,,,,0,0,,,0,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 2 Flash Lite,text_out,,,,,,,,,,,0,0,,,0,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 2.5 Flash,text_out,,,,,,,,,,,5,250000,,,20,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 2.5 Flash Lite,text_out,,,,,,,,,,,10,250000,,,20,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 2.5 Flash Native Audio Dialog,audio,,,,,,,,,,,-1,1000000,,,-1,,,,,,,,,Live API
+google-ai-studio,free,,family,,,,Gemini 2.5 Flash TTS,vision,,,,,,,,,,,3,10000,,,10,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Gemini 2.5 Pro,text_out,,,,,,,,,,,0,0,,,0,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 2.5 Pro TTS,vision,,,,,,,,,,,0,0,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Gemini 3 Flash,text_out,,,,,,,,,,,5,250000,,,20,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 3 Flash Live,default,,,,,,,,,,,-1,65000,,,-1,,,,,,,,,Live API
+google-ai-studio,free,,family,,,,Gemini 3.1 Flash Lite,text_out,,,,,,,,,,,15,250000,,,500,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 3.1 Flash TTS,vision,,,,,,,,,,,3,10000,,,10,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Gemini 3.1 Pro,text_out,,,,,,,,,,,0,0,,,0,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 3.5 Flash,text_out,,,,,,,,,,,5,250000,,,20,,,,,,,,,Text-out models
+google-ai-studio,free,,family,,,,Gemini 3.5 Live Translate,default,,,,,,,,,,,-1,20000,,,-1,,,,,,,,,Live API
+google-ai-studio,free,,family,,,,Gemini Embedding 1,custom,,,,,,,,,,,100,30000,,,1000,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Gemini Embedding 2,custom,,,,,,,,,,,100,30000,,,1000,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Gemini Robotics ER 1.5 Preview,custom,,,,,,,,,,,10,250000,,,20,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Gemini Robotics ER 1.6 Preview,custom,,,,,,,,,,,5,250000,,,20,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Gemma 4 26B,custom,,,,,,,,,,,15,-1,,,1500,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Gemma 4 31B,custom,,,,,,,,,,,15,-1,,,1500,,,,,,,,,Other models
+google-ai-studio,free,,family,,,,Imagen 4 Fast Generate,vision,,,,,,,,,,,,,,,25,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Imagen 4 Generate,vision,,,,,,,,,,,,,,,25,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Imagen 4 Ultra Generate,vision,,,,,,,,,,,,,,,25,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Lyria 3 Clip,vision,,,,,,,,,,,0,0,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Lyria 3 Pro,vision,,,,,,,,,,,0,0,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Nano Banana (Gemini 2.5 Flash Preview Image),vision,,,,,,,,,,,0,0,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Nano Banana 2 (Gemini 3.1 Flash Image),vision,,,,,,,,,,,0,0,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Nano Banana Pro (Gemini 3 Pro Image),vision,,,,,,,,,,,0,0,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Veo 3 Fast Generate,vision,,,,,,,,,,,0,,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Veo 3 Generate,vision,,,,,,,,,,,0,,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Veo 3 Lite Generate,vision,,,,,,,,,,,0,,,,0,,,,,,,,,Multi-modal generative models
+google-ai-studio,free,,family,,,,Computer Use Preview,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Deep Research Pro Preview,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Default,default,,,,,,,,,,,,,,,1500,,,,,,,,,Search grounding
+google-ai-studio,free,,family,,,,Gemini 2,default,,,,,,,,,,,,,,,1500,,,,,,,,,Search grounding
+google-ai-studio,free,,family,,,,Gemini 2 Flash,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 2.5,default,,,,,,,,,,,,,,,1500,,,,,,,,,Search grounding
+google-ai-studio,free,,family,,,,Gemini 2.5 Flash,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 2.5 Flash Lite,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 2.5 Pro,map_grounding,,,,,,,,,,,,,,,0,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 3,default,,,,,,,,,,,,,,,0,,,,,,,,,Search grounding
+google-ai-studio,free,,family,,,,Gemini 3 Flash,map_grounding,,,,,,,,,,,,,,,0,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 3.1 Flash Lite,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 3.1 Flash TTS,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 3.1 Pro,map_grounding,,,,,,,,,,,,,,,0,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini 3.5 Flash,map_grounding,,,,,,,,,,,,,,,0,,,,,,,,,Map grounding
+google-ai-studio,free,,family,,,,Gemini Robotics ER 1.6 Preview,map_grounding,,,,,,,,,,,,,,,500,,,,,,,,,Map grounding
+groq,free,,model,,,,allam-2-7b,default,,,,,,,,,,,30,6000,,,7000,500000,,,,,,,,Chat Completions
+groq,free,,model,,,,groq/compound,default,,,,,,,,,,,30,70000,,,250,-1,,,,,,,,Chat Completions
+groq,free,,model,,,,groq/compound-mini,default,,,,,,,,,,,30,70000,,,250,-1,,,,,,,,Chat Completions
+groq,free,,model,,,,llama-3.1-8b-instant,chat,,,,,,,,,,,30,6000,,,14400,500000,,,,,,,,Chat Completions
+groq,free,,model,,,,llama-3.3-70b-versatile,chat,,,,,,,,,,,30,12000,,,1000,100000,,,,,,,,Chat Completions
+groq,free,,model,,,,meta-llama/llama-4-scout-17b-16e-instruct,chat,,,,,,,,,,,30,30000,,,1000,500000,,,,,,,,Chat Completions
+groq,free,,model,,,,meta-llama/llama-prompt-guard-2-22m,chat,,,,,,,,,,,30,15000,,,14400,500000,,,,,,,,Chat Completions
+groq,free,,model,,,,meta-llama/llama-prompt-guard-2-86m,chat,,,,,,,,,,,30,15000,,,14400,500000,,,,,,,,Chat Completions
+groq,free,,model,,,,openai/gpt-oss-120b,default,,,,,,,,,,,30,8000,,,1000,200000,,,,,,,,Chat Completions
+groq,free,,model,,,,openai/gpt-oss-20b,default,,,,,,,,,,,30,8000,,,1000,200000,,,,,,,,Chat Completions
+groq,free,,model,,,,openai/gpt-oss-safeguard-20b,default,,,,,,,,,,,30,8000,,,1000,200000,,,,,,,,Chat Completions
+groq,free,,model,,,,qwen/qwen3-32b,chat,,,,,,,,,,,60,6000,,,1000,500000,,,,,,,,Chat Completions
+groq,free,,model,,,,qwen/qwen3.6-27b,chat,,,,,,,,,,,30,8000,,,1000,200000,,,,,,,,Chat Completions
+groq,free,,model,,,,whisper-large-v3,default,,,,,,,,,,,20,,,,2000,,,7200,28800,,,,,Speech to Text
+groq,free,,model,,,,whisper-large-v3-turbo,default,,,,,,,,,,,20,,,,2000,,,7200,28800,,,,,Speech to Text
+groq,free,,model,,,,canopylabs/orpheus-arabic-saudi,default,,,,,,,,,,,10,1200,,,100,3600,,,,,,,,Text to Speech
+groq,free,,model,,,,canopylabs/orpheus-v1-english,default,,,,,,,,,,,10,1200,,,100,3600,,,,,,,,Text to Speech
+modelscope,free,,model,,,,*,default,,,,,,,,,,,,,,,500,,,,,,,,,default
+mistral,free,,model,,,,magistral-small-2509,default,,,,,,,,,,,0.03,25000,,,,,,,,,,,,default
+mistral,free,,model,,,,magistral-small-latest,default,,,,,,,,,,,0.03,25000,,,,,,,,,,,,default
+mistral,free,,model,,,,magistral-medium-latest,default,,,,,,,,,,,0.08,75000,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-medium-latest,chat,,,,,,,,,,,0.83,25000,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-medium-2508,chat,,,,,,,,,,,0.38,356250,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-medium-2505,chat,,,,,,,,,,,0.42,375000,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-large-2512,chat,,,,,,,,,,,0.07,250000,,,,,,,,,,,,default
+mistral,free,,model,,,,magistral-medium-2509,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,codestral-embed,embedding,,,,,,,,,,,1,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,codestral-latest,code,,,,,,,,,,,2.08,625000,,,,,,,,,,,,default
+mistral,free,,model,,,,codestral-embed-2505,embedding,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,codestral-2508,code,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-tiny-2407,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-tiny-latest,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-small-latest,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-small-2603,chat,,,,,,,,,,,0.83,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-small-2506,chat,,,,,,,,,,,5,2250000,,,,,,,,,,,,default
+mistral,free,,model,,,,ministral-3b-latest,default,,,,,,,,,,,12.5,1300000,,,,,,,,,,,,default
+mistral,free,,model,,,,ministral-3b-2512,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,ministral-8b-latest,default,,,,,,,,,,,3.13,625000,,,,,,,,,,,,default
+mistral,free,,model,,,,ministral-8b-2512,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,ministral-14b-latest,default,,,,,,,,,,,0.5,937500,,,,,,,,,,,,default
+mistral,free,,model,,,,ministral-14b-2512,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-moderation-2603,chat,,,,,,,,,,,1.67,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-code-latest,code,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-code-fim-latest,code,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-vibe-cli-fast,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-vibe-cli-with-tools,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-code-agent-latest,code,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-tts-mellon-greek-2606-solutions,audio,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-2602,default,,,,,,,,,,,1,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-tts-2603,audio,,,,,,,,,,,1,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-small-2507,default,,,,,,,,,,,1,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-small-latest,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-transcribe-realtime-2602,default,,,,,,,,,,,1,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-2507,default,,,,,,,,,,,1,50000,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-latest,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-realtime-2602,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-realtime-latest,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,voxtral-mini-tts-latest,audio,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-ocr-2512,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-ocr-3-0,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-ocr-3,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-ocr-latest,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-ocr-4-0,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-ocr-4,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,open-mistral-nemo,chat,,,,,,,,,,,0.5,500000,,,,,,,,,,,,default
+mistral,free,,model,,,,open-mistral-nemo-2407,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,devstral-2512,default,,,,,,,,,,,0.83,1000000,,,,,,,,,,,,default
+mistral,free,,model,,,,devstral-medium-latest,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,devstral-latest,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,labs-leanstral-1-5-1,default,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-embed-2312,embedding,,,,,,,,,,,,,,,,,,,,,,,,default
+mistral,free,,model,,,,mistral-embed,embedding,,,,,,,,,,,1,20000000,,,,,,,,,,,,default
+mistral,free,,model,,,,labs-leanstral-1-5,default,,,,,,,,,,,0.63,5000000,,,,,,,,,,,,default
+cerebras,paid,,model,,,,gemma-4-31b,chat,,,,,,,,,1,,500,500000,30000,30000000,720000,720000000,,,,,,,,default
+cerebras,paid,,model,,,,zai-glm-4.7,default,,,,,,,,,1,,500,500000,30000,30000000,720000,720000000,,,,,,,,default
+cerebras,paid,,model,,,,gpt-oss-120b,default,,,,,,,,,1,,1000,1000000,60000,120000000,1440000,2000000000,,,,,,,,default
+cerebras,free,,model,,,,gemma-4-31b,chat,,,,,,,,,1,,5,30000,150,1000000,2400,1000000,,,,,,,,default
+cerebras,free,,model,,,,zai-glm-4.7,default,,,,,,,,,1,,5,30000,150,1000000,2400,1000000,,,,,,,,default
+cerebras,free,,model,,,,gpt-oss-120b,default,,,,,,,,,1,,5,30000,150,1000000,2400,1000000,,,,,,,,default
+z-ai,free,,model,,,,GLM-4.6,default,,,,,,,,3,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.6V-FlashX,default,,,,,,,,3,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.7,default,,,,,,,,2,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-Image,image,,,,,,,,1,,,,,,,,,,,,,,,,Image Generation Model
+z-ai,free,,model,,,,GLM-5-Turbo,default,,,,,,,,1,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-5V-Turbo,default,,,,,,,,1,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-5.1,default,,,,,,,,10,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-5.2,default,,,,,,,,10,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.5,default,,,,,,,,10,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.6V,default,,,,,,,,10,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.7-Flash,default,,,,,,,,1,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.7-FlashX,default,,,,,,,,3,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-OCR,default,,,,,,,,2,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-5,default,,,,,,,,2,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4-Plus,default,,,,,,,,20,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.5V,default,,,,,,,,10,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.6V-Flash,default,,,,,,,,1,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,AutoGLM-Phone-Multilingual,default,,,,,,,,5,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.5-Air,default,,,,,,,,5,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.5-AirX,default,,,,,,,,5,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4.5-Flash,default,,,,,,,,2,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,GLM-4-32B-0414-128K,default,,,,,,,,15,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,Web-Reader,default,,,,,,,,5,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,Search-Prime,default,,,,,,,,5,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,Search-Prime-Claude,default,,,,,,,,5,,,,,,,,,,,,,,,,Language Model
+z-ai,free,,model,,,,CogView-4-250304,default,,,,,,,,5,,,,,,,,,,,,,,,,Image Generation Model
+z-ai,free,,model,,,,GLM-ASR-2512,default,,,,,,,,5,,,,,,,,,,,,,,,,Real-time Audio-Video Model
+z-ai,free,,model,,,,ViduQ1-text,default,,,,,,,,5,,,,,,,,,,,,,,,,Video Generation Model
+z-ai,free,,model,,,,Viduq1-Image,image,,,,,,,,5,,,,,,,,,,,,,,,,Video Generation Model
+z-ai,free,,model,,,,Viduq1-Start-End,default,,,,,,,,5,,,,,,,,,,,,,,,,Video Generation Model
+z-ai,free,,model,,,,Vidu2-Image,image,,,,,,,,5,,,,,,,,,,,,,,,,Video Generation Model
+z-ai,free,,model,,,,Vidu2-Start-End,default,,,,,,,,5,,,,,,,,,,,,,,,,Video Generation Model
+z-ai,free,,model,,,,Vidu2-Reference,default,,,,,,,,5,,,,,,,,,,,,,,,,Video Generation Model
+z-ai,free,,model,,,,CogVideoX-3,default,,,,,,,,1,,,,,,,,,,,,,,,,Video Generation Model
+sambanova,free,,model,,,,DeepSeek-V3.1,default,,,,,,,,,,,20,,,,20,200000,,,,,,,,Production
+sambanova,free,,model,,,,Meta-Llama-3.3-70B-Instruct,chat,,,,,,,,,,,20,,,,20,200000,,,,,,,,Production
+sambanova,free,,model,,,,gpt-oss-120b,default,,,,,,,,,,,20,,,,20,200000,,,,,,,,Production
+sambanova,free,,model,,,,DeepSeek-V3.2,default,,,,,,,,,,,20,,,,20,200000,,,,,,,,Preview
+sambanova,free,,model,,,,gemma-4-31B-it,chat,,,,,,,,,,,20,,,,20,200000,,,,,,,,Preview
+sambanova,paid,,model,,,,MiniMax-M2.7,default,,,,,,,,,,,60,,,,12000,,,,,,,,,Production
+sambanova,paid,,model,,,,DeepSeek-V3.1,default,,,,,,,,,,,60,,,,12000,,,,,,,,,Production
+sambanova,paid,,model,,,,Meta-Llama-3.3-70B-Instruct,chat,,,,,,,,,,,240,,,,48000,,,,,,,,,Production
+sambanova,paid,,model,,,,gpt-oss-120b,default,,,,,,,,,,,60,,,,12000,,,,,,,,,Production
+sambanova,paid,,model,,,,DeepSeek-V3.2,default,,,,,,,,,,,60,,,,12000,,,,,,,,,Preview
+sambanova,paid,,model,,,,gemma-4-31B-it,chat,,,,,,,,,,,60,,,,12000,,,,,,,,,Preview
+aihubmax,free,,model,,,,coding-glm-5.2-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,step-3.7-flash-free,default,,,,,,,,,,,10,,,,200,2000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-minimax-m3-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,gpt-5.5-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,gpt-image-2-free,image,,,,,,,,,,,,,,,,,,,,,,,,external content filter provided by Azure has been enforced
+aihubmax,free,,model,,,,xiaomi-mimo-v2.5-pro-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,xiaomi-mimo-v2.5-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,xiaomi-mimo-v2-pro-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,xiaomi-mimo-v2-omni-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-glm-5.1-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-minimax-m2.7-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-glm-5-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-glm-5-turbo-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-minimax-m2.5-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,gemini-3.1-flash-image-preview-free,image,,,,,,,,,,,,,,,,,,,,,,,,officially marketed as Nano Banana 2 (resources are limited)
+aihubmax,free,,model,,,,coding-step-3.7-flash-free,default,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,gemini-3-flash-preview-free,default,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,gpt-4.1-free,default,,,,,,,,,,,,,,,,,,,,,,,,external content filter provided by Azure has been enforced
+aihubmax,free,,model,,,,gpt-4.1-mini-free,default,,,,,,,,,,,,,,,,,,,,,,,,external content filter provided by Azure has been enforced
+aihubmax,free,,model,,,,gpt-4.1-nano-free,default,,,,,,,,,,,,,,,,,,,,,,,,external content filter provided by Azure has been enforced
+aihubmax,free,,model,,,,gpt-4o-free,default,,,,,,,,,,,,,,,,,,,,,,,,external content filter provided by Azure has been enforced
+aihubmax,free,,model,,,,glm-4.7-flash-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-glm-4.7-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,k2.6-code-preview-free,code,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,qwen3.6-plus-preview-free,chat,,,,,,,,,,,,,,,,,,,,,,,,This model has been removed from the platform.
+aihubmax,free,,model,,,,coding-step-3.5-flash-free,default,,,,,,,,,,,5,,,,250,500000,,,,,,,,default
+aihubmax,free,,model,,,,coding-minimax-m2.1-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,kimi-for-coding-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-glm-4.6-free,default,,,,,,,,,,,5,,,,500,1000000,,,,,,,,default
+aihubmax,free,,model,,,,coding-minimax-m2-free,default,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,mimo-v2-flash-free,default,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,google/gemma-2-9b-it:free,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,meta-llama/llama-3.1-405b-instruct:free,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,meta-llama/llama-3.1-70b-instruct:free,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,meta-llama/llama-3.1-8b-instruct:free,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,meta-llama/llama-3.2-11b-vision-instruct:free,vision,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,meta-llama/llama-3.2-3b-instruct:free,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+aihubmax,free,,model,,,,mistralai/mistral-7b-instruct:free,chat,,,,,,,,,,,,,,,,,,,,,,,,default
+alibaba,free,,model,,,,qwen3.5-122b-a10b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-vl-ocr-2025-11-20,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-235b-a22b-thinking,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-2025-07-28,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-max,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-plus-2026-02-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-max,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-mt-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-235b-a22b-thinking-2507,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-30b-a3b-thinking,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-max-2026-06-08,chat,token,"1,000,000",64,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,glm-5.1,default,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-max-preview,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-max-preview,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-32b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,kimi-k2.7-code,code,token,"1,000,000",80,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,glm-5.2,default,token,"1,000,000",80,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-397b-a17b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-plus-2025-09-23,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,deepseek-v3.2,default,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-vl-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-next,code,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-35b-a3b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-30b-a3b-thinking-2507,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-plus-2025-09-23,code,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-latest,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-max-2026-01-23,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-480b-a35b-instruct,code,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-plus,code,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-8b-thinking,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-kf2v-flash,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-2025-09-11,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-flash-2026-01-22,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-flash-2026-02-23,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-max-preview,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-flash-2025-10-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-max-2026-05-20,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-vl-max,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-30b-a3b-instruct,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-plus-2026-05-26,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-8b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-235b-a22b-instruct,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-27b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-235b-a22b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus,chat,token,"1,000,000",0,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-turbo,chat,token,"1,000,000",0,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-mt-lite,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-flash-2026-04-16,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qvq-max,default,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-next-80b-a3b-thinking,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-27b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-max-2026-05-17,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-30b-a3b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-mt-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-14b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-8b-instruct,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-max-2025-09-23,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-character,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,deepseek-v4-pro,default,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-flash-2025-07-28,code,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-flash-character,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-vl-plus-2025-12-19,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-2025-04-28,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-mt-turbo,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-30b-a3b-instruct-2507,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-flash-2025-07-28,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-35b-a3b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-2025-07-14,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-235b-a22b-instruct-2507,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwq-plus,default,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.6-plus-2026-04-02,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-plus-2025-07-22,code,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-plus-2026-04-20,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.7-max,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-vl-ocr,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-next-80b-a3b-instruct,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,deepseek-v4-flash,default,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-30b-a3b-instruct,code,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-coder-flash,code,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-character-ja,chat,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-plus-2025-01-25,chat,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-vace-plus,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-videoedit,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-kf2v-plus,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-edit-plus,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.1-i2v,default,token,10,77,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-edit-plus-2025-10-30,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-i2v,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-image,image,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-t2v,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-edit,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-2.0,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-t2v-plus,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-t2v,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,z-image-turbo,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-max-2025-12-30,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-r2v,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-animate-move,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-edit-max-2026-01-16,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-i2v,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.5-t2v-preview,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-t2v-plus,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.0-t2v,default,token,10,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.0-r2v,default,token,10,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.5-t2i-preview,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-2.0-pro-2026-06-22,image,token,100,79,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-i2v-turbo,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-t2v-turbo,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-t2i-turbo,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.0-video-edit,default,token,10,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.1-r2v,default,token,10,77,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-i2v-2026-04-25,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.1-t2v,default,token,10,77,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.5-i2v-preview,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-i2v-plus,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-t2i-flash,default,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-t2i-plus,default,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-i2v-flash,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-t2v-2026-06-12,default,token,50,86,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-r2v-2026-06-12,default,token,50,86,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-2.0-2026-03-03,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-edit-max,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-max,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-2.0-pro-2026-03-03,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.5-i2i-preview,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-plus,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-2.0-pro,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-plus-2026-01-09,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-i2v-plus,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-image-pro,image,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-r2v,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.1-t2i-plus,default,token,200,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.2-animate-mix,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-t2i,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-2.0-pro-2026-04-22,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-i2v-flash,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-t2v-2026-04-25,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-image-edit-plus-2025-12-15,image,token,100,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.6-r2v-flash,default,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,happyhorse-1.0-i2v,default,token,10,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,wan2.7-image,image,token,50,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-plus-2026-03-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-omni-flash-realtime-2025-09-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-omni-flash-realtime,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-omni-turbo-realtime-2025-05-08,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-flash-realtime-2026-03-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-plus,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-omni-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-omni-turbo-realtime,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-omni-turbo,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen2.5-omni-7b,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-plus-realtime,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-omni-turbo-2025-03-26,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-flash,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-flash-realtime,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-plus-realtime-2026-03-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-omni-flash-2026-03-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-omni-flash-2025-09-15,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-omni-turbo-realtime-latest,chat,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-omni-turbo-latest,chat,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-2025-09-08,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-omni-30b-a3b-captioner,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-vd-2026-01-26,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-vc-realtime-2026-01-15,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,cosyvoice-v3-flash,default,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-flash-realtime,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-2025-08-25,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-mtl,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-realtime-2025-11-07,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-flash-2025-09-18,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-flash,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-flash-realtime-2025-09-18,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-realtime-2026-02-10,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-livetranslate-flash-realtime-2025-09-22,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-vc-2026-01-22,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-instruct-flash-2026-01-26,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-2025-11-07,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-flash-2025-11-27,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-realtime-2025-10-27,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-realtime,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-vd-realtime-2025-12-16,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,cosyvoice-v3-plus,default,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-instruct-flash-realtime-2026-01-22,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-2026-02-10,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-instruct-flash,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-instruct-flash-realtime,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-mtl-2025-08-25,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-realtime,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-vd-realtime-2026-01-15,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-filetrans,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash-filetrans-2025-11-17,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-livetranslate-flash-realtime,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-tts-flash-realtime-2025-11-27,audio,token,"10,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-livetranslate-flash-realtime-2026-05-19,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr,default,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3.5-livetranslate-flash-realtime,chat,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-asr-flash,chat,token,"36,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,fun-asr-flash-2026-06-15,default,token,"36,000",72,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen-voice-design,chat,token,10,60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,voice-enrollment,default,,,,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,tongyi-embedding-vision-flash,embedding,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,qwen3-rerank,rerank,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,tongyi-embedding-vision-plus,embedding,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,text-embedding-v3,embedding,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+alibaba,free,,model,,,,text-embedding-v4,embedding,token,"1,000,000",60,FALSE,,,,,,,,,,,,,,,,,,,,
+agnes-ai,free,,provider,,,,*,default,,,,,,,,,,,20,,,,,,,,,,,,,default
+cloudflare-workers-ai,free,,provider,,,,*,default,,,,,,,,,,,,,,,,,,,,,10000,,,default
+modelscope,free,,provider,,,,*,default,,,,,,,,,,,,,,,2000,,,,,,,,,default
+mistral,free,,provider,,,,*,default,usd,10,30,TRUE,,,,,,,,,,,,,3600,,,625,,,,default
+llm7,free,,provider,,,,*,default,,,,,,,,,,,120,,,,,1000000,,,,,,,,default
+llm7,anon,,provider,,,,*,default,,,,,,,,,,,30,,,,,,,,,,,,,default
+cerebras,free,,provider,,,,*,default,,,,,,,,,,,10,,,,100,1000000,,,,,,,,default
+sambanova,free,,provider,,,,*,default,usd,5,30,FALSE,,,,,,,,,,,,,,,,,,,,default
+sambanova,paid,,provider,,,,*,default,,,,,,,,,,,,,,,,20000000,,,,,,,,paid
+aionlabs-ai,free,,provider,,,,*,default,,,,,,,,,,,15,,,,,20000,,,,,,,,default
+vercel-ai-gateway,free,,provider,,,,*,default,usd,5,30,TRUE,,,,,,,,,,,,,,,,,,,,default
+hermes-agent,free,,provider,,,,*,default,usd,1,,FALSE,,,,,,,,,,,,,,,,,,,,default
+openrouter,free,,provider,,,,*,default,,,,,,,,,,,20,,,,50,,,,,,,,,default
+openrouter,paid,,provider,,,,*,default,,,,,,,,,,,,,,,1000,,,,,,,,,default
+openai,paid,tier_1,model,,/v1/chat/completions,adaptive,gpt-4o,chat,,,,,,,2026-07-05,,,,500,30000,,,,,,,,,,https://platform.openai.com/docs/guides/rate-limits,,Tier 1 default.
+openai,paid,tier_1,model,,/v1/chat/completions,adaptive,gpt-4o-mini,chat,,,,,,,2026-07-05,,,,500,200000,,,,,,,,,,https://platform.openai.com/docs/guides/rate-limits,,Tier 1 default.
+anthropic,paid,tier_1,model,,/v1/messages,adaptive,claude-3-5-sonnet-20241022,chat,,,,,,,2026-07-05,,,,50,40000,,,,1000000,,,,,,https://platform.claude.com/docs/en/api/rate-limits,,Tier 1 default.
+anthropic,paid,tier_1,model,,/v1/messages,adaptive,claude-3-5-haiku-20241022,chat,,,,,,,2026-07-05,,,,50,40000,,,,1000000,,,,,,https://platform.claude.com/docs/en/api/rate-limits,,Tier 1 default.
+xai,paid,default,model,,/v1/chat/completions,hard,grok-4-0709,chat,,,,,,,2026-07-05,,,,1800,10000000,,,,,,,,,,https://docs.x.ai/developers/rate-limits,,
+xai,paid,default,model,,/v1/chat/completions,adaptive,grok-4.20-0309-reasoning,chat,,,,,,,2026-07-05,,37,,,10000000,,,,,,,,,,https://docs.x.ai/developers/models/grok-4.20-0309-reasoning,,Reasoning model.
+replicate,paid,default,provider,,/v1/predictions,adaptive,*,default,,,,,,,2026-07-05,,,,600,,,,,,,,,,,https://replicate.com/docs/topics/predictions/rate-limits,,Create-prediction endpoint default; other endpoints 3000 RPM.
+replicate,paid,default,provider,,/v1/*,adaptive,*,default,,,,,,,2026-07-05,,,,3000,,,,,,,,,,,https://replicate.com/docs/topics/predictions/rate-limits,,All non-create-prediction endpoints.
+together-ai,paid,,provider,,/v1/chat/completions,adaptive,*,chat,,,,,,,2026-07-05,,,,,,,,,,,,,,,https://docs.together.ai/docs/serverless/rate-limits,,Dynamic per-model limits; no fixed RPM/TPM published. Use x-ratelimit-reset header.
+fireworks-ai,paid,default,provider,,/v1/chat/completions,adaptive,*,chat,,,,,,,2026-07-05,,,,-1,21600000,,,,,,,,,,https://docs.fireworks.ai/serverless/rate-limits,,Adaptive serverless limits with 21.6M total prompt TPM ceiling. Exact TPM grows/shrinks with usage.
+cohere,free,,model,per_key,/v1/chat,soft,command,chat,request,1000,30,TRUE,2024-06-01,,2025-06-05,,,,100,40000,,,1000,,,,,,,https://docs.cohere.com/docs/rate-limits,,"Evaluations trial key with 1,000 calls/month credit window from docs."
+ai21,paid,,model,,/v1/chat,hard,jamba-mini,chat,,,,,,,2025-06-05,,10,,200,,,,,,,,,,,https://docs.ai21.com/docs/rate-limits,,Foundation model limits from AI21 docs.
+stability-ai,paid,,model,,/v1/generation,,*,image,,,,,,,,,17,,2000,,,,,,,,,,,,,
+deepseek,paid,,model,,/v1/chat,hard,deepseek-v4-pro,chat,,,,,,,2025-06-05,500,,,,,,,,,,,,,,https://api-docs.deepseek.com/quick_start/rate_limit,,Account-level concurrency limit per model from docs.
+deepseek,paid,,model,,/v1/chat,hard,deepseek-v4-flash,chat,,,,,,,2025-06-05,2500,,,,,,,,,,,,,,https://api-docs.deepseek.com/quick_start/rate_limit,,Higher concurrency limit for flash variant from docs.
+inception,free,,model,,/v1/chat/completions,,mercury-2,chat,,,,,,,2025-06-05,,,,100,100000,,,,,,,,,,https://docs.inceptionlabs.ai/get-started/rate-limits,,Free tier rate limits.
+inception,free,,model,,/v1/chat/completions,,mercury-2,text_out,,,,,,,2025-06-05,,,,100,10000,,,,,,,,,,https://docs.inceptionlabs.ai/get-started/rate-limits,,Output token limit for free tier.
+perplexity,free,tier_0,model,,/chat/completions,hard,sonar,chat,,,,,,,2025-06-05,,,,50,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Tier 0=50 RPM.
+perplexity,paid,tier_1,model,,/chat/completions,hard,sonar,chat,,,,,,,2025-06-05,,,,150,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Tier 1=150 RPM.
+perplexity,free,tier_0,model,,/chat/completions,hard,sonar-pro,chat,,,,,,,2025-06-05,,,,50,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Tier 0=50 RPM.
+perplexity,free,tier_0,model,,/chat/completions,hard,sonar-reasoning-pro,chat,,,,,,,2025-06-05,,,,50,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Tier 0=50 RPM.
+perplexity,free,tier_0,model,,/chat/completions,hard,sonar-deep-research,chat,,,,,,,2025-06-05,,,,5,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Tier 0=5 RPM.
+perplexity,paid,,provider,,/v1/async/sonar,hard,*,chat,,,,,,,2025-06-05,,5,,,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Async Sonar POST sustained/burst.
+perplexity,paid,,provider,,/v1/async/sonar/{request_id},hard,*,chat,,,,,,,2025-06-05,,6000,,,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Async Sonar request status.
+perplexity,paid,tier_0,provider,,/chat/completions,hard,*,agents,,,,,,,2025-06-05,,,1,50,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Agent API tier 0=1 QPS / 50 RPM.
+perplexity,paid,,provider,,/search,hard,*,text_out,,,,,,,2025-06-05,,,50,,,,,,,,,,,,https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers,,Search API 50 QPS sustained/burst across tiers.
