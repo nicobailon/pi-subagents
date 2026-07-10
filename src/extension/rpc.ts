@@ -9,6 +9,7 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import { type Details, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
+import { validateChainInput } from "./chain-validation.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -111,6 +112,13 @@ function assertRecordParams(params: unknown, method: SubagentRpcMethod): Record<
 }
 
 function assertSubagentParams(params: SubagentParamsLike, label: string): void {
+	// Friendly chain validation first: name the disallowed property, list allowed
+	// ones, and show a valid example instead of raw TypeBox diagnostics.
+	try {
+		validateChainInput(params);
+	} catch (error) {
+		throw new SubagentRpcError("invalid_params", `${label}: ${error instanceof Error ? error.message : String(error)}`);
+	}
 	if (subagentParamsValidator.Check(params)) return;
 	const messages = [...subagentParamsValidator.Errors(params)]
 		.slice(0, 4)

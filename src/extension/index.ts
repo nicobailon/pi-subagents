@@ -25,6 +25,7 @@ import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.ts";
 import { SubagentParams, WaitParams } from "./schemas.ts";
+import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
@@ -461,6 +462,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		label: "Subagent",
 		description: buildSubagentToolDescription(config),
 		parameters: SubagentParams,
+
+		prepareArguments(args) {
+			// Run friendly chain validation before pi-ai's raw TypeBox schema check
+			// so the model sees which property is disallowed, what is allowed, and a
+			// valid example instead of `chain.N: must not have additional properties`.
+			validateChainInput(args);
+			return args as never;
+		},
 
 		execute(id, params, signal, onUpdate, ctx) {
 			return executeSubagentCollapsed(id, params, signal, onUpdate, ctx);
