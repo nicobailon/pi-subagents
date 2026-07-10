@@ -81,7 +81,11 @@ export function resolveWindowsPiCliScript(
 	if (argv1) {
 		const argvPath = normalizePath(argv1);
 		if (isRunnableNodeScript(argvPath, existsSync)) {
-			return argvPath;
+			try {
+				if (findPiPackageRootFromEntry(argvPath)) return argvPath;
+			} catch {
+				// Host package metadata is untrusted here; keep resolving the installed Pi CLI.
+			}
 		}
 	}
 
