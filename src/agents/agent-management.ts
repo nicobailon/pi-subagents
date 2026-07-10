@@ -21,6 +21,7 @@ import {
 	removeBuiltinAgentOverrideFields,
 } from "./agents.ts";
 import { serializeAgent } from "./agent-serializer.ts";
+import { mergeAgentsForScope } from "./agent-selection.ts";
 import { serializeChain, serializeJsonChain } from "./chain-serializer.ts";
 import { discoverAvailableSkills } from "./skills.ts";
 import {
@@ -98,25 +99,6 @@ function parsePackageConfig(value: unknown): { packageName?: string; error?: str
 
 function allAgents(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): AgentConfig[] {
 	return [...d.builtin, ...d.package, ...d.user, ...d.project];
-}
-
-const agentSourcePriority: Record<AgentSource, number> = {
-	builtin: 0,
-	package: 1,
-	user: 2,
-	project: 3,
-};
-
-function hideShadowedAgentsForList(agents: AgentConfig[]): AgentConfig[] {
-	const highestPriorityByName = new Map<string, number>();
-	for (const agent of agents) {
-		const priority = agentSourcePriority[agent.source];
-		const current = highestPriorityByName.get(agent.name);
-		if (current === undefined || priority > current) {
-			highestPriorityByName.set(agent.name, priority);
-		}
-	}
-	return agents.filter((agent) => agentSourcePriority[agent.source] === highestPriorityByName.get(agent.name));
 }
 
 function availableNames(cwd: string, kind: "agent" | "chain"): string[] {
@@ -599,7 +581,8 @@ function formatChainDetail(chain: ChainConfig): string {
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
-	const scopedAgents = hideShadowedAgentsForList(allAgents(d).filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope)).sort((a, b) => a.name.localeCompare(b.name));
+	const scopedAgents = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package)
+		.sort((a, b) => a.name.localeCompare(b.name));
 	const agents = scopedAgents.filter((a) => !a.disabled);
 	const chains = d.chains.filter((c) => scope === "both" || c.source === "package" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const diagnostics = d.chainDiagnostics.filter((entry) => scope === "both" || entry.source === scope);
