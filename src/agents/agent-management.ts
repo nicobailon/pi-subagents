@@ -31,6 +31,7 @@ import { parseFrontmatter } from "./frontmatter.ts";
 import { toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
+import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import type { Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 
@@ -261,6 +262,9 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 		fields.add("inheritSkills");
 	}
 	if (hasKey(cfg, "defaultContext")) changed("defaultContext");
+	if (hasKey(cfg, "async")) changed("async");
+	if (hasKey(cfg, "timeoutMs")) changed("timeoutMs");
+	if (hasKey(cfg, "turnBudget")) changed("turnBudget");
 	if (hasKey(cfg, "output")) changed("output");
 	if (hasKey(cfg, "reads")) changed("defaultReads");
 	if (hasKey(cfg, "progress")) changed("defaultProgress");
@@ -417,6 +421,24 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork") target.defaultContext = cfg.defaultContext;
 		else return "config.defaultContext must be 'fresh', 'fork', or false when provided.";
 	}
+	if (hasKey(cfg, "async")) {
+		if (cfg.async === "") target.defaultAsync = undefined;
+		else if (typeof cfg.async === "boolean") target.defaultAsync = cfg.async;
+		else return "config.async must be a boolean or empty string when provided.";
+	}
+	if (hasKey(cfg, "timeoutMs")) {
+		if (cfg.timeoutMs === false || cfg.timeoutMs === "") target.defaultTimeoutMs = undefined;
+		else if (typeof cfg.timeoutMs === "number" && Number.isInteger(cfg.timeoutMs) && cfg.timeoutMs > 0) target.defaultTimeoutMs = cfg.timeoutMs;
+		else return "config.timeoutMs must be a positive integer or false when provided.";
+	}
+	if (hasKey(cfg, "turnBudget")) {
+		if (cfg.turnBudget === false || cfg.turnBudget === "") target.defaultTurnBudget = undefined;
+		else {
+			const resolved = resolveTurnBudgetConfig(cfg.turnBudget, "config.turnBudget");
+			if (resolved.error) return resolved.error;
+			target.defaultTurnBudget = resolved.turnBudget;
+		}
+	}
 	if (hasKey(cfg, "output")) {
 		if (cfg.output === false || cfg.output === "") target.output = undefined;
 		else if (typeof cfg.output === "string") target.output = cfg.output;
@@ -513,6 +535,9 @@ function formatAgentDetail(agent: AgentConfig): string {
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);
+	if (agent.defaultAsync !== undefined) lines.push(`Async: ${agent.defaultAsync ? "true" : "false"}`);
+	if (agent.defaultTimeoutMs !== undefined) lines.push(`Timeout: ${agent.defaultTimeoutMs}ms`);
+	if (agent.defaultTurnBudget) lines.push(`Turn budget: ${JSON.stringify(agent.defaultTurnBudget)}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);

@@ -153,6 +153,63 @@ Inspect
 		assert.doesNotMatch(content, /^package:/m);
 	});
 
+	it("creates and updates agents with single-agent launch defaults", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const result = handleCreate(
+			{
+				config: {
+					name: "background-reviewer",
+					description: "Review in the background",
+					scope: "project",
+					async: false,
+					timeoutMs: 120_000,
+					turnBudget: { maxTurns: 8, graceTurns: 2 },
+				},
+			},
+			ctx,
+		);
+
+		assert.equal(result.isError, false);
+		const filePath = path.join(tempDir, ".pi", "agents", "background-reviewer.md");
+		let content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^async: false$/m);
+		assert.match(content, /^timeoutMs: 120000$/m);
+		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
+
+		const got = handleManagementAction("get", { agent: "background-reviewer" }, ctx);
+		assert.equal(got.isError, false);
+		assert.match(readText(got), /Async: false/);
+		assert.match(readText(got), /Timeout: 120000ms/);
+		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
+
+		const updated = handleUpdate(
+			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false } },
+			ctx,
+		);
+		assert.equal(updated.isError, false);
+		content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^async: true$/m);
+		assert.doesNotMatch(content, /^timeoutMs:/m);
+		assert.doesNotMatch(content, /^turnBudget:/m);
+	});
+
+	it("rejects invalid single-agent launch defaults", () => {
+		const result = handleCreate(
+			{
+				config: {
+					name: "bad-launch-defaults",
+					description: "Bad defaults",
+					scope: "project",
+					timeoutMs: 0,
+				},
+			},
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /config\.timeoutMs must be a positive integer/);
+	});
+
 	it("creates and updates agents with tool budgets", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const result = handleCreate(

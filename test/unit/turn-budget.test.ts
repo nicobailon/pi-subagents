@@ -6,6 +6,7 @@ import {
 	appendTurnBudgetSystemPrompt,
 	formatTurnBudgetOutput,
 	initialTurnBudgetState,
+	resolveTurnBudgetConfig,
 	shouldAbortForTurnBudget,
 	turnBudgetExceededMessage,
 	turnBudgetSoftNote,
@@ -20,6 +21,29 @@ describe("turn-budget module", () => {
 	describe("DEFAULT_TURN_BUDGET_GRACE_TURNS", () => {
 		it("defaults to one grace turn", () => {
 			assert.equal(DEFAULT_TURN_BUDGET_GRACE_TURNS, 1);
+		});
+	});
+
+	describe("resolveTurnBudgetConfig", () => {
+		it("resolves valid budgets and supplies the default grace turn", () => {
+			assert.deepEqual(resolveTurnBudgetConfig({ maxTurns: 5 }), {
+				turnBudget: { maxTurns: 5, graceTurns: 1 },
+			});
+			assert.deepEqual(resolveTurnBudgetConfig({ maxTurns: 5, graceTurns: 0 }), {
+				turnBudget: { maxTurns: 5, graceTurns: 0 },
+			});
+		});
+
+		it("rejects invalid values with the caller's boundary label", () => {
+			assert.deepEqual(resolveTurnBudgetConfig({ maxTurns: 0 }, "agent.turnBudget"), {
+				error: "agent.turnBudget.maxTurns must be an integer >= 1.",
+			});
+			assert.deepEqual(resolveTurnBudgetConfig({ maxTurns: 2, graceTurns: -1 }), {
+				error: "turnBudget.graceTurns must be an integer >= 0.",
+			});
+			assert.deepEqual(resolveTurnBudgetConfig({ maxTurns: 2, extra: true }), {
+				error: "turnBudget.extra is not supported.",
+			});
 		});
 	});
 

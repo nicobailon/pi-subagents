@@ -43,7 +43,7 @@ import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
-import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.ts";
+import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
@@ -1551,6 +1551,22 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 	);
 }
 
+function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: AgentConfig[]): SubagentParamsLike {
+	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
+	const agent = agents.find((candidate) => candidate.name === params.agent);
+	if (!agent) return params;
+	return {
+		...params,
+		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
+		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
+			? { timeoutMs: agent.defaultTimeoutMs }
+			: {}),
+		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
+			? { turnBudget: agent.defaultTurnBudget }
+			: {}),
+	};
+}
+
 function resolveForegroundTimeout(params: SubagentParamsLike): { timeoutMs?: number; error?: string } {
 	const rawTimeout = params.timeoutMs;
 	const rawMaxRuntime = params.maxRuntimeMs;
@@ -1565,20 +1581,6 @@ function resolveForegroundTimeout(params: SubagentParamsLike): { timeoutMs?: num
 		return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one value or use the same value for both." };
 	}
 	return { timeoutMs: rawTimeout ?? rawMaxRuntime };
-}
-
-function resolveTurnBudget(params: SubagentParamsLike, config: ExtensionConfig): { turnBudget?: ResolvedTurnBudget; error?: string } {
-	const raw = params.turnBudget ?? config.turnBudget;
-	if (raw === undefined) return {};
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "turnBudget must be an object with maxTurns and optional graceTurns." };
-	if (typeof raw.maxTurns !== "number" || !Number.isInteger(raw.maxTurns) || raw.maxTurns < 1) {
-		return { error: "turnBudget.maxTurns must be an integer >= 1." };
-	}
-	const graceTurns = raw.graceTurns ?? DEFAULT_TURN_BUDGET_GRACE_TURNS;
-	if (typeof graceTurns !== "number" || !Number.isInteger(graceTurns) || graceTurns < 0) {
-		return { error: "turnBudget.graceTurns must be an integer >= 0." };
-	}
-	return { turnBudget: { maxTurns: raw.maxTurns, graceTurns } };
 }
 
 function resolveToolBudget(raw: unknown, label = "toolBudget"): { toolBudget?: ResolvedToolBudget; error?: string } {
@@ -3423,10 +3425,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			depth,
 			deps.config.forceTopLevelAsync === true,
 		);
-		const foregroundTimeout = resolveForegroundTimeout(effectiveParams);
-		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
-		const turnBudget = resolveTurnBudget(effectiveParams, deps.config);
-		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
 		const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
 		if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
 		const configToolBudget = resolveToolBudget(deps.config.toolBudget, "config.toolBudget");
@@ -3439,6 +3437,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const discovered = deps.discoverAgents(effectiveCwd, scope);
 		const discoveredAgents = discovered.agents;
 		const modelScope = discovered.modelScope;
+		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
+		const foregroundTimeout = resolveForegroundTimeout(effectiveParams);
+		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
+		const turnBudget = resolveTurnBudgetConfig(effectiveParams.turnBudget ?? deps.config.turnBudget);
+		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
 		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents);
 		effectiveParams = contextPolicy.params;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
