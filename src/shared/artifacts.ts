@@ -1,12 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TEMP_ARTIFACTS_DIR, type ArtifactPaths } from "./types.ts";
-import { getAgentDir } from "./utils.ts";
+import { getAgentDir, getProjectConfigDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
-const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
+const PROJECT_ARTIFACT_DIR_NAME = "subagents";
 
 export function getProjectSubagentsDir(cwd: string): string {
-	return path.join(cwd, PROJECT_ARTIFACT_ROOT);
+	return path.join(getProjectConfigDir(cwd), PROJECT_ARTIFACT_DIR_NAME);
 }
 
 export function getProjectArtifactsDir(cwd: string): string {

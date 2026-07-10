@@ -1,4 +1,6 @@
 .pi/todos/
+.pi/subagents/
+# Legacy artifacts location; keep ignored until old worktrees are cleaned up.
 .pi-subagents/
 .DS_Store
 AGENTS.md

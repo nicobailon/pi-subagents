@@ -2,9 +2,25 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getProjectSubagentsDir } from "../shared/artifacts.ts";
 
-const IGNORED_CHANGE_PREFIXES = [".pi-subagents/", "tmp/", "node_modules/"];
-const IGNORED_CHANGE_PATHS = new Set([".pi-subagents", "tmp", "node_modules"]);
+const STATIC_IGNORED_CHANGE_PATHS = ["tmp", "node_modules"];
+
+interface IgnoreRules {
+	prefixes: string[];
+	paths: Set<string>;
+}
+
+function buildIgnoreRules(root: string): IgnoreRules {
+	// Project-local subagent artifacts live under {project config dir}/subagents,
+	// which is configurable (".pi" by default), so resolve it per repo root.
+	const subagentsRelPath = normalizeRelPath(path.relative(root, getProjectSubagentsDir(root)));
+	const ignoredPaths = [...STATIC_IGNORED_CHANGE_PATHS, subagentsRelPath];
+	return {
+		prefixes: ignoredPaths.map((entry) => `${entry}/`),
+		paths: new Set(ignoredPaths),
+	};
+}
 
 export interface WatchdogRepoChangeSignature {
 	root: string;
@@ -22,16 +38,16 @@ function normalizeRelPath(value: string): string {
 	return value.replaceAll(path.sep, "/").replace(/^\.\//, "");
 }
 
-function ignoredRelPath(relPath: string): boolean {
+function ignoredRelPath(relPath: string, rules: IgnoreRules): boolean {
 	const normalized = normalizeRelPath(relPath);
-	return IGNORED_CHANGE_PATHS.has(normalized) || IGNORED_CHANGE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+	return rules.paths.has(normalized) || rules.prefixes.some((prefix) => normalized.startsWith(prefix));
 }
 
 function hashFile(filePath: string): string {
 	return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-function hashPath(root: string, relPath: string): unknown {
+function hashPath(root: string, relPath: string, rules: IgnoreRules): unknown {
 	const normalized = normalizeRelPath(relPath);
 	const fullPath = path.join(root, normalized);
 	let stat: fs.Stats;
@@ -47,9 +63,9 @@ function hashPath(root: string, relPath: string): unknown {
 	if (stat.isDirectory()) {
 		const entries = fs.readdirSync(fullPath)
 			.map((entry) => normalizeRelPath(path.posix.join(normalized, entry)))
-			.filter((entry) => !ignoredRelPath(entry))
+			.filter((entry) => !ignoredRelPath(entry, rules))
 			.sort();
-		return { path: normalized, state: "dir", entries: entries.map((entry) => hashPath(root, entry)) };
+		return { path: normalized, state: "dir", entries: entries.map((entry) => hashPath(root, entry, rules)) };
 	}
 	if (stat.isFile()) {
 		return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash: hashFile(fullPath) };
@@ -80,10 +96,11 @@ export function computeWatchdogRepoChangeSignature(cwd: string): WatchdogRepoCha
 	if (!root) return undefined;
 	const statusOutput = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
 	if (statusOutput === undefined) return undefined;
+	const rules = buildIgnoreRules(root);
 	const entries = parsePorcelainZ(statusOutput)
 		.map((entry) => ({
 			status: entry.status,
-			paths: entry.paths.map(normalizeRelPath).filter((relPath) => !ignoredRelPath(relPath)),
+			paths: entry.paths.map(normalizeRelPath).filter((relPath) => !ignoredRelPath(relPath, rules)),
 		}))
 		.filter((entry) => entry.paths.length > 0)
 		.sort((a, b) => `${a.status} ${a.paths.join("\0")}`.localeCompare(`${b.status} ${b.paths.join("\0")}`));
@@ -91,7 +108,7 @@ export function computeWatchdogRepoChangeSignature(cwd: string): WatchdogRepoCha
 	const payload = entries.map((entry) => ({
 		status: entry.status,
 		paths: entry.paths,
-		content: entry.paths.map((relPath) => hashPath(root, relPath)),
+		content: entry.paths.map((relPath) => hashPath(root, relPath, rules)),
 	}));
 	const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 	return { root, key, changedPaths };

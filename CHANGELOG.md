@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Moved project-local subagent artifacts from `.pi-subagents/` to the project config `subagents/` directory (`.pi/subagents/` in standard Pi), consistent with the existing project-scoped config directory used for agent memory. The watchdog change signature ignores the new location under custom Pi config directories too. Existing `.pi-subagents/` directories are left in place and are safe to delete manually. Projects that gitignored `.pi-subagents/` should add the new location (`.pi/subagents/` in standard Pi, or `{configDir}/subagents/` for custom Pi config directories) to their `.gitignore`.
+
 ### Added
 - Added single-agent launch defaults for `async`, `timeoutMs`, and `turnBudget` in agent frontmatter, with explicit tool-call values taking precedence. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #410.
 - Added `/subagents-stop` and `subagent({ action: "stop", id })` for current-session top-level async runs. The slash command opens a confirmation selector when no id is provided, falls back to exact commands without a TUI, routes scheduled jobs through `schedule-cancel`, and records manual stops as `stopped`/cancelled lifecycle events instead of timeouts. Thanks to Sean Seaman (@seans-leadsonline) for #407 and #408.

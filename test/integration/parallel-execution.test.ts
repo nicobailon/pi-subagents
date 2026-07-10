@@ -205,7 +205,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId, "parallel-output.md");
+		const outputPath = path.join(tempDir, ".pi", "subagents", "artifacts", "outputs", runId, "parallel-output.md");
 		assert.equal(result.isError, undefined);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Saved report");
 		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
@@ -258,7 +258,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId, "parallel-file-only.md");
+		const outputPath = path.join(tempDir, ".pi", "subagents", "artifacts", "outputs", runId, "parallel-file-only.md");
 		const text = result.content[0]?.text ?? "";
 		assert.equal(result.isError, undefined);
 		assert.match(text, /Output saved to:/);
@@ -369,7 +369,7 @@ Inspect
 		);
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const expectedProgressPath = path.join(tempDir, ".pi-subagents", "artifacts", "progress", runId, "progress.md");
+		const expectedProgressPath = path.join(tempDir, ".pi", "subagents", "artifacts", "progress", runId, "progress.md");
 
 		const args = readLastCallArgs();
 		const taskArg = args.at(-1) ?? "";
