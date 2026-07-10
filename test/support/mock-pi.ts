@@ -58,13 +58,22 @@ export function createMockPi(): MockPi {
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mock-cli-"));
 	const queueDir = path.join(rootDir, "queue");
 	const binDir = path.join(rootDir, "bin");
+	const piPackageDir = path.join(rootDir, "pi-package");
+	const cliScriptPath = path.join(piPackageDir, "dist", "cli.mjs");
 	ensureDir(queueDir);
 	ensureDir(binDir);
+	ensureDir(path.dirname(cliScriptPath));
+	fs.copyFileSync(SCRIPT_PATH, cliScriptPath);
+	fs.writeFileSync(
+		path.join(piPackageDir, "package.json"),
+		JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+		"utf-8",
+	);
 
 	const shellScriptPath = path.join(binDir, "pi");
 	const cmdScriptPath = path.join(binDir, "pi.cmd");
-	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${SCRIPT_PATH}" "$@"\n`);
-	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${SCRIPT_PATH}" %*\r\n`);
+	writeExecutable(shellScriptPath, `#!/bin/sh\nexec "${process.execPath}" "${cliScriptPath}" "$@"\n`);
+	writeExecutable(cmdScriptPath, `@echo off\r\n"${process.execPath}" "${cliScriptPath}" %*\r\n`);
 
 	let installed = false;
 	let nextSequence = 0;
@@ -85,7 +94,7 @@ export function createMockPi(): MockPi {
 			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 			if (process.platform === "win32") {
 				originalArgv1 = process.argv[1];
-				process.argv[1] = SCRIPT_PATH;
+				process.argv[1] = cliScriptPath;
 			}
 		},
 		uninstall() {

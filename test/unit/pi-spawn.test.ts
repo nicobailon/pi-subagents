@@ -106,23 +106,91 @@ describe("getPiSpawnCommand", () => {
 		assert.deepEqual(result, { command: "pi", args });
 	});
 
-	it("uses node + argv1 script on Windows when argv1 is runnable JS", () => {
-		const argv1 = "/tmp/pi-entry.mjs";
-		const deps = makeDeps({
-			platform: "win32",
-			execPath: "/usr/local/bin/node",
-			argv1,
-			existing: [argv1],
-		});
-		const args = [
-			"--mode",
-			"json",
-			'Task: Read C:/dev/file.md and review "quotes" & pipes | too',
-		];
-		const result = getPiSpawnCommand(args, deps);
-		assert.equal(result.command, "/usr/local/bin/node");
-		assert.equal(result.args[0], argv1);
-		assert.equal(result.args[3], args[2]);
+	it("uses node + argv1 script on Windows when argv1 belongs to the Pi package", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "pi-spawn-argv-entry-"),
+		);
+		try {
+			const argv1 = path.join(tempDir, "dist", "cli.js");
+			fs.mkdirSync(path.dirname(argv1), { recursive: true });
+			fs.writeFileSync(argv1, "#!/usr/bin/env node\n");
+			fs.writeFileSync(
+				path.join(tempDir, "package.json"),
+				JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+			);
+			const args = [
+				"--mode",
+				"json",
+				'Task: Read C:/dev/file.md and review "quotes" & pipes | too',
+			];
+			const result = getPiSpawnCommand(args, {
+				platform: "win32",
+				execPath: "/usr/local/bin/node",
+				argv1,
+				env: {},
+			});
+			assert.equal(result.command, "/usr/local/bin/node");
+			assert.equal(result.args[0], argv1);
+			assert.equal(result.args[3], args[2]);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores an embedded host entry point and resolves the Pi package bin on Windows", () => {
+		const tempDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "pi-spawn-embedded-host-"),
+		);
+		try {
+			const hostRoot = path.join(tempDir, "pi-web");
+			const hostEntry = path.join(hostRoot, "dist", "server.js");
+			const hostPackageJson = path.join(hostRoot, "package.json");
+			const piRoot = path.join(
+				tempDir,
+				"node_modules",
+				"@earendil-works",
+				"pi-coding-agent",
+			);
+			const piCli = path.join(piRoot, "dist", "cli.js");
+			fs.mkdirSync(path.dirname(hostEntry), { recursive: true });
+			fs.mkdirSync(path.dirname(piCli), { recursive: true });
+			fs.writeFileSync(hostEntry, "export {};\n");
+			fs.writeFileSync(
+				hostPackageJson,
+				JSON.stringify({ name: "@jmfederico/pi-web" }),
+			);
+			fs.writeFileSync(piCli, "#!/usr/bin/env node\n");
+			fs.writeFileSync(
+				path.join(piRoot, "package.json"),
+				JSON.stringify({
+					name: "@earendil-works/pi-coding-agent",
+					bin: { pi: "dist/cli.js" },
+				}),
+			);
+
+			const result = getPiSpawnCommand(["-p", "Task: hello"], {
+				platform: "win32",
+				execPath: "/usr/local/bin/node",
+				argv1: hostEntry,
+				resolvePackageJson: () => path.join(piRoot, "package.json"),
+				env: {},
+			});
+			assert.equal(result.command, "/usr/local/bin/node");
+			assert.equal(result.args[0], piCli);
+
+			fs.writeFileSync(hostPackageJson, "{");
+			const malformedHostResult = getPiSpawnCommand(["-p", "Task: hello"], {
+				platform: "win32",
+				execPath: "/usr/local/bin/node",
+				argv1: hostEntry,
+				resolvePackageJson: () => path.join(piRoot, "package.json"),
+				env: {},
+			});
+			assert.equal(malformedHostResult.command, "/usr/local/bin/node");
+			assert.equal(malformedHostResult.args[0], piCli);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 
 	it("resolves CLI script from package bin when argv1 is not runnable JS", () => {

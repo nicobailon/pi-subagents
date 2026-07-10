@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	type AssistantMessage,
 	type Context,
@@ -114,25 +114,33 @@ function createModelRegistry(model: { provider: string; id: string }) {
 function installChildPiShim(childText: string): () => void {
 	const rootDir = mkdtempSync(path.join(os.tmpdir(), "pi-real-session-cli-"));
 	const binDir = path.join(rootDir, "bin");
+	const piPackageDir = path.join(rootDir, "pi-package");
+	const childCliPath = path.join(piPackageDir, "dist", "cli.mjs");
 	const previousPath = process.env.PATH;
 	const previousChildText = process.env.PI_SUBAGENTS_E2E_CHILD_TEXT;
 	const previousArgv1 = process.argv[1];
 
 	writeFileSync(path.join(rootDir, ".keep"), "");
 	mkdirSync(binDir, { recursive: true });
+	mkdirSync(path.dirname(childCliPath), { recursive: true });
+	writeFileSync(childCliPath, `import ${JSON.stringify(pathToFileURL(CHILD_CLI_PATH).href)};\n`);
+	writeFileSync(
+		path.join(piPackageDir, "package.json"),
+		JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+	);
 	writeFileSync(
 		path.join(binDir, "pi"),
-		`#!/bin/sh\nexec "${process.execPath}" "${CHILD_CLI_PATH}" "$@"\n`,
+		`#!/bin/sh\nexec "${process.execPath}" "${childCliPath}" "$@"\n`,
 		{ mode: 0o755 },
 	);
 	writeFileSync(
 		path.join(binDir, "pi.cmd"),
-		`@echo off\r\n"${process.execPath}" "${CHILD_CLI_PATH}" %*\r\n`,
+		`@echo off\r\n"${process.execPath}" "${childCliPath}" %*\r\n`,
 	);
 
 	process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
 	process.env.PI_SUBAGENTS_E2E_CHILD_TEXT = childText;
-	if (process.platform === "win32") process.argv[1] = CHILD_CLI_PATH;
+	if (process.platform === "win32") process.argv[1] = childCliPath;
 
 	return () => {
 		if (previousPath === undefined) delete process.env.PATH;
