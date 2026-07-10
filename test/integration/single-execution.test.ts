@@ -195,7 +195,9 @@ interface ExecutorToolResult {
 	isError?: boolean;
 	details?: {
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+		asyncId?: string;
 		timeoutMs?: number;
+		turnBudget?: { maxTurns: number; graceTurns: number };
 	};
 }
 
@@ -270,12 +272,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		return readCall().args;
 	}
 
-	function makeExecutor(agents = [makeAgent("echo")], config: Record<string, unknown> = {}) {
+	function makeExecutor(
+		agents = [makeAgent("echo")],
+		config: Record<string, unknown> = {},
+		asyncByDefault = false,
+	) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
 			config,
-			asyncByDefault: false,
+			asyncByDefault,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
@@ -1326,6 +1332,80 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /aliases/);
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("applies agent frontmatter defaults to single-agent launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([
+			makeAgent("echo", {
+				defaultAsync: true,
+				defaultTimeoutMs: 2_000,
+				defaultTurnBudget: { maxTurns: 4, graceTurns: 2 },
+			}),
+		]);
+
+		const result = await executor.execute(
+			"agent-launch-defaults",
+			{ agent: "echo", task: "Task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /Async:/);
+		assert.equal(typeof result.details?.asyncId, "string");
+		assert.equal(result.details?.timeoutMs, 2_000);
+		assert.deepEqual(result.details?.turnBudget, { maxTurns: 4, graceTurns: 2 });
+	});
+
+	it("lets agent frontmatter override the global async default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "agent foreground default finished" });
+		const executor = makeExecutor(
+			[makeAgent("echo", { defaultAsync: false })],
+			{},
+			true,
+		);
+
+		const result = await executor.execute(
+			"agent-foreground-default",
+			{ agent: "echo", task: "Task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /agent foreground default finished/);
+		assert.equal(result.details?.asyncId, undefined);
+	});
+
+	it("lets explicit single-agent launch values override frontmatter defaults", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "explicit foreground finished" });
+		const executor = makeExecutor([
+			makeAgent("echo", {
+				defaultAsync: true,
+				defaultTimeoutMs: 1,
+				defaultTurnBudget: { maxTurns: 1, graceTurns: 0 },
+			}),
+		]);
+
+		const result = await executor.execute(
+			"explicit-launch-values",
+			{
+				agent: "echo",
+				task: "Task",
+				async: false,
+				timeoutMs: 2_000,
+				turnBudget: { maxTurns: 4, graceTurns: 2 },
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /explicit foreground finished/);
+		assert.equal(result.details?.asyncId, undefined);
 	});
 
 	it("allows timeout settings for async runs before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

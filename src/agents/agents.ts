@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceInput, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
@@ -17,6 +17,7 @@ import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { parseMemoryFrontmatter } from "./agent-memory.ts";
+import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -116,6 +117,9 @@ export interface AgentConfig {
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
 	defaultContext?: AgentDefaultContext;
+	defaultAsync?: boolean;
+	defaultTimeoutMs?: number;
+	defaultTurnBudget?: TurnBudgetConfig;
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
@@ -1238,6 +1242,27 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			: frontmatter.defaultContext === "fresh"
 				? "fresh" as const
 				: undefined;
+		let defaultAsync: boolean | undefined;
+		if (frontmatter.async !== undefined) {
+			if (frontmatter.async === "true") defaultAsync = true;
+			else if (frontmatter.async === "false") defaultAsync = false;
+			else throw new Error(`Agent '${localName}' has invalid async frontmatter; expected true or false.`);
+		}
+		let defaultTimeoutMs: number | undefined;
+		if (frontmatter.timeoutMs !== undefined) {
+			const parsed = Number(frontmatter.timeoutMs);
+			if (!Number.isInteger(parsed) || parsed <= 0) {
+				throw new Error(`Agent '${localName}' has invalid timeoutMs frontmatter; expected a positive integer.`);
+			}
+			defaultTimeoutMs = parsed;
+		}
+		let defaultTurnBudget: TurnBudgetConfig | undefined;
+		if (frontmatter.turnBudget !== undefined && frontmatter.turnBudget.trim()) {
+			const parsed = JSON.parse(frontmatter.turnBudget) as unknown;
+			const resolved = resolveTurnBudgetConfig(parsed, `Agent '${localName}' turnBudget frontmatter`);
+			if (resolved.error) throw new Error(resolved.error);
+			defaultTurnBudget = resolved.turnBudget;
+		}
 
 		let extensions: string[] | undefined;
 		if (frontmatter.extensions !== undefined) {
@@ -1288,6 +1313,9 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			inheritProjectContext,
 			inheritSkills,
 			defaultContext,
+			defaultAsync,
+			defaultTimeoutMs,
+			defaultTurnBudget,
 			systemPrompt: body,
 			source,
 			filePath,
