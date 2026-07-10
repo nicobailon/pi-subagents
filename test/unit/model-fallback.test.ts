@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import {
 	buildModelCandidates,
 	fuzzyResolveModel,
@@ -7,7 +7,79 @@ import {
 	normalizeModelSegment,
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
+	setLeadershipArtifact,
 } from "../../src/runs/shared/model-fallback.ts";
+import type { LeadershipArtifact } from "../../src/model-leadership/types.ts";
+
+describe("resolveSubagentModelOverride leadership-first selection", () => {
+	const availableModels = [
+		{ provider: "openai", id: "gpt-4o", fullId: "openai/gpt-4o" },
+		{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+	];
+	const parentModel = { provider: "deepseek", id: "deepseek-v4-flash" };
+
+	const leadershipArtifact: LeadershipArtifact = {
+		version: 1,
+		generatedAt: "2026-01-01T00:00:00Z",
+		source: { snapshotPath: "", snapshotGeneratedAt: "" },
+		config: { preferFree: true, defaultCategory: "coding", maxResults: 50, paidSortRule: { strategy: "priority" } },
+		models: [
+			{
+				id: "openai/gpt-4o",
+				provider: "openai",
+				modelId: "gpt-4o",
+				name: "GPT-4o",
+				isFree: false,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				family: "gpt",
+				categories: ["coding"],
+				rankings: { coding: 1 },
+				conservativeRating: 90,
+				available: true,
+				topRanking: 1,
+				topRankingCategory: "coding",
+				providers: ["openai/gpt-4o"],
+				availableProviders: ["openai/gpt-4o"],
+				availabilityScore: 1,
+			},
+		],
+		views: { freeLocal: [], paidLocal: [], overall: ["openai/gpt-4o"], byCategory: { coding: ["openai/gpt-4o"] } },
+	};
+
+	afterEach(() => {
+		// Reset the module leadership cache so other suites are unaffected.
+		setLeadershipArtifact(null);
+	});
+
+	it("selects the leadership model when no explicit model is requested", () => {
+		setLeadershipArtifact(leadershipArtifact);
+		const resolved = resolveSubagentModelOverride(undefined, parentModel, availableModels);
+		assert.equal(resolved, "openai/gpt-4o");
+	});
+
+	it("lets an explicit model override win over leadership", () => {
+		setLeadershipArtifact(leadershipArtifact);
+		const resolved = resolveSubagentModelOverride("anthropic/claude-sonnet-4", parentModel, availableModels);
+		assert.equal(resolved, "anthropic/claude-sonnet-4");
+	});
+
+	it("falls back to the parent model when no leadership is active", () => {
+		const resolved = resolveSubagentModelOverride(undefined, parentModel, availableModels);
+		assert.equal(resolved, "deepseek/deepseek-v4-flash");
+	});
+
+	it("falls back to the parent model when leadership returns an unavailable model", () => {
+		const unavailable: LeadershipArtifact = {
+			...leadershipArtifact,
+			models: [{ ...leadershipArtifact.models[0], id: "openai/gpt-99", available: false, availableProviders: [] }],
+			views: { freeLocal: [], paidLocal: [], overall: ["openai/gpt-99"], byCategory: { coding: ["openai/gpt-99"] } },
+		};
+		setLeadershipArtifact(unavailable);
+		const resolved = resolveSubagentModelOverride(undefined, parentModel, availableModels);
+		assert.equal(resolved, "deepseek/deepseek-v4-flash");
+	});
+});
 
 describe("model fallback helpers", () => {
 	const availableModels = [

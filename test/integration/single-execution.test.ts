@@ -996,23 +996,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "fallback assistant output");
 	});
 
-	it("does not retry on ordinary task/tool failures", async () => {
+	it("retries on unrecognized task/tool failures when fallback models are configured", async () => {
 		mockPi.onCall({
 			jsonl: [events.toolResult("bash", "process exited with code 127")],
 			exitCode: 0,
 		});
+		mockPi.onCall({ output: "Recovered on fallback" });
 		const agents = [makeAgent("echo", {
 			model: "openai/gpt-5-mini",
 			fallbackModels: ["anthropic/claude-sonnet-4"],
 		})];
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
-			runId: "no-fallback-task-failure",
+			runId: "fallback-unrecognized-error",
 		});
 
-		assert.equal(result.exitCode, 127);
-		assert.equal(result.modelAttempts?.length, 1);
-		assert.equal(mockPi.callCount(), 1);
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.modelAttempts?.length, 2);
+		assert.equal(mockPi.callCount(), 2);
 	});
 
 	it("tracks progress during execution", async () => {
