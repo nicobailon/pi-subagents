@@ -282,6 +282,24 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(args.includes("openai-codex/gpt-5.4-mini:high"));
 	});
 
+	it("passes max thinking through to the model argument", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			model: "openai/gpt-5",
+			thinking: "max",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.equal(applyThinkingSuffix("openai/gpt-5", "max"), "openai/gpt-5:max");
+		assert.equal(applyThinkingSuffix("openai/gpt-5:max", "high"), "openai/gpt-5:max");
+		assert.equal(applyThinkingSuffix("openai/gpt-5:max", "high", true), "openai/gpt-5:high");
+		assert.ok(args.includes("--model"));
+		assert.ok(args.includes("openai/gpt-5:max"));
+	});
+
 	it("passes explicit thinking off through to the model arg", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],

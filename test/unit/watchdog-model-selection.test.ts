@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { recommendStrongWatchdogModel, resolveWatchdogModelInput } from "../../src/watchdog/model-selection.ts";
 
-function createCtx(current: { provider: string; id: string }, authenticated: string[] = ["openai-codex/gpt-5.5", "anthropic/claude-opus-4-8"]) {
-	const models = [
+function createCtx(
+	current: { provider: string; id: string },
+	authenticated: string[] = ["openai-codex/gpt-5.5", "anthropic/claude-opus-4-8"],
+	models: Array<{ provider: string; id: string; reasoning: boolean; thinkingLevelMap?: Record<string, string | null> }> = [
 		{ provider: "openai-codex", id: "gpt-5.5", reasoning: true },
 		{ provider: "anthropic", id: "claude-opus-4-8", reasoning: true },
-	];
+	],
+) {
 	return {
 		cwd: "/tmp/watchdog-model-selection",
 		model: current,
@@ -105,5 +108,14 @@ describe("watchdog model selection", () => {
 
 		assert.equal(resolved.model, "openai-codex/gpt-5.5");
 		assert.equal(resolved.thinking, "high");
+	});
+
+	it("accepts a max suffix for an authenticated watchdog model", () => {
+		const ctx = createCtx(
+			{ provider: "openai", id: "gpt-5" },
+			["openai/gpt-5"],
+			[{ provider: "openai", id: "gpt-5", reasoning: true, thinkingLevelMap: { max: "max" } }],
+		);
+		assert.equal(resolveWatchdogModelInput(ctx, "openai/gpt-5:max").thinking, "max");
 	});
 });

@@ -8,7 +8,7 @@ interface ClarifyTestModel {
 	id: string;
 	fullId: string;
 	reasoning?: boolean;
-	thinkingLevelMap?: Partial<Record<"off" | "minimal" | "low" | "medium" | "high" | "xhigh", string | null>>;
+	thinkingLevelMap?: Partial<Record<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max", string | null>>;
 }
 
 interface ClarifyTestComponent {
@@ -116,6 +116,38 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 		assert.doesNotMatch(rendered, /minimal - Brief reasoning/);
 		assert.doesNotMatch(rendered, /low - Light reasoning/);
 		assert.doesNotMatch(rendered, /medium - Moderate reasoning/);
+		assert.doesNotMatch(rendered, /max - Maximum available reasoning/);
+	});
+
+	it("renders the max thinking option when the selected model exposes it", () => {
+		const component = new ChainClarifyComponent(
+			{ requestRender() {} },
+			{ fg(_key: string, text: string) { return text; } },
+			[{
+				name: "worker",
+				description: "",
+				systemPrompt: "",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				source: "user",
+				filePath: "worker.md",
+				model: "openai/gpt-5",
+			}],
+			["Task"],
+			"Task",
+			undefined,
+			[{ output: false, outputMode: "inline", reads: false, progress: false, skills: [], model: "openai/gpt-5" }],
+			[{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { max: "max" } }],
+			"openai",
+			[],
+			() => {},
+			"single",
+		);
+		component.selectedStep = 0;
+		component.enterThinkingSelector();
+		const rendered = component.renderThinkingSelector().join("\n");
+		assert.match(rendered, /max - Maximum available reasoning/);
 	});
 
 	it("drops thinking when switching to a model that does not support it", () => {

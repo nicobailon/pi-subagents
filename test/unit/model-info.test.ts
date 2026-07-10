@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findModelInfo, getSupportedThinkingLevels, type ModelInfo } from "../../src/shared/model-info.ts";
+import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, type ModelInfo } from "../../src/shared/model-info.ts";
 
 describe("model info helpers", () => {
 	const ambiguousModels: ModelInfo[] = [
@@ -20,14 +20,15 @@ describe("model info helpers", () => {
 		assert.equal(findModelInfo("openai/gpt-5-mini:high", ambiguousModels, "github-copilot")?.fullId, "openai/gpt-5-mini");
 	});
 
-	it("keeps the legacy full thinking list for reasoning models without per-level metadata", () => {
+	it("keeps the legacy thinking list for models without per-level metadata", () => {
 		assert.deepEqual(
 			getSupportedThinkingLevels({ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true }),
 			["off", "minimal", "low", "medium", "high", "xhigh"],
 		);
+		assert.deepEqual(getSupportedThinkingLevels(undefined), ["off", "minimal", "low", "medium", "high", "xhigh"]);
 	});
 
-	it("keeps the legacy full thinking list when older model metadata omits reasoning", () => {
+	it("keeps the legacy thinking list when older model metadata omits reasoning", () => {
 		assert.deepEqual(
 			getSupportedThinkingLevels({ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }),
 			["off", "minimal", "low", "medium", "high", "xhigh"],
@@ -57,6 +58,23 @@ describe("model info helpers", () => {
 				thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: "high" },
 			}),
 			["high"],
+		);
+	});
+
+	it("honors an explicit max mapping and recognizes max suffixes", () => {
+		assert.deepEqual(
+			getSupportedThinkingLevels({
+				provider: "openai",
+				id: "gpt-5",
+				fullId: "openai/gpt-5",
+				reasoning: true,
+				thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: null, xhigh: null, max: "max" },
+			}),
+			["max"],
+		);
+		assert.deepEqual(
+			splitKnownThinkingSuffix("openai/gpt-5:max"),
+			{ baseModel: "openai/gpt-5", thinkingSuffix: ":max" },
 		);
 	});
 });
