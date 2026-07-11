@@ -1102,16 +1102,27 @@ export class ChainClarifyComponent implements Component {
 		return lines;
 	}
 
-	private getFooterText(): string {
-		const bgLabel = this.runInBackground ? '[b]g:ON' : '[b]g';
+	private getShortcutHelpText(): string {
+		const th = this.theme;
+		const shortcut = (key: string, label: string) =>
+			th.fg("accent", `[${key}]`) + th.fg("dim", label);
+		const backgroundState = this.runInBackground ? "ON" : "OFF";
+		const background = shortcut("b", `Background:${backgroundState}`);
+
 		switch (this.mode) {
 			case 'single':
-				return ` [Enter] Run • [Esc] Cancel • e m t w s ${bgLabel} `;
+				return ` ${shortcut("e", "Task")} ${shortcut("m", "Model")} ${shortcut("t", "Think")} ${shortcut("w", "Output")} ${shortcut("s", "Skills")} ${background}`;
 			case 'parallel':
-				return ` [Enter] Run • [Esc] Cancel • e m t s ${bgLabel} • ↑↓ Nav `;
+				return ` ${shortcut("e", "Task")} ${shortcut("m", "Model")} ${shortcut("t", "Think")} ${shortcut("s", "Skills")} ${background}`;
 			case 'chain':
-				return ` [Enter] Run • [Esc] Cancel • e m t w r p s ${bgLabel} • ↑↓ Nav `;
+				return ` ${shortcut("e", "Task")} ${shortcut("m", "Model")} ${shortcut("t", "Think")} ${shortcut("w", "Output")} ${shortcut("r", "Reads")} ${shortcut("p", "Prog")} ${shortcut("s", "Skills")} ${background}`;
 		}
+	}
+
+	private getFooterText(): string {
+		return this.mode === 'single'
+			? " [Enter] Run • [Esc] Cancel "
+			: " [Enter] Run • [Esc] Cancel • [↑↓] Navigate ";
 	}
 
 	private appendNotice(lines: string[]): void {
@@ -1162,7 +1173,7 @@ export class ChainClarifyComponent implements Component {
 		const skillsLabel = th.fg("dim", "skills: ");
 		lines.push(this.row(`     ${skillsLabel}${truncateToWidth(skillsValue, innerW - 14)}`));
 
-		lines.push(this.row(""));
+		lines.push(this.row(this.getShortcutHelpText()));
 
 		this.appendNotice(lines);
 		lines.push(this.renderFooter(this.getFooterText()));
@@ -1216,6 +1227,8 @@ export class ChainClarifyComponent implements Component {
 			lines.push(this.row(""));
 		}
 
+		if (this.agentConfigs.length > 0) lines.pop();
+		lines.push(this.row(this.getShortcutHelpText()));
 		this.appendNotice(lines);
 		lines.push(this.renderFooter(this.getFooterText()));
 
@@ -1319,6 +1332,8 @@ export class ChainClarifyComponent implements Component {
 			lines.push(this.row(""));
 		}
 
+		if (this.agentConfigs.length > 0) lines.pop();
+		lines.push(this.row(this.getShortcutHelpText()));
 		this.appendNotice(lines);
 		lines.push(this.renderFooter(this.getFooterText()));
 

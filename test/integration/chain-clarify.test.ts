@@ -271,4 +271,69 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 
 		assert.equal(component.getEffectiveModel(0), "github-copilot/gpt-5:high");
 	});
+
+	it("labels every shortcut and keeps the clarify overlay within 84 columns", () => {
+		for (const mode of ["single", "parallel", "chain"] as const) {
+			const count = mode === "single" ? 1 : mode === "parallel" ? 2 : 4;
+			const component = new ChainClarifyComponent(
+				{ requestRender() {} },
+				{ fg(_key: string, text: string) { return `\u001b[31m${text}\u001b[0m`; } },
+				Array.from({ length: count }, (_, index) => ({
+					name: `agent-${index + 1}`,
+					description: "",
+					systemPrompt: "",
+					systemPromptMode: "replace",
+					inheritProjectContext: false,
+					inheritSkills: false,
+					source: "user",
+					filePath: `agent-${index + 1}.md`,
+				})),
+				Array.from({ length: count }, (_, index) => index === 0 ? "Task" : "Use {previous}"),
+				"Task",
+				undefined,
+				Array.from({ length: count }, () => ({
+					output: false,
+					outputMode: "inline",
+					reads: false,
+					progress: false,
+					skills: [],
+					model: undefined,
+				})),
+				[],
+				undefined,
+				[],
+				() => {},
+				mode,
+			);
+
+			const initialLines = component.render(84).map(stripAnsi);
+			const initial = initialLines.join("\n");
+			assert.match(initial, /\[e\]Task/);
+			assert.match(initial, /\[m\]Model/);
+			assert.match(initial, /\[t\]Think/);
+			assert.match(initial, /\[s\]Skills/);
+			assert.match(initial, /\[b\]Background:OFF/);
+			assert.doesNotMatch(initial, /• e m t/);
+			assert.match(initial, /\[Enter\] Run • \[Esc\] Cancel/);
+			if (mode === "single") {
+				assert.match(initial, /\[w\]Output/);
+				assert.doesNotMatch(initial, /\[↑↓\] Navigate/);
+			} else {
+				assert.match(initial, /\[↑↓\] Navigate/);
+			}
+			if (mode === "chain") {
+				assert.match(initial, /\[w\]Output/);
+				assert.match(initial, /\[r\]Reads/);
+				assert.match(initial, /\[p\]Prog/);
+			} else if (mode === "parallel") {
+				assert.doesNotMatch(initial, /\[w\]Output|\[r\]Reads|\[p\]Prog/);
+			}
+			for (const line of initialLines) {
+				assert.equal(visibleWidth(line), 84, `${mode} line did not match component width: ${line}`);
+			}
+
+			component.handleInput("b");
+			assert.match(component.render(84).map(stripAnsi).join("\n"), /\[b\]Background:ON/);
+		}
+	});
 });
