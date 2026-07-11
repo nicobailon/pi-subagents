@@ -61,7 +61,9 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 		const match = line.match(/^([\w-]+):\s*(.*)$/);
 		if (match) {
 			let value = match[2].trim();
-			if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+			// skillPath has its own YAML-string-list parser and needs quote context to
+			// distinguish a literal ` #` from a comment.
+			if (match[1] !== "skillPath" && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
 				value = value.slice(1, -1);
 			}
 

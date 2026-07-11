@@ -18,6 +18,7 @@ export const KNOWN_FIELDS = new Set([
 	"turnBudget",
 	"skill",
 	"skills",
+	"skillPath",
 	"extensions",
 	"subagentOnlyExtensions",
 	"output",
@@ -71,6 +72,16 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 
 	const skillsValue = joinComma(config.skills);
 	if (skillsValue || preserve("skill", "skills")) lines.push(`skills: ${skillsValue ?? ""}`);
+	if (config.skillPath?.length === 1) {
+		// JSON string syntax is also unambiguous YAML and safely preserves commas,
+		// comments, quotes, and leading/trailing whitespace in trusted path config.
+		lines.push(`skillPath: ${JSON.stringify(config.skillPath[0])}`);
+	} else if (config.skillPath && config.skillPath.length > 1) {
+		lines.push("skillPath:");
+		for (const skillPath of config.skillPath) lines.push(`  - ${JSON.stringify(skillPath)}`);
+	} else if (preserve("skillPath")) {
+		lines.push("skillPath:");
+	}
 
 	if (config.extensions !== undefined) {
 		const extensionsValue = joinComma(config.extensions);

@@ -700,7 +700,12 @@ thinking: high
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
-skills: safe-bash, chrome-devtools
+# Names to select/inject; skillPath only makes candidates discoverable.
+skills: safe-bash, chrome-devtools, review-checklist
+# Invocation-private paths; relative paths resolve beside this agent file.
+skillPath:
+  - ./skills
+  - ./review-checklist/SKILL.md
 output: context.md
 defaultReads: context.md
 defaultProgress: true
@@ -731,6 +736,7 @@ Important fields:
 | `inheritSkills` | Keeps or strips Pi’s discovered skills catalog. |
 | `defaultContext` | Optional `fresh` or `fork` launch context default for this agent. |
 | `skills` | Adds specific skills to the child’s available skill list, regardless of `inheritSkills`. |
+| `skillPath` | A scalar, inline YAML string list, or block YAML string list of invocation-private skill files/directories. It discovers candidates only—it does **not** select or inject them; list each desired name under `skills`. Relative paths resolve against the agent definition; matching local names win, while unresolved or unreadable local names fall back globally. Agent definitions are trusted configuration, not a sandbox: absolute paths, `..`, and symlinks are supported. |
 | `output` | Default single-agent output file. |
 | `defaultReads` | Files to read before running in chain/parallel behavior. |
 | `defaultProgress` | Maintain `progress.md`. |
