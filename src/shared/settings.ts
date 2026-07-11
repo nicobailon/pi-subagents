@@ -55,6 +55,7 @@ export interface SequentialStep {
 	progress?: boolean;
 	skill?: string | string[] | false;
 	model?: string;
+	thinking?: string | false;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
 }
@@ -75,6 +76,7 @@ export interface ParallelTaskItem {
 	progress?: boolean;
 	skill?: string | string[] | false;
 	model?: string;
+	thinking?: string | false;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
 }

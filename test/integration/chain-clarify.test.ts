@@ -112,7 +112,7 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 
 		assert.match(rendered, /off - No extended thinking/);
 		assert.match(rendered, /high - Deep reasoning/);
-		assert.match(rendered, /xhigh - Maximum reasoning/);
+		assert.match(rendered, /xhigh - Very deep reasoning/);
 		assert.doesNotMatch(rendered, /minimal - Brief reasoning/);
 		assert.doesNotMatch(rendered, /low - Light reasoning/);
 		assert.doesNotMatch(rendered, /medium - Moderate reasoning/);

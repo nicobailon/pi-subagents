@@ -6,7 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { type AgentConfig, type AgentScope } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectChainRunsDir } from "../../shared/artifacts.ts";
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
-import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
+import { THINKING_LEVELS, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
@@ -122,6 +122,7 @@ interface TaskParam {
 	reads?: string[] | boolean;
 	progress?: boolean;
 	model?: string;
+	thinking?: string | false;
 	skill?: string | string[] | boolean;
 	acceptance?: AcceptanceInput;
 	toolBudget?: ToolBudgetConfig;
@@ -715,6 +716,14 @@ function appendStepToAsyncChain(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+	const thinkingError = validateExecutionThinking(input.params);
+	if (thinkingError) {
+		return {
+			content: [{ type: "text", text: `Cannot append step: ${thinkingError}` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	const acceptanceErrors = validateExecutionAcceptance(input.params);
 	if (acceptanceErrors.length > 0) {
 		return {
@@ -822,6 +831,7 @@ function appendStepToAsyncChain(input: {
 		cwd: status.cwd ?? input.requestCwd,
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
+		thinkingOverridesByFlatIndex: collectRequestedThinkingOverrides(input.params, input.deps.config.chain?.dynamicFanout?.maxItems),
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		asyncDir: resolved.location.asyncDir,
 		validateOutputBindings: false,
@@ -1348,6 +1358,38 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	};
 }
 
+function validateExecutionThinking(params: SubagentParamsLike): string | undefined {
+	const validate = (value: string | false | undefined, label: string): string | undefined => {
+		if (value === undefined || value === false || THINKING_LEVELS.some((level) => level === value)) return undefined;
+		return `${label} must be one of: ${THINKING_LEVELS.join(", ")}.`;
+	};
+
+	const runError = validate(params.thinking, "thinking");
+	if (runError) return runError;
+	for (let index = 0; index < (params.tasks?.length ?? 0); index++) {
+		const error = validate(params.tasks![index]!.thinking, `tasks[${index}].thinking`);
+		if (error) return error;
+	}
+	for (let stepIndex = 0; stepIndex < (params.chain?.length ?? 0); stepIndex++) {
+		const step = params.chain![stepIndex]!;
+		if (isParallelStep(step)) {
+			for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
+				const error = validate(step.parallel[taskIndex]!.thinking, `chain[${stepIndex}].parallel[${taskIndex}].thinking`);
+				if (error) return error;
+			}
+			continue;
+		}
+		if (isDynamicParallelStep(step)) {
+			const error = validate(step.parallel.thinking, `chain[${stepIndex}].parallel.thinking`);
+			if (error) return error;
+			continue;
+		}
+		const error = validate((step as SequentialStep).thinking, `chain[${stepIndex}].thinking`);
+		if (error) return error;
+	}
+	return undefined;
+}
+
 function validateExecutionInput(
 	params: SubagentParamsLike,
 	agents: AgentConfig[],
@@ -1366,6 +1408,15 @@ function validateExecutionInput(
 			],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
+		};
+	}
+
+	const thinkingError = validateExecutionThinking(params);
+	if (thinkingError) {
+		return {
+			content: [{ type: "text", text: thinkingError }],
+			isError: true,
+			details: { mode: getRequestedModeLabel(params), results: [] },
 		};
 	}
 
@@ -1707,6 +1758,40 @@ function collectChainSessionFiles(
 		flatIndex++;
 	}
 	return sessionFiles;
+}
+
+function normalizeRequestedThinking(thinking: string | false | undefined): AgentConfig["thinking"] | undefined {
+	if (thinking === false) return "off";
+	return THINKING_LEVELS.find((level) => level === thinking);
+}
+
+function collectRequestedThinkingOverrides(
+	params: SubagentParamsLike,
+	dynamicFanoutMaxItems?: number,
+): (AgentConfig["thinking"] | undefined)[] {
+	const runThinking = normalizeRequestedThinking(params.thinking);
+	if (params.tasks) {
+		return params.tasks.map((task) => normalizeRequestedThinking(task.thinking) ?? runThinking);
+	}
+	if (!params.chain) return [runThinking];
+
+	const overrides: (AgentConfig["thinking"] | undefined)[] = [];
+	for (const step of params.chain) {
+		if (isParallelStep(step)) {
+			for (const task of step.parallel) {
+				overrides.push(normalizeRequestedThinking(task.thinking) ?? runThinking);
+			}
+			continue;
+		}
+		if (isDynamicParallelStep(step)) {
+			const thinking = normalizeRequestedThinking(step.parallel.thinking) ?? runThinking;
+			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
+			for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) overrides.push(thinking);
+			continue;
+		}
+		overrides.push(normalizeRequestedThinking((step as SequentialStep).thinking) ?? runThinking);
+	}
+	return overrides;
 }
 
 function collectChainThinkingOverrides(
@@ -3518,12 +3603,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			path.join(sessionRoot, `run-${idx ?? 0}`);
 		const forkSessionFileForTask = (agentName: string, idx?: number) =>
 			shouldForkAgent(contextPolicy, agentName) ? forkSessionFileForIndex(idx) : undefined;
-		const forkThinkingOverrideForTask = (agentName: string, idx?: number) =>
-			shouldForkAgent(contextPolicy, agentName) ? forkThinkingOverrideForIndex(idx) : undefined;
 		const childSessionFileForTask = (agentName: string, idx?: number) =>
 			forkSessionFileForTask(agentName, idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
+		const requestedThinkingOverrides = collectRequestedThinkingOverrides(effectiveParams, deps.config.chain?.dynamicFanout?.maxItems);
+		const thinkingOverrideForTask = (agentName: string, idx = 0) => {
+			const forkSafetyOverride = shouldForkAgent(contextPolicy, agentName) ? forkThinkingOverrideForIndex(idx) : undefined;
+			return forkSafetyOverride ?? requestedThinkingOverrides[idx];
+		};
 		try {
 			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
 		} catch (error) {
@@ -3559,7 +3647,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			sessionDirForIndex,
 			sessionFileForIndex: childSessionFileForIndex,
 			sessionFileForTask: childSessionFileForTask,
-			thinkingOverrideForTask: forkThinkingOverrideForTask,
+			thinkingOverrideForTask,
 			artifactConfig,
 			artifactsDir,
 			backgroundRequestedWhileClarifying,

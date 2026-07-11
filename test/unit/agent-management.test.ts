@@ -512,7 +512,7 @@ Drive the failing test first.
 		assert.equal(result.isError, false);
 		assert.match(text, /^Builtin subagent models/m);
 		assert.match(text, /Current session model:\n  openai\/gpt-5-mini/);
-		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  source: inherits current session model(?:\n|$)/);
+		assert.match(text, /(?:^|\n)scout\n  model:\n    openai\/gpt-5-mini\n  default thinking: low\n  source: inherits current session model(?:\n|$)/);
 	});
 
 	it("reports override source and disabled builtin state in runtime model mappings", () => {
@@ -544,6 +544,7 @@ Drive the failing test first.
 		assert.match(text, /Agent: reviewer/);
 		assert.match(text, /Effective model:\n  anthropic\/claude-sonnet-4/);
 		assert.match(text, /Source: project override/);
+		assert.match(text, /Default thinking: high/);
 		assert.match(text, /Requested model setting:\n  claude-sonnet-4/);
 		assert.match(text, /Disabled: true/);
 		assert.match(text.replaceAll("\\", "/"), /Override file:\n  .*\.pi\/settings\.json/);

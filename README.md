@@ -960,6 +960,7 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
 ```ts
 // Single agent
 { agent: "worker", task: "refactor auth" }
+{ agent: "worker", task: "implement the approved plan", thinking: "low" }
 { agent: "scout", task: "find todos", maxOutput: { lines: 1000 } }
 { agent: "scout", task: "investigate", output: false }
 { agent: "scout", task: "write a large report", output: "reports/scout.md", outputMode: "file-only" }
@@ -969,15 +970,19 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
 
 // Parallel
 { tasks: [{ agent: "scout", task: "a" }, { agent: "reviewer", task: "b" }] }
+{ thinking: "medium", tasks: [
+  { agent: "worker", task: "implement the approved plan", thinking: "low" },
+  { agent: "planner", task: "design the migration", thinking: "xhigh" }
+] }
 { tasks: [{ agent: "scout", task: "audit auth", count: 3 }] }
 { tasks: [{ agent: "scout", task: "audit frontend" }, { agent: "reviewer", task: "audit backend" }], context: "fork" }
 
 // Chain
 { chain: [
-  { agent: "scout", task: "Gather context for auth refactor" },
-  { agent: "planner" },
-  { agent: "worker" },
-  { agent: "reviewer" }
+  { agent: "scout", task: "Gather context for auth refactor", thinking: "low" },
+  { agent: "planner", thinking: "xhigh" },
+  { agent: "worker", thinking: "low" },
+  { agent: "reviewer", thinking: "medium" }
 ]}
 
 // Chain in the background, suitable for unblocking the main chat
@@ -1034,6 +1039,8 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
   { agent: "worker", task: "Implement API" }
 ], worktree: true }
 ```
+
+`thinking` accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. A task or chain-step value overrides the invocation-wide value; the invocation-wide value overrides the agent's configured default. Fork-context safety sanitization may still force thinking off when inherited signed thinking blocks cannot be replayed safely.
 
 ### Management actions
 

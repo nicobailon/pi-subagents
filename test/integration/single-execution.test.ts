@@ -257,15 +257,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		removeTempDir(tempDir);
 	});
 
-	function readCall(): { args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> } {
-		const callFile = fs.readdirSync(mockPi.dir)
+	function readCalls(): Array<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
+		return fs.readdirSync(mockPi.dir)
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
-			.at(-1);
-		assert.ok(callFile, "expected a recorded mock pi call");
-		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
-		assert.ok(Array.isArray(payload.args), "expected recorded args");
-		return { args: payload.args, systemPrompts: payload.systemPrompts ?? [] };
+			.map((name) => {
+				const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord;
+				assert.ok(Array.isArray(payload.args), "expected recorded args");
+				return { args: payload.args, systemPrompts: payload.systemPrompts ?? [] };
+			});
+	}
+
+	function readCall(): { args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> } {
+		const call = readCalls().at(-1);
+		assert.ok(call, "expected a recorded mock pi call");
+		return call;
 	}
 
 	function readCallArgs(): string[] {
@@ -1356,6 +1362,89 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(typeof result.details?.asyncId, "string");
 		assert.equal(result.details?.timeoutMs, 2_000);
 		assert.deepEqual(result.details?.turnBudget, { maxTurns: 4, graceTurns: 2 });
+	});
+
+	it("lets an explicit run thinking level override the agent default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "low-effort implementation finished" });
+		const executor = makeExecutor([
+			makeAgent("echo", { model: "openai/gpt-5", thinking: "high", completionGuard: false }),
+		]);
+
+		const result = await executor.execute(
+			"explicit-thinking",
+			{ agent: "echo", task: "Implement the approved plan", thinking: "low" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		const modelIndex = args.indexOf("--model");
+		assert.notEqual(modelIndex, -1);
+		assert.equal(args[modelIndex + 1], "openai/gpt-5:low");
+	});
+
+	it("applies per-step thinking over a run-wide chain default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Done" });
+		const executor = makeExecutor([
+			makeAgent("echo", { model: "openai/gpt-5", thinking: "high", completionGuard: false }),
+		]);
+
+		const result = await executor.execute(
+			"chain-thinking",
+			{
+				thinking: "medium",
+				chain: [
+					{ agent: "echo", task: "Plan", thinking: "xhigh" },
+					{ agent: "echo", task: "Implement", thinking: "low" },
+				],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		const models = readCalls().map(({ args }) => args[args.indexOf("--model") + 1]);
+		assert.deepEqual(models, ["openai/gpt-5:xhigh", "openai/gpt-5:low"]);
+	});
+
+	it("accepts max as an explicit run thinking level", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "maximum-effort planning finished" });
+		const executor = makeExecutor([
+			makeAgent("echo", { model: "openai/gpt-5", thinking: "low" }),
+		]);
+
+		const result = await executor.execute(
+			"max-thinking",
+			{ agent: "echo", task: "Plan the system", thinking: "max" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		const modelIndex = args.indexOf("--model");
+		assert.notEqual(modelIndex, -1);
+		assert.equal(args[modelIndex + 1], "openai/gpt-5:max");
+	});
+
+	it("rejects watchdog-only inherit as an execution thinking level", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5" })]);
+
+		const result = await executor.execute(
+			"invalid-execution-thinking",
+			{ agent: "echo", task: "Task", thinking: "inherit" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /thinking must be one of/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("lets agent frontmatter override the global async default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

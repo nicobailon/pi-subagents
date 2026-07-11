@@ -17,6 +17,7 @@ interface SubagentParamsSchema {
 						minimum?: number;
 						description?: string;
 					};
+					thinking?: { type?: string; enum?: string[] };
 				};
 			};
 		};
@@ -65,6 +66,7 @@ interface SubagentParamsSchema {
 			maximum?: number;
 			description?: string;
 		};
+		thinking?: JsonSchemaNode;
 		control?: {
 			properties?: {
 				needsAttentionAfterMs?: { minimum?: number };
@@ -172,6 +174,30 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(concurrencySchema, "concurrency schema should exist");
 		assert.equal(concurrencySchema.minimum, 1);
 		assert.match(String(concurrencySchema.description ?? ""), /parallel/i);
+	});
+
+	it("exposes run-wide and per-task thinking overrides including max", () => {
+		const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+		const runThinking = SubagentParams?.properties?.thinking;
+		const runStringBranch = anyOfBranches(runThinking).find((branch) => branch.type === "string");
+		assert.deepEqual(runStringBranch?.enum, [...levels, "inherit"]);
+
+		const taskThinking = SubagentParams?.properties?.tasks?.items?.properties?.thinking;
+		assert.equal(taskThinking?.type, "string");
+		assert.deepEqual(taskThinking?.enum, levels);
+
+		const chainItem = SubagentParams?.properties?.chain?.items;
+		const chainThinking = getPropertySchema(chainItem, ["thinking"]);
+		assert.equal(chainThinking?.type, "string");
+		assert.deepEqual(chainThinking?.enum, levels);
+
+		const parallelSchema = getPropertySchema(chainItem, ["parallel"]);
+		const staticParallel = anyOfBranches(parallelSchema).find((branch) => branch.type === "array");
+		const staticThinking = getPropertySchema(staticParallel?.items as JsonSchemaNode, ["thinking"]);
+		assert.deepEqual(staticThinking?.enum, levels);
+		const dynamicParallel = anyOfBranches(parallelSchema).find((branch) => branch.type === "object");
+		const dynamicThinking = getPropertySchema(dynamicParallel, ["thinking"]);
+		assert.deepEqual(dynamicThinking?.enum, levels);
 	});
 
 	it("allows runtime validation of management and control action strings", () => {

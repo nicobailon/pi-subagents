@@ -1,4 +1,4 @@
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = typeof THINKING_LEVELS[number];
 export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
 
@@ -66,12 +66,12 @@ export function getSupportedThinkingLevels(model: ModelInfo | undefined): Thinki
 	if (!model) return [...THINKING_LEVELS];
 	if (model.reasoning === false) return ["off"];
 
-	if (!model.thinkingLevelMap) return [...THINKING_LEVELS];
+	if (!model.thinkingLevelMap) return THINKING_LEVELS.filter((level) => level !== "max");
 
 	const levels = THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
-		if (level === "xhigh") return mapped !== undefined;
+		if (level === "xhigh" || level === "max") return mapped !== undefined;
 		return true;
 	});
 	return levels;

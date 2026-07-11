@@ -797,7 +797,7 @@ Run the work through seven gated phases:
 
 For straightforward non-trivial work, this sequence is the lightweight version of the parent-owned loop. When the task is complex, use Fable mode above. In either case, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents.
 
-Keep builtin agent defaults unless the user explicitly asks for a different model, thinking level, skills, output behavior, context mode, or other override. Do not add overrides just because you are orchestrating; the defaults encode the intended role behavior. In particular, packaged `planner`, `worker`, and `oracle` default to forked context.
+Treat builtin model and thinking settings as fallbacks. When the user's policy or the delegated task calls for a specific reasoning budget, set `thinking` explicitly on the invocation or individual task/chain step; task-level effort should reflect the work being delegated rather than the parent's effort. Keep other builtin defaults unless the user or task requires an override. In particular, packaged `planner`, `worker`, and `oracle` default to forked context.
 
 When the user approves launching a subagent to carry out a plan or workflow, treat that as approval to generate a proper role-specific meta prompt for that subagent. Include the approved plan path or summary, clarified requirements, non-goals, relevant context, role boundaries, files or areas to inspect, acceptance criteria, expected output, and validation expectations. Do not pass vague instructions like “implement the plan fully” or “review this” by themselves.
 

@@ -125,10 +125,17 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		});
 	}
 
+	function readAllCallArgs(): string[][] {
+		return fs.readdirSync(mockPi.dir)
+			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.sort()
+			.map((name) => JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")).args as string[]);
+	}
+
 	function readLastCallArgs(): string[] {
-		const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
-		assert.ok(callFile, "expected a recorded mock pi call");
-		return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
+		const calls = readAllCallArgs();
+		assert.ok(calls.length > 0, "expected a recorded mock pi call");
+		return calls.at(-1)!;
 	}
 
 	it("runs multiple agents concurrently via mapConcurrent + runSync", async () => {
@@ -189,6 +196,32 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			assert.equal(result.details?.mode, "parallel");
 			assert.match(result.content[0]?.text ?? "", new RegExp(`${action} alias finished`));
 		}
+	});
+
+	it("applies per-task thinking over a run-wide thinking default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Done" });
+		const executor = makeExecutor([
+			makeAgent("agent-a", { model: "openai/gpt-5", thinking: "high" }),
+			makeAgent("agent-b", { model: "openai/gpt-5", thinking: "high" }),
+		]);
+
+		const result = await executor.execute(
+			"parallel-thinking",
+			{
+				thinking: "medium",
+				tasks: [
+					{ agent: "agent-a", task: "Implement", thinking: "low" },
+					{ agent: "agent-b", task: "Plan", thinking: "xhigh" },
+				],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		const models = readAllCallArgs().map((args) => args[args.indexOf("--model") + 1]).sort();
+		assert.deepEqual(models, ["openai/gpt-5:low", "openai/gpt-5:xhigh"]);
 	});
 
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

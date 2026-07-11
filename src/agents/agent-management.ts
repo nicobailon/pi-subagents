@@ -667,6 +667,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 			"Effective model:",
 			`  ${resolvedModel ?? "(unresolved)"}`,
 			`Source: ${formatModelSource(agent, currentModel)}`,
+			`Default thinking: ${agent.thinking ?? "(inherits child Pi default)"}`,
 		];
 		if (agent.override) {
 			lines.push("Override file:");
@@ -705,6 +706,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 		lines.push(name);
 		lines.push("  model:");
 		lines.push(`    ${resolvedModel ?? "(unresolved)"}`);
+		lines.push(`  default thinking: ${agent.thinking ?? "(inherits child Pi default)"}`);
 		lines.push(`  source: ${source}`);
 		lines.push("");
 	}

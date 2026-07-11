@@ -41,9 +41,9 @@ describe("model info helpers", () => {
 				id: "deepseek-v4-pro",
 				fullId: "deepseek/deepseek-v4-pro",
 				reasoning: true,
-				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" },
+				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "xhigh", max: "max" },
 			}),
-			["off", "high", "xhigh"],
+			["off", "high", "xhigh", "max"],
 		);
 	});
 
