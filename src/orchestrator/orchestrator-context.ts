@@ -88,6 +88,8 @@ export interface WorktreeOrchestratorContext {
 	runAgent(config: OrchestratorRunAgentConfig): Promise<OrchestratorRunAgentResult>;
 	/** Ścieżka do katalogu worktree */
 	worktreePath: string;
+	/** Ścieżka do pliku .patch (przekazana jawnie przez użytkownika przy wywołaniu runInWorktree) */
+	patchPath: string;
 	/** Log do debugu */
 	log(message: string): void;
 }
@@ -102,10 +104,14 @@ export interface OrchestratorContext {
 	 * wspólnym worktree. Po zakończeniu callbacku tworzony jest patch
 	 * ze wszystkimi zmianami, a worktree jest usuwany.
 	 *
+	 * @param patchPath - jawna ścieżka do pliku .patch (absolutna lub względem cwd)
+	 * @param fn - callback wykonujący agentów w worktree
+	 *
 	 * Zwraca wynik callbacku połączony z WorktreeBlockResult.
 	 * Jeśli callback rzuci wyjątek, worktree i tak jest sprzątany.
 	 */
 	runInWorktree<T>(
+		patchPath: string,
 		fn: (ctx: WorktreeOrchestratorContext) => Promise<T>,
 	): Promise<T & WorktreeBlockResult>;
 
@@ -230,9 +236,11 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 	};
 
 	const runInWorktree = async <T>(
+		patchPath: string,
 		fn: (ctx: WorktreeOrchestratorContext) => Promise<T>,
 	): Promise<T & WorktreeBlockResult> => {
 		let setup: WorktreeSetup | undefined;
+		const resolvedPatchPath = path.isAbsolute(patchPath) ? patchPath : path.resolve(deps.cwd, patchPath);
 
 		try {
 			const repo = resolveRepoState(deps.cwd);
@@ -253,31 +261,31 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			};
 
 			const worktreeCwd = worktree.agentCwd;
-			log(`Worktree created at ${worktree.path} (agent cwd: ${worktreeCwd})`);
+			log(`Worktree created at ${worktree.path} (agent cwd: ${worktreeCwd}, patch: ${resolvedPatchPath})`);
+
+			// Ensure parent dir exists
+			try {
+				fs.mkdirSync(path.dirname(resolvedPatchPath), { recursive: true });
+			} catch {
+				// best-effort
+			}
 
 			const wtCtx: WorktreeOrchestratorContext = {
 				runAgent: async (config: OrchestratorRunAgentConfig) => {
 					return runAgent({ ...config, cwd: config.cwd ?? worktreeCwd });
 				},
 				worktreePath: worktreeCwd,
+				patchPath: resolvedPatchPath,
 				log,
 			};
 
 			const userResult = await fn(wtCtx);
 
-			// Capture diff
-			const patchesDir = path.join(deps.chainDir, "worktree-patches");
-			const patchPath = path.join(patchesDir, `orch-${deps.runId}.patch`);
-			try {
-				fs.mkdirSync(patchesDir, { recursive: true });
-			} catch {
-				// best-effort
-			}
-
-			const diff = captureWorktreeDiff(setup, worktree, "orchestrator", patchPath);
+			// Capture diff to the user-specified patchPath
+			const diff = captureWorktreeDiff(setup, worktree, "orchestrator", resolvedPatchPath);
 			const patch = (() => {
 				try {
-					return fs.readFileSync(patchPath, "utf-8");
+					return fs.readFileSync(resolvedPatchPath, "utf-8");
 				} catch {
 					return "";
 				}
@@ -291,7 +299,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 				filesChanged: diff.filesChanged,
 				insertions: diff.insertions,
 				deletions: diff.deletions,
-				patchPath,
+				patchPath: resolvedPatchPath,
 				patch,
 			};
 		} finally {
