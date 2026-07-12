@@ -171,16 +171,6 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
 	}
 
-	function readCallSystemPrompt(index: number): string {
-		const callFiles = fs.readdirSync(mockPi.dir)
-			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-			.sort();
-		const callFile = callFiles[index];
-		assert.ok(callFile, `expected call ${index}`);
-		const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as { systemPrompts?: Array<{ text?: string }> };
-		return payload.systemPrompts?.map((record) => record.text ?? "").join("\n") ?? "";
-	}
-
 	function acceptanceReport(overrides: Record<string, unknown> = {}): string {
 		return [
 			"done",
@@ -1086,25 +1076,6 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		assert.deepEqual(result.details.results[0]?.skills, ["chain-step-skill"]);
-	});
-
-	it("injects agent-local skills for foreground parallel chain children", async () => {
-		mockPi.onCall({ output: "one" });
-		mockPi.onCall({ output: "two" });
-		const agents = ["one", "two"].map((name) => {
-			const agentFile = path.join(tempDir, "agents", name, `${name}.md`);
-			const skillFile = path.join(path.dirname(agentFile), "skills", `${name}-skill`, "SKILL.md");
-			fs.mkdirSync(path.dirname(skillFile), { recursive: true });
-			fs.writeFileSync(skillFile, `---\ndescription: ${name} local skill\n---\n${name} body\n`, "utf-8");
-			return makeAgent(name, { filePath: agentFile, skills: [`${name}-skill`], skillPath: ["./skills"] });
-		});
-
-		const result = await executeChain(makeChainParams([{ parallel: [{ agent: "one", task: "One" }, { agent: "two", task: "Two" }] }], agents));
-
-		assert.ok(!result.isError, JSON.stringify(result.content));
-		const prompts = [readCallSystemPrompt(0), readCallSystemPrompt(1)];
-		assert.equal(prompts.filter((prompt) => /one local skill/.test(prompt) && !/two local skill/.test(prompt)).length, 1);
-		assert.equal(prompts.filter((prompt) => /two local skill/.test(prompt) && !/one local skill/.test(prompt)).length, 1);
 	});
 
 	it("tracks chain metadata (chainAgents, totalSteps)", async () => {

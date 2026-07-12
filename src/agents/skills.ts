@@ -17,7 +17,6 @@ export type SkillSource =
 	| "user-settings"
 	| "extension"
 	| "builtin"
-	| "agent-local"
 	| "unknown";
 
 interface ResolvedSkill {
@@ -30,9 +29,7 @@ interface ResolvedSkill {
 
 interface SkillCacheEntry {
 	mtime: number;
-	realPath: string;
-	content: string;
-	description?: string;
+	skill: ResolvedSkill;
 }
 
 interface CachedSkillEntry {
@@ -65,7 +62,6 @@ const SOURCE_PRIORITY: Record<SkillSource, number> = {
 	"user-package": 200,
 	extension: 150,
 	builtin: 100,
-	"agent-local": 0,
 	unknown: 0,
 };
 
@@ -409,7 +405,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 	const pushEntry = (name: string, filePath: string, sourceHint?: SkillSource) => {
 		const resolvedFile = path.resolve(filePath);
 		if (!fs.existsSync(resolvedFile)) return;
-		const source = sourceHint === "agent-local" ? sourceHint : inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
+		const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
 		const existingIndex = seen.get(resolvedFile);
 		if (existingIndex !== undefined) {
 			const existing = entries[existingIndex];
@@ -580,17 +576,23 @@ function readSkill(
 ): ResolvedSkill | undefined {
 	try {
 		const stat = fs.statSync(skillPath);
-		// Keep lexical paths in injected locations, but invalidate a cached entry when
-		// a symlink is retargeted even if its replacement has the same mtime.
-		const realPath = fs.realpathSync(skillPath);
 		const cached = skillCache.get(skillPath);
-		const cachedContent = cached && cached.mtime === stat.mtimeMs && cached.realPath === realPath ? cached : undefined;
-		const raw = cachedContent ? undefined : fs.readFileSync(skillPath, "utf-8");
-		const content = cachedContent?.content ?? stripSkillFrontmatter(raw!);
-		const description = cachedContent?.description ?? maybeReadSkillDescription(skillPath);
-		const skill: ResolvedSkill = { name: skillName, path: skillPath, content, description, source };
+		if (cached && cached.mtime === stat.mtimeMs) {
+			return cached.skill;
+		}
 
-		if (!cachedContent) skillCache.set(skillPath, { mtime: stat.mtimeMs, realPath, content, description });
+		const raw = fs.readFileSync(skillPath, "utf-8");
+		const content = stripSkillFrontmatter(raw);
+		const description = maybeReadSkillDescription(skillPath);
+		const skill: ResolvedSkill = {
+			name: skillName,
+			path: skillPath,
+			content,
+			description,
+			source,
+		};
+
+		skillCache.set(skillPath, { mtime: stat.mtimeMs, skill });
 		if (skillCache.size > MAX_CACHE_SIZE) {
 			const firstKey = skillCache.keys().next().value;
 			if (firstKey) skillCache.delete(firstKey);
@@ -616,7 +618,7 @@ export function resolveSkills(
 	if (localSkillPaths?.length) {
 		const localEntries = collectFilesystemSkills(cwd, agentDir, localSkillPaths.map((entry) => ({
 			path: path.resolve(localBaseDir ?? cwd, entry),
-			source: "agent-local" as const,
+			source: "unknown" as const,
 		})));
 		for (const entry of localEntries) if (!localByName.has(entry.name)) localByName.set(entry.name, entry);
 	}

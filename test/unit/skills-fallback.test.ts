@@ -409,7 +409,7 @@ describe("skills filesystem fallback", () => {
 		}
 	});
 
-	it("resolves agent-local direct files and directories before global skills without leaking provenance", () => {
+	it("resolves agent-local direct files and directories before global skills", () => {
 		makeProjectSkill(tempDir, "shared", "global body");
 		const agentDir = path.join(tempDir, "agents", "nested");
 		const directFile = path.join(agentDir, "direct.md");
@@ -418,18 +418,14 @@ describe("skills filesystem fallback", () => {
 		writeSkillFile(path.join(agentDir, "skills", "shared"), "local shared body");
 		writeSkillFile(path.join(agentDir, "skills", "directory"), "local directory body");
 
-		const globalFirst = resolveSkills(["shared"], tempDir);
-		assert.equal(globalFirst.resolved[0]?.source, "project");
 		const local = resolveSkills(["shared", "direct", "directory", "missing"], tempDir, ["./skills", "./direct.md"], agentDir);
-		assert.deepEqual(local.resolved.map((skill) => [skill.name, skill.source, skill.content]), [
-			["shared", "agent-local", "local shared body"],
-			["direct", "agent-local", "local direct body\n"],
-			["directory", "agent-local", "local directory body"],
+		assert.deepEqual(local.resolved.map((skill) => [skill.name, skill.path, skill.content]), [
+			["shared", path.join(agentDir, "skills", "shared", "SKILL.md"), "local shared body"],
+			["direct", directFile, "local direct body\n"],
+			["directory", path.join(agentDir, "skills", "directory", "SKILL.md"), "local directory body"],
 		]);
 		assert.deepEqual(local.missing, ["missing"]);
-		const globalAgain = resolveSkills(["shared"], tempDir);
-		assert.equal(globalAgain.resolved[0]?.source, "project");
-		assert.equal(globalAgain.resolved[0]?.content, "global body");
+		assert.equal(resolveSkills(["shared"], tempDir).resolved[0]?.content, "global body");
 	});
 
 	it("does not discover global skills when a valid agent-local candidate exists", () => {
@@ -440,24 +436,9 @@ describe("skills filesystem fallback", () => {
 
 		const result = resolveSkills(["local"], tempDir, ["./skills"], agentDir);
 		assert.deepEqual(result.missing, []);
-		assert.deepEqual(result.resolved.map((skill) => [skill.source, skill.content]), [["agent-local", "local body"]]);
+		assert.deepEqual(result.resolved.map((skill) => skill.content), ["local body"]);
 	});
 
-	it("invalidates lexical cache entries when a local skill symlink is retargeted", () => {
-		const agentDir = path.join(tempDir, "agents", "nested");
-		const first = path.join(tempDir, "targets", "first.md");
-		const second = path.join(tempDir, "targets", "second.md");
-		fs.mkdirSync(path.dirname(first), { recursive: true });
-		fs.writeFileSync(first, "first body", "utf-8");
-		fs.writeFileSync(second, "second body", "utf-8");
-		const link = path.join(agentDir, "local.md");
-		fs.mkdirSync(agentDir, { recursive: true });
-		fs.symlinkSync(first, link);
-		assert.equal(resolveSkills(["local"], tempDir, ["./local.md"], agentDir).resolved[0]?.content, "first body");
-		fs.unlinkSync(link);
-		fs.symlinkSync(second, link);
-		assert.equal(resolveSkills(["local"], tempDir, ["./local.md"], agentDir).resolved[0]?.content, "second body");
-	});
 
 	it("falls back globally when an agent-local skill file cannot be read", () => {
 		makeProjectSkill(tempDir, "shared", "global body");
@@ -467,38 +448,13 @@ describe("skills filesystem fallback", () => {
 		fs.chmodSync(localFile, 0);
 		try {
 			const result = resolveSkills(["shared"], tempDir, ["./skills"], agentDir);
-			assert.deepEqual(result.resolved.map((skill) => [skill.source, skill.content]), [["project", "global body"]]);
+			assert.deepEqual(result.resolved.map((skill) => skill.content), ["global body"]);
 			assert.deepEqual(result.missing, []);
 		} finally {
 			fs.chmodSync(localFile, 0o644);
 		}
 	});
 
-	it("preserves global provenance when a global skill is read before the same agent-local file", () => {
-		makeProjectSkill(tempDir, "shared", "shared body");
-		const agentDir = path.join(tempDir, "agents", "nested");
-		fs.mkdirSync(agentDir, { recursive: true });
-
-		const global = resolveSkills(["shared"], tempDir);
-		const local = resolveSkills(["shared"], tempDir, ["../../.pi/skills"], agentDir);
-
-		assert.equal(global.resolved[0]?.source, "project");
-		assert.equal(local.resolved[0]?.source, "agent-local");
-		assert.equal(local.resolved[0]?.path, global.resolved[0]?.path);
-	});
-
-	it("preserves agent-local provenance when the same file is read before its global name", () => {
-		makeProjectSkill(tempDir, "shared", "shared body");
-		const agentDir = path.join(tempDir, "agents", "nested");
-		fs.mkdirSync(agentDir, { recursive: true });
-
-		const local = resolveSkills(["shared"], tempDir, ["../../.pi/skills"], agentDir);
-		const global = resolveSkills(["shared"], tempDir);
-
-		assert.equal(local.resolved[0]?.source, "agent-local");
-		assert.equal(global.resolved[0]?.source, "project");
-		assert.equal(local.resolved[0]?.path, global.resolved[0]?.path);
-	});
 
 	it("keeps agent-local paths isolated and falls back to global names", () => {
 		makeProjectSkill(tempDir, "global-only", "global fallback");

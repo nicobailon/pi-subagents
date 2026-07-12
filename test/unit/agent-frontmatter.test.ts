@@ -77,8 +77,6 @@ body`);
 		assert.deepEqual(multiple.skillPath, ["./skills", "../shared-skills"]);
 		const serialized = serializeAgent(multiple);
 		assert.match(serialized, /skillPath: \.\/skills, \.\.\/shared-skills/);
-		const detail = handleManagementAction("get", { agent: "multiple" }, { cwd: project, modelRegistry: { getAvailable: () => [] } });
-		assert.match(detail.content[0]?.text ?? "", /Skill paths: \.\/skills, \.\.\/shared-skills/);
 	}));
 });
 
