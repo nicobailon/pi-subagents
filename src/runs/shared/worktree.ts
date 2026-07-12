@@ -9,7 +9,7 @@ export interface WorktreeSetup {
 	baseCommit: string;
 }
 
-interface WorktreeInfo {
+export interface WorktreeInfo {
 	path: string;
 	agentCwd: string;
 	branch: string;
@@ -18,7 +18,7 @@ interface WorktreeInfo {
 	syntheticPaths: string[];
 }
 
-interface WorktreeDiff {
+export interface WorktreeDiff {
 	index: number;
 	agent: string;
 	branch: string;
@@ -72,7 +72,7 @@ interface GitResult {
 	status: number | null;
 }
 
-interface RepoState {
+export interface RepoState {
 	toplevel: string;
 	cwdRelative: string;
 	baseCommit: string;
@@ -99,7 +99,7 @@ function runGitChecked(cwd: string, args: string[]): string {
 	return result.stdout;
 }
 
-function resolveRepoState(cwd: string): RepoState {
+export function resolveRepoState(cwd: string): RepoState {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
 	const toplevel = runGitChecked(cwd, ["rev-parse", "--show-toplevel"]).trim();
 
@@ -312,7 +312,7 @@ function runWorktreeSetupHook(
 	return [...uniquePaths];
 }
 
-function createSingleWorktree(
+export function createSingleWorktree(
 	toplevel: string,
 	cwdRelative: string,
 	runId: string,
@@ -438,7 +438,7 @@ function parseNumstat(numstat: string): { filesChanged: number; insertions: numb
 	return { filesChanged, insertions, deletions };
 }
 
-function captureWorktreeDiff(
+export function captureWorktreeDiff(
 	setup: WorktreeSetup,
 	worktree: WorktreeInfo,
 	agent: string,
@@ -554,6 +554,32 @@ export function cleanupWorktrees(setup: WorktreeSetup): void {
 	try { runGitChecked(setup.cwd, ["worktree", "prune"]); } catch {
 		// Pruning is best-effort cleanup.
 	}
+}
+
+/**
+ * Convenience for orchestrator scripts: resolve repo state, create a single worktree.
+ * Returns a WorktreeSetup with exactly one worktree at index 0.
+ */
+export function setupOrchestratorWorktree(
+	cwd: string,
+	runId: string,
+	agent?: string,
+): WorktreeSetup {
+	const repo = resolveRepoState(cwd);
+	const worktree = createSingleWorktree(
+		repo.toplevel,
+		repo.cwdRelative,
+		runId,
+		0,
+		repo.baseCommit,
+		undefined,
+		agent,
+	);
+	return {
+		cwd: repo.toplevel,
+		worktrees: [worktree],
+		baseCommit: repo.baseCommit,
+	};
 }
 
 export function formatWorktreeDiffSummary(diffs: WorktreeDiff[]): string {
