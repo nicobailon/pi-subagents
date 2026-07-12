@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import type { Message } from "@earendil-works/pi-ai";
 import {
 	acceptanceFailureMessage,
 	aggregateAcceptanceReport,
@@ -13,6 +14,7 @@ import {
 	stripAcceptanceReport,
 	validateAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
+import { extractChildWrittenOutput } from "../../src/runs/shared/single-output.ts";
 
 function reportData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -121,9 +123,17 @@ describe("acceptance gates", () => {
 		assert.match(genericReportShapedJson.error ?? "", /Structured acceptance report not found/);
 		assert.equal(stripAcceptanceReport(reportShapedJson), reportShapedJson);
 
-		const malformed = parseAcceptanceReport("```acceptance-report\n{bad-json\n```");
-		assert.equal(malformed.report, undefined);
-		assert.match(malformed.error ?? "", /Failed to parse acceptance-report/);
+		for (const malformedOutput of [
+			"```acceptance-report\n{bad-json\n```",
+			"```acceptance-report\n```",
+			"```acceptance-report\n{\"criteriaSatisfied\": []}",
+			"ACCEPTANCE_REPORT: { not json",
+			"ACCEPTANCE_REPORT: no object",
+		]) {
+			const malformed = parseAcceptanceReport(malformedOutput);
+			assert.equal(malformed.report, undefined);
+			assert.match(malformed.error ?? "", /Failed to parse acceptance-report/, malformedOutput);
+		}
 	});
 
 	it("parses acceptance reports from json-family fences", () => {
@@ -398,6 +408,165 @@ describe("acceptance gates", () => {
 
 			assert.equal(ledger.status, "rejected");
 			assert.match(acceptanceFailureMessage(ledger) ?? "", /criterion|changed-files|tests-added|commands-run|validation-output|no-staged-files/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("recovers the acceptance report from child-written configured output", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked" },
+			});
+			const receipt = "Report written to the configured output file.";
+
+			const withoutFile = await evaluateAcceptance({ acceptance, output: receipt, cwd });
+			assert.equal(withoutFile.status, "rejected");
+
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: receipt,
+				fileOutput: { content: report(), path: "/tmp/report.md", authoritative: true },
+				cwd,
+			});
+			assert.equal(ledger.status, "checked");
+			assert.ok(ledger.childReport);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("report source order follows output authority", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked" },
+			});
+			const inline = await evaluateAcceptance({
+				acceptance,
+				output: report({ notes: "from text" }),
+				fileOutput: { content: report({ notes: "from file" }), path: "/tmp/report.md" },
+				cwd,
+			});
+			assert.equal(inline.childReport?.notes, "from text");
+
+			const fileOnly = await evaluateAcceptance({
+				acceptance,
+				output: report({ notes: "from text" }),
+				fileOutput: { content: report({ notes: "from file" }), path: "/tmp/report.md", authoritative: true },
+				cwd,
+			});
+			assert.equal(fileOnly.childReport?.notes, "from file");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("sibling overwrites of a shared output path cannot pollute this child's acceptance", async () => {
+		const cwd = tempRepo();
+		const sharedPath = path.join(cwd, "context.md");
+		try {
+			// Sibling child B wrote the shared path last (issue #420); the disk
+			// content is B's. Child A's acceptance input comes from A's own
+			// successful write-tool call, so B's report must not be attributed to A.
+			fs.writeFileSync(sharedPath, report({ notes: "sibling B report" }), "utf-8");
+			const childAMessages: Message[] = [
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "w1", name: "write", arguments: { path: sharedPath, content: report({ notes: "child A report" }) } }],
+					api: "test",
+					provider: "test",
+					model: "mock/test-model",
+					usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "toolUse",
+					timestamp: 0,
+				},
+				{ role: "toolResult", toolCallId: "w1", toolName: "write", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 0 },
+			];
+			const childAContent = extractChildWrittenOutput(childAMessages, sharedPath, cwd);
+			assert.equal(typeof childAContent, "string");
+
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked" },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: "Report written to the configured output file.",
+				fileOutput: { content: childAContent!, path: sharedPath, authoritative: true },
+				cwd,
+			});
+			assert.equal(ledger.childReport?.notes, "child A report");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a malformed primary report instead of falling back to the secondary source", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked" },
+			});
+			const malformedReports = [
+				"```acceptance-report\n{ not json\n```",
+				"```acceptance-report\n```",
+				"```acceptance-report\n{\"criteriaSatisfied\": []}",
+				"ACCEPTANCE_REPORT: { not json",
+			];
+
+			for (const malformed of malformedReports) {
+				const fileOnly = await evaluateAcceptance({
+					acceptance,
+					output: report({ notes: "valid text report" }),
+					fileOutput: { content: malformed, path: "/tmp/report.md", authoritative: true },
+					cwd,
+				});
+				assert.equal(fileOnly.status, "rejected", malformed);
+				assert.match(fileOnly.childReportParseError ?? "", /configured output/, malformed);
+			}
+
+			const inline = await evaluateAcceptance({
+				acceptance,
+				output: malformedReports[0]!,
+				fileOutput: { content: report({ notes: "valid file report" }), path: "/tmp/report.md" },
+				cwd,
+			});
+			assert.equal(inline.status, "rejected");
+			assert.match(inline.childReportParseError ?? "", /Failed to parse acceptance-report/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces field-level errors from an invalid configured-output report", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked" },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: "wrote the report to the file",
+				fileOutput: {
+					content: report({ criteriaSatisfied: [{ id: "criterion-1", status: "not_satisfied", evidence: "x" }] }),
+					path: "/tmp/report.md",
+				},
+				cwd,
+			});
+			assert.equal(ledger.status, "rejected");
+			assert.match(acceptanceFailureMessage(ledger) ?? "", /not_satisfied/);
+			assert.match(acceptanceFailureMessage(ledger) ?? "", /configured output/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

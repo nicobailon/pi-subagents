@@ -51,7 +51,7 @@ import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { readStructuredOutput } from "../shared/structured-output.ts";
-import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatModelAttemptNote,
@@ -1313,6 +1313,9 @@ export async function runSync(
 		if (sessionFile) result.sessionFile = sessionFile;
 	}
 
+	const childWrittenOutput = options.outputPath
+		? extractChildWrittenOutput(result.messages, options.outputPath, options.cwd ?? runtimeCwd)
+		: undefined;
 	result.acceptance = result.detached
 		? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "detached", message: "Acceptance was not evaluated because the subagent detached for intercom coordination before task completion." })
 		: result.timedOut
@@ -1322,6 +1325,9 @@ export async function runSync(
 			: await evaluateAcceptance({
 			acceptance: effectiveAcceptance,
 			output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
+			fileOutput: childWrittenOutput !== undefined && options.outputPath
+				? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
+				: undefined,
 			cwd: options.cwd ?? runtimeCwd,
 		});
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);

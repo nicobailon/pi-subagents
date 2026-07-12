@@ -167,6 +167,16 @@ function defaultResponse() {
 	return { output: "ok", exitCode: 0 };
 }
 
+function writeDeclaredFiles(response) {
+	if (!Array.isArray(response.writeFiles)) return;
+	for (const file of response.writeFiles) {
+		if (!file || typeof file.path !== "string" || typeof file.content !== "string") continue;
+		const target = path.resolve(process.cwd(), file.path);
+		fs.mkdirSync(path.dirname(target), { recursive: true });
+		fs.writeFileSync(target, file.content, "utf-8");
+	}
+}
+
 function isJsonMode(args) {
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === "--mode") {
@@ -292,6 +302,8 @@ async function main() {
 	if (typeof response.delay === "number" && response.delay > 0) {
 		await new Promise((resolve) => setTimeout(resolve, response.delay));
 	}
+
+	writeDeclaredFiles(response);
 
 	if (Array.isArray(response.steps) && response.steps.length > 0) {
 		for (const step of response.steps) {
