@@ -288,36 +288,29 @@ async function waitForMockPiArgs(mockPi: MockPi, index: number, timeoutMs = 30_0
 	return (await waitForMockPiCall(mockPi, index, timeoutMs)).args;
 }
 
-function readLastMockPiArgs(mockPi: MockPi): string[] {
+function readMockPiCall(mockPi: MockPi, index: number): MockPiCallRecord {
 	const callFile = fs.readdirSync(mockPi.dir)
 		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 		.sort()
-		.at(-1);
-	assert.ok(callFile, "expected a recorded mock pi call");
-	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
+		.at(index);
+	assert.ok(callFile, `expected recorded call ${index}`);
+	return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
+}
+
+function readLastMockPiArgs(mockPi: MockPi): string[] {
+	const payload = readMockPiCall(mockPi, -1);
 	assert.ok(Array.isArray(payload.args), "expected recorded args");
 	return payload.args;
 }
 
 function readMockPiArgs(mockPi: MockPi, index: number): string[] {
-	const callFile = fs.readdirSync(mockPi.dir)
-		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-		.sort()
-		.at(index);
-	assert.ok(callFile, `expected recorded call ${index}`);
-	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
+	const payload = readMockPiCall(mockPi, index);
 	assert.ok(Array.isArray(payload.args), "expected recorded args");
 	return payload.args;
 }
 
 function readMockPiSystemPrompt(mockPi: MockPi, index: number): string {
-	const callFile = fs.readdirSync(mockPi.dir)
-		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-		.sort()
-		.at(index);
-	assert.ok(callFile, `expected recorded call ${index}`);
-	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
-	return payload.systemPrompts?.map((record) => record.text ?? "").join("\n") ?? "";
+	return readMockPiCall(mockPi, index).systemPrompts?.map((record) => record.text ?? "").join("\n") ?? "";
 }
 
 function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
