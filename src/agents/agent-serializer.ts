@@ -74,7 +74,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	if (skillsValue || preserve("skill", "skills")) lines.push(`skills: ${skillsValue ?? ""}`);
 	if (config.skillPath?.length === 1) {
 		// JSON string syntax is also unambiguous YAML and safely preserves commas,
-		// comments, quotes, and leading/trailing whitespace in trusted path config.
+		// quotes, and leading/trailing whitespace in trusted path config.
 		lines.push(`skillPath: ${JSON.stringify(config.skillPath[0])}`);
 	} else if (config.skillPath && config.skillPath.length > 1) {
 		lines.push("skillPath:");
