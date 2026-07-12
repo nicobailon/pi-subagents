@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -445,13 +446,21 @@ describe("skills filesystem fallback", () => {
 		const agentDir = path.join(tempDir, "agents", "nested");
 		const localFile = path.join(agentDir, "skills", "shared", "SKILL.md");
 		writeSkillFile(path.dirname(localFile), "local body");
-		fs.chmodSync(localFile, 0);
+		const originalReadFileSync = fs.readFileSync;
+		fs.readFileSync = ((filePath, options) => {
+			if (filePath === localFile) {
+				throw new Error("Simulated unreadable local skill file");
+			}
+			return originalReadFileSync(filePath, options);
+		}) as typeof fs.readFileSync;
+		syncBuiltinESMExports();
 		try {
 			const result = resolveSkills(["shared"], tempDir, ["./skills"], agentDir);
 			assert.deepEqual(result.resolved.map((skill) => skill.content), ["global body"]);
 			assert.deepEqual(result.missing, []);
 		} finally {
-			fs.chmodSync(localFile, 0o644);
+			fs.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
 		}
 	});
 
