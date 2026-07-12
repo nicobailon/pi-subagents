@@ -456,23 +456,8 @@ function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolea
 	return { agents, chains };
 }
 
-function stripYamlComment(value: string): string {
-	let quote: "'" | '"' | undefined;
-	for (let i = 0; i < value.length; i++) {
-		const char = value[i]!;
-		if (quote) {
-			if (char === quote) {
-				if (quote === "'" && value[i + 1] === "'") i++;
-				else quote = undefined;
-			} else if (quote === '"' && char === "\\") i++;
-		} else if (char === "'" || char === '"') quote = char;
-		else if (char === "#" && (i === 0 || /\s/.test(value[i - 1]!))) return value.slice(0, i).trimEnd();
-	}
-	return value.trim();
-}
-
 function parseYamlString(value: string): string | undefined {
-	const trimmed = stripYamlComment(value).trim();
+	const trimmed = value.trim();
 	if (!trimmed) return undefined;
 	if (trimmed.startsWith('"')) {
 		try {
@@ -497,17 +482,14 @@ export function parseSkillPathFrontmatter(value: string | undefined): string[] {
 		const entries: string[] = [];
 		for (const line of raw.split("\n")) {
 			const item = line.match(/^\s*-\s+(.*)$/);
-			if (!item) {
-				if (line.trim() && !line.trimStart().startsWith("#")) return [];
-				continue;
-			}
+			if (!item) return [];
 			const entry = parseYamlString(item[1]!);
 			if (entry === undefined) return [];
 			entries.push(entry);
 		}
 		return entries;
 	}
-	const trimmed = stripYamlComment(raw).trim();
+	const trimmed = raw;
 	if (trimmed.startsWith("[")) {
 		if (!trimmed.endsWith("]")) return [];
 		const entries: string[] = [];

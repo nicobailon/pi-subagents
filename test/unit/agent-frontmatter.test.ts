@@ -57,19 +57,19 @@ afterEach(() => {
 });
 
 describe("agent skillPath frontmatter", () => {
-	it("parses scalar, inline, and block YAML strings without splitting quoted commas or comments", () => withTempHome(() => {
+	it("parses scalar, inline, and block YAML strings without splitting quoted commas", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-skill-path-agent-"));
 		tempDirs.push(project);
 		writeAgent(path.join(project, ".pi", "agents", "scalar.md"), `---
 name: scalar
 description: Scalar
-skillPath: "./comma,path # literal"
+skillPath: "./comma,path"
 ---
 body`);
 		writeAgent(path.join(project, ".pi", "agents", "inline.md"), `---
 name: inline
 description: Inline
-skillPath: ["./comma,path", './single,comma', ./plain] # comment
+skillPath: ["./comma,path", './single,comma', ./plain]
 ---
 body`);
 		writeAgent(path.join(project, ".pi", "agents", "block.md"), `---
@@ -77,21 +77,20 @@ name: block
 description: Block
 skillPath:
   - "./double,comma"
-  # not a path
-  - './single,comma # literal'
-  - ./plain # not a path comment
+  - './single,comma'
+  - ./plain
 ---
 body`);
 		const agents = discoverAgents(project, "both").agents;
-		assert.deepEqual(agents.find((agent) => agent.name === "scalar")?.skillPath, ["./comma,path # literal"]);
+		assert.deepEqual(agents.find((agent) => agent.name === "scalar")?.skillPath, ["./comma,path"]);
 		assert.deepEqual(agents.find((agent) => agent.name === "inline")?.skillPath, ["./comma,path", "./single,comma", "./plain"]);
 		const block = agents.find((agent) => agent.name === "block")!;
-		assert.deepEqual(block.skillPath, ["./double,comma", "./single,comma # literal", "./plain"]);
+		assert.deepEqual(block.skillPath, ["./double,comma", "./single,comma", "./plain"]);
 		const serialized = serializeAgent(block);
-		assert.match(serialized, /skillPath:\n  - "\.\/double,comma"\n  - "\.\/single,comma # literal"\n  - "\.\/plain"/);
+		assert.match(serialized, /skillPath:\n  - "\.\/double,comma"\n  - "\.\/single,comma"\n  - "\.\/plain"/);
 		assert.deepEqual(parseSkillPathFrontmatter(parseFrontmatter(serialized).frontmatter.skillPath), block.skillPath);
 		const detail = handleManagementAction("get", { agent: "block" }, { cwd: project, modelRegistry: { getAvailable: () => [] } });
-		assert.match(detail.content[0]?.text ?? "", /Skill paths: \.\/double,comma, \.\/single,comma # literal, \.\/plain/);
+		assert.match(detail.content[0]?.text ?? "", /Skill paths: \.\/double,comma, \.\/single,comma, \.\/plain/);
 	}));
 });
 
