@@ -1134,6 +1134,7 @@ export default {
 | Field | Type | Description |
 |-------|------|-------------|
 | `runAgent(config)` | `Promise<OrchestratorRunAgentResult>` | Run a subagent and wait for the result |
+| `runInWorktree(patchPath, fn)` | `Promise<T & WorktreeBlockResult>` | Run agents inside a single shared git worktree, capture diff to `patchPath` |
 | `chainDir` | `string` | Shared directory for artifacts, contexts, and logs |
 | `runId` | `string` | Unique run identifier |
 | `cwd` | `string` | Working directory (where Pi was started) |
@@ -1160,6 +1161,50 @@ export default {
 | `structuredOutput` | `unknown` | Parsed structured output if `outputSchema` was used |
 | `error` | `string?` | Error message on failure |
 | `agent` | `string` | Agent name that produced this result |
+
+### Worktree block
+
+`runInWorktree` executes a sequence of agents inside a single git worktree. All agents share the same working directory, changes accumulate, and a unified diff patch is captured at the end.
+
+```ts
+const result = await ctx.runInWorktree(
+  path.join(ctx.chainDir, "changes.patch"),  // explicit patch path — no magic
+  async (wt) => {
+    // wt.worktreePath — the worktree working directory
+    // wt.patchPath   — the patch file path (same as passed above)
+
+    await wt.runAgent({ agent: "worker", task: "implement X" });
+    await wt.runAgent({ agent: "reviewer", task: "review and fix" });
+
+    return { message: "done", patchPath: wt.patchPath };
+  },
+);
+// result.message === "done"
+// result.diffStat, result.filesChanged, result.insertions, result.deletions
+// result.patchPath, result.patch
+```
+
+#### WorktreeOrchestratorContext
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runAgent(config)` | `Promise<OrchestratorRunAgentResult>` | Run a subagent inside the worktree |
+| `worktreePath` | `string` | Working directory inside the worktree |
+| `patchPath` | `string` | Explicit patch path (same as passed to `runInWorktree`) |
+| `log(message)` | `void` | Append to orchestrator log |
+
+#### WorktreeBlockResult
+
+Merged into the return value alongside your callback's return type.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `diffStat` | `string` | `git diff --stat` output |
+| `filesChanged` | `number` | Number of changed files |
+| `insertions` | `number` | Lines added |
+| `deletions` | `number` | Lines removed |
+| `patchPath` | `string` | Path to the `.patch` file |
+| `patch` | `string` | Full diff content |
 
 ### Backward compatibility
 

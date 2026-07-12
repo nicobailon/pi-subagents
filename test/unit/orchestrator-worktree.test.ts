@@ -106,10 +106,12 @@ describe("orchestrator worktree", () => {
 		};
 
 		const orchCtx = createOrchestratorContext(deps);
+		const patchPath = path.join(chainDir, "test.patch");
 
-		const result = await orchCtx.runInWorktree(async (wt) => {
+		const result = await orchCtx.runInWorktree(patchPath, async (wt) => {
 			assert.ok(fs.existsSync(wt.worktreePath), "worktree path should exist");
 			assert.ok(wt.worktreePath !== repoDir, "worktree should not be the original repo dir");
+			assert.equal(wt.patchPath, patchPath, "wt.patchPath should match user-provided path");
 
 			await wt.runAgent({ agent: "worker", task: "Add foo feature" });
 			await wt.runAgent({ agent: "reviewer", task: "Review and fix" });
@@ -118,8 +120,8 @@ describe("orchestrator worktree", () => {
 		});
 
 		assert.equal(result.count, 2);
+		assert.equal(result.patchPath, patchPath, "result.patchPath should match");
 		assert.ok(result.filesChanged > 0, "should have at least one file changed");
-		assert.ok(result.patchPath, "patchPath should be set");
 		assert.ok(result.patch.length > 0, "patch should not be empty");
 		assert.ok(result.diffStat.length > 0, "diffStat should not be empty");
 
@@ -142,13 +144,15 @@ describe("orchestrator worktree", () => {
 		};
 
 		const orchCtx = createOrchestratorContext(deps);
+		const patchPath = path.join(chainDir, "changes.patch");
 
 		let worktreePath: string | undefined;
 		let errorThrown = false;
 
 		try {
-			await orchCtx.runInWorktree(async (wt) => {
+			await orchCtx.runInWorktree(patchPath, async (wt) => {
 				worktreePath = wt.worktreePath;
+				assert.equal(wt.patchPath, patchPath);
 				await wt.runAgent({ agent: "worker", task: "Do something" });
 				throw new Error("Intentional test error");
 			});
@@ -185,10 +189,11 @@ describe("orchestrator worktree", () => {
 		};
 
 		const orchCtx = createOrchestratorContext(deps);
+		const patchPath = path.join(chainDir, "dirty.patch");
 
 		await assert.rejects(
 			async () => {
-				await orchCtx.runInWorktree(async (wt) => {
+				await orchCtx.runInWorktree(patchPath, async (wt) => {
 					await wt.runAgent({ agent: "worker", task: "test" });
 					return {};
 				});
@@ -215,10 +220,11 @@ describe("orchestrator worktree", () => {
 		};
 
 		const orchCtx = createOrchestratorContext(deps);
+		const patchPath = path.join(chainDir, "nonrepo.patch");
 
 		await assert.rejects(
 			async () => {
-				await orchCtx.runInWorktree(async (wt) => {
+				await orchCtx.runInWorktree(patchPath, async (wt) => {
 					await wt.runAgent({ agent: "worker", task: "test" });
 					return {};
 				});
@@ -259,16 +265,50 @@ describe("orchestrator worktree", () => {
 		};
 
 		const orchCtx = createOrchestratorContext(deps);
+		const patchPath = path.join(chainDir, "empty.patch");
 
-		const result = await orchCtx.runInWorktree(async (wt) => {
+		const result = await orchCtx.runInWorktree(patchPath, async (wt) => {
+			assert.equal(wt.patchPath, patchPath);
 			await wt.runAgent({ agent: "scout", task: "Just read, no edits" });
 			return { done: true };
 		});
 
 		assert.equal(result.done, true);
+		assert.equal(result.patchPath, patchPath);
 		assert.equal(result.filesChanged, 0);
 		assert.equal(result.insertions, 0);
 		assert.equal(result.deletions, 0);
+
+		cleanupRepo(repoDir);
+	});
+
+	it("runInWorktree resolves relative patchPath against cwd", async () => {
+		const repoDir = createRepo("pi-orch-wt-relpath-");
+		const chainDir = path.join(repoDir, ".pi-orch-runs", "test-relpath");
+		fs.mkdirSync(chainDir, { recursive: true });
+
+		const ctx = createMockExtensionContext(repoDir);
+		const deps: OrchestratorContextDeps = {
+			execute: createDummyExecute(),
+			ctx,
+			chainDir,
+			runId: "test-relpath",
+			cwd: repoDir,
+			timeoutMs: 30000,
+		};
+
+		const orchCtx = createOrchestratorContext(deps);
+
+		const result = await orchCtx.runInWorktree("my-relative.patch", async (wt) => {
+			assert.ok(path.isAbsolute(wt.patchPath), "patchPath should be resolved to absolute");
+			assert.ok(wt.patchPath.endsWith("my-relative.patch"), "patchPath should end with relative name");
+			await wt.runAgent({ agent: "worker", task: "test" });
+			return { ok: true };
+		});
+
+		assert.equal(result.ok, true);
+		assert.ok(result.patchPath.endsWith("my-relative.patch"));
+		assert.ok(fs.existsSync(path.join(repoDir, "my-relative.patch")), "patch file should exist at relative path");
 
 		cleanupRepo(repoDir);
 	});

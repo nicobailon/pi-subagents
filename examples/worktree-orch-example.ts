@@ -4,20 +4,25 @@
  * Przykładowy skrypt orchestratora używający runInWorktree.
  * Wszystkie wywołania runAgent() wewnątrz worktree działają na
  * tym samym izolowanym drzewie roboczym git.
- * Po zakończeniu bloku tworzony jest patch ze zmianami.
+ * Po zakończeniu bloku tworzony jest patch w ścieżce jawnie podanej przez użytkownika.
  *
  * Użycie:
  *   /pi-orch ./examples/worktree-orch-example.ts
  */
 
+import * as path from "node:path";
 import type { OrchestratorScript } from "../src/orchestrator/orchestrator-context";
 
 const script: OrchestratorScript = {
   flow: async (ctx) => {
     ctx.log("Starting worktree orchestrator example...");
 
-    const result = await ctx.runInWorktree(async (wt) => {
+    // Jawnie podajemy ścieżkę patcha — żadnej magii
+    const patchPath = path.join(ctx.chainDir, "worktree-changes.patch");
+
+    const result = await ctx.runInWorktree(patchPath, async (wt) => {
       wt.log(`Working inside worktree: ${wt.worktreePath}`);
+      wt.log(`Patch will be saved to: ${wt.patchPath}`);
 
       // Krok 1: implementacja
       const step1 = await wt.runAgent({
@@ -37,9 +42,11 @@ const script: OrchestratorScript = {
       });
       wt.log(`Step 2 (reviewer) exitCode=${step2.exitCode}`);
 
+      // patchPath jest jawnie dostępny z wt
       return {
         message: "Worktree block completed successfully",
         steps: [step1.agent, step2.agent],
+        patchPath: wt.patchPath,
       };
     });
 
@@ -52,6 +59,7 @@ const script: OrchestratorScript = {
       `# Worktree Orchestrator Result\n`,
       `**Status**: ${result.message}\n`,
       `**Steps executed**: ${result.steps.join(" → ")}\n`,
+      `**Patch**: \`${result.patchPath}\`\n`,
       `## Diff summary\n`,
       `- Files changed: ${result.filesChanged}`,
       `- Insertions: +${result.insertions}`,
@@ -61,7 +69,6 @@ const script: OrchestratorScript = {
       result.diffStat || "(no changes)",
       "```\n",
       `## Full patch\n`,
-      `Saved to: \`${result.patchPath}\`\n`,
       `\`\`\`diff`,
       result.patch || "(empty)",
       "```",
