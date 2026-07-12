@@ -6,8 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
-import { discoverAgents, discoverAgentsAll, parseSkillPathFrontmatter, type AgentConfig } from "../../src/agents/agents.ts";
-import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
+import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
@@ -57,40 +56,29 @@ afterEach(() => {
 });
 
 describe("agent skillPath frontmatter", () => {
-	it("parses scalar, inline, and block YAML strings without splitting quoted commas", () => withTempHome(() => {
+	it("parses and serializes comma-separated paths", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-skill-path-agent-"));
 		tempDirs.push(project);
-		writeAgent(path.join(project, ".pi", "agents", "scalar.md"), `---
-name: scalar
-description: Scalar
-skillPath: "./comma,path"
+		writeAgent(path.join(project, ".pi", "agents", "single.md"), `---
+name: single
+description: Single
+skillPath: ./skills
 ---
 body`);
-		writeAgent(path.join(project, ".pi", "agents", "inline.md"), `---
-name: inline
-description: Inline
-skillPath: ["./comma,path", './single,comma', ./plain]
----
-body`);
-		writeAgent(path.join(project, ".pi", "agents", "block.md"), `---
-name: block
-description: Block
-skillPath:
-  - "./double,comma"
-  - './single,comma'
-  - ./plain
+		writeAgent(path.join(project, ".pi", "agents", "multiple.md"), `---
+name: multiple
+description: Multiple
+skillPath: ./skills, ../shared-skills
 ---
 body`);
 		const agents = discoverAgents(project, "both").agents;
-		assert.deepEqual(agents.find((agent) => agent.name === "scalar")?.skillPath, ["./comma,path"]);
-		assert.deepEqual(agents.find((agent) => agent.name === "inline")?.skillPath, ["./comma,path", "./single,comma", "./plain"]);
-		const block = agents.find((agent) => agent.name === "block")!;
-		assert.deepEqual(block.skillPath, ["./double,comma", "./single,comma", "./plain"]);
-		const serialized = serializeAgent(block);
-		assert.match(serialized, /skillPath:\n  - "\.\/double,comma"\n  - "\.\/single,comma"\n  - "\.\/plain"/);
-		assert.deepEqual(parseSkillPathFrontmatter(parseFrontmatter(serialized).frontmatter.skillPath), block.skillPath);
-		const detail = handleManagementAction("get", { agent: "block" }, { cwd: project, modelRegistry: { getAvailable: () => [] } });
-		assert.match(detail.content[0]?.text ?? "", /Skill paths: \.\/double,comma, \.\/single,comma, \.\/plain/);
+		assert.deepEqual(agents.find((agent) => agent.name === "single")?.skillPath, ["./skills"]);
+		const multiple = agents.find((agent) => agent.name === "multiple")!;
+		assert.deepEqual(multiple.skillPath, ["./skills", "../shared-skills"]);
+		const serialized = serializeAgent(multiple);
+		assert.match(serialized, /skillPath: \.\/skills, \.\.\/shared-skills/);
+		const detail = handleManagementAction("get", { agent: "multiple" }, { cwd: project, modelRegistry: { getAvailable: () => [] } });
+		assert.match(detail.content[0]?.text ?? "", /Skill paths: \.\/skills, \.\.\/shared-skills/);
 	}));
 });
 

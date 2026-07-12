@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Added agent-local `skillPath` frontmatter. A string or YAML list can point at SKILL.md files or discovery directories relative to the agent file; local matches take precedence only for that invocation and unresolved names retain global fallback.
+- Added agent-local `skillPath` frontmatter. Comma-separated paths can point at SKILL.md files or discovery directories relative to the agent file; local matches take precedence only for that invocation and unresolved names retain global fallback.
 
 ## [0.34.0] - 2026-07-07
 

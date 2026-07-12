@@ -456,68 +456,6 @@ function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolea
 	return { agents, chains };
 }
 
-function parseYamlString(value: string): string | undefined {
-	const trimmed = value.trim();
-	if (!trimmed) return undefined;
-	if (trimmed.startsWith('"')) {
-		try {
-			return JSON.parse(trimmed) as string;
-		} catch {
-			return undefined;
-		}
-	}
-	if (trimmed.startsWith("'")) {
-		if (!trimmed.endsWith("'")) return undefined;
-		return trimmed.slice(1, -1).replace(/''/g, "'");
-	}
-	return trimmed.includes("'") || trimmed.includes('"') ? undefined : trimmed;
-}
-
-/** Deliberately small YAML-string-list parser for skillPath frontmatter. */
-export function parseSkillPathFrontmatter(value: string | undefined): string[] {
-	if (!value) return [];
-	const raw = value.trim();
-	if (!raw) return [];
-	if (raw.includes("\n")) {
-		const entries: string[] = [];
-		for (const line of raw.split("\n")) {
-			const item = line.match(/^\s*-\s+(.*)$/);
-			if (!item) return [];
-			const entry = parseYamlString(item[1]!);
-			if (entry === undefined) return [];
-			entries.push(entry);
-		}
-		return entries;
-	}
-	const trimmed = raw;
-	if (trimmed.startsWith("[")) {
-		if (!trimmed.endsWith("]")) return [];
-		const entries: string[] = [];
-		let start = 1;
-		let quote: "'" | '"' | undefined;
-		for (let i = 1; i < trimmed.length - 1; i++) {
-			const char = trimmed[i]!;
-			if (quote) {
-				if (char === quote) {
-					if (quote === "'" && trimmed[i + 1] === "'") i++;
-					else quote = undefined;
-				} else if (quote === '"' && char === "\\") i++;
-			} else if (char === "'" || char === '"') quote = char;
-			else if (char === ",") {
-				const entry = parseYamlString(trimmed.slice(start, i));
-				if (entry === undefined) return [];
-				entries.push(entry);
-				start = i + 1;
-			}
-		}
-		if (quote) return [];
-		const entry = parseYamlString(trimmed.slice(start, -1));
-		return entry === undefined ? [] : [...entries, entry];
-	}
-	const entry = parseYamlString(trimmed);
-	return entry === undefined ? [] : [entry];
-}
-
 function splitToolList(rawTools: string[] | undefined): { tools?: string[]; mcpDirectTools?: string[] } {
 	const mcpDirectTools: string[] = [];
 	const tools: string[] = [];
@@ -1281,7 +1219,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			?.split(",")
 			.map((s) => s.trim())
 			.filter(Boolean);
-		const skillPath = parseSkillPathFrontmatter(frontmatter.skillPath);
+		const skillPath = frontmatter.skillPath
+			?.split(",")
+			.map((skillPath) => skillPath.trim())
+			.filter(Boolean) ?? [];
 		const fallbackModels = frontmatter.fallbackModels
 			?.split(",")
 			.map((model) => model.trim())
