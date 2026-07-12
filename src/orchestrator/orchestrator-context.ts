@@ -37,21 +37,17 @@ export interface OrchestratorScript {
 	settings?: OrchestratorSettings;
 }
 
-export interface OrchestratorRunAgentConfig {
-	/** Nazwa agenta (scout, worker, reviewer, oracle...) */
+export interface OrchestratorRunAgentConfig extends SubagentParamsLike {
+	/** Nazwa agenta (zawężone do required) */
 	agent: string;
-	/** Zadanie */
+	/** Zadanie (zawężone do required) */
 	task: string;
-	/** Opcjonalna nazwa do późniejszego odwołania */
+	/** Opcjonalny identyfikator kroku (np. "scan", "plan") — zapisywany w flow.json */
 	as?: string;
-	/** Override modelu */
-	model?: string;
-	/** Kontekst wykonania — domyślnie zgodnie z defaultContext agenta (worker/planner/oracle = fork, reszta = fresh) */
-	context?: "fresh" | "fork";
-	/** JSON Schema dla structured output */
-	outputSchema?: Record<string, unknown>;
-	/** Override working directory (używane wewnętrznie przez runInWorktree) */
-	cwd?: string;
+	/** Czytelna etykieta kroku (np. "Skanowanie kodu") — używana w logach i podsumowaniu */
+	label?: string;
+	/** Pliki do przeczytania przed wykonaniem — wstrzykiwane jako prefix [Read from: ...] */
+	reads?: string[];
 }
 
 export interface OrchestratorRunAgentResult {
@@ -60,6 +56,14 @@ export interface OrchestratorRunAgentResult {
 	structuredOutput?: unknown;
 	error?: string;
 	agent: string;
+	/** Token usage z wykonania agenta */
+	usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
+	/** Czas wykonania w ms */
+	durationMs?: number;
+	/** Model użyty przez agenta */
+	model?: string;
+	/** Liczba wywołań narzędzi */
+	toolCount?: number;
 }
 
 /** Rezultat bloku worktree zwracany przez runInWorktree */
@@ -152,13 +156,30 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		const currentIndex = stepIndex++;
 		const requestId = `${deps.runId}-step-${currentIndex}`;
 		const effectiveCwd = config.cwd ?? deps.cwd;
-		log(`[step ${currentIndex}] Running agent '${config.agent}'${config.cwd ? ` (cwd: ${config.cwd})` : ""}: ${config.task.slice(0, 100)}`);
+
+		// Wyciągnij orchestrator-specific pola, reszta to SubagentParamsLike
+		const { label, as: _as, reads, ...agentParams } = config;
+
+		// Wstrzyknij prefixy [Read from: ...] / [Write to: ...] — dokładnie jak chain
+		let taskWithInstructions = config.task;
+		if (reads && Array.isArray(reads) && reads.length > 0) {
+			const files = reads.map((r: string) =>
+				path.isAbsolute(r) ? r : path.join(deps.chainDir, r),
+			);
+			taskWithInstructions = `[Read from: ${files.join(", ")}]\n\n${taskWithInstructions}`;
+		}
+		if (config.output && typeof config.output === "string") {
+			const outputPath = path.isAbsolute(config.output)
+				? config.output
+				: path.join(deps.chainDir, config.output);
+			taskWithInstructions = `[Write to: ${outputPath}]\n\n${taskWithInstructions}`;
+		}
+
+		log(`[step ${currentIndex}] Running agent '${config.agent}'${label ? ` (${label})` : ""}${config.cwd ? ` cwd=${config.cwd}` : ""}`);
 
 		const params: SubagentParamsLike = {
-			agent: config.agent,
-			task: config.task,
-			...(config.context ? { context: config.context } : {}),
-			...(config.model ? { model: config.model } : {}),
+			...agentParams,
+			task: taskWithInstructions,
 			...(effectiveCwd !== deps.cwd ? { cwd: effectiveCwd } : {}),
 		};
 
@@ -179,7 +200,21 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		const error = singleResult?.error ?? (result.isError ? output : undefined);
 		const structuredOutput = singleResult?.structuredOutput;
 
-		log(`[step ${currentIndex}] Done. exitCode=${exitCode}${error ? ` error=${error.slice(0, 100)}` : ""}`);
+		// Bogaty log z metrykami
+		const usage = singleResult?.usage;
+		const totalTokens = usage ? usage.input + usage.output : 0;
+		const cost = usage?.cost;
+		const durationMs = singleResult?.progressSummary?.durationMs;
+		const model = singleResult?.model;
+		const toolCount = singleResult?.progressSummary?.toolCount;
+
+		log(`[step ${currentIndex}] Done. exitCode=${exitCode}` +
+			(durationMs ? ` duration=${(durationMs / 1000).toFixed(1)}s` : "") +
+			(totalTokens ? ` tokens=${totalTokens}` : "") +
+			(cost !== undefined && cost !== null ? ` cost=$${cost.toFixed(4)}` : "") +
+			(model ? ` model=${model}` : "") +
+			(toolCount ? ` tools=${toolCount}` : "") +
+			(error ? ` error=${error.slice(0, 100)}` : ""));
 
 		return {
 			exitCode,
@@ -187,6 +222,10 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			structuredOutput,
 			error,
 			agent: config.agent,
+			usage: usage ? { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost } : undefined,
+			durationMs,
+			model,
+			toolCount,
 		};
 	};
 

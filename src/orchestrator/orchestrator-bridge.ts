@@ -138,25 +138,63 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 				timeoutMs,
 			});
 
-			// Owiń runAgent żeby śledzić wyniki i wysyłać update'y
+			const flowStartTime = new Date().toISOString();
+
+			// Owiń runAgent żeby auto-logować, pisać flow.json i wysyłać update'y
 			const originalRunAgent = orchestratorCtx.runAgent.bind(orchestratorCtx);
 			orchestratorCtx.runAgent = async (config) => {
+				const stepIndex = results.length;
+
+				// Auto-log startu (infrastruktura, nie skrypt)
+				orchestratorCtx.log(`[step ${stepIndex}] Agent '${config.agent}'${config.label ? ` (${config.label})` : ""} starting`);
+
 				options.events.emit(ORCHESTRATOR_UPDATE_EVENT, {
 					requestId,
-					step: results.length,
+					step: stepIndex,
 					agent: config.agent,
 					status: "running",
 				} as OrchestratorUpdate);
 
+				const stepStart = Date.now();
 				const result = await originalRunAgent(config);
+				const stepDuration = Date.now() - stepStart;
 				results.push(result);
 
 				options.events.emit(ORCHESTRATOR_UPDATE_EVENT, {
 					requestId,
-					step: results.length - 1,
+					step: stepIndex,
 					agent: config.agent,
 					status: result.exitCode === 0 ? "completed" : "failed",
 				} as OrchestratorUpdate);
+
+				// Zapis flow.json — przyrostowo po każdym kroku
+				const flowPath = path.join(chainDir, "orchestrator-flow.json");
+				const flowEntry = {
+					index: stepIndex,
+					agent: config.agent,
+					as: config.as,
+					label: config.label,
+					task: config.task.slice(0, 200),
+					exitCode: result.exitCode,
+					usage: result.usage,
+					model: result.model,
+					durationMs: result.durationMs ?? stepDuration,
+					toolCount: result.toolCount,
+					outputPreview: result.output.slice(0, 200),
+					error: result.error,
+				};
+				try {
+					let flow: { runId: string; scriptPath: string; startTime: string; steps: unknown[] };
+					if (fs.existsSync(flowPath)) {
+						flow = JSON.parse(fs.readFileSync(flowPath, "utf-8"));
+					} else {
+						flow = { runId: requestId, scriptPath: resolvedPath, startTime: flowStartTime, steps: [] };
+					}
+					flow.steps.push(flowEntry);
+					fs.writeFileSync(flowPath, JSON.stringify(flow, null, 2), "utf-8");
+				} catch {
+					// best-effort
+				}
 
 				return result;
 			};
@@ -172,16 +210,80 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 				timeoutPromise,
 			]);
 
+			const flowEndTime = new Date().toISOString();
+			const finalResults = scriptResult.results || results;
+
+			// Finalizuj flow.json
+			const flowFp = path.join(chainDir, "orchestrator-flow.json");
+			try {
+				if (fs.existsSync(flowFp)) {
+					const flow = JSON.parse(fs.readFileSync(flowFp, "utf-8"));
+					flow.endTime = flowEndTime;
+					flow.status = "success";
+					flow.totalDurationMs = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + (r.durationMs ?? 0), 0);
+					fs.writeFileSync(flowFp, JSON.stringify(flow, null, 2), "utf-8");
+				}
+			} catch {
+				// best-effort
+			}
+
+			// Wygeneruj flow-summary.md
+			const summaryPath = path.join(chainDir, "flow-summary.md");
+			try {
+				const totalDuration = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + (r.durationMs ?? 0), 0);
+				const totalTokens = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + ((r.usage?.input ?? 0) + (r.usage?.output ?? 0)), 0);
+				const totalCost = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + (r.usage?.cost ?? 0), 0);
+
+				const mdLines = [
+					`# Orchestrator Flow: ${path.basename(resolvedPath)}`,
+					"",
+					`**Run ID**: ${requestId}`,
+					`**Status**: ✅ Success | **Duration**: ${(totalDuration / 1000).toFixed(1)}s | **Steps**: ${finalResults.length}`,
+					`**Tokens**: ${totalTokens} | **Cost**: $${totalCost.toFixed(4)}`,
+					"",
+					"| # | Agent | Exit | Duration | Tokens | Cost | Model |",
+					"|---|-------|------|----------|--------|------|-------|",
+				];
+
+				for (const r of finalResults) {
+					const dur = r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : "-";
+					const tok = (r.usage?.input ?? 0) + (r.usage?.output ?? 0) || "-";
+					const cost = r.usage?.cost != null ? `$${r.usage.cost.toFixed(4)}` : "-";
+					const status = r.exitCode === 0 ? "✅" : "❌";
+					mdLines.push(`| ${finalResults.indexOf(r)} | ${r.agent} | ${status} ${r.exitCode} | ${dur} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
+				}
+
+				mdLines.push("", `📁 **Chain dir**: ${chainDir}`);
+				fs.writeFileSync(summaryPath, mdLines.join("\n") + "\n", "utf-8");
+			} catch {
+				// best-effort
+			}
+
 			const output = scriptResult.output || "Orchestrator completed.";
 			const response: OrchestratorResponse = {
 				requestId,
 				output,
-				results: scriptResult.results || results,
+				results: finalResults,
 			};
 			options.events.emit(ORCHESTRATOR_RESPONSE_EVENT, response);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const stack = error instanceof Error ? error.stack : "";
+
+			// Zapisz flow.json z errorem
+			const flowFp2 = path.join(chainDir, "orchestrator-flow.json");
+			try {
+				if (fs.existsSync(flowFp2)) {
+					const flow = JSON.parse(fs.readFileSync(flowFp2, "utf-8"));
+					flow.endTime = new Date().toISOString();
+					flow.status = "failed";
+					flow.error = message;
+					fs.writeFileSync(flowFp2, JSON.stringify(flow, null, 2), "utf-8");
+				}
+			} catch {
+				// best-effort
+			}
+
 			const response: OrchestratorResponse = {
 				requestId,
 				output: `Orchestrator failed:\n${message}\n\n${stack}`,
