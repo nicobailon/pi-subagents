@@ -248,6 +248,7 @@ Skip this section until you want exact syntax.
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel |
 | `/run-chain <chainName> -- <task>` | Launch a saved `.chain.md` or `.chain.json` workflow |
 | `/subagents-doctor` | Show read-only setup diagnostics |
+| `/pi-orch <path>` | Run a TypeScript orchestrator script with programmatic control flow |
 
 Commands validate agent names locally, support tab completion, and send results back into the conversation.
 
@@ -1089,6 +1090,91 @@ Then `/take-screenshot https://example.com` switches to Sonnet, delegates to `br
 
 For more reusable workflows on top of subagents, including `/chain-prompts` and compare-style prompts such as `/best-of-n`, install `pi-prompt-template-model` separately and copy the examples you want into `~/.pi/agent/prompts/`.
 
+## Orchestrator scripts (`/pi-orch`)
+
+`/pi-orch` lets you write programmable orchestrator flows in TypeScript — loops, conditions, retries, and dynamic fan-out that go beyond what `.chain.md` files can express.
+
+```text
+/pi-orch /path/to/flow.ts
+```
+
+The script exports an `OrchestratorScript` object:
+
+```ts
+import type { OrchestratorScript } from "pi-subagents-milosz/src/orchestrator/orchestrator-context.ts";
+
+export default {
+  settings: {
+    timeout: 300_000,  // 5 min (default)
+  },
+
+  flow: async (ctx) => {
+    const scan = await ctx.runAgent({ agent: "scout", task: "analyze auth" });
+
+    if (scan.exitCode !== 0) {
+      return { output: `Scout failed: ${scan.error}` };
+    }
+
+    const impl = await ctx.runAgent({ agent: "worker", task: `implement based on: ${scan.output}` });
+
+    return { output: "Done", results: [scan, impl] };
+  },
+} satisfies OrchestratorScript;
+```
+
+### OrchestratorScript interface
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `flow` | `(ctx: OrchestratorContext) => Promise<{ output, results? }>` | yes | Main orchestrator function |
+| `settings.timeout` | `number` | no | Flow timeout in ms (default 300 000 = 5 min) |
+
+### OrchestratorContext
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runAgent(config)` | `Promise<OrchestratorRunAgentResult>` | Run a subagent and wait for the result |
+| `chainDir` | `string` | Shared directory for artifacts, contexts, and logs |
+| `runId` | `string` | Unique run identifier |
+| `cwd` | `string` | Working directory (where Pi was started) |
+| `timeoutMs` | `number` | Resolved timeout for this flow |
+| `log(message)` | `void` | Append a line to `orchestrator.log` inside `chainDir` |
+
+### OrchestratorRunAgentConfig
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent` | `string` | yes | Agent name (scout, worker, reviewer, oracle, …) |
+| `task` | `string` | yes | Task to delegate |
+| `as` | `string` | no | Logical name for later reference |
+| `model` | `string` | no | Override model for this step |
+| `context` | `"fresh" \| "fork"` | no | Override execution context (agents with `defaultContext: fork` will fork by default) |
+| `outputSchema` | `object` | no | JSON Schema for structured output |
+
+### OrchestratorRunAgentResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `exitCode` | `number` | 0 = success, non-zero = failure |
+| `output` | `string` | Text output from the subagent |
+| `structuredOutput` | `unknown` | Parsed structured output if `outputSchema` was used |
+| `error` | `string?` | Error message on failure |
+| `agent` | `string` | Agent name that produced this result |
+
+### Backward compatibility
+
+Existing scripts that export a bare default function still work:
+
+```ts
+export default async function (ctx: OrchestratorContext) { … }
+```
+
+The bridge wraps them as `{ flow: fn }` automatically. New scripts should prefer the object form.
+
+### Timeout
+
+The flow timeout is set in `settings.timeout` (default 300 000 ms). The bridge wraps `flow(ctx)` in `Promise.race` with a timeout promise. On timeout, an error response is sent to the slash command handler and the run terminates. The slash-command handler has no separate timeout — it relies on the bridge always emitting a response via `try/catch`.
+
 ## Runtime files
 
 The main runtime files are:
@@ -1108,3 +1194,6 @@ The main runtime files are:
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
 | `test/unit/` / `test/integration/` | Unit and loader-based integration tests. |
+| `src/orchestrator/orchestrator-bridge.ts` | `/pi-orch` bridge handler — loads TypeScript scripts via jiti, creates `OrchestratorContext`, applies timeout. |
+| `src/orchestrator/orchestrator-context.ts` | `OrchestratorContext`, `OrchestratorScript`, `OrchestratorSettings` interfaces and implementation. |
+| `src/orchestrator/orchestrator-session.ts` | Session snapshot persistence + synthetic assistant injection for fork support. |

@@ -15,7 +15,11 @@ import {
 	failSlashResult,
 	finalizeSlashResult,
 } from "./slash-live-state.ts";
+import { persistOrchSessionSnapshot } from "../orchestrator/orchestrator-session.ts";
 import {
+	ORCHESTRATOR_REQUEST_EVENT,
+	ORCHESTRATOR_RESPONSE_EVENT,
+	ORCHESTRATOR_UPDATE_EVENT,
 	RICH_REPORT_TYPE,
 	SLASH_RESULT_TYPE,
 	SLASH_SUBAGENT_CANCEL_EVENT,
@@ -581,6 +585,85 @@ export function registerSlashCommands(
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
 			await runSlashSubagent(pi, ctx, { action: "doctor" });
+		},
+	});
+
+	pi.registerCommand("pi-orch", {
+		description: "Run a TypeScript orchestrator script: /pi-orch path/to/script.ts",
+		handler: async (args, ctx) => {
+			const scriptPath = args.trim();
+			if (!scriptPath) {
+				ctx.ui.notify("Usage: /pi-orch <path/to/script.ts>", "error");
+				return;
+			}
+
+			ctx.ui.setStatus("orch", "loading script...");
+
+			// Ensure session is persisted now so fork-capable agents (worker, planner,
+			// oracle) can create branched sessions. persistOrchSessionSnapshot appends
+			// a synthetic assistant message required by Pi's createBranchedSession.
+			persistOrchSessionSnapshot(ctx);
+
+			const requestId = randomUUID();
+			let step = 0;
+			let agent = "";
+
+			const onUpdate = (data: unknown) => {
+				if (!data || typeof data !== "object") return;
+				const update = data as { requestId?: string; step?: number; agent?: string; status?: string };
+				if (update.requestId !== requestId) return;
+				step = update.step ?? step;
+				agent = update.agent ?? agent;
+				ctx.ui.setStatus("orch", `[step ${step + 1}] ${agent}: ${update.status ?? "running"}`);
+			};
+
+			const unsubUpdate = pi.events.on(ORCHESTRATOR_UPDATE_EVENT, onUpdate);
+
+			try {
+				const response = await new Promise<{ output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string }>((resolve) => {
+					const onResponse = (data: unknown) => {
+						if (!data || typeof data !== "object") return;
+						const resp = data as { requestId?: string };
+						if (resp.requestId !== requestId) return;
+						if (typeof unsubResponse === "function") unsubResponse();
+						if (typeof unsubUpdate === "function") unsubUpdate();
+						resolve(data as { output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string });
+					};
+
+					const unsubResponse = pi.events.on(ORCHESTRATOR_RESPONSE_EVENT, onResponse) as () => void;
+					pi.events.emit(ORCHESTRATOR_REQUEST_EVENT, { requestId, scriptPath });
+				});
+
+				ctx.ui.setStatus("orch", undefined);
+
+				const lines = ["## Orchestrator result\n"];
+				if (response.error && response.results.length === 0) {
+					lines.push(`❌ ${response.error}`);
+				} else {
+					for (const r of response.results) {
+						const icon = r.exitCode === 0 ? "✅" : "❌";
+						lines.push(`${icon} **${r.agent}** (exit ${r.exitCode})`);
+						if (r.output) {
+							const preview = r.output.slice(0, 500);
+							lines.push("```");
+							lines.push(preview);
+							if (r.output.length > 500) lines.push("...[truncated]");
+							lines.push("```");
+						}
+					}
+				}
+
+				pi.sendMessage({
+					customType: "orchestrator",
+					content: lines.join("\n"),
+					display: true,
+				});
+			} catch (error) {
+				if (typeof unsubUpdate === "function") unsubUpdate();
+				ctx.ui.setStatus("orch", undefined);
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(message, "error");
+			}
 		},
 	});
 

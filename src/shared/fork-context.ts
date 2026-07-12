@@ -58,7 +58,12 @@ export function createForkContextResolver(
 					throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
 				}
 				const sourceManager = openSession(parentSessionFile, sessionDir);
-				const sessionFile = sourceManager.createBranchedSession(leafId);
+				// Use sourceManager's leafId (from disk) rather than the parent sessionManager's,
+				// because the persisted file may have entries appended externally (e.g. by the
+				// orchestrator's synthetic assistant message). The in-memory parent doesn't know
+				// about those.
+				const effectiveLeafId = sourceManager.getLeafId() ?? leafId;
+				const sessionFile = sourceManager.createBranchedSession(effectiveLeafId);
 				if (!sessionFile) {
 					throw new Error("Session manager did not return a forked session file.");
 				}

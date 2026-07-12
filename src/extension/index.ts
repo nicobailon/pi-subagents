@@ -30,6 +30,7 @@ import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
+import { registerOrchestratorBridge } from "../orchestrator/orchestrator-bridge.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
@@ -338,6 +339,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),
 	});
 
+	const orchestratorBridge = registerOrchestratorBridge({
+		events: pi.events,
+		getContext: () => state.lastUiContext,
+		execute: (id, params, signal, onUpdate, ctx) =>
+			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),
+	});
+
 	const promptTemplateBridge = registerPromptTemplateDelegationBridge({
 		events: pi.events,
 		getContext: () => state.lastUiContext,
@@ -557,6 +565,7 @@ DIAGNOSTICS:
 		clearSlashSnapshots();
 		slashBridge.cancelAll();
 		slashBridge.dispose();
+		orchestratorBridge.dispose();
 		promptTemplateBridge.cancelAll();
 		promptTemplateBridge.dispose();
 		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
