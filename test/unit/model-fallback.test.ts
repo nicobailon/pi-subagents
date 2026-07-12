@@ -71,12 +71,24 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("authentication failed"), true);
 		assert.equal(isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."), true);
 		assert.equal(isRetryableModelFailure("model load failed"), true);
+		assert.equal(isRetryableModelFailure("Stream ended without finish_reason"), true);
+		assert.equal(isRetryableModelFailure("Request timed out."), true);
 	});
 
 	it("does not treat ordinary task/tool failures as retryable model failures", () => {
 		assert.equal(isRetryableModelFailure("bash failed (exit 1): command not found"), false);
 		assert.equal(isRetryableModelFailure("read failed (exit 1): no such file or directory"), false);
 		assert.equal(isRetryableModelFailure(undefined), false);
+	});
+
+	it("does not treat network-flavored tool failures as retryable model failures", () => {
+		assert.equal(isRetryableModelFailure("bash failed (exit 1): requests.exceptions.ConnectionError: Connection error."), false);
+		assert.equal(isRetryableModelFailure("bash failed (exit 1): urllib.error.URLError: request timed out"), false);
+		assert.equal(isRetryableModelFailure("fetch_content failed with exit code 1"), false);
+		assert.equal(isRetryableModelFailure("mcp.server/write failed (exit 1): request timed out"), false);
+		assert.equal(isRetryableModelFailure("mcp:tools.search failed with exit code 1"), false);
+		assert.equal(isRetryableModelFailure("Provider error: bash failed (exit 1): request timed out"), true);
+		assert.equal(isRetryableModelFailure("bash failed (exit unknown): request timed out"), true);
 	});
 });
 

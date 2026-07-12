@@ -267,6 +267,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/fetch failed/i,
 	/network error/i,
 	/socket hang up/i,
+	/stream ended without finish_reason/i,
 	/upstream/i,
 	/timed? out/i,
 	/timeout/i,
@@ -279,8 +280,18 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/model.*(?:load|fail|error)/i,
 ];
 
+/**
+ * Failures reported as `<tool> failed (exit N): ...` or `<tool> failed with
+ * exit code N` come from a tool call inside the child's task, not from the
+ * provider/model, however network-flavored their details read. Retrying a
+ * different model cannot fix them and would rerun the whole task. Tool names
+ * include namespaced forms like `mcp.server/write`.
+ */
+const TOOL_FAILURE_PREFIX = /^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exit code \d+))(?:\s|$)/i;
+
 export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
+	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 
