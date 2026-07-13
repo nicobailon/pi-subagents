@@ -620,14 +620,23 @@ export function registerSlashCommands(
 			const unsubUpdate = pi.events.on(ORCHESTRATOR_UPDATE_EVENT, onUpdate);
 
 			try {
-				const response = await new Promise<{ output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string; flowSummary?: string }>((resolve) => {
+				interface OrchestratorResultItem {
+					agent: string;
+					exitCode: number;
+					output: string;
+					structuredOutput?: unknown;
+					extractionDurationMs?: number;
+					durationMs?: number;
+				}
+
+				const response = await new Promise<{ output: string; results: OrchestratorResultItem[]; error?: string; flowSummary?: string }>((resolve) => {
 					const onResponse = (data: unknown) => {
 						if (!data || typeof data !== "object") return;
 						const resp = data as { requestId?: string };
 						if (resp.requestId !== requestId) return;
 						if (typeof unsubResponse === "function") unsubResponse();
 						if (typeof unsubUpdate === "function") unsubUpdate();
-						resolve(data as { output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string; flowSummary?: string });
+						resolve(data as { output: string; results: OrchestratorResultItem[]; error?: string; flowSummary?: string });
 					};
 
 					const unsubResponse = pi.events.on(ORCHESTRATOR_RESPONSE_EVENT, onResponse) as () => void;
@@ -637,23 +646,38 @@ export function registerSlashCommands(
 				ctx.ui.setStatus("orch", undefined);
 
 				const lines = ["## Orchestrator result\n"];
-				if (response.flowSummary) {
-					lines.push(response.flowSummary);
+				if (response.error) {
+					lines.push(`❌ **Error**: ${response.error}`);
+					lines.push("");
 				}
-				if (response.error && response.results.length === 0) {
-					lines.push(`❌ ${response.error}`);
-				} else {
-					for (const r of response.results) {
-						const icon = r.exitCode === 0 ? "✅" : "❌";
-						lines.push(`${icon} **${r.agent}** (exit ${r.exitCode})`);
-						if (r.output) {
-							const preview = r.output.slice(0, 500);
-							lines.push("```");
-							lines.push(preview);
-							if (r.output.length > 500) lines.push("...[truncated]");
-							lines.push("```");
-						}
+				for (const r of response.results) {
+					const icon = r.exitCode === 0 ? "✅" : "❌";
+					const agentSecs = r.extractionDurationMs
+						? `${(((r.durationMs ?? 0) - r.extractionDurationMs) / 1000).toFixed(1)}s`
+						: null;
+					const extractSecs = r.extractionDurationMs
+						? `${(r.extractionDurationMs / 1000).toFixed(1)}s`
+						: null;
+					const timing = extractSecs
+						? `(agent: ${agentSecs} + extraction: ${extractSecs})`
+						: "";
+					lines.push(`${icon} **${r.agent}** (exit ${r.exitCode}) ${timing}`);
+					if (r.structuredOutput) {
+						lines.push("```json");
+						lines.push(JSON.stringify(r.structuredOutput, null, 2));
+						lines.push("```");
 					}
+					if (r.output) {
+						const preview = r.output.slice(0, 500);
+						lines.push("```");
+						lines.push(preview);
+						if (r.output.length > 500) lines.push("...[truncated]");
+						lines.push("```");
+					}
+				}
+				if (response.flowSummary) {
+					lines.push("---");
+					lines.push(response.flowSummary);
 				}
 
 				pi.sendMessage({

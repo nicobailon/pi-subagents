@@ -63,6 +63,94 @@ interface OrchestratorBridgeOptions {
 	) => Promise<AgentToolResult<Details>>;
 }
 
+// ── Helpers (exported for testing) ─────────────────────────────────────
+
+export function loadStepResults(dir: string): OrchestratorRunAgentResult[] {
+	const resultsDir = path.join(dir, "step-results");
+	const results: OrchestratorRunAgentResult[] = [];
+	try {
+		if (!fs.existsSync(resultsDir)) return results;
+		const files = fs.readdirSync(resultsDir)
+			.filter((f) => f.endsWith(".json"))
+			.map((f) => parseInt(f.replace(".json", ""), 10))
+			.filter((n) => !isNaN(n))
+			.sort((a, b) => a - b);
+		for (const idx of files) {
+			try {
+				const raw = fs.readFileSync(path.join(resultsDir, `${idx}.json`), "utf-8");
+				results.push(JSON.parse(raw) as OrchestratorRunAgentResult);
+			} catch {
+				// best-effort per file
+			}
+		}
+	} catch {
+		// best-effort
+	}
+	return results;
+}
+
+export function generateFlowSummary(
+	scriptPath: string,
+	runId: string,
+	rs: OrchestratorRunAgentResult[],
+	dir: string,
+	status: "success" | "failed",
+	errorMsg?: string,
+): string {
+	try {
+		const statusIcon = status === "success" ? "✅ Success" : "❌ Failed";
+
+		const mdLines = [
+			`# Orchestrator Flow: ${path.basename(scriptPath)}`,
+			"",
+			`**Run ID**: ${runId}`,
+			`**Status**: ${statusIcon} | **Steps**: ${rs.length}`,
+		];
+		if (errorMsg) {
+			mdLines.push(`**Error**: ${errorMsg}`);
+		}
+
+		if (rs.length > 0) {
+			const totalDuration = rs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0);
+			const totalTokens = rs.reduce((sum, r) => sum + ((r.usage?.input ?? 0) + (r.usage?.output ?? 0)), 0);
+			const totalCost = rs.reduce((sum, r) => sum + (r.usage?.cost ?? 0), 0);
+			mdLines[3] = `**Status**: ${statusIcon} | **Duration**: ${(totalDuration / 1000).toFixed(1)}s | **Steps**: ${rs.length}`;
+			mdLines.push(`**Tokens**: ${totalTokens} | **Cost**: $${totalCost.toFixed(4)}`);
+
+			const hasExtraction = rs.some((r) => r.extractionDurationMs != null);
+			mdLines.push(
+				"",
+				hasExtraction
+					? "| # | Agent | Exit | Duration | Extraction | Tokens | Cost | Model |"
+					: "| # | Agent | Exit | Duration | Tokens | Cost | Model |",
+				hasExtraction
+					? "|---|-------|------|----------|------------|--------|------|-------|"
+					: "|---|-------|------|----------|--------|------|-------|",
+			);
+
+			for (const r of rs) {
+				const dur = r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : "-";
+				const extr = r.extractionDurationMs
+					? `${(r.extractionDurationMs / 1000).toFixed(1)}s`
+					: "-";
+				const tok = (r.usage?.input ?? 0) + (r.usage?.output ?? 0) || "-";
+				const cost = r.usage?.cost != null ? `$${r.usage.cost.toFixed(4)}` : "-";
+				const icon = r.exitCode === 0 ? "✅" : "❌";
+				if (hasExtraction) {
+					mdLines.push(`| ${rs.indexOf(r)} | ${r.agent} | ${icon} ${r.exitCode} | ${dur} | ${extr} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
+				} else {
+					mdLines.push(`| ${rs.indexOf(r)} | ${r.agent} | ${icon} ${r.exitCode} | ${dur} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
+				}
+			}
+		}
+
+		mdLines.push("", `📁 **Chain dir**: ${dir}`);
+		return mdLines.join("\n") + "\n";
+	} catch {
+		return `# Orchestrator Flow: ${path.basename(scriptPath)}\n\n**Run ID**: ${runId}\n**Status**: ❌ Failed\n\n📁 **Chain dir**: ${dir}\n`;
+	}
+}
+
 // ── Bridge ──────────────────────────────────────────────────────────────
 
 export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): {
@@ -99,11 +187,12 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 		const results: OrchestratorRunAgentResult[] = [];
 		let chainDir: string | undefined;
 
+		// Rozwiąż ścieżkę
+		const resolvedPath = path.isAbsolute(scriptPath)
+			? scriptPath
+			: path.resolve(ctx.cwd, scriptPath);
+
 		try {
-			// Rozwiąż ścieżkę
-			const resolvedPath = path.isAbsolute(scriptPath)
-				? scriptPath
-				: path.resolve(ctx.cwd, scriptPath);
 
 			if (!fs.existsSync(resolvedPath)) {
 				const response: OrchestratorResponse = {
@@ -245,38 +334,8 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 			}
 
 			// Wygeneruj flow-summary.md
-			let flowSummaryMd: string | undefined;
-			const summaryPath = path.join(chainDir, "flow-summary.md");
-			try {
-				const totalDuration = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + (r.durationMs ?? 0), 0);
-				const totalTokens = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + ((r.usage?.input ?? 0) + (r.usage?.output ?? 0)), 0);
-				const totalCost = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + (r.usage?.cost ?? 0), 0);
-
-				const mdLines = [
-					`# Orchestrator Flow: ${path.basename(resolvedPath)}`,
-					"",
-					`**Run ID**: ${requestId}`,
-					`**Status**: ✅ Success | **Duration**: ${(totalDuration / 1000).toFixed(1)}s | **Steps**: ${finalResults.length}`,
-					`**Tokens**: ${totalTokens} | **Cost**: $${totalCost.toFixed(4)}`,
-					"",
-					"| # | Agent | Exit | Duration | Tokens | Cost | Model |",
-					"|---|-------|------|----------|--------|------|-------|",
-				];
-
-				for (const r of finalResults) {
-					const dur = r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : "-";
-					const tok = (r.usage?.input ?? 0) + (r.usage?.output ?? 0) || "-";
-					const cost = r.usage?.cost != null ? `$${r.usage.cost.toFixed(4)}` : "-";
-					const status = r.exitCode === 0 ? "✅" : "❌";
-					mdLines.push(`| ${finalResults.indexOf(r)} | ${r.agent} | ${status} ${r.exitCode} | ${dur} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
-				}
-
-				mdLines.push("", `📁 **Chain dir**: ${chainDir}`);
-				flowSummaryMd = mdLines.join("\n") + "\n";
-				fs.writeFileSync(summaryPath, flowSummaryMd, "utf-8");
-			} catch {
-				// best-effort
-			}
+			const flowSummaryMd = generateFlowSummary(resolvedPath, requestId, finalResults, chainDir, "success");
+			try { fs.writeFileSync(path.join(chainDir, "flow-summary.md"), flowSummaryMd, "utf-8"); } catch { /* best-effort */ }
 
 			const output = scriptResult.output || "Orchestrator completed.";
 			const response: OrchestratorResponse = {
@@ -290,27 +349,41 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 			const message = error instanceof Error ? error.message : String(error);
 			const stack = error instanceof Error ? error.stack : "";
 
-			// Zapisz flow.json z errorem
+			// Zapisz flow.json z errorem (utwórz jeśli nie istnieje)
+			let flowSummaryMd: string | undefined;
+			let effectiveResults = results;
 			if (chainDir) {
 				const flowFp2 = path.join(chainDir, "orchestrator-flow.json");
 				try {
+					let flow: { runId: string; scriptPath: string; startTime: string; steps: unknown[] };
 					if (fs.existsSync(flowFp2)) {
-						const flow = JSON.parse(fs.readFileSync(flowFp2, "utf-8"));
-						flow.endTime = new Date().toISOString();
-						flow.status = "failed";
-						flow.error = message;
-						fs.writeFileSync(flowFp2, JSON.stringify(flow, null, 2), "utf-8");
+						flow = JSON.parse(fs.readFileSync(flowFp2, "utf-8"));
+					} else {
+						flow = { runId: requestId, scriptPath: resolvedPath, startTime: new Date().toISOString(), steps: [] };
 					}
+					flow.endTime = new Date().toISOString();
+					flow.status = "failed";
+					flow.error = message;
+					fs.writeFileSync(flowFp2, JSON.stringify(flow, null, 2), "utf-8");
 				} catch {
 					// best-effort
 				}
+
+				// Odtwórz results z plików step-results/ jeśli bridge ich nie zdążył zapisać
+				const stepResults = loadStepResults(chainDir);
+				effectiveResults = results.length > 0 ? results : stepResults;
+
+				// Generuj flowSummary nawet przy failu
+				flowSummaryMd = generateFlowSummary(resolvedPath, requestId, effectiveResults, chainDir, "failed", message);
+				try { fs.writeFileSync(path.join(chainDir, "flow-summary.md"), flowSummaryMd, "utf-8"); } catch { /* best-effort */ }
 			}
 
 			const response: OrchestratorResponse = {
 				requestId,
 				output: `Orchestrator failed:\n${message}\n\n${stack}`,
-				results,
+				results: effectiveResults,
 				error: message,
+				flowSummary: flowSummaryMd,
 			};
 			options.events.emit(ORCHESTRATOR_RESPONSE_EVENT, response);
 		}

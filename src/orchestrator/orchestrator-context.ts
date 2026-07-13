@@ -31,6 +31,7 @@ const FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH = path.join(
 );
 
 const DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3;
+const DEFAULT_STRUCTURED_OUTPUT_EXTRACT_TIMEOUT_MS = 30_000; // 30s per extraction attempt
 const STRUCTURED_OUTPUT_EXTRACT_TASK = "Extract the required structured data from this conversation according to the specified format. Call the structured_output tool with the data.";
 
 /**
@@ -104,6 +105,10 @@ export interface OrchestratorRunAgentConfig extends SubagentParamsLike {
 	 * Każda próba to osobne `pi --continue` z wymuszeniem tool_choice.
 	 */
 	maxStructuredOutputAttempts?: number;
+	/**
+	 * Timeout pojedynczej próby ekstrakcji structured output w ms (domyślnie 30_000 = 30s).
+	 */
+	structuredOutputExtractTimeoutMs?: number;
 }
 
 export interface OrchestratorRunAgentResult {
@@ -120,6 +125,8 @@ export interface OrchestratorRunAgentResult {
 	model?: string;
 	/** Liczba wywołań narzędzi */
 	toolCount?: number;
+	/** Czas ekstrakcji structured output w ms (jeśli dotyczy) */
+	extractionDurationMs?: number;
 }
 
 /** Rezultat bloku worktree zwracany przez runInWorktree */
@@ -228,7 +235,19 @@ export interface OrchestratorContextDeps {
 
 export function createOrchestratorContext(deps: OrchestratorContextDeps): OrchestratorContext {
 	const logPath = path.join(deps.chainDir, "orchestrator.log");
+	const stepResultsDir = path.join(deps.chainDir, "step-results");
+
 	let stepIndex = 0;
+
+	const saveStepResult = (index: number, result: OrchestratorRunAgentResult) => {
+		try {
+			fs.mkdirSync(stepResultsDir, { recursive: true });
+			const fp = path.join(stepResultsDir, `${index}.json`);
+			fs.writeFileSync(fp, JSON.stringify(result, null, 2), "utf-8");
+		} catch {
+			// best-effort
+		}
+	};
 
 	const log = (message: string) => {
 		const line = `[${new Date().toISOString()}] ${message}\n`;
@@ -246,7 +265,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		const effectiveCwd = config.cwd ?? deps.cwd;
 
 		// Wyciągnij orchestrator-specific pola, reszta to SubagentParamsLike
-		const { label, as: _as, reads, doNotThrowOnError, outputSchema, maxStructuredOutputAttempts, ...agentParams } = config;
+		const { label, as: _as, reads, doNotThrowOnError, outputSchema, maxStructuredOutputAttempts, structuredOutputExtractTimeoutMs, ...agentParams } = config;
 
 		// Wstrzyknij prefixy [Read from: ...] / [Write to: ...] — dokładnie jak chain
 		let taskWithInstructions = config.task;
@@ -288,7 +307,22 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		const error = singleResult?.error ?? (result.isError ? output : undefined);
 		let structuredOutput = singleResult?.structuredOutput;
 
+		// Zapisz wynik wstępny (przed ekstrakcją) — na wypadek timeoutu
+		saveStepResult(currentIndex, {
+			exitCode,
+			output,
+			structuredOutput,
+			error,
+			agent: config.agent,
+			usage: singleResult?.usage ? { input: singleResult.usage.input, output: singleResult.usage.output, cacheRead: singleResult.usage.cacheRead, cacheWrite: singleResult.usage.cacheWrite, cost: singleResult.usage.cost } : undefined,
+			durationMs: singleResult?.progressSummary?.durationMs,
+			model: singleResult?.model,
+			toolCount: singleResult?.progressSummary?.toolCount,
+		});
+
 		// ── Orchestrator-level forced structured output extraction ──
+		let extractionDurationMs: number | undefined;
+		let extractionUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number } | undefined;
 		if (outputSchema && exitCode === 0) {
 			const sessionFile = singleResult?.sessionFile;
 			if (sessionFile && fs.existsSync(sessionFile)) {
@@ -297,47 +331,72 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 
 				const prevEnv = process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"];
 				process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"] = JSON.stringify(outputSchema);
+				const extractionStart = Date.now();
+				const extrUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 				try {
 					let forcedOutput: unknown;
 					for (let attempt = 0; attempt < attempts; attempt++) {
 						const attemptLabel = attempts > 1 ? ` [attempt ${attempt + 1}/${attempts}]` : "";
+						const attemptStart = Date.now();
+						log(`[step ${currentIndex}] Extraction attempt ${attempt + 1}/${attempts} starting...`);
 						try {
-							const extractResult = await deps.execute(
-								`${requestId}-extract-${attempt}`,
-								{
-									agent: config.agent,
-									task: STRUCTURED_OUTPUT_EXTRACT_TASK,
-									sessionFile,
-									extraExtensions: [FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH],
-								},
-								new AbortController().signal,
-								undefined,
-								deps.ctx,
-							);
+							const extractTimeout = structuredOutputExtractTimeoutMs ?? DEFAULT_STRUCTURED_OUTPUT_EXTRACT_TIMEOUT_MS;
+							const abortController = new AbortController();
+							const timeoutId = setTimeout(() => abortController.abort(), extractTimeout);
+							try {
+								const extractResult = await deps.execute(
+									`${requestId}-extract-${attempt}`,
+									{
+										agent: config.agent,
+										task: STRUCTURED_OUTPUT_EXTRACT_TASK,
+										sessionFile,
+										extraExtensions: [FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH],
+									},
+									abortController.signal,
+									undefined,
+									deps.ctx,
+								);
 
-							const extractDetails = extractResult.details as Details | undefined;
-							const extractSingle = extractDetails?.results?.[0];
-							const forcedOutputCandidate = extractSingle?.structuredOutput
-								?? extractStructuredOutputFromMessages(extractSingle?.messages);
-							if (forcedOutputCandidate !== undefined) {
-								forcedOutput = forcedOutputCandidate;
-								log(`[step ${currentIndex}] Structured output extracted${attemptLabel}: ${JSON.stringify(forcedOutput).slice(0, 300)}`);
-								break;
+								const extractDetails = extractResult.details as Details | undefined;
+								const extractSingle = extractDetails?.results?.[0];
+								if (extractSingle?.usage) {
+									extrUsage.input += extractSingle.usage.input;
+									extrUsage.output += extractSingle.usage.output;
+									extrUsage.cacheRead += extractSingle.usage.cacheRead;
+									extrUsage.cacheWrite += extractSingle.usage.cacheWrite;
+									extrUsage.cost += extractSingle.usage.cost;
+								}
+								const forcedOutputCandidate = extractSingle?.structuredOutput
+									?? extractStructuredOutputFromMessages(extractSingle?.messages);
+								const attemptDuration = ((Date.now() - attemptStart) / 1000).toFixed(1);
+								if (forcedOutputCandidate !== undefined) {
+									forcedOutput = forcedOutputCandidate;
+									log(`[step ${currentIndex}] Extraction success${attemptLabel} (${attemptDuration}s): ${JSON.stringify(forcedOutput).slice(0, 300)}`);
+									break;
+								}
+								log(`[step ${currentIndex}] Extraction returned no data${attemptLabel} (${attemptDuration}s)`);
+							} finally {
+								clearTimeout(timeoutId);
 							}
-							log(`[step ${currentIndex}] Structured output extraction returned no data${attemptLabel}`);
 						} catch (err) {
+							const attemptDuration = ((Date.now() - attemptStart) / 1000).toFixed(1);
 							const message = err instanceof Error ? err.message : String(err);
-							log(`[step ${currentIndex}] Extraction attempt failed${attemptLabel}: ${message.slice(0, 200)}`);
+							const isTimeout = err instanceof Error && err.name === "AbortError";
+							log(`[step ${currentIndex}] Extraction attempt ${attempt + 1}/${attempts} ${isTimeout ? "timed out" : "failed"} (${attemptDuration}s): ${message.slice(0, 200)}`);
 						}
 						if (attempt < attempts - 1) {
 							await new Promise((r) => setTimeout(r, 1000));
 						}
 					}
+					extractionDurationMs = Date.now() - extractionStart;
+					const totalExtractionDuration = (extractionDurationMs / 1000).toFixed(1);
 					if (forcedOutput !== undefined) {
 						structuredOutput = forcedOutput;
+						log(`[step ${currentIndex}] Structured output extraction completed (total ${totalExtractionDuration}s, ${attempts} attempts max)`);
 					} else {
-						log(`[step ${currentIndex}] Structured output extraction failed after ${attempts} attempts`);
+						log(`[step ${currentIndex}] Structured output extraction FAILED after ${attempts} attempts (total ${totalExtractionDuration}s)`);
 					}
+					extractionUsage = extrUsage;
 				} finally {
 					if (prevEnv !== undefined) {
 						process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"] = prevEnv;
@@ -366,17 +425,33 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			(toolCount ? ` tools=${toolCount}` : "") +
 			(error ? ` error=${error.slice(0, 100)}` : ""));
 
+		// Sumuj usage z głównego agenta i ekstrakcji
+		const totalUsage = usage ? { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost } : undefined;
+		const mergedUsage = extractionUsage && totalUsage
+			? {
+				input: totalUsage.input + extractionUsage.input,
+				output: totalUsage.output + extractionUsage.output,
+				cacheRead: totalUsage.cacheRead + extractionUsage.cacheRead,
+				cacheWrite: totalUsage.cacheWrite + extractionUsage.cacheWrite,
+				cost: totalUsage.cost + extractionUsage.cost,
+			}
+			: (totalUsage ?? extractionUsage);
+
 		const orchResult: OrchestratorRunAgentResult = {
 			exitCode,
 			output,
 			structuredOutput,
 			error,
 			agent: config.agent,
-			usage: usage ? { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost } : undefined,
+			usage: mergedUsage,
 			durationMs,
 			model,
 			toolCount,
+			extractionDurationMs,
 		};
+
+		// Nadpisz wynik finalny (po ewentualnej ekstrakcji)
+		saveStepResult(currentIndex, orchResult);
 
 		if (exitCode !== 0 && !doNotThrowOnError) {
 			throw new OrchestratorAgentError(

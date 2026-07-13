@@ -12,6 +12,8 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createTempDir, removeTempDir, createEventBus } from "../support/helpers.ts";
 import {
 	registerOrchestratorBridge,
+	loadStepResults,
+	generateFlowSummary,
 } from "../../src/orchestrator/orchestrator-bridge.ts";
 import {
 	ORCHESTRATOR_REQUEST_EVENT,
@@ -605,6 +607,103 @@ describe("orchestrator bridge", () => {
 			// Custom results take precedence over tracked results
 			assert.equal((response.results as Array<{ agent: string }>)[0].agent, "custom");
 		});
+	});
+});
+
+// ── loadStepResults ──────────────────────────────────────────────────
+
+describe("loadStepResults", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = createTempDir("load-step-");
+	});
+
+	afterEach(() => {
+		removeTempDir(tempDir);
+	});
+
+	it("returns empty array for non-existent directory", () => {
+		const results = loadStepResults(path.join(tempDir, "nonexistent"));
+		assert.deepEqual(results, []);
+	});
+
+	it("returns empty array for empty step-results directory", () => {
+		const dir = path.join(tempDir, "chain");
+		fs.mkdirSync(path.join(dir, "step-results"), { recursive: true });
+		const results = loadStepResults(dir);
+		assert.deepEqual(results, []);
+	});
+
+	it("loads and sorts step results by index", () => {
+		const dir = path.join(tempDir, "chain");
+		const resultsDir = path.join(dir, "step-results");
+		fs.mkdirSync(resultsDir, { recursive: true });
+
+		fs.writeFileSync(path.join(resultsDir, "1.json"), JSON.stringify({ agent: "worker", exitCode: 0, output: "step1" }));
+		fs.writeFileSync(path.join(resultsDir, "0.json"), JSON.stringify({ agent: "scout", exitCode: 0, output: "step0" }));
+		fs.writeFileSync(path.join(resultsDir, "2.json"), JSON.stringify({ agent: "reviewer", exitCode: 0, output: "step2" }));
+
+		const results = loadStepResults(dir);
+		assert.equal(results.length, 3);
+		assert.equal(results[0].agent, "scout");
+		assert.equal(results[1].agent, "worker");
+		assert.equal(results[2].agent, "reviewer");
+	});
+
+	it("skips non-json files and invalid indices", () => {
+		const dir = path.join(tempDir, "chain");
+		const resultsDir = path.join(dir, "step-results");
+		fs.mkdirSync(resultsDir, { recursive: true });
+
+		fs.writeFileSync(path.join(resultsDir, "0.json"), JSON.stringify({ agent: "scout", exitCode: 0, output: "ok" }));
+		fs.writeFileSync(path.join(resultsDir, "notes.txt"), "ignored");
+		fs.writeFileSync(path.join(resultsDir, "abc.json"), JSON.stringify({ agent: "bad", exitCode: 1 })); // non-numeric name
+
+		const results = loadStepResults(dir);
+		assert.equal(results.length, 1);
+		assert.equal(results[0].agent, "scout");
+	});
+
+	it("skips malformed json files gracefully", () => {
+		const dir = path.join(tempDir, "chain");
+		const resultsDir = path.join(dir, "step-results");
+		fs.mkdirSync(resultsDir, { recursive: true });
+
+		fs.writeFileSync(path.join(resultsDir, "0.json"), "not valid json");
+		fs.writeFileSync(path.join(resultsDir, "1.json"), JSON.stringify({ agent: "worker", exitCode: 0, output: "ok" }));
+
+		const results = loadStepResults(dir);
+		assert.equal(results.length, 1);
+		assert.equal(results[0].agent, "worker");
+	});
+});
+
+// ── generateFlowSummary ──────────────────────────────────────────────
+
+describe("generateFlowSummary", () => {
+	it("returns summary with error for empty results", () => {
+		const md = generateFlowSummary("/tmp/test.ts", "run-1", [], "/tmp/chain", "failed", "timeout");
+		assert.ok(md.includes("❌ Failed"));
+		assert.ok(md.includes("timeout"));
+		assert.ok(md.includes("**Steps**: 0"), "should show 0 steps");
+	});
+
+	it("includes step table for non-empty results", () => {
+		const results = [
+			{ agent: "scout", exitCode: 0, output: "ok", durationMs: 1000, model: "test", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001 } },
+		];
+		const md = generateFlowSummary("/tmp/test.ts", "run-1", results, "/tmp/chain", "success");
+		assert.ok(md.includes("✅ Success"));
+		assert.ok(md.includes("scout"));
+		assert.ok(md.includes("1.0s"));
+	});
+
+	it("returns fallback on unexpected error", () => {
+		const results = [{} as any];
+		const md = generateFlowSummary("/tmp/test.ts", "run-1", results, "/tmp/chain", "success");
+		assert.ok(typeof md === "string");
+		assert.ok(md.length > 0);
 	});
 });
 

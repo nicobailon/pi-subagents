@@ -741,3 +741,132 @@ describe("extractStructuredOutputFromMessages", () => {
 		assert.equal(result, undefined);
 	});
 });
+
+// ── Step results persistence ─────────────────────────────────────────
+
+describe("step results persistence", () => {
+	let tempDir: string;
+	let chainDir: string;
+
+	beforeEach(() => {
+		tempDir = createTempDir("orch-step-");
+		chainDir = path.join(tempDir, "chain");
+		fs.mkdirSync(chainDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		removeTempDir(tempDir);
+	});
+
+	it("writes step result file after main agent (before extraction)", async () => {
+		const sessionFile = path.join(tempDir, "session.jsonl");
+		fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant"}}\n', "utf-8");
+
+		const mockExec = createMockExecute();
+		mockExec.setResponses([
+			makeSingleResult({ agent: "scout", output: "scan done", sessionFile, exitCode: 0 }),
+			makeSingleResult({ agent: "scout", output: "extracted", exitCode: 0, structuredOutput: { key: "val" } }),
+		]);
+
+		const outputSchema = Type.Object({ key: Type.String() });
+		const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
+
+		const result = await ctx.runAgent({
+			agent: "scout",
+			task: "scan",
+			outputSchema: JSON.parse(JSON.stringify(outputSchema)),
+		});
+
+		// Final result should have structuredOutput from extraction
+		assert.deepEqual(result.structuredOutput, { key: "val" });
+
+		// step-results/0.json should exist
+		const stepFile = path.join(chainDir, "step-results", "0.json");
+		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist");
+
+		const saved = JSON.parse(fs.readFileSync(stepFile, "utf-8"));
+		assert.equal(saved.agent, "scout");
+		assert.equal(saved.exitCode, 0);
+		assert.deepEqual(saved.structuredOutput, { key: "val" }, "final save should include structuredOutput");
+	});
+
+	it("saves preliminary result before extraction (survives extraction failure)", async () => {
+		const sessionFile = path.join(tempDir, "session.jsonl");
+		fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant"}}\n', "utf-8");
+
+		const mockExec = createMockExecute();
+		// Main agent succeeds, but all extraction attempts throw
+		mockExec.setResponses([
+			makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
+			makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
+			makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
+			makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
+		]);
+
+		const outputSchema = Type.Object({ key: Type.String() });
+		const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
+
+		const result = await ctx.runAgent({
+			agent: "worker",
+			task: "implement",
+			outputSchema: JSON.parse(JSON.stringify(outputSchema)),
+		});
+
+		// Extraction failed, but main agent succeeded
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.structuredOutput, undefined);
+
+		// step-results/0.json should still exist (final save after extraction)
+		const stepFile = path.join(chainDir, "step-results", "0.json");
+		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist even when extraction fails");
+
+		const saved = JSON.parse(fs.readFileSync(stepFile, "utf-8"));
+		assert.equal(saved.agent, "worker");
+		assert.equal(saved.exitCode, 0);
+		assert.equal(saved.structuredOutput, undefined, "structuredOutput should be undefined after failed extraction");
+	});
+
+	it("writes step result for agent without outputSchema", async () => {
+		const mockExec = createMockExecute();
+		mockExec.setResponses([
+			makeSingleResult({ agent: "scout", output: "scan done", exitCode: 0 }),
+		]);
+
+		const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
+		await ctx.runAgent({ agent: "scout", task: "scan" });
+
+		const stepFile = path.join(chainDir, "step-results", "0.json");
+		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist for non-outputSchema agents");
+
+		const saved = JSON.parse(fs.readFileSync(stepFile, "utf-8"));
+		assert.equal(saved.agent, "scout");
+		assert.equal(saved.exitCode, 0);
+		assert.ok(saved.output.includes("scan done"));
+	});
+
+	it("writes multiple step results with correct indices", async () => {
+		const mockExec = createMockExecute();
+		mockExec.setResponses([
+			makeSingleResult({ agent: "scout", output: "step 0", exitCode: 0 }),
+			makeSingleResult({ agent: "worker", output: "step 1", exitCode: 0 }),
+			makeSingleResult({ agent: "reviewer", output: "step 2", exitCode: 0 }),
+		]);
+
+		const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
+		await ctx.runAgent({ agent: "scout", task: "a" });
+		await ctx.runAgent({ agent: "worker", task: "b" });
+		await ctx.runAgent({ agent: "reviewer", task: "c" });
+
+		assert.ok(fs.existsSync(path.join(chainDir, "step-results", "0.json")));
+		assert.ok(fs.existsSync(path.join(chainDir, "step-results", "1.json")));
+		assert.ok(fs.existsSync(path.join(chainDir, "step-results", "2.json")));
+
+		const r0 = JSON.parse(fs.readFileSync(path.join(chainDir, "step-results", "0.json"), "utf-8"));
+		const r1 = JSON.parse(fs.readFileSync(path.join(chainDir, "step-results", "1.json"), "utf-8"));
+		const r2 = JSON.parse(fs.readFileSync(path.join(chainDir, "step-results", "2.json"), "utf-8"));
+
+		assert.equal(r0.agent, "scout");
+		assert.equal(r1.agent, "worker");
+		assert.equal(r2.agent, "reviewer");
+	});
+});
