@@ -36,6 +36,7 @@ interface OrchestratorResponse {
 	output: string;
 	results: OrchestratorRunAgentResult[];
 	error?: string;
+	flowSummary?: string;
 }
 
 interface OrchestratorUpdate {
@@ -228,6 +229,7 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 			}
 
 			// Wygeneruj flow-summary.md
+			let flowSummaryMd: string | undefined;
 			const summaryPath = path.join(chainDir, "flow-summary.md");
 			try {
 				const totalDuration = finalResults.reduce((sum: number, r: OrchestratorRunAgentResult) => sum + (r.durationMs ?? 0), 0);
@@ -254,7 +256,8 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 				}
 
 				mdLines.push("", `📁 **Chain dir**: ${chainDir}`);
-				fs.writeFileSync(summaryPath, mdLines.join("\n") + "\n", "utf-8");
+				flowSummaryMd = mdLines.join("\n") + "\n";
+				fs.writeFileSync(summaryPath, flowSummaryMd, "utf-8");
 			} catch {
 				// best-effort
 			}
@@ -264,6 +267,7 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 				requestId,
 				output,
 				results: finalResults,
+				flowSummary: flowSummaryMd,
 			};
 			options.events.emit(ORCHESTRATOR_RESPONSE_EVENT, response);
 		} catch (error) {
