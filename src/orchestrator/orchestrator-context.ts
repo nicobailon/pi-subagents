@@ -37,6 +37,16 @@ export interface OrchestratorScript {
 	settings?: OrchestratorSettings;
 }
 
+/** Błąd rzucany przez runAgent gdy agent zakończy się z exitCode !== 0 */
+export class OrchestratorAgentError extends Error {
+	result: OrchestratorRunAgentResult;
+	constructor(message: string, result: OrchestratorRunAgentResult) {
+		super(message);
+		this.name = "OrchestratorAgentError";
+		this.result = result;
+	}
+}
+
 export interface OrchestratorRunAgentConfig extends SubagentParamsLike {
 	/** Nazwa agenta (zawężone do required) */
 	agent: string;
@@ -48,6 +58,8 @@ export interface OrchestratorRunAgentConfig extends SubagentParamsLike {
 	label?: string;
 	/** Pliki do przeczytania przed wykonaniem — wstrzykiwane jako prefix [Read from: ...] */
 	reads?: string[];
+	/** Jeśli true, nie rzuca wyjątku przy exitCode !== 0 — zwraca wynik normalnie */
+	doNotThrowOnError?: boolean;
 }
 
 export interface OrchestratorRunAgentResult {
@@ -82,6 +94,24 @@ export interface WorktreeBlockResult {
 	patch: string;
 }
 
+/** Konfiguracja retry dla withRetry */
+export interface RetryConfig {
+	/** Maksymalna liczba prób (włącznie z pierwszą) */
+	maxAttempts: number;
+	/** Opóźnienie między próbami w ms (domyślnie 1000) */
+	delayMs?: number;
+	/** Strategia backoff: "fixed" (domyślnie) lub "exponential" */
+	backoff?: "fixed" | "exponential";
+}
+
+/** Kontekst dostępny wewnątrz bloku withRetry */
+export interface RetryContext {
+	/** Numer aktualnej próby (0-indexed) */
+	attempt: number;
+	/** Błąd z poprzedniej próby (undefined przy pierwszej próbie) */
+	lastError: OrchestratorAgentError | undefined;
+}
+
 /** Kontekst dostępny wewnątrz bloku runInWorktree */
 export interface WorktreeOrchestratorContext {
 	/** Odpal subagenta w worktree (cwd automatycznie ustawione na ścieżkę worktree) */
@@ -95,8 +125,16 @@ export interface WorktreeOrchestratorContext {
 }
 
 export interface OrchestratorContext {
-	/** Odpal subagenta, czekaj na wynik */
+	/** Odpal subagenta, czekaj na wynik. Domyślnie rzuca OrchestratorAgentError przy exitCode !== 0 (chyba że doNotThrowOnError: true). */
 	runAgent(config: OrchestratorRunAgentConfig): Promise<OrchestratorRunAgentResult>;
+
+	/**
+	 * Wykonuje blok z automatycznym retry.
+	 * Jeśli callback rzuci OrchestratorAgentError, blok jest ponawiany
+	 * do maxAttempts razy z konfigurowalnym delay/backoff.
+	 * Po wyczerpaniu prób rzuca ostatni błąd.
+	 */
+	withRetry<T>(config: RetryConfig, fn: (ctx: RetryContext) => Promise<T>): Promise<T>;
 
 	/**
 	 * Wykonuje blok agentów wewnątrz jednego git worktree.
@@ -164,7 +202,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		const effectiveCwd = config.cwd ?? deps.cwd;
 
 		// Wyciągnij orchestrator-specific pola, reszta to SubagentParamsLike
-		const { label, as: _as, reads, ...agentParams } = config;
+		const { label, as: _as, reads, doNotThrowOnError, ...agentParams } = config;
 
 		// Wstrzyknij prefixy [Read from: ...] / [Write to: ...] — dokładnie jak chain
 		let taskWithInstructions = config.task;
@@ -222,7 +260,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			(toolCount ? ` tools=${toolCount}` : "") +
 			(error ? ` error=${error.slice(0, 100)}` : ""));
 
-		return {
+		const orchResult: OrchestratorRunAgentResult = {
 			exitCode,
 			output,
 			structuredOutput,
@@ -233,6 +271,50 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			model,
 			toolCount,
 		};
+
+		if (exitCode !== 0 && !doNotThrowOnError) {
+			throw new OrchestratorAgentError(
+				error ? `Agent '${config.agent}' failed: ${error.slice(0, 200)}` : `Agent '${config.agent}' failed with exit code ${exitCode}`,
+				orchResult,
+			);
+		}
+
+		return orchResult;
+	};
+
+	const withRetry = async <T>(
+		config: RetryConfig,
+		fn: (ctx: RetryContext) => Promise<T>,
+	): Promise<T> => {
+		const maxAttempts = config.maxAttempts;
+		const delayMs = config.delayMs ?? 1000;
+		const backoff = config.backoff ?? "fixed";
+
+		let lastError: OrchestratorAgentError | undefined;
+
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			try {
+				const result = await fn({ attempt, lastError });
+				return result;
+			} catch (err) {
+				if (err instanceof OrchestratorAgentError) {
+					lastError = err;
+					if (attempt < maxAttempts - 1) {
+						const waitMs = backoff === "exponential"
+							? delayMs * Math.pow(2, attempt)
+							: delayMs;
+						log(`[retry] Attempt ${attempt + 1}/${maxAttempts} failed: ${err.message.slice(0, 100)}. Retrying in ${waitMs}ms...`);
+						await new Promise((resolve) => setTimeout(resolve, waitMs));
+					}
+				} else {
+					// Nie-agentowe błędy (timeout, sieć, itp.) propagujemy od razu
+					throw err;
+				}
+			}
+		}
+
+		// Wyczerpane próby — rzuć ostatni błąd
+		throw lastError!;
 	};
 
 	const runInWorktree = async <T>(
@@ -316,6 +398,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 
 	return {
 		runAgent,
+		withRetry,
 		runInWorktree,
 		chainDir: deps.chainDir,
 		runId: deps.runId,
