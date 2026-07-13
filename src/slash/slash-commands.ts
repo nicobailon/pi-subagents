@@ -620,14 +620,14 @@ export function registerSlashCommands(
 			const unsubUpdate = pi.events.on(ORCHESTRATOR_UPDATE_EVENT, onUpdate);
 
 			try {
-				const response = await new Promise<{ output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string }>((resolve) => {
+				const response = await new Promise<{ output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string; flowSummary?: string }>((resolve) => {
 					const onResponse = (data: unknown) => {
 						if (!data || typeof data !== "object") return;
 						const resp = data as { requestId?: string };
 						if (resp.requestId !== requestId) return;
 						if (typeof unsubResponse === "function") unsubResponse();
 						if (typeof unsubUpdate === "function") unsubUpdate();
-						resolve(data as { output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string });
+						resolve(data as { output: string; results: Array<{ agent: string; exitCode: number; output: string }>; error?: string; flowSummary?: string });
 					};
 
 					const unsubResponse = pi.events.on(ORCHESTRATOR_RESPONSE_EVENT, onResponse) as () => void;
@@ -637,6 +637,9 @@ export function registerSlashCommands(
 				ctx.ui.setStatus("orch", undefined);
 
 				const lines = ["## Orchestrator result\n"];
+				if (response.flowSummary) {
+					lines.push(response.flowSummary);
+				}
 				if (response.error && response.results.length === 0) {
 					lines.push(`❌ ${response.error}`);
 				} else {
