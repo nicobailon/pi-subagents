@@ -22,7 +22,7 @@ import {
 	ORCHESTRATOR_UPDATE_EVENT,
 	type Details,
 } from "../shared/types.ts";
-import { createOrchestratorContext, type OrchestratorContext, type OrchestratorRunAgentResult, type OrchestratorScript } from "./orchestrator-context.ts";
+import { createOrchestratorContext, OrchestratorAgentError, type OrchestratorContext, type OrchestratorRunAgentResult, type OrchestratorScript } from "./orchestrator-context.ts";
 
 // ── Typy ────────────────────────────────────────────────────────────────
 
@@ -157,7 +157,18 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 				} as OrchestratorUpdate);
 
 				const stepStart = Date.now();
-				const result = await originalRunAgent(config);
+				let failedError: OrchestratorAgentError | undefined;
+				let result: OrchestratorRunAgentResult;
+				try {
+					result = await originalRunAgent(config);
+				} catch (err) {
+					if (err instanceof OrchestratorAgentError) {
+						result = err.result;
+						failedError = err;
+					} else {
+						throw err;
+					}
+				}
 				const stepDuration = Date.now() - stepStart;
 				results.push(result);
 
@@ -195,6 +206,10 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 					fs.writeFileSync(flowPath, JSON.stringify(flow, null, 2), "utf-8");
 				} catch {
 					// best-effort
+				}
+
+				if (failedError) {
+					throw failedError;
 				}
 
 				return result;
