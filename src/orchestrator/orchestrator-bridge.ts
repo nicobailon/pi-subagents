@@ -97,6 +97,7 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 		persistOrchSessionSnapshot(ctx);
 
 		const results: OrchestratorRunAgentResult[] = [];
+		let chainDir: string | undefined;
 
 		try {
 			// Rozwiąż ścieżkę
@@ -116,7 +117,7 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 			}
 
 			// Stwórz chainDir
-			const chainDir = path.join(path.dirname(resolvedPath), ".pi-orch-runs", requestId);
+			chainDir = path.join(path.dirname(resolvedPath), ".pi-orch-runs", requestId);
 			fs.mkdirSync(chainDir, { recursive: true });
 
 			// Załaduj skrypt — format: export default { flow, settings? }
@@ -290,17 +291,19 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 			const stack = error instanceof Error ? error.stack : "";
 
 			// Zapisz flow.json z errorem
-			const flowFp2 = path.join(chainDir, "orchestrator-flow.json");
-			try {
-				if (fs.existsSync(flowFp2)) {
-					const flow = JSON.parse(fs.readFileSync(flowFp2, "utf-8"));
-					flow.endTime = new Date().toISOString();
-					flow.status = "failed";
-					flow.error = message;
-					fs.writeFileSync(flowFp2, JSON.stringify(flow, null, 2), "utf-8");
+			if (chainDir) {
+				const flowFp2 = path.join(chainDir, "orchestrator-flow.json");
+				try {
+					if (fs.existsSync(flowFp2)) {
+						const flow = JSON.parse(fs.readFileSync(flowFp2, "utf-8"));
+						flow.endTime = new Date().toISOString();
+						flow.status = "failed";
+						flow.error = message;
+						fs.writeFileSync(flowFp2, JSON.stringify(flow, null, 2), "utf-8");
+					}
+				} catch {
+					// best-effort
 				}
-			} catch {
-				// best-effort
 			}
 
 			const response: OrchestratorResponse = {
