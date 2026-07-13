@@ -1133,7 +1133,8 @@ export default {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `runAgent(config)` | `Promise<OrchestratorRunAgentResult>` | Run a subagent and wait for the result |
+| `runAgent(config)` | `Promise<OrchestratorRunAgentResult>` | Run a subagent and wait for the result. Throws `OrchestratorAgentError` on failure unless `doNotThrowOnError: true`. |
+| `withRetry(config, fn)` | `Promise<T>` | Retry a block on `OrchestratorAgentError`, with configurable `maxAttempts`, `delayMs`, and `backoff` ("fixed" or "exponential"). |
 | `runInWorktree(patchPath, fn)` | `Promise<T & WorktreeBlockResult>` | Run agents inside a single shared git worktree, capture diff to `patchPath` |
 | `chainDir` | `string` | Shared directory for artifacts, contexts, and logs |
 | `runId` | `string` | Unique run identifier |
@@ -1147,10 +1148,16 @@ export default {
 |-------|------|----------|-------------|
 | `agent` | `string` | yes | Agent name (scout, worker, reviewer, oracle, …) |
 | `task` | `string` | yes | Task to delegate |
-| `as` | `string` | no | Logical name for later reference |
+| `as` | `string` | no | Logical name for later reference (saved in flow.json) |
+| `label` | `string` | no | Human-readable step label shown in logs and status updates |
 | `model` | `string` | no | Override model for this step |
 | `context` | `"fresh" \| "fork"` | no | Override execution context (agents with `defaultContext: fork` will fork by default) |
-| `outputSchema` | `object` | no | JSON Schema for structured output |
+| `output` | `string` | no | Write agent output to a file inside `chainDir` |
+| `reads` | `string[]` | no | Files to read before execution (paths relative to `chainDir`) |
+| `doNotThrowOnError` | `boolean` | no | If true, returns result normally even when `exitCode !== 0` |
+| `outputSchema` | `object` | no | JSON Schema (or TypeBox object) for deterministic structured output extraction |
+| `maxStructuredOutputAttempts` | `number` | no | Max extraction attempts via `pi --continue` (default 3) |
+| `structuredOutputExtractTimeoutMs` | `number` | no | Timeout per extraction attempt in ms (default 30 000 = 30s) |
 
 ### OrchestratorRunAgentResult
 
@@ -1158,9 +1165,14 @@ export default {
 |-------|------|-------------|
 | `exitCode` | `number` | 0 = success, non-zero = failure |
 | `output` | `string` | Text output from the subagent |
-| `structuredOutput` | `unknown` | Parsed structured output if `outputSchema` was used |
+| `structuredOutput` | `unknown` | Parsed structured output if `outputSchema` was used and extraction succeeded |
 | `error` | `string?` | Error message on failure |
 | `agent` | `string` | Agent name that produced this result |
+| `usage` | `object?` | Token usage: `{ input, output, cacheRead, cacheWrite, cost }` — includes extraction if applicable |
+| `durationMs` | `number?` | Total execution time in ms (main agent only, excluding extraction) |
+| `extractionDurationMs` | `number?` | Structured output extraction time in ms (if applicable) |
+| `model` | `string?` | Model used for this step |
+| `toolCount` | `number?` | Number of tool calls made |
 
 ### Worktree block
 
