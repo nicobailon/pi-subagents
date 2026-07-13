@@ -8,6 +8,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +32,27 @@ const FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH = path.join(
 
 const DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3;
 const STRUCTURED_OUTPUT_EXTRACT_TASK = "Extract the required structured data from this conversation according to the specified format. Call the structured_output tool with the data.";
+
+/**
+ * Extract structured output arguments from the messages of a subagent run.
+ * Looks for the last assistant message that contains a toolCall to "structured_output"
+ * and returns its arguments. Used as a fallback when the agent-level structuredOutput
+ * capture mechanism is not configured (e.g., in orchestrator extraction runs).
+ */
+export function extractStructuredOutputFromMessages(messages: Message[] | undefined): unknown {
+	if (!messages || messages.length === 0) return undefined;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+		for (let j = msg.content.length - 1; j >= 0; j--) {
+			const part = msg.content[j];
+			if (part?.type === "toolCall" && "name" in part && part.name === "structured_output" && "arguments" in part) {
+				return part.arguments;
+			}
+		}
+	}
+	return undefined;
+}
 
 // ── Interfejs dla skryptów użytkownika ──────────────────────────────────
 
@@ -295,8 +317,10 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 
 							const extractDetails = extractResult.details as Details | undefined;
 							const extractSingle = extractDetails?.results?.[0];
-							if (extractSingle?.structuredOutput) {
-								forcedOutput = extractSingle.structuredOutput;
+							const forcedOutputCandidate = extractSingle?.structuredOutput
+								?? extractStructuredOutputFromMessages(extractSingle?.messages);
+							if (forcedOutputCandidate !== undefined) {
+								forcedOutput = forcedOutputCandidate;
 								log(`[step ${currentIndex}] Structured output extracted${attemptLabel}: ${JSON.stringify(forcedOutput).slice(0, 300)}`);
 								break;
 							}

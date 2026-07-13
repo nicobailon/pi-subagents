@@ -16,6 +16,7 @@ import { createTempDir, removeTempDir } from "../support/helpers.ts";
 import {
 	createOrchestratorContext,
 	OrchestratorAgentError,
+	extractStructuredOutputFromMessages,
 	type OrchestratorContextDeps,
 	type OrchestratorContext,
 } from "../../src/orchestrator/orchestrator-context.ts";
@@ -394,6 +395,60 @@ describe("orchestrator context", () => {
 			// No extraction attempt — failed immediately
 			assert.equal(mockExec.callCount(), 1);
 		});
+
+		it("extracts structured output from messages when structuredOutput field is not set", async () => {
+			// Simulates the real-world orchestrator scenario where the extraction
+			// subagent does not have structuredOutput capture configured, but the
+			// force-structured-output extension causes the model to call the
+			// structured_output tool. The arguments should be in messages.
+			const sessionFile = path.join(tempDir, "session.jsonl");
+			fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n', "utf-8");
+
+			const mockExec = createMockExecute();
+			mockExec.setResponses([
+				// Main call
+				makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
+				// Extraction call: structuredOutput is NOT set on SingleResult,
+				// but messages contain the tool call with arguments.
+				{
+					content: [{ type: "text", text: "extracted" }],
+					details: {
+						mode: "single" as const,
+						results: [{
+							agent: "worker",
+							task: "extract",
+							exitCode: 0,
+							messages: [
+								{ role: "assistant", content: [
+									{ type: "toolCall", id: "t1", name: "structured_output", arguments: { name: "test", count: 42 } },
+								], api: "test", provider: "test", model: "test", responseId: "r1",
+									usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
+									stopReason: "toolUse" as const, timestamp: 1,
+								},
+							],
+							usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+							output: "extracted",
+							finalOutput: "extracted",
+							// structuredOutput is intentionally NOT set
+						}],
+					},
+					isError: false,
+				} as AgentToolResult<Details>,
+			]);
+
+			const outputSchema = Type.Object({ name: Type.String(), count: Type.Number() });
+			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
+
+			const result = await ctx.runAgent({
+				agent: "worker",
+				task: "implement",
+				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
+			});
+
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(result.structuredOutput, { name: "test", count: 42 });
+			assert.equal(mockExec.callCount(), 2, "main call + 1 extraction");
+		});
 	});
 
 	// ── withRetry ───────────────────────────────────────────────────────
@@ -611,5 +666,78 @@ describe("orchestrator context", () => {
 			const content = fs.readFileSync(logPath, "utf-8");
 			assert.match(content, /test message/);
 		});
+	});
+});
+
+
+// ── extractStructuredOutputFromMessages unit tests ────────────────────────────
+
+describe("extractStructuredOutputFromMessages", () => {
+	it("returns arguments from last structured_output tool call", () => {
+		const messages = [
+			{ role: "user" as const, content: "extract data", timestamp: 1 },
+			{ role: "assistant" as const, content: [
+				{ type: "toolCall" as const, id: "t1", name: "structured_output", arguments: { name: "test", count: 42 } },
+			], api: "test", provider: "test", model: "test", responseId: "r1",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
+				stopReason: "toolUse" as const, timestamp: 2,
+			},
+		];
+		const result = extractStructuredOutputFromMessages(messages);
+		assert.deepEqual(result, { name: "test", count: 42 });
+	});
+
+	it("returns arguments from last structured_output when multiple tool calls exist", () => {
+		const messages = [
+			{ role: "assistant" as const, content: [
+				{ type: "toolCall" as const, id: "t1", name: "structured_output", arguments: { first: true } },
+			], api: "test", provider: "test", model: "test", responseId: "r1",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
+				stopReason: "toolUse" as const, timestamp: 1,
+			},
+			{ role: "assistant" as const, content: [
+				{ type: "text" as const, text: "retrying" },
+				{ type: "toolCall" as const, id: "t2", name: "structured_output", arguments: { last: true, value: 99 } },
+			], api: "test", provider: "test", model: "test", responseId: "r2",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
+				stopReason: "toolUse" as const, timestamp: 2,
+			},
+		];
+		const result = extractStructuredOutputFromMessages(messages);
+		assert.deepEqual(result, { last: true, value: 99 });
+	});
+
+	it("returns undefined when no structured_output tool call exists", () => {
+		const messages = [
+			{ role: "assistant" as const, content: [
+				{ type: "text" as const, text: "analysis" },
+			], api: "test", provider: "test", model: "test", responseId: "r1",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
+				stopReason: "stop" as const, timestamp: 1,
+			},
+		];
+		const result = extractStructuredOutputFromMessages(messages);
+		assert.equal(result, undefined);
+	});
+
+	it("returns undefined for empty messages", () => {
+		assert.equal(extractStructuredOutputFromMessages([]), undefined);
+	});
+
+	it("returns undefined for undefined input", () => {
+		assert.equal(extractStructuredOutputFromMessages(undefined), undefined);
+	});
+
+	it("ignores non-structured_output tool calls", () => {
+		const messages = [
+			{ role: "assistant" as const, content: [
+				{ type: "toolCall" as const, id: "t1", name: "read", arguments: { path: "/tmp" } },
+			], api: "test", provider: "test", model: "test", responseId: "r1",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
+				stopReason: "toolUse" as const, timestamp: 1,
+			},
+		];
+		const result = extractStructuredOutputFromMessages(messages);
+		assert.equal(result, undefined);
 	});
 });
