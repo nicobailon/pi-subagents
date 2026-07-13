@@ -8,14 +8,12 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { Details, SingleResult } from "../shared/types.ts";
 import { getSingleResultOutput } from "../shared/utils.ts";
-import { Compile } from "typebox/compile";
 import {
 	captureWorktreeDiff,
 	cleanupWorktrees,
@@ -31,9 +29,8 @@ const FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH = path.join(
 	"force-structured-output.ts",
 );
 
-const STRUCTURED_OUTPUT_ENV = "PI_ORCH_FORCE_STRUCTURED_OUTPUT";
 const DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3;
-const STRUCTURED_OUTPUT_TIMEOUT_MS = 30_000;
+const STRUCTURED_OUTPUT_EXTRACT_TASK = "Extract the required structured data from this conversation according to the specified format. Call the structured_output tool with the data.";
 
 // ── Interfejs dla skryptów użytkownika ──────────────────────────────────
 
@@ -190,111 +187,6 @@ export interface OrchestratorContext {
 	log(message: string): void;
 }
 
-// ── Structured output extraction ──────────────────────────────────────
-
-interface StructuredToolCall {
-	toolName: string;
-	params: unknown;
-}
-
-function parseStructuredOutputFromStdout(stdout: string): StructuredToolCall | null {
-	// Pi --mode json wypisuje zdarzenia jako linie JSON. Szukamy tool_use dla structured_output.
-	const lines = stdout.split("\n");
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-		try {
-			const event = JSON.parse(trimmed);
-			if (event?.type === "tool_use" && event?.tool === "structured_output") {
-				return { toolName: "structured_output", params: event.input };
-			}
-		} catch {
-			// Non-JSON lines are expected (progress, etc.)
-		}
-	}
-	return null;
-}
-
-function validateStructuredOutput(
-	schema: Record<string, unknown>,
-	value: unknown,
-): { valid: true; value: unknown } | { valid: false; error: string } {
-	try {
-		const validator = (Compile as (schema: unknown) => { Check(value: unknown): boolean; Errors(value: unknown): Iterable<{ instancePath?: string; message?: string }> })(schema);
-		if (validator.Check(value)) return { valid: true, value };
-		const errors = [...validator.Errors(value)]
-			.slice(0, 8)
-			.map((e) => `${e.instancePath || "root"}: ${e.message}`);
-		return { valid: false, error: errors.join("; ") || "schema validation failed" };
-	} catch (err) {
-		return { valid: false, error: `Schema compile error: ${err instanceof Error ? err.message : String(err)}` };
-	}
-}
-
-async function extractForcedStructuredOutput(
-	sessionFile: string,
-	schema: Record<string, unknown>,
-	maxAttempts: number,
-	log: (message: string) => void,
-): Promise<unknown> {
-	const schemaJson = JSON.stringify(schema);
-
-	for (let attempt = 0; attempt < maxAttempts; attempt++) {
-		const attemptLabel = maxAttempts > 1 ? ` [attempt ${attempt + 1}/${maxAttempts}]` : "";
-		log(`[structured-output] Extracting${attemptLabel}...`);
-
-		try {
-			const env = {
-				...process.env,
-				[STRUCTURED_OUTPUT_ENV]: schemaJson,
-			};
-
-			const stdout = execSync(
-				`pi --continue --session "${sessionFile}" --extension "${FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH}" --no-extensions --mode json -p "Extract the required structured data from this conversation according to the specified format."`,
-				{
-					env,
-					timeout: STRUCTURED_OUTPUT_TIMEOUT_MS,
-					maxBuffer: 10 * 1024 * 1024,
-					encoding: "utf-8",
-				},
-			);
-
-			const toolCall = parseStructuredOutputFromStdout(stdout);
-			if (!toolCall) {
-				log(`[structured-output] No structured_output tool call found in output${attemptLabel}`);
-				if (attempt < maxAttempts - 1) {
-					await new Promise((r) => setTimeout(r, 1000));
-					continue;
-				}
-				return undefined;
-			}
-
-			const validation = validateStructuredOutput(schema, toolCall.params);
-			if (!validation.valid) {
-				log(`[structured-output] Validation failed${attemptLabel}: ${validation.error}`);
-				if (attempt < maxAttempts - 1) {
-					await new Promise((r) => setTimeout(r, 1000));
-					continue;
-				}
-				return undefined;
-			}
-
-			log(`[structured-output] Extracted successfully${attemptLabel}`);
-			return validation.value;
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			log(`[structured-output] Extraction failed${attemptLabel}: ${message.slice(0, 200)}`);
-			if (attempt < maxAttempts - 1) {
-				await new Promise((r) => setTimeout(r, 1000));
-				continue;
-			}
-			return undefined;
-		}
-	}
-
-	return undefined;
-}
-
 // ── Implementacja ───────────────────────────────────────────────────────
 
 export interface OrchestratorContextDeps {
@@ -380,17 +272,54 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			if (sessionFile && fs.existsSync(sessionFile)) {
 				const attempts = maxStructuredOutputAttempts ?? DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS;
 				log(`[step ${currentIndex}] Extracting structured output (max ${attempts} attempts)...`);
-				const forced = await extractForcedStructuredOutput(
-					sessionFile,
-					outputSchema,
-					attempts,
-					log,
-				);
-				if (forced !== undefined) {
-					structuredOutput = forced;
-					log(`[step ${currentIndex}] Structured output extracted: ${JSON.stringify(forced).slice(0, 300)}`);
-				} else {
-					log(`[step ${currentIndex}] Structured output extraction failed after ${attempts} attempts`);
+
+				const prevEnv = process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"];
+				process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"] = JSON.stringify(outputSchema);
+				try {
+					let forcedOutput: unknown;
+					for (let attempt = 0; attempt < attempts; attempt++) {
+						const attemptLabel = attempts > 1 ? ` [attempt ${attempt + 1}/${attempts}]` : "";
+						try {
+							const extractResult = await deps.execute(
+								`${requestId}-extract-${attempt}`,
+								{
+									agent: config.agent,
+									task: STRUCTURED_OUTPUT_EXTRACT_TASK,
+									sessionFile,
+									extraExtensions: [FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH],
+								},
+								new AbortController().signal,
+								undefined,
+								deps.ctx,
+							);
+
+							const extractDetails = extractResult.details as Details | undefined;
+							const extractSingle = extractDetails?.results?.[0];
+							if (extractSingle?.structuredOutput) {
+								forcedOutput = extractSingle.structuredOutput;
+								log(`[step ${currentIndex}] Structured output extracted${attemptLabel}: ${JSON.stringify(forcedOutput).slice(0, 300)}`);
+								break;
+							}
+							log(`[step ${currentIndex}] Structured output extraction returned no data${attemptLabel}`);
+						} catch (err) {
+							const message = err instanceof Error ? err.message : String(err);
+							log(`[step ${currentIndex}] Extraction attempt failed${attemptLabel}: ${message.slice(0, 200)}`);
+						}
+						if (attempt < attempts - 1) {
+							await new Promise((r) => setTimeout(r, 1000));
+						}
+					}
+					if (forcedOutput !== undefined) {
+						structuredOutput = forcedOutput;
+					} else {
+						log(`[step ${currentIndex}] Structured output extraction failed after ${attempts} attempts`);
+					}
+				} finally {
+					if (prevEnv !== undefined) {
+						process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"] = prevEnv;
+					} else {
+						delete process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"];
+					}
 				}
 			} else {
 				log(`[step ${currentIndex}] Cannot extract structured output: no session file available`);
