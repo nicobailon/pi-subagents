@@ -24,8 +24,8 @@ function missingPackageName(error: unknown): string | undefined {
 }
 
 let validateChainInput: (args: unknown) => void = () => {};
+let validateSubagentParams: (args: unknown) => boolean = () => true;
 let chainItemProperties: Record<string, unknown> | undefined;
-let parallelTaskProperties: Record<string, unknown> | undefined;
 let dynamicTemplateProperties: Record<string, unknown> | undefined;
 let schemasAvailable = true;
 try {
@@ -38,11 +38,15 @@ try {
 	validateChainInput = mod.validateChainInput;
 	const schemas = await import("../../src/extension/schemas.ts") as {
 		ChainItem: JsonSchemaNode;
-		ParallelTaskSchema: JsonSchemaNode;
 		DynamicParallelTemplateSchema: JsonSchemaNode;
+		SubagentParams: JsonSchemaNode;
 	};
+	const { Compile } = await import("typebox/compile") as unknown as {
+		Compile: (schema: JsonSchemaNode) => { Check(value: unknown): boolean };
+	};
+	const subagentParamsValidator = Compile(schemas.SubagentParams);
+	validateSubagentParams = (args) => subagentParamsValidator.Check(args);
 	chainItemProperties = schemas.ChainItem.properties as Record<string, unknown> | undefined;
-	parallelTaskProperties = schemas.ParallelTaskSchema.properties as Record<string, unknown> | undefined;
 	dynamicTemplateProperties = schemas.DynamicParallelTemplateSchema.properties as Record<string, unknown> | undefined;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
@@ -142,29 +146,10 @@ describe("chain input validation", { skip: !schemasAvailable ? "typebox not avai
 		);
 	});
 
-	it("names disallowed properties on a static parallel task", () => {
-		expectInvalid(
-			{ chain: [{ parallel: [{ agent: "worker", oops: true }] }] },
-			/chain\[0\]\.parallel\[0\]/,
-			/"oops" is not allowed/,
-			/Allowed properties:/,
-			/Example:/,
-		);
-	});
-
-	it("lists every allowed static parallel task property from the schema", () => {
-		const allowed = Object.keys(parallelTaskProperties ?? {});
-		assert.ok(allowed.includes("agent"));
-		assert.ok(allowed.includes("count"));
-		try {
-			validateChainInput({ chain: [{ parallel: [{ notReal: 1 }] }] });
-			assert.fail("should have thrown");
-		} catch (error) {
-			assert.ok(error instanceof Error);
-			for (const key of allowed) {
-				assert.match(error.message, new RegExp(`\\b${key}\\b`), `allowed key ${key} should appear: ${error.message}`);
-			}
-		}
+	it("preserves static parallel extra properties accepted by the TypeBox schema", () => {
+		const args = { chain: [{ parallel: [{ agent: "worker", extensionField: true }] }] };
+		assert.equal(validateSubagentParams(args), true);
+		assert.doesNotThrow(() => validateChainInput(args));
 	});
 
 	it("names disallowed properties on a dynamic fanout template", () => {
@@ -325,6 +310,11 @@ describe("registered subagent tool prepareArguments", { skip: !schemasAvailable 
 
 	it("passes valid chain arguments through unchanged", () => {
 		const result = runPrepare({ chain: [{ agent: "worker", task: "do X" }] });
+		assert.equal(result.ok, true);
+	});
+
+	it("preserves static parallel extra properties accepted by the registered schema", () => {
+		const result = runPrepare({ chain: [{ parallel: [{ agent: "worker", extensionField: true }] }] });
 		assert.equal(result.ok, true);
 	});
 

@@ -13,8 +13,8 @@
  * common chain-shape failures, so the model sees which property is disallowed,
  * what is allowed, and a valid example — instead of a raw TypeBox diagnostic.
  *
- * Allowed property names are derived directly from the schema objects in
- * `schemas.ts` so this never drifts from what the TypeBox validator enforces.
+ * Allowed property names and additional-property strictness are derived directly
+ * from the schema objects in `schemas.ts` so this stays aligned with TypeBox.
  */
 
 import {
@@ -25,7 +25,10 @@ import {
 	DynamicCollectSchema,
 } from "./schemas.ts";
 
-type ObjectSchema = { properties?: Record<string, unknown> };
+type ObjectSchema = {
+	properties?: Record<string, unknown>;
+	additionalProperties?: unknown;
+};
 
 function allowedKeysOf(schema: ObjectSchema | undefined): string[] {
 	return schema?.properties ? Object.keys(schema.properties) : [];
@@ -89,9 +92,11 @@ function expectObject(value: unknown, path: string, allowed: readonly string[], 
 function checkNoExtraKeys(
 	value: Record<string, unknown>,
 	path: string,
+	schema: ObjectSchema,
 	allowed: readonly string[],
 	example?: string,
 ): void {
+	if (schema.additionalProperties !== false) return;
 	const extra = disallowedKeys(value, allowed);
 	if (extra.length > 0) {
 		throw new Error(disallowedMessage(path, extra, allowed, example));
@@ -114,25 +119,25 @@ export function validateChainInput(args: unknown): void {
 	chain.forEach((step, index) => {
 		const stepPath = `chain step validation failed at chain[${index}]`;
 		expectObject(step, stepPath, CHAIN_STEP_KEYS, CHAIN_STEP_EXAMPLE);
-		checkNoExtraKeys(step, stepPath, CHAIN_STEP_KEYS, CHAIN_STEP_EXAMPLE);
+		checkNoExtraKeys(step, stepPath, ChainItem, CHAIN_STEP_KEYS, CHAIN_STEP_EXAMPLE);
 
 		if (step.expand !== undefined) {
 			const expandPath = `${stepPath}.expand`;
 			expectObject(step.expand, expandPath, EXPAND_KEYS, EXPAND_EXAMPLE);
-			checkNoExtraKeys(step.expand, expandPath, EXPAND_KEYS, EXPAND_EXAMPLE);
+			checkNoExtraKeys(step.expand, expandPath, DynamicExpandSchema, EXPAND_KEYS, EXPAND_EXAMPLE);
 
 			const from = (step.expand as Record<string, unknown>).from;
 			if (from !== undefined) {
 				const fromPath = `${expandPath}.from`;
 				expectObject(from, fromPath, EXPAND_FROM_KEYS, EXPAND_FROM_EXAMPLE);
-				checkNoExtraKeys(from, fromPath, EXPAND_FROM_KEYS, EXPAND_FROM_EXAMPLE);
+				checkNoExtraKeys(from, fromPath, ExpandFromSchema, EXPAND_FROM_KEYS, EXPAND_FROM_EXAMPLE);
 			}
 		}
 
 		if (step.collect !== undefined) {
 			const collectPath = `${stepPath}.collect`;
 			expectObject(step.collect, collectPath, COLLECT_KEYS, COLLECT_EXAMPLE);
-			checkNoExtraKeys(step.collect, collectPath, COLLECT_KEYS, COLLECT_EXAMPLE);
+			checkNoExtraKeys(step.collect, collectPath, DynamicCollectSchema, COLLECT_KEYS, COLLECT_EXAMPLE);
 		}
 
 		const parallel = step.parallel;
@@ -142,14 +147,14 @@ export function validateChainInput(args: unknown): void {
 			parallel.forEach((task, pIndex) => {
 				const taskPath = `${stepPath}.parallel[${pIndex}]`;
 				expectObject(task, taskPath, PARALLEL_TASK_KEYS, PARALLEL_TASK_EXAMPLE);
-				checkNoExtraKeys(task, taskPath, PARALLEL_TASK_KEYS, PARALLEL_TASK_EXAMPLE);
+				checkNoExtraKeys(task, taskPath, ParallelTaskSchema, PARALLEL_TASK_KEYS, PARALLEL_TASK_EXAMPLE);
 			});
 			return;
 		}
 
 		if (isPlainObject(parallel)) {
 			const templatePath = `${stepPath}.parallel (dynamic fanout template)`;
-			checkNoExtraKeys(parallel, templatePath, DYNAMIC_TEMPLATE_KEYS, DYNAMIC_TEMPLATE_EXAMPLE);
+			checkNoExtraKeys(parallel, templatePath, DynamicParallelTemplateSchema, DYNAMIC_TEMPLATE_KEYS, DYNAMIC_TEMPLATE_EXAMPLE);
 			return;
 		}
 
