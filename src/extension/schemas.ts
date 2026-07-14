@@ -108,7 +108,7 @@ const TaskItem = Type.Object({
 });
 
 // Parallel task item (within a parallel step)
-const ParallelTaskSchema = Type.Object({
+export const ParallelTaskSchema = Type.Object({
 	agent: Type.String(),
 	task: Type.Optional(Type.String({ description: "Task template with {task}, {previous}, {chain_dir} variables. Defaults to {previous}." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
@@ -127,7 +127,7 @@ const ParallelTaskSchema = Type.Object({
 	acceptance: Type.Optional(AcceptanceOverride),
 });
 
-const DynamicExpandSchema = Type.Object({
+export const DynamicExpandSchema = Type.Object({
 	from: Type.Object({
 		output: Type.String({ description: "Prior named structured output to expand from." }),
 		path: Type.String({ description: "JSON Pointer into the structured output, e.g. /items." }),
@@ -138,7 +138,7 @@ const DynamicExpandSchema = Type.Object({
 	onEmpty: Type.Optional(Type.String({ enum: ["skip", "fail"], description: "Empty input behavior. Defaults to skip." })),
 }, { additionalProperties: false });
 
-const DynamicParallelTemplateSchema = Type.Object({
+export const DynamicParallelTemplateSchema = Type.Object({
 	agent: Type.String(),
 	task: Type.Optional(Type.String({ description: "Task template with {item}, {item.path}, {task}, {previous}, {chain_dir}, and {outputs.name} variables." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
@@ -155,13 +155,13 @@ const DynamicParallelTemplateSchema = Type.Object({
 	acceptance: Type.Optional(AcceptanceOverride),
 }, { additionalProperties: false });
 
-const DynamicCollectSchema = Type.Object({
+export const DynamicCollectSchema = Type.Object({
 	as: Type.String({ description: "Safe output name for the ordered collected result array." }),
 	outputSchema: Type.Optional(JsonSchemaObject),
 }, { additionalProperties: false });
 
 // Flattened so chain steps do not need an object-shape anyOf/oneOf union.
-const ChainItem = Type.Object({
+export const ChainItem = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
 	task: Type.Optional(Type.String({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder, {outputs.name}=prior named output. Required for first step, defaults to '{previous}' for subsequent steps."

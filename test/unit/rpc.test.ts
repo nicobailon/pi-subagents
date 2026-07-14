@@ -160,6 +160,31 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("preserves schema-valid static parallel extension fields", async () => {
+		const events = new FakeEvents();
+		let executedParams: any;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executedParams = params;
+				return {
+					content: [{ type: "text", text: "Async: worker [run-1]" }],
+					details: { mode: "chain", results: [], asyncId: "run-1", asyncDir: "/tmp/run-1" },
+				} as any;
+			},
+		});
+
+		const reply = await request(events, "spawn-chain-extra", "spawn", {
+			chain: [{ parallel: [{ agent: "worker", extensionField: true }] }],
+		});
+
+		assert.equal(reply.success, true);
+		assert.equal(executedParams.chain[0].parallel[0].extensionField, true);
+
+		bridge.dispose();
+	});
+
 	it("rejects foreground or management spawn requests before executor dispatch", async () => {
 		const events = new FakeEvents();
 		let executeCalls = 0;
