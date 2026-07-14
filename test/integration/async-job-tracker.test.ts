@@ -15,6 +15,9 @@ interface AsyncJobTrackerModule {
 			resultsDir?: string;
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
+			monotonicNow?: () => number;
+			setInterval?: typeof setInterval;
+			clearInterval?: typeof clearInterval;
 		},
 	): {
 		ensurePoller(): void;
@@ -22,6 +25,8 @@ interface AsyncJobTrackerModule {
 		restoreActiveJobs(ctx?: unknown): void;
 		handleStarted(data: unknown): void;
 		handleComplete(data: unknown): void;
+		renderCurrentJobs(ctx?: unknown): void;
+		dispose(): void;
 	};
 }
 
@@ -107,6 +112,90 @@ function createUiContext() {
 }
 
 describe("async job tracker", { skip: !available ? "pi packages not available" : undefined }, () => {
+	it("uses injected timer ownership and dispose stops the poller", () => {
+		const { pi } = createEventRecorder();
+		const state = createState();
+		const created: unknown[] = []; const cleared: unknown[] = [];
+		const tracker = trackerMod!.createAsyncJobTracker(pi, state, "/tmp/none", {
+			setInterval: ((_: () => void) => { const token = { unref() {} }; created.push(token); return token; }) as unknown as typeof setInterval,
+			clearInterval: ((token: unknown) => { cleared.push(token); }) as unknown as typeof clearInterval,
+		});
+		tracker.ensurePoller();
+		assert.equal(created.length, 1);
+		tracker.dispose();
+		assert.deepEqual(cleared, created);
+		assert.equal((state as { poller: unknown }).poller, null);
+	});
+	it("owns one deterministic animation clock, advances without writes, and stops on terminal/reset/stale/dispose", async () => {
+		const asyncRoot = createTempDir("pi-async-animation-");
+		try {
+			const runDir = path.join(asyncRoot, "run");
+			fs.mkdirSync(runDir, { recursive: true });
+			const statusPath = path.join(runDir, "status.json");
+			fs.writeFileSync(statusPath, JSON.stringify({ state: "running" }));
+			const before = { text: fs.readFileSync(statusPath, "utf8"), mtime: fs.statSync(statusPath).mtimeMs };
+			type Timer = { callback: () => void; ms: number; cleared: boolean; unref(): void };
+			const timers: Timer[] = [];
+			let monotonic = 0;
+			const state = createState();
+			const ui = createUiContext();
+			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				now: () => 10_000,
+				monotonicNow: () => monotonic,
+				setInterval: ((callback: () => void, ms: number) => { const timer: Timer = { callback, ms, cleared: false, unref() {} }; timers.push(timer); return timer; }) as unknown as typeof setInterval,
+				clearInterval: ((timer: Timer) => { timer.cleared = true; }) as unknown as typeof clearInterval,
+			});
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run", asyncDir: runDir, agent: "worker", sessionId: undefined });
+			(state.asyncJobs.get("run") as { status: string }).status = "running";
+			tracker.renderCurrentJobs(ui.ctx as never);
+			await Promise.resolve();
+			assert.equal(timers.filter((timer) => timer.ms === 80).length, 1);
+			tracker.renderCurrentJobs(ui.ctx as never);
+			await Promise.resolve();
+			assert.equal(timers.filter((timer) => timer.ms === 80).length, 1, "repeated renders share one animation interval");
+			const animation = timers.find((timer) => timer.ms === 80)!;
+			const requestsBefore = ui.renderRequests;
+			// Measure a full second of a static persisted snapshot: only the
+			// tracker-owned render clock advances, with no status write.
+			for (let tick = 1; tick <= 13; tick++) {
+				monotonic = tick * 80;
+				animation.callback();
+			}
+			assert.ok(ui.renderRequests >= requestsBefore + 13);
+			assert.deepEqual({ text: fs.readFileSync(statusPath, "utf8"), mtime: fs.statSync(statusPath).mtimeMs }, before, "one second of animation must not write status");
+			tracker.handleComplete({ id: "run", success: true });
+			await Promise.resolve();
+			assert.equal(animation.cleared, true);
+
+			tracker.handleStarted({ id: "queued", asyncDir: path.join(asyncRoot, "queued"), agent: "worker" });
+			tracker.renderCurrentJobs(ui.ctx as never);
+			await Promise.resolve();
+			assert.equal(timers.filter((timer) => timer.ms === 80 && !timer.cleared).length, 0, "queued-only state stays static");
+			tracker.resetJobs(ui.ctx as never);
+			tracker.dispose();
+			assert.ok(timers.every((timer) => timer.cleared));
+		} finally { removeTempDir(asyncRoot); }
+	});
+
+	it("stops animation and forgets an inactive UI context", async () => {
+		const state = createState();
+		type Timer = { callback: () => void; ms: number; cleared: boolean; unref(): void };
+		const timers: Timer[] = [];
+		const stale = { hasUI: true, ui: { setWidget: () => { throw new Error("Extension context no longer active"); }, requestRender() {} } };
+		const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, "/tmp/none", {
+			setInterval: ((callback: () => void, ms: number) => { const timer: Timer = { callback, ms, cleared: false, unref() {} }; timers.push(timer); return timer; }) as unknown as typeof setInterval,
+			clearInterval: ((timer: Timer) => { timer.cleared = true; }) as unknown as typeof clearInterval,
+		});
+		tracker.handleStarted({ id: "run", agent: "worker" });
+		(state.asyncJobs.get("run") as { status: string }).status = "running";
+		tracker.renderCurrentJobs(stale as never);
+		await Promise.resolve();
+		assert.equal(state.lastUiContext, undefined);
+		assert.equal(timers.filter((timer) => timer.ms === 80 && !timer.cleared).length, 0);
+		tracker.dispose();
+	});
+
 	it("removes completed jobs after retention and requests a rerender", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
@@ -120,7 +209,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-1", asyncDir: path.join(asyncRoot, "run-1"), agent: "worker" });
 			tracker.handleComplete({ id: "run-1", success: true });
 
-			assert.equal(state.asyncJobs.size, 1);
+			// Authoritative completion removes the live widget immediately; retention is only for poll-first completion.
+			assert.equal(state.asyncJobs.size, 0);
 			await new Promise((resolve) => setTimeout(resolve, 40));
 
 			assert.equal(state.asyncJobs.size, 0);
@@ -180,11 +270,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(job);
 			assert.equal(job.status, "running");
 			assert.equal(job.sessionId, "session-restored");
-			assert.deepEqual(job.agents, ["reviewer", "worker"]);
-			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [1, 2]);
-			assert.equal(job.stepsTotal, 2);
+			assert.deepEqual(job.agents, ["scout", "reviewer", "worker", "writer"]);
+			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [0, 1, 2, 3]);
+			assert.equal(job.stepsTotal, 4);
 			assert.equal(job.runningSteps, 2);
-			assert.equal(job.completedSteps, 0);
+			assert.equal(job.completedSteps, 1);
 			assert.equal(job.activeParallelGroup, true);
 			assert.ok(state.poller, "expected restored active jobs to start polling");
 			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
@@ -362,12 +452,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			const job = state.asyncJobs.get("run-chain");
-			assert.deepEqual(job?.steps?.map((step: { index?: number }) => step.index), [1, 2]);
-			assert.deepEqual(job?.agents, ["reviewer", "auditor"]);
-			assert.equal(job?.steps?.[0]?.currentTool, "read");
-			assert.equal(job?.steps?.[0]?.currentToolArgs, "src/tui/render.ts");
-			assert.deepEqual(job?.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "grep", args: "async widget" }]);
-			assert.deepEqual(job?.steps?.[0]?.recentOutput, ["reviewer line"]);
+			assert.deepEqual(job?.steps?.map((step: { index?: number }) => step.index), [0, 1, 2, 3]);
+			assert.deepEqual(job?.agents, ["scout", "reviewer", "auditor", "writer"]);
+			assert.equal(job?.steps?.[1]?.currentTool, "read");
+			assert.equal(job?.steps?.[1]?.currentToolArgs, "src/tui/render.ts");
+			assert.deepEqual(job?.steps?.[1]?.recentTools?.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "grep", args: "async widget" }]);
+			assert.deepEqual(job?.steps?.[1]?.recentOutput, ["reviewer line"]);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -675,8 +765,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				pollIntervalMs: 10,
 			});
 			tracker.handleStarted({ id: "run-recovered", asyncDir: runDir, agent: "worker" });
+			// A completion event is authoritative and is not retained for a later status reversal.
 			tracker.handleComplete({ id: "run-recovered", success: true });
-			assert.equal(state.cleanupTimers.has("run-recovered"), true);
+			assert.equal(state.cleanupTimers.has("run-recovered"), false);
+			assert.equal(state.asyncJobs.has("run-recovered"), false);
 
 			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
 				runId: "run-recovered",
@@ -693,7 +785,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			}
 
 			assert.equal(state.cleanupTimers.has("run-recovered"), false);
-			assert.equal(state.asyncJobs.get("run-recovered")?.status, "running");
+			assert.equal(state.asyncJobs.has("run-recovered"), false);
 		} finally {
 			tracker?.resetJobs();
 			removeTempDir(asyncRoot);

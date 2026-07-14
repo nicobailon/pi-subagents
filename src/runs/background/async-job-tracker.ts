@@ -25,6 +25,10 @@ interface AsyncJobTrackerOptions {
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
+	monotonicNow?: () => number;
+	setInterval?: typeof setInterval;
+	clearInterval?: typeof clearInterval;
+	assistantMessagePreviews?: boolean;
 }
 
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
@@ -37,14 +41,40 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	handleComplete: (data: unknown) => void;
 	resetJobs: (ctx?: ExtensionContext) => void;
 	restoreActiveJobs: (ctx?: ExtensionContext) => void;
+	renderCurrentJobs: (ctx?: ExtensionContext) => void;
+	dispose: () => void;
 } {
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
+	const createInterval = options.setInterval ?? setInterval;
+	const clearTrackerInterval = options.clearInterval ?? clearInterval;
+	const monotonicNow = options.monotonicNow ?? (() => performance.now());
+	const wallNow = options.now ?? Date.now;
+	const clockOrigin = monotonicNow();
+	const wallOrigin = wallNow();
+	let animationTimer: ReturnType<typeof setInterval> | undefined;
+	let animationFrame = 0;
+	// Microtasks queued by a prior render must not resurrect timers after shutdown.
+	let generation = 0;
+	let disposed = false;
+	const renderClock = () => ({ frame: animationFrame, nowMs: wallOrigin + Math.max(0, monotonicNow() - clockOrigin) });
+	const hasVisibleRunning = () => Array.from(state.asyncJobs.values()).some((job) => job.status === "running");
+	const stopAnimation = () => { if (animationTimer) { clearTrackerInterval(animationTimer); animationTimer = undefined; } };
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
-		renderWidget(ctx, jobs);
-		ctx.ui.requestRender?.();
+		if (disposed) return;
+		try { renderWidget(ctx, jobs, renderClock()); ctx.ui.requestRender?.(); }
+		catch (error) { if (error instanceof Error && error.message.includes("Extension context no longer active")) { if (state.lastUiContext === ctx) state.lastUiContext = undefined; stopAnimation(); return; } throw error; }
+		const renderGeneration = generation;
+		queueMicrotask(() => { if (!disposed && renderGeneration === generation) reconcileAnimation(); });
 	};
+	const reconcileAnimation = () => {
+		if (disposed || !state.lastUiContext?.hasUI || !hasVisibleRunning()) { stopAnimation(); return; }
+		if (animationTimer) return;
+		animationTimer = createInterval(() => { animationFrame++; const ctx = state.lastUiContext; if (ctx?.hasUI && hasVisibleRunning()) rerenderWidget(ctx); else stopAnimation(); }, 80);
+		animationTimer.unref?.();
+	};
+	const renderCurrentJobs = (ctx?: ExtensionContext) => { if (ctx?.hasUI) state.lastUiContext = ctx; if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext); reconcileAnimation(); };
 	const restoredControlEventCursor = (asyncDir: string) => {
 		try {
 			return fs.statSync(path.join(asyncDir, "events.jsonl")).size;
@@ -58,15 +88,18 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const activeGroup = run.currentStep !== undefined
 			? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
 			: undefined;
-		const visibleSteps = activeGroup
-			? run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
-			: run.steps.map((step, index) => ({ ...step, index }));
+		const visibleSteps = run.steps.map((step, index) => ({ ...step, index }));
 		return {
 			asyncId: run.id,
 			asyncDir: run.asyncDir,
 			status: run.state,
 			sessionId: run.sessionId,
 			activityState: run.activityState,
+			activityKind: run.activityKind,
+			activityStartedAt: run.activityStartedAt,
+			...(options.assistantMessagePreviews === false ? {} : { latestVisibleMessagePreview: run.latestVisibleMessagePreview, latestVisibleMessageAt: run.latestVisibleMessageAt }),
+			attentionReason: run.attentionReason,
+			recentToolActivities: run.recentToolActivities,
 			lastActivityAt: run.lastActivityAt,
 			currentTool: run.currentTool,
 			currentToolStartedAt: run.currentToolStartedAt,
@@ -85,6 +118,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			hasParallelGroups: groups.length > 0,
 			activeParallelGroup: Boolean(activeGroup),
 			startedAt: run.startedAt,
+			endedAt: run.endedAt,
+			error: run.error,
 			updatedAt: run.lastUpdate ?? run.startedAt,
 			timeoutMs: run.timeoutMs,
 			deadlineAt: run.deadlineAt,
@@ -96,6 +131,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			sessionDir: run.sessionDir,
 			outputFile: run.outputFile,
 			totalTokens: run.totalTokens,
+			totalCost: run.totalCost,
 			sessionFile: run.sessionFile,
 			controlEventCursor: restoredControlEventCursor(run.asyncDir),
 			nestedChildren: run.nestedChildren,
@@ -216,11 +252,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 
 	const ensurePoller = () => {
 		if (state.poller) return;
-		state.poller = setInterval(() => {
+		state.poller = createInterval(() => {
 			if (state.asyncJobs.size === 0) {
 				if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext, []);
 				if (state.poller) {
-					clearInterval(state.poller);
+					clearTrackerInterval(state.poller);
 					state.poller = null;
 				}
 				return;
@@ -273,6 +309,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
 						job.activityState = status.activityState;
+						job.activityKind = status.activityKind;
+						job.activityStartedAt = status.activityStartedAt;
+						if (options.assistantMessagePreviews !== false) {
+							job.latestVisibleMessagePreview = status.latestVisibleMessagePreview;
+							job.latestVisibleMessageAt = status.latestVisibleMessageAt;
+						} else { delete job.latestVisibleMessagePreview; delete job.latestVisibleMessageAt; }
+						job.attentionReason = status.attentionReason;
+						job.recentToolActivities = status.recentToolActivities;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
 						job.currentTool = status.currentTool;
 						job.currentToolStartedAt = status.currentToolStartedAt;
@@ -283,6 +327,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.currentStep = status.currentStep ?? job.currentStep;
 						job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
 						job.startedAt = status.startedAt ?? job.startedAt;
+						job.endedAt = status.endedAt ?? job.endedAt;
+						job.error = status.error ?? job.error;
 						if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
 						if (status.steps?.length) {
 							const groups = normalizeParallelGroups(status.parallelGroups, status.steps.length, status.chainStepCount ?? status.steps.length);
@@ -291,9 +337,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							const activeGroup = status.currentStep !== undefined
 								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
 								: undefined;
-							const visibleSteps = activeGroup
-								? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
-								: status.steps.map((step, index) => ({ ...step, index }));
+							const visibleSteps = status.steps.map((step, index) => {
+								const next = { ...step, index };
+								if (options.assistantMessagePreviews === false) { delete next.latestVisibleMessagePreview; delete next.latestVisibleMessageAt; }
+								return next;
+							});
 							job.activeParallelGroup = Boolean(activeGroup);
 							job.agents = visibleSteps.map((step) => step.agent);
 							job.steps = visibleSteps;
@@ -306,6 +354,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.sessionDir = status.sessionDir ?? job.sessionDir;
 						job.outputFile = status.outputFile ?? job.outputFile;
 						job.totalTokens = status.totalTokens ?? job.totalTokens;
+						job.totalCost = status.totalCost ?? job.totalCost;
 						job.timeoutMs = status.timeoutMs ?? job.timeoutMs;
 						job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
 						job.timedOut = status.timedOut ?? job.timedOut;
@@ -404,10 +453,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (state.lastUiContext) {
 			rerenderWidget(state.lastUiContext);
 		}
-		if (!nestedRefreshFailed && !hasLiveNestedDescendants(job?.nestedChildren)) scheduleCleanup(asyncId);
+		if (!nestedRefreshFailed && !hasLiveNestedDescendants(job?.nestedChildren)) {
+			cancelCleanup(asyncId);
+			state.asyncJobs.delete(asyncId);
+			if (state.lastUiContext) rerenderWidget(state.lastUiContext);
+		} else scheduleCleanup(asyncId);
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {
+		stopAnimation();
 		for (const timer of state.cleanupTimers.values()) {
 			clearTimeout(timer);
 		}
@@ -440,5 +494,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);
 	};
 
-	return { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs };
+	const dispose = () => {
+		disposed = true;
+		generation++;
+		stopAnimation();
+		if (state.poller) { clearTrackerInterval(state.poller); state.poller = null; }
+		for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
+		state.cleanupTimers.clear();
+	};
+	return { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs, renderCurrentJobs, dispose };
 }

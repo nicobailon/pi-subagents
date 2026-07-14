@@ -23,6 +23,8 @@ import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
+import { compactEvidence, projectAsyncWidget, collapseRecentSuccesses, formatWidgetDuration, type AsyncWidgetChild } from "./async-widget-projection.ts";
+import { sanitizeObservableText } from "../runs/background/live-observability.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -125,6 +127,15 @@ function wrapPlainText(text: string, maxWidth: number): string[] {
 
 const RUNNING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const STATIC_RUNNING_GLYPH = "●";
+/** Set only by the async tracker; it is presentation state, never persisted. */
+let asyncWidgetFrame = 0;
+let asyncWidgetNowMs = 0;
+export interface AsyncRenderClock { frame: number; nowMs: number; }
+function stablePhase(identity: string): number {
+	let hash = 0;
+	for (let index = 0; index < identity.length; index++) hash = ((hash * 31) + identity.charCodeAt(index)) | 0;
+	return Math.abs(hash) % RUNNING_FRAMES.length;
+}
 
 type ProgressSeedSource = Partial<Pick<AgentProgress, "index" | "toolCount" | "tokens" | "durationMs" | "lastActivityAt" | "currentToolStartedAt" | "turnCount">>;
 
@@ -299,6 +310,12 @@ export function widgetRenderKey(job: AsyncJobState): string {
 		asyncDir: job.asyncDir,
 		status: job.status,
 		activityState: job.activityState,
+		activityKind: job.activityKind,
+		activityStartedAt: job.activityStartedAt,
+		latestVisibleMessagePreview: job.latestVisibleMessagePreview,
+		latestVisibleMessageAt: job.latestVisibleMessageAt,
+		attentionReason: job.attentionReason,
+		recentToolActivities: job.recentToolActivities,
 		lastActivityAt: job.lastActivityAt,
 		currentTool: job.currentTool,
 		currentToolStartedAt: job.currentToolStartedAt,
@@ -318,7 +335,10 @@ export function widgetRenderKey(job: AsyncJobState): string {
 		activeParallelGroup: job.activeParallelGroup,
 		startedAt: job.startedAt,
 		updatedAt: job.updatedAt,
+		endedAt: job.endedAt,
+		error: job.error,
 		totalTokens: job.totalTokens,
+		totalCost: job.totalCost,
 	});
 }
 
@@ -357,16 +377,7 @@ function widgetActivity(job: AsyncJobState): string {
 }
 
 function widgetStepRunningSeed(step: NonNullable<AsyncJobState["steps"]>[number], fallbackIndex?: number): number | undefined {
-	return runningSeed(
-		fallbackIndex,
-		step.index,
-		step.toolCount,
-		step.turnCount,
-		step.tokens?.total,
-		step.lastActivityAt,
-		step.currentToolStartedAt,
-		step.durationMs,
-	);
+	return asyncWidgetFrame + stablePhase(`step:${step.index ?? fallbackIndex ?? 0}`);
 }
 
 function widgetStepsRunningSeed(steps: Array<NonNullable<AsyncJobState["steps"]>[number]> | undefined): number | undefined {
@@ -376,23 +387,11 @@ function widgetStepsRunningSeed(steps: Array<NonNullable<AsyncJobState["steps"]>
 }
 
 function widgetJobRunningSeed(job: AsyncJobState): number | undefined {
-	return runningSeed(
-		job.updatedAt,
-		job.lastActivityAt,
-		job.toolCount,
-		job.turnCount,
-		job.totalTokens?.total,
-		job.currentStep,
-		job.runningSteps,
-		job.completedSteps,
-		widgetStepsRunningSeed(job.steps),
-	);
+	return asyncWidgetFrame + stablePhase(job.asyncId);
 }
 
-function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
-	let seed: number | undefined;
-	for (const job of jobs) seed = runningSeed(seed, widgetJobRunningSeed(job));
-	return seed;
+function widgetJobsRunningSeed(_jobs: AsyncJobState[]): number | undefined {
+	return asyncWidgetFrame;
 }
 
 function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
@@ -1188,94 +1187,275 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], lines: string[], theme: T
 	return rendered.lines;
 }
 
+function asyncStatusGlyph(child: AsyncWidgetChild, theme: Theme): string {
+	if (child.attention) return theme.fg("warning", "⚠");
+	if (child.status === "running") return theme.fg("accent", runningGlyph(asyncWidgetFrame + stablePhase(child.id)));
+	if (child.status === "queued") return theme.fg("muted", "◦");
+	if (child.status === "completed") return theme.fg("success", "✓");
+	if (child.status === "failed") return theme.fg("error", "✗");
+	return theme.fg("warning", "■");
+}
+
+function asyncAge(at: number | undefined): string | undefined {
+	if (at === undefined || asyncWidgetNowMs === 0) return undefined;
+	return formatWidgetDuration(Math.max(0, asyncWidgetNowMs - at));
+}
+
+function asyncCurrentAction(child: AsyncWidgetChild): string {
+	const source = child.source;
+	if (source.currentTool) {
+		const duration = asyncAge(source.currentToolStartedAt);
+		const pathText = source.currentPath ? ` · ${shortenPath(source.currentPath)}` : "";
+		return `${source.currentTool}${pathText}${duration ? ` · ${duration}` : ""}`;
+	}
+	if (source.activityKind === "reasoning") return `reasoning…${asyncAge(source.activityStartedAt) ? ` ${asyncAge(source.activityStartedAt)}` : ""}`;
+	const age = asyncAge(source.lastActivityAt ?? source.activityStartedAt);
+	return `quiet · no observable event${age ? ` for ${age}` : ""}`;
+}
+
+function asyncHeader(projection: ReturnType<typeof projectAsyncWidget>, theme: Theme, oneLine = false): string {
+	const c = projection.counts;
+	const parts: string[] = [];
+	if (c.attention) parts.push(`⚠ ${c.attention}${oneLine ? "" : " needs attention"}`);
+	if (c.failed) parts.push(`✗ ${c.failed}${oneLine ? "" : " failed"}`);
+	if (c.running) parts.push(`${runningGlyph(asyncWidgetFrame)} ${c.running}${oneLine ? "" : " running"}`);
+	if (c.queued) parts.push(`◦ ${c.queued}${oneLine ? "" : " queued"}`);
+	if (c.completed) parts.push(`✓ ${c.completed}${oneLine ? "" : " completed"}`);
+	if (c.paused) parts.push(`■P ${c.paused}${oneLine ? "" : " paused"}`);
+	if (c.stopped) parts.push(`■S ${c.stopped}${oneLine ? "" : " stopped"}`);
+	if (projection.elapsedMs !== undefined) parts.push(formatWidgetDuration(projection.elapsedMs));
+	return `${theme.fg(c.running ? "accent" : "dim", oneLine ? "subagents" : "Async agents")} ${theme.fg("dim", "· background")} ${theme.fg("dim", parts.join(" · "))}`;
+}
+
+function asyncOneLineHeader(projection: ReturnType<typeof projectAsyncWidget>, theme: Theme, width: number): string {
+	const c = projection.counts;
+	const tokens = [[c.attention, `⚠ ${c.attention}`], [c.failed, `✗ ${c.failed}`], [c.running, `${runningGlyph(asyncWidgetFrame)} ${c.running}`], [c.queued, `◦ ${c.queued}`], [c.completed, `✓ ${c.completed}`], [c.paused, `■P ${c.paused}`], [c.stopped, `■S ${c.stopped}`]] as const;
+	const activeTokens = tokens.filter(([count]) => count > 0).map(([, token]) => token);
+	const prefixes = ["Async agents · background", "Async", ""];
+	for (const prefix of prefixes) {
+		const selected: string[] = [];
+		for (const token of activeTokens) {
+			const candidate = [prefix, ...selected, token].filter(Boolean).join(" · ");
+			if (candidate.length <= width) selected.push(token);
+		}
+		if (projection.elapsedMs !== undefined) {
+			const elapsed = formatWidgetDuration(projection.elapsedMs);
+			if ([prefix, ...selected, elapsed].filter(Boolean).join(" · ").length <= width) selected.push(elapsed);
+		}
+		if (selected.length > 0 || activeTokens.length === 0) return theme.fg(c.running ? "accent" : "dim", [prefix, ...selected].filter(Boolean).join(" · "));
+	}
+	return "";
+}
+
+function asyncCompactLines(jobs: AsyncJobState[], theme: Theme, width: number): string[] {
+	const projection = projectAsyncWidget(jobs, true, asyncWidgetNowMs || undefined);
+	const budget = estimateAvailableWidgetRows();
+	if (budget <= 2) return [asyncOneLineHeader(projection, theme, width)];
+	const lines = [truncLine(asyncHeader(projection, theme), width)];
+	const mandatory = projection.children.filter((child) => child.attention || child.status === "failed" || child.status === "paused");
+	const mandatoryIds = new Set(mandatory.map((child) => child.id));
+	const running = projection.children.filter((child) => child.status === "running" && !mandatoryIds.has(child.id));
+	const renderChild = (child: AsyncWidgetChild, evidenceAllowed: boolean): void => {
+		const state = child.attention ? `${child.status} · needs attention` : child.status;
+		lines.push(truncLine(`${asyncStatusGlyph(child, theme)} ${themeBold(theme, child.agent)} · ${state} · ${asyncCurrentAction(child)}`, width));
+		const evidence = compactEvidence(child, true, asyncWidgetNowMs || undefined);
+		if (evidenceAllowed && evidence) lines.push(truncLine(theme.fg(child.attention || child.status === "failed" ? "warning" : "dim", `  ⎿ ${evidence}`), width));
+	};
+	// Mandatory rows are a soft-cap exception and retain their concise reasons.
+	for (const child of mandatory) renderChild(child, true);
+	let shownRunning = 0;
+	for (let index = 0; index < running.length; index++) {
+		const futureHidden = index < running.length - 1;
+		if (lines.length + 1 + (futureHidden ? 1 : 0) > budget) break;
+		const child = running[index]!;
+		renderChild(child, false);
+		shownRunning++;
+		const evidence = compactEvidence(child, true, asyncWidgetNowMs || undefined);
+		if (evidence && lines.length + (futureHidden ? 1 : 0) < budget) lines.push(truncLine(theme.fg("dim", `  ⎿ ${evidence}`), width));
+	}
+	const hiddenRunning = running.length - shownRunning;
+	const completedContext = projection.children.filter((child) => child.status === "completed" && child.root.status === "running" && !mandatoryIds.has(child.id));
+	for (const child of completedContext) {
+		if (lines.length + (hiddenRunning > 0 ? 1 : 0) >= budget) break;
+		lines.push(truncLine(theme.fg("dim", `✓ ${child.agent} · completed · ${asyncFlowPosition(child)}`), width));
+	}
+	if (hiddenRunning > 0 && lines.length < budget) lines.push(truncLine(theme.fg("dim", `… ${hiddenRunning} running children hidden`), width));
+	return lines;
+}
+
+function asyncFlowPosition(child: AsyncWidgetChild): string {
+	const groups = child.root.parallelGroups ?? [];
+	const group = groups.find((candidate) => child.index >= candidate.start && child.index < candidate.start + candidate.count);
+	const chainTotal = child.root.chainStepCount ?? child.root.stepsTotal ?? child.root.steps?.length ?? 1;
+	if (group) return `step ${(group.stepIndex ?? child.index) + 1}/${chainTotal} · parallel child ${child.index - group.start + 1}/${group.count}`;
+	const collapsedBefore = groups.filter((candidate) => candidate.start + candidate.count <= child.index).reduce((total, candidate) => total + candidate.count - 1, 0);
+	return `step ${child.index - collapsedBefore + 1}/${chainTotal}`;
+}
+
+function nestedPathIdentity(path: Array<{ runId: string; stepIndex?: number; agent?: string }> | undefined): string {
+	return (path ?? []).map((part) => `${part.runId}:${part.stepIndex ?? ""}:${part.agent ?? ""}`).join("/");
+}
+
+function nestedFlowLines(child: AsyncWidgetChild, theme: Theme): string[] {
+	const descendants = (child.source as AsyncJobStep).children ?? [];
+	return descendants.slice(0, 3).map((nested) => {
+		const state = displayNestedState(nested.state);
+		const identity = `${child.rootId}:nested:${nestedPathIdentity(nested.path)}:${nested.id}`;
+		const glyph = state === "running" ? theme.fg("accent", runningGlyph(asyncWidgetFrame + stablePhase(identity))) : state === "complete" ? theme.fg("success", "✓") : state === "failed" ? theme.fg("error", "✗") : theme.fg("muted", "◦");
+		return `  ${glyph} ${nested.agent ?? nested.id} · ${state}${nested.currentTool ? ` · ${nested.currentTool}` : ""}`;
+	});
+}
+
+function displayNestedState(state: string | undefined): "running" | "complete" | "failed" | "queued" {
+	return state === "complete" || state === "completed" ? "complete" : state === "failed" ? "failed" : state === "pending" || state === "queued" ? "queued" : "running";
+}
+
+function asyncExpandedLines(jobs: AsyncJobState[], theme: Theme, width: number): string[] {
+	const projection = projectAsyncWidget(jobs, true, asyncWidgetNowMs || undefined);
+	const detailed = projection.children.filter((child) => child.attention || child.status === "running");
+	type Section = { name: string; lines: string[]; mandatory: number };
+	const sections: Section[] = [];
+	const addSection = (name: string, content: string[], mandatory = 0) => { if (content.length) sections.push({ name, lines: content.map((line) => truncLine(line, width)), mandatory: Math.min(mandatory, content.length) }); };
+	addSection("Current", detailed.map((child) => `${asyncStatusGlyph(child, theme)} ${child.agent} · ${asyncFlowPosition(child)} · ${asyncCurrentAction(child)}${child.source.currentToolArgs ? ` · ${child.source.currentToolArgs}` : ""}`));
+	const recent: string[] = [];
+	for (const child of detailed) {
+		const preview = child.source.latestVisibleMessagePreview;
+		if (preview) recent.push(...wrapPlainText(`  ${child.agent}: ${preview}`, Math.max(1, width - 2)).slice(0, 2));
+		for (const activity of collapseRecentSuccesses(child.source.recentToolActivities ?? [])) {
+			recent.push(`  ${child.agent}: ${activity.tool}${activity.path ? ` · ${shortenPath(activity.path)}` : activity.args ? ` · ${activity.args}` : ""} · ${activity.outcome}${activity.count && activity.count > 1 ? ` ×${activity.count}` : ""}${activity.durationMs !== undefined ? ` · ${formatWidgetDuration(activity.durationMs)}` : ""}`);
+		}
+	}
+	addSection("Recent activity", recent);
+	const countSummary = Object.entries(projection.counts).filter(([key, value]) => key !== "attention" && value).map(([key, value]) => `${value} ${key}`).join(" · ");
+	const groupLines: string[] = [];
+	for (const root of jobs) {
+		for (const group of root.parallelGroups ?? []) {
+			const members = projection.children.filter((child) => child.rootId === root.asyncId && child.index >= group.start && child.index < group.start + group.count);
+			const running = members.filter((child) => child.status === "running").length;
+			const done = members.filter((child) => child.status === "completed").length;
+			const logical = group.stepIndex ?? group.start;
+			const aggregate = members.some((child) => child.attention) ? "attention"
+				: members.some((child) => child.status === "failed") ? "failed"
+					: members.some((child) => child.status === "paused") ? "paused"
+						: members.some((child) => child.status === "stopped") ? "stopped"
+							: running > 0 ? "running"
+								: members.some((child) => child.status === "queued") ? "queued" : "completed";
+			const glyph = aggregate === "attention" ? "⚠" : aggregate === "failed" ? "✗" : aggregate === "paused" || aggregate === "stopped" ? "■" : aggregate === "running" ? runningGlyph(asyncWidgetFrame + stablePhase(`${root.asyncId}:group:${logical}`)) : aggregate === "queued" ? "◦" : "✓";
+			const total = root.chainStepCount ?? root.stepsTotal ?? root.steps?.length ?? 1;
+			groupLines.push(`${glyph} step ${logical + 1}/${total} · parallel group · ${done}/${group.count} done${running ? ` · ${running} running` : ""}`);
+		}
+	}
+	const childFlow = projection.children.map((child) => `${asyncStatusGlyph(child, theme)} ${child.agent} · ${asyncFlowPosition(child)} · ${child.status}`);
+	const nestedFlow = projection.children.flatMap((child) => nestedFlowLines(child, theme));
+	const flow = [countSummary, ...groupLines, ...childFlow, ...nestedFlow].filter(Boolean);
+	addSection("Flow", flow, Math.min(flow.length, 1 + groupLines.length));
+	const reasonLines = projection.children.flatMap((child) => {
+		const reason = child.source.attentionReason ?? child.source.error;
+		if (child.attention) return [`${child.agent}: needs attention${reason ? ` · ${reason}` : ""}`];
+		if (child.status === "failed" || child.status === "paused") return [`${child.agent}: ${child.status}${reason ? ` · ${reason}` : ""}`];
+		return [];
+	});
+	const healthFacts = detailed.map((child) => child.source.activityState === "active_long_running"
+		? `${child.agent}: active but long-running`
+		: `${child.agent}: ${asyncCurrentAction(child)}`);
+	addSection("Health", [...reasonLines, ...healthFacts], reasonLines.length);
+	const usage = detailed.flatMap((child) => {
+		const source = child.source;
+		const tokens = source.tokens?.total;
+		const cost = source.totalCost?.costUsd;
+		const values = [source.model ? `model ${source.model}` : "", source.thinking ? `thinking ${source.thinking}` : "", source.turnCount ? `${source.turnCount} turns` : "", source.toolCount ? `${source.toolCount} tools` : "", tokens ? `${formatTokens(tokens)} tokens` : "", cost ? `$${cost}` : ""].filter(Boolean);
+		return values.length ? [`${child.agent}: ${values.join(" · ")}`] : [];
+	});
+	addSection("Usage", usage);
+	const artifacts = [...new Set(jobs.flatMap((job) => [job.outputFile, job.sessionFile, job.sessionDir].map((value) => sanitizeObservableText(value)).filter((value): value is string => Boolean(value)).map((value) => shortenPath(value))))];
+	addSection("Artifacts", artifacts);
+	const budget = Math.max(12, Math.min(24, Math.floor((process.stdout.rows || 30) * .55)));
+	let remaining = budget - 1; // Header is always present.
+	const allocation = new Map<Section, number>();
+	const omissionRows = new Set<Section>();
+	const allocate = (section: Section | undefined, requested: number): void => {
+		if (!section || requested <= 0 || remaining <= 0) return;
+		const current = allocation.get(section) ?? 0;
+		const headingCost = current === 0 ? 1 : 0;
+		const take = Math.min(requested, section.lines.length - current, Math.max(0, remaining - headingCost));
+		if (take <= 0) return;
+		allocation.set(section, current + take);
+		remaining -= headingCost + take;
+	};
+	const reserveOmission = (section: Section | undefined): void => {
+		if (!section || omissionRows.has(section)) return;
+		const take = allocation.get(section) ?? 0;
+		if (take > 0 && take < section.lines.length && remaining > 0) {
+			omissionRows.add(section);
+			remaining--;
+		}
+	};
+	const named = (name: string) => sections.find((section) => section.name === name);
+
+	// Mandatory operational truth is allocated before any Current/Recent or
+	// optional detail. Reserve its section-local omission row at the same time so
+	// later detail can never displace a reason or hide how much was elided.
+	for (const name of ["Flow", "Health"]) {
+		const section = named(name);
+		allocate(section, section?.mandatory ?? 0);
+		reserveOmission(section);
+	}
+	// Retain one useful live row where possible, together with an accurate local
+	// omission count, before spending rows on additional detail.
+	for (const name of ["Current", "Recent activity"]) {
+		const section = named(name);
+		if (!section) continue;
+		const required = 1 + (section.lines.length > 1 ? 1 : 0); // heading is charged by allocate
+		if (remaining >= required + 1) {
+			allocate(section, 1);
+			reserveOmission(section);
+		}
+	}
+	for (const name of ["Current", "Recent activity", "Flow", "Health"]) {
+		const section = named(name);
+		allocate(section, section?.lines.length ?? 0);
+	}
+	// Usage and Artifacts yield first. Only start them when a heading and useful
+	// fact fit; reserve a local omission row if the section is only partial.
+	for (const name of ["Usage", "Artifacts"]) {
+		const section = named(name);
+		if (!section || remaining < 2) continue;
+		allocate(section, section.lines.length);
+		reserveOmission(section);
+	}
+
+	const output = [truncLine(asyncHeader(projection, theme), width)];
+	for (const section of sections) {
+		const take = allocation.get(section) ?? 0;
+		if (take <= 0) continue;
+		output.push(themeBold(theme, section.name));
+		output.push(...section.lines.slice(0, take));
+		const omitted = section.lines.length - take;
+		if (omitted > 0 && omissionRows.has(section)) output.push(theme.fg("dim", `  … ${omitted} ${section.name} ${omitted === 1 ? "line" : "lines"} omitted`));
+	}
+	return output;
+}
+
 function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: unknown, theme: Theme) => Component {
 	return (_tui, theme) => {
 		const width = getTermWidth();
-		const lines = expanded
-			? buildWidgetLines(jobs, theme, width, true)
-			: jobs.length === 1
-				? compactSingleWidgetLines(jobs[0]!, theme, width)
-				: buildWidgetLines(jobs, theme, width, false);
+		const lines = expanded ? asyncExpandedLines(jobs, theme, width) : asyncCompactLines(jobs, theme, width);
 		const container = new Container();
-		for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded)) container.addChild(new Text(line, 1, 0));
+		for (const line of lines) container.addChild(new Text(line, 1, 0));
 		return container;
 	};
 }
 
 export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false): string[] {
 	if (jobs.length === 0) return [];
-	if (jobs.length === 1) return buildSingleWidgetLines(jobs[0]!, theme, width, expanded);
-	const running = jobs.filter((job) => job.status === "running");
-	const queued = jobs.filter((job) => job.status === "queued");
-	const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
-
-	const lines: string[] = [];
-	const hasActive = running.length > 0 || queued.length > 0;
-	const headerGlyph = running.length > 0 ? runningGlyph(widgetJobsRunningSeed(running)) : hasActive ? "●" : "○";
-	lines.push(truncLine(`${theme.fg(hasActive ? "accent" : "dim", headerGlyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")} ${theme.fg("dim", "· background")}`, width));
-
-	const items: string[][] = [];
-	let hiddenRunning = 0;
-	let hiddenFinished = 0;
-	let queuedSummaryShown = false;
-	let slots = MAX_WIDGET_JOBS;
-
-	for (const job of running) {
-		if (slots <= 0) { hiddenRunning++; continue; }
-		const stats = widgetStats(job, theme);
-		items.push([
-			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
-			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
-			...widgetParallelAgentDetails(job, theme, expanded, width),
-		]);
-		slots--;
-	}
-
-	if (queued.length > 0 && slots > 0) {
-		items.push([`${theme.fg("muted", "◦")} ${theme.fg("dim", `${queued.length} queued`)}`]);
-		queuedSummaryShown = true;
-		slots--;
-	}
-
-	for (const job of finished) {
-		if (slots <= 0) { hiddenFinished++; continue; }
-		const stats = widgetStats(job, theme);
-		items.push([
-			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
-			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
-			...widgetParallelAgentDetails(job, theme, expanded, width),
-		]);
-		slots--;
-	}
-
-	const hiddenQueued = queued.length > 0 && !queuedSummaryShown ? queued.length : 0;
-	const hiddenTotal = hiddenRunning + hiddenFinished + hiddenQueued;
-	if (hiddenTotal > 0) {
-		const parts: string[] = [];
-		if (hiddenRunning > 0) parts.push(`${hiddenRunning} running`);
-		if (hiddenQueued > 0) parts.push(`${hiddenQueued} queued`);
-		if (hiddenFinished > 0) parts.push(`${hiddenFinished} finished`);
-		items.push([theme.fg("dim", `+${hiddenTotal} more (${parts.join(", ")})`)]);
-	}
-
-	for (let i = 0; i < items.length; i++) {
-		const item = items[i]!;
-		const last = i === items.length - 1;
-		const branch = last ? "└─" : "├─";
-		const continuation = last ? "   " : "│  ";
-		lines.push(truncLine(`${theme.fg("dim", branch)} ${item[0]}`, width));
-		for (const detail of item.slice(1)) {
-			lines.push(truncLine(`${theme.fg("dim", continuation)} ${detail}`, width));
-		}
-	}
-
-	return lines;
+	return expanded ? asyncExpandedLines(jobs, theme, width) : asyncCompactLines(jobs, theme, width);
 }
 
 /**
  * Render the async jobs widget
  */
-export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
+export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], clock?: AsyncRenderClock): void {
+	if (clock) { asyncWidgetFrame = clock.frame; asyncWidgetNowMs = clock.nowMs; }
 	if (jobs.length === 0) {
 		resetWidgetLayoutSession();
 		if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);

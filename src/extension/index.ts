@@ -23,7 +23,7 @@ import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
-import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.ts";
+import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
 import { SubagentParams, WaitParams } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
@@ -302,14 +302,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		scheduledRunManager.stop();
 		supervisorChannel.dispose();
 		clearPendingForegroundControlNotices(state);
-		if (state.poller) {
-			clearInterval(state.poller);
-			state.poller = null;
-		}
+		trackerDispose?.();
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
-	const { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR);
+	const previewPolicy = config.observability?.assistantMessagePreviews !== false;
+	const { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs, renderCurrentJobs, dispose: trackerDispose } = createAsyncJobTracker(pi, state, ASYNC_DIR, { assistantMessagePreviews: previewPolicy });
 	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	const scheduledRunManager = createScheduledRunManager({
 		config,
@@ -571,8 +569,7 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
 		if (state.asyncJobs.size > 0) {
-			renderWidget(ctx, Array.from(state.asyncJobs.values()));
-			ctx.ui.requestRender?.();
+			renderCurrentJobs(ctx);
 			ensurePoller();
 		}
 	});
@@ -633,14 +630,10 @@ wait also returns when a run needs attention (a child that went idle or blocked 
 		}
 		stopResultWatcher();
 		scheduledRunManager.stop();
-		if (state.poller) clearInterval(state.poller);
-		state.poller = null;
+		// The tracker owns both its poller and its animation clock; dispose it
+		// instead of partially duplicating its cleanup here.
+		trackerDispose();
 		clearPendingForegroundControlNotices(state);
-		for (const timer of state.cleanupTimers.values()) {
-			clearTimeout(timer);
-		}
-		state.cleanupTimers.clear();
-		state.asyncJobs.clear();
 		clearSlashSnapshots();
 		slashBridge.cancelAll();
 		slashBridge.dispose();
