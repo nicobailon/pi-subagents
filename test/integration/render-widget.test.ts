@@ -98,7 +98,7 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /⚠ step 1\/2 · parallel group · 0\/2 done/);
 			assert.match(text, /active · step 2\/2/);
 			assert.match(text, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] nested · running/);
-			assert.match(text, /0\.1s/);
+			assert.match(text, /0s/);
 			assert.doesNotMatch(text, /\dms\b/);
 		} finally { if (descriptor) Object.defineProperty(stdout, "rows", descriptor); else Reflect.deleteProperty(stdout, "rows"); }
 	});
@@ -113,8 +113,8 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /Health\n/);
 			for (let index = 0; index < 5; index++) assert.match(text, new RegExp(`reason-${index}`));
 			assert.match(text, /failed reason/);
-			assert.match(text, /1\.5s/);
-			assert.match(text, /0\.1s/);
+			assert.match(text, /1s/);
+			assert.match(text, /0s/);
 			assert.match(text, /3 Current lines omitted/);
 			assert.match(text, /6 Flow lines omitted/);
 			assert.match(text, /5 Health lines omitted/);

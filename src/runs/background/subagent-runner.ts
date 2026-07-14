@@ -824,10 +824,10 @@ function createShareLink(htmlPath: string): { shareUrl: string; gistUrl: string 
 }
 
 function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-	const minutes = Math.floor(ms / 60000);
-	const seconds = Math.floor((ms % 60000) / 1000);
+	const safeMs = Math.max(0, ms);
+	if (safeMs < 60000) return `${Math.floor(safeMs / 1000)}s`;
+	const minutes = Math.floor(safeMs / 60000);
+	const seconds = Math.floor((safeMs % 60000) / 1000);
 	return `${minutes}m${seconds}s`;
 }
 

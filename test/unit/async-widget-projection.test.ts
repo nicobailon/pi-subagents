@@ -44,18 +44,18 @@ describe("async widget projection", () => {
 		assert.equal(nested.children?.[0]?.id, "deep");
 		assert.equal(nested.children?.[0]?.agent, "deep");
 	});
-	it("uses 0.1 seconds as the minimum visible widget duration", () => {
-		assert.equal(formatWidgetDuration(0), "0.1s");
-		assert.equal(formatWidgetDuration(80), "0.1s");
-		assert.equal(formatWidgetDuration(100), "0.1s");
-		assert.equal(formatWidgetDuration(500), "0.5s");
+	it("truncates visible widget durations to whole seconds", () => {
+		assert.equal(formatWidgetDuration(0), "0s");
+		assert.equal(formatWidgetDuration(999), "0s");
 		assert.equal(formatWidgetDuration(1_000), "1s");
+		assert.equal(formatWidgetDuration(1_999), "1s");
+		assert.equal(formatWidgetDuration(2_000), "2s");
 		const projected = projectAsyncWidget([{ asyncId: "r", asyncDir: "/tmp/r", status: "running", updatedAt: 580, steps: [{ agent: "worker", status: "running", lastActivityAt: 500, recentToolActivities: [{ tool: "read", outcome: "success", endMs: 1, durationMs: 80 }] }] }]);
-		assert.equal(compactEvidence(projected.children[0]!, true, 580), "read success · 0.1s");
+		assert.equal(compactEvidence(projected.children[0]!, true, 580), "read success · 0s");
 		assert.doesNotMatch(compactEvidence(projected.children[0]!, true, 580) ?? "", /ms/);
-		assert.equal(normalizeWidgetDurationText("Subagent timed out after 80ms."), "Subagent timed out after 0.1s.");
-		assert.equal(normalizeWidgetDurationText("timeouts after 1,500ms and .5ms"), "timeouts after 1.5s and 0.1s");
+		assert.equal(normalizeWidgetDurationText("Subagent timed out after 80ms."), "Subagent timed out after 0s.");
+		assert.equal(normalizeWidgetDurationText("timeouts after 1,500ms and .5ms"), "timeouts after 1s and 0s");
 		const timedOut = projectAsyncWidget([{ asyncId: "timeout", asyncDir: "/tmp/timeout", status: "failed", steps: [{ agent: "worker", status: "failed", error: "Subagent timed out after 1,500ms and retried after .5ms." }] }]);
-		assert.equal(compactEvidence(timedOut.children[0]!, true), "Subagent timed out after 1.5s and retried after 0.1s.");
+		assert.equal(compactEvidence(timedOut.children[0]!, true), "Subagent timed out after 1s and retried after 0s.");
 	});
 });
