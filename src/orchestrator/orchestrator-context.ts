@@ -11,7 +11,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import type { Details, SingleResult } from "../shared/types.ts";
+import type { Details, JsonSchemaObject, SingleResult } from "../shared/types.ts";
 import { getSingleResultOutput } from "../shared/utils.ts";
 import {
 	captureWorktreeDiff,
@@ -60,6 +60,8 @@ export interface OrchestratorRunAgentConfig extends SubagentParamsLike {
 	reads?: string[];
 	/** Jeśli true, nie rzuca wyjątku przy exitCode !== 0 — zwraca wynik normalnie */
 	doNotThrowOnError?: boolean;
+	/** JSON Schema for structured output validation */
+	outputSchema?: JsonSchemaObject;
 }
 
 export interface OrchestratorRunAgentResult {

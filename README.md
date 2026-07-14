@@ -1155,9 +1155,7 @@ export default {
 | `output` | `string` | no | Write agent output to a file inside `chainDir` |
 | `reads` | `string[]` | no | Files to read before execution (paths relative to `chainDir`) |
 | `doNotThrowOnError` | `boolean` | no | If true, returns result normally even when `exitCode !== 0` |
-| `outputSchema` | `object` | no | JSON Schema (or TypeBox object) for deterministic structured output extraction |
-| `maxStructuredOutputAttempts` | `number` | no | Max extraction attempts via `pi --continue` (default 3) |
-| `structuredOutputExtractTimeoutMs` | `number` | no | Timeout per extraction attempt in ms (default 30 000 = 30s) |
+| `outputSchema` | `object` | no | JSON Schema (or TypeBox object) for structured output. When set, the `structured_output` tool is dynamically injected into the child agent's tool allowlist — no agent configuration changes are needed. The child must call this tool with JSON matching the schema before completing; prose-only completion fails the step. The validated value is available as `result.structuredOutput`. |
 
 ### OrchestratorRunAgentResult
 
@@ -1165,14 +1163,33 @@ export default {
 |-------|------|-------------|
 | `exitCode` | `number` | 0 = success, non-zero = failure |
 | `output` | `string` | Text output from the subagent |
-| `structuredOutput` | `unknown` | Parsed structured output if `outputSchema` was used and extraction succeeded |
+| `structuredOutput` | `unknown` | Validated JSON value returned by the child via `structured_output`, when `outputSchema` was set |
 | `error` | `string?` | Error message on failure |
 | `agent` | `string` | Agent name that produced this result |
-| `usage` | `object?` | Token usage: `{ input, output, cacheRead, cacheWrite, cost }` — includes extraction if applicable |
-| `durationMs` | `number?` | Total execution time in ms (main agent only, excluding extraction) |
-| `extractionDurationMs` | `number?` | Structured output extraction time in ms (if applicable) |
+| `usage` | `object?` | Token usage: `{ input, output, cacheRead, cacheWrite, cost }` |
+| `durationMs` | `number?` | Total execution time in ms |
 | `model` | `string?` | Model used for this step |
 | `toolCount` | `number?` | Number of tool calls made |
+
+### Structured output
+
+When `outputSchema` is set on a `runAgent` call, the orchestrator automatically injects the `structured_output` tool into the child agent. The child must call this tool with schema-valid JSON before completing — plain text responses fail the step.
+
+```ts
+import { Type } from "typebox";
+
+const scan = await ctx.runAgent({
+  agent: "delegate",
+  task: "Ile to 2 + 2? Odpowiedz jedną liczbą.",
+  as: "scan",
+  outputSchema: Type.Object({ result: Type.Number() }),
+});
+
+// Access the validated structured output
+console.log(scan.structuredOutput); // { result: 4 }
+```
+
+The `structured_output` tool is added to the child's `--tools` allowlist automatically — no changes to the agent definition are needed. The mechanism works with any agent, including custom agents with restricted tool lists.
 
 ### Worktree block
 

@@ -837,8 +837,11 @@ export async function runSync(
 		dynamic: options.acceptanceContext?.dynamic,
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
-	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
+	const acceptancePrompt = options.structuredOutput ? "" : formatAcceptancePrompt(effectiveAcceptance);
+	let taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
+	if (options.structuredOutput) {
+		taskWithAcceptance = `${taskWithAcceptance}\n\n---\nThis step requires structured output. Your final action must be to call the \`structured_output\` tool with the result matching the provided schema. Do not just return prose text — the step will fail if you do not call structured_output.`;
+	}
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
