@@ -367,6 +367,36 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(typeof result, "boolean");
 	});
 
+	it("keeps named output references literal in async single tasks", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const task = "Reply with OK. You may reference {outputs.name} if it helps.";
+		mockPi.onCall({ output: "OK" });
+		const id = `async-single-literal-output-ref-${Date.now().toString(36)}`;
+		const result = executeAsyncSingle(id, {
+			agent: "worker",
+			task,
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(result.isError, undefined);
+		const call = await waitForMockPiCall(mockPi, 0, 10_000);
+		assert.match(call.args.at(-1) ?? "", /\{outputs\.name\}/);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.output, "OK");
+	});
+
 	it("spawns the async runner with node when process.execPath is not node", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const originalExecPath = process.execPath;
 		process.execPath = path.join(tempDir, process.platform === "win32" ? "pi.exe" : "pi");
