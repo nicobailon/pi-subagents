@@ -1223,6 +1223,14 @@ Controls the parent-facing `subagent` tool description registered at startup. `f
 
 Makes top-level calls use background execution when the request does not explicitly set `async`. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
+### `observability.assistantMessagePreviews`
+
+```json
+{ "observability": { "assistantMessagePreviews": false } }
+```
+
+Async widgets normally retain a short, sanitized preview of explicitly visible assistant text. Set this to `false` to suppress preview persistence and rendering; tool activity and lifecycle evidence remain available. Hidden reasoning and raw transcripts are never used as previews.
+
 ### `waitTool`
 
 ```json
