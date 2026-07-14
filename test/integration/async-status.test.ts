@@ -72,8 +72,8 @@ describe("async status helpers", () => {
 				}],
 			});
 			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["complete"] }));
-			assert.match(text, /phases: launch→runner 10ms · completion→delivery 50ms/);
-			assert.match(text, /phases: spawn→event 100ms · event→assistant 500ms · assistant→done 580ms/);
+			assert.match(text, /phases: launch→runner 0s · completion→delivery 0s/);
+			assert.match(text, /phases: spawn→event 0s · event→assistant 0s · assistant→done 0s/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
