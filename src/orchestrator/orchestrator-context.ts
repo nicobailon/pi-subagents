@@ -8,10 +8,8 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { Details, SingleResult } from "../shared/types.ts";
 import { getSingleResultOutput } from "../shared/utils.ts";
@@ -22,38 +20,6 @@ import {
 	resolveRepoState,
 	type WorktreeSetup,
 } from "../runs/shared/worktree.ts";
-
-// ── Structured output extension path ──────────────────────────────────
-
-const FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"force-structured-output.ts",
-);
-
-const DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3;
-const DEFAULT_STRUCTURED_OUTPUT_EXTRACT_TIMEOUT_MS = 30_000; // 30s per extraction attempt
-const STRUCTURED_OUTPUT_EXTRACT_TASK = "Extract the required structured data from this conversation according to the specified format. Call the structured_output tool with the data.";
-
-/**
- * Extract structured output arguments from the messages of a subagent run.
- * Looks for the last assistant message that contains a toolCall to "structured_output"
- * and returns its arguments. Used as a fallback when the agent-level structuredOutput
- * capture mechanism is not configured (e.g., in orchestrator extraction runs).
- */
-export function extractStructuredOutputFromMessages(messages: Message[] | undefined): unknown {
-	if (!messages || messages.length === 0) return undefined;
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
-		for (let j = msg.content.length - 1; j >= 0; j--) {
-			const part = msg.content[j];
-			if (part?.type === "toolCall" && "name" in part && part.name === "structured_output" && "arguments" in part) {
-				return part.arguments;
-			}
-		}
-	}
-	return undefined;
-}
 
 // ── Interfejs dla skryptów użytkownika ──────────────────────────────────
 
@@ -94,21 +60,6 @@ export interface OrchestratorRunAgentConfig extends SubagentParamsLike {
 	reads?: string[];
 	/** Jeśli true, nie rzuca wyjątku przy exitCode !== 0 — zwraca wynik normalnie */
 	doNotThrowOnError?: boolean;
-	/**
-	 * JSON Schema dla structured output — wymusza deterministyczną ekstrakcję
-	 * przez osobne `pi --continue` z tool_choice: "required".
-	 * Użyj z TypeBox: Type.Object({...}) — schemat jest JSON-serializowany.
-	 */
-	outputSchema?: Record<string, unknown>;
-	/**
-	 * Maksymalna liczba prób ekstrakcji structured output (domyślnie 3).
-	 * Każda próba to osobne `pi --continue` z wymuszeniem tool_choice.
-	 */
-	maxStructuredOutputAttempts?: number;
-	/**
-	 * Timeout pojedynczej próby ekstrakcji structured output w ms (domyślnie 30_000 = 30s).
-	 */
-	structuredOutputExtractTimeoutMs?: number;
 }
 
 export interface OrchestratorRunAgentResult {
@@ -125,8 +76,6 @@ export interface OrchestratorRunAgentResult {
 	model?: string;
 	/** Liczba wywołań narzędzi */
 	toolCount?: number;
-	/** Czas ekstrakcji structured output w ms (jeśli dotyczy) */
-	extractionDurationMs?: number;
 }
 
 /** Rezultat bloku worktree zwracany przez runInWorktree */
@@ -265,7 +214,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		const effectiveCwd = config.cwd ?? deps.cwd;
 
 		// Wyciągnij orchestrator-specific pola, reszta to SubagentParamsLike
-		const { label, as: _as, reads, doNotThrowOnError, outputSchema, maxStructuredOutputAttempts, structuredOutputExtractTimeoutMs, ...agentParams } = config;
+		const { label, as: _as, reads, doNotThrowOnError, ...agentParams } = config;
 
 		// Wstrzyknij prefixy [Read from: ...] / [Write to: ...] — dokładnie jak chain
 		let taskWithInstructions = config.task;
@@ -305,9 +254,9 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			? getSingleResultOutput(singleResult)
 			: result.content.find((c) => c.type === "text")?.text ?? "";
 		const error = singleResult?.error ?? (result.isError ? output : undefined);
-		let structuredOutput = singleResult?.structuredOutput;
+		const structuredOutput = singleResult?.structuredOutput;
 
-		// Zapisz wynik wstępny (przed ekstrakcją) — na wypadek timeoutu
+		// Zapisz wynik
 		saveStepResult(currentIndex, {
 			exitCode,
 			output,
@@ -319,95 +268,6 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			model: singleResult?.model,
 			toolCount: singleResult?.progressSummary?.toolCount,
 		});
-
-		// ── Orchestrator-level forced structured output extraction ──
-		let extractionDurationMs: number | undefined;
-		let extractionUsage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number } | undefined;
-		if (outputSchema && exitCode === 0) {
-			const sessionFile = singleResult?.sessionFile;
-			if (sessionFile && fs.existsSync(sessionFile)) {
-				const attempts = maxStructuredOutputAttempts ?? DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS;
-				log(`[step ${currentIndex}] Extracting structured output (max ${attempts} attempts)...`);
-
-				const prevEnv = process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"];
-				process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"] = JSON.stringify(outputSchema);
-				const extractionStart = Date.now();
-				const extrUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-				try {
-					let forcedOutput: unknown;
-					for (let attempt = 0; attempt < attempts; attempt++) {
-						const attemptLabel = attempts > 1 ? ` [attempt ${attempt + 1}/${attempts}]` : "";
-						const attemptStart = Date.now();
-						log(`[step ${currentIndex}] Extraction attempt ${attempt + 1}/${attempts} starting...`);
-						try {
-							const extractTimeout = structuredOutputExtractTimeoutMs ?? DEFAULT_STRUCTURED_OUTPUT_EXTRACT_TIMEOUT_MS;
-							const abortController = new AbortController();
-							const timeoutId = setTimeout(() => abortController.abort(), extractTimeout);
-							try {
-								const extractResult = await deps.execute(
-									`${requestId}-extract-${attempt}`,
-									{
-										agent: config.agent,
-										task: STRUCTURED_OUTPUT_EXTRACT_TASK,
-										sessionFile,
-										extraExtensions: [FORCE_STRUCTURED_OUTPUT_EXTENSION_PATH],
-									},
-									abortController.signal,
-									undefined,
-									deps.ctx,
-								);
-
-								const extractDetails = extractResult.details as Details | undefined;
-								const extractSingle = extractDetails?.results?.[0];
-								if (extractSingle?.usage) {
-									extrUsage.input += extractSingle.usage.input;
-									extrUsage.output += extractSingle.usage.output;
-									extrUsage.cacheRead += extractSingle.usage.cacheRead;
-									extrUsage.cacheWrite += extractSingle.usage.cacheWrite;
-									extrUsage.cost += extractSingle.usage.cost;
-								}
-								const forcedOutputCandidate = extractSingle?.structuredOutput
-									?? extractStructuredOutputFromMessages(extractSingle?.messages);
-								const attemptDuration = ((Date.now() - attemptStart) / 1000).toFixed(1);
-								if (forcedOutputCandidate !== undefined) {
-									forcedOutput = forcedOutputCandidate;
-									log(`[step ${currentIndex}] Extraction success${attemptLabel} (${attemptDuration}s): ${JSON.stringify(forcedOutput).slice(0, 300)}`);
-									break;
-								}
-								log(`[step ${currentIndex}] Extraction returned no data${attemptLabel} (${attemptDuration}s)`);
-							} finally {
-								clearTimeout(timeoutId);
-							}
-						} catch (err) {
-							const attemptDuration = ((Date.now() - attemptStart) / 1000).toFixed(1);
-							const message = err instanceof Error ? err.message : String(err);
-							const isTimeout = err instanceof Error && err.name === "AbortError";
-							log(`[step ${currentIndex}] Extraction attempt ${attempt + 1}/${attempts} ${isTimeout ? "timed out" : "failed"} (${attemptDuration}s): ${message.slice(0, 200)}`);
-						}
-						if (attempt < attempts - 1) {
-							await new Promise((r) => setTimeout(r, 1000));
-						}
-					}
-					extractionDurationMs = Date.now() - extractionStart;
-					const totalExtractionDuration = (extractionDurationMs / 1000).toFixed(1);
-					if (forcedOutput !== undefined) {
-						structuredOutput = forcedOutput;
-						log(`[step ${currentIndex}] Structured output extraction completed (total ${totalExtractionDuration}s, ${attempts} attempts max)`);
-					} else {
-						log(`[step ${currentIndex}] Structured output extraction FAILED after ${attempts} attempts (total ${totalExtractionDuration}s)`);
-					}
-					extractionUsage = extrUsage;
-				} finally {
-					if (prevEnv !== undefined) {
-						process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"] = prevEnv;
-					} else {
-						delete process.env["PI_ORCH_FORCE_STRUCTURED_OUTPUT"];
-					}
-				}
-			} else {
-				log(`[step ${currentIndex}] Cannot extract structured output: no session file available`);
-			}
-		}
 
 		// Bogaty log z metrykami
 		const usage = singleResult?.usage;
@@ -425,29 +285,16 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 			(toolCount ? ` tools=${toolCount}` : "") +
 			(error ? ` error=${error.slice(0, 100)}` : ""));
 
-		// Sumuj usage z głównego agenta i ekstrakcji
-		const totalUsage = usage ? { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost } : undefined;
-		const mergedUsage = extractionUsage && totalUsage
-			? {
-				input: totalUsage.input + extractionUsage.input,
-				output: totalUsage.output + extractionUsage.output,
-				cacheRead: totalUsage.cacheRead + extractionUsage.cacheRead,
-				cacheWrite: totalUsage.cacheWrite + extractionUsage.cacheWrite,
-				cost: totalUsage.cost + extractionUsage.cost,
-			}
-			: (totalUsage ?? extractionUsage);
-
 		const orchResult: OrchestratorRunAgentResult = {
 			exitCode,
 			output,
 			structuredOutput,
 			error,
 			agent: config.agent,
-			usage: mergedUsage,
+			usage: usage ? { input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, cost: usage.cost } : undefined,
 			durationMs,
 			model,
 			toolCount,
-			extractionDurationMs,
 		};
 
 		// Nadpisz wynik finalny (po ewentualnej ekstrakcji)

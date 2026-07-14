@@ -9,14 +9,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it, beforeEach, afterEach } from "node:test";
-import { Type } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createTempDir, removeTempDir } from "../support/helpers.ts";
 import {
 	createOrchestratorContext,
 	OrchestratorAgentError,
-	extractStructuredOutputFromMessages,
 	type OrchestratorContextDeps,
 	type OrchestratorContext,
 } from "../../src/orchestrator/orchestrator-context.ts";
@@ -220,234 +218,6 @@ describe("orchestrator context", () => {
 			const params = mockExec.lastCall().params;
 			assert.equal(typeof params.task, "string");
 			assert.match(params.task as string, /\[Write to:.*report\.md\]/);
-		});
-	});
-
-	// ── Structured output extraction ────────────────────────────────────
-
-	describe("runAgent with outputSchema", () => {
-		it("extracts structured output via second execute call", async () => {
-			// Create a real session file so the extraction path can proceed
-			const sessionFile = path.join(tempDir, "session.jsonl");
-			fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n', "utf-8");
-
-			const mockExec = createMockExecute();
-			mockExec.setResponses([
-				// First call: main runAgent
-				makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
-				// Second call: structured output extraction
-				makeSingleResult({
-					agent: "worker",
-					output: "extracted",
-					exitCode: 0,
-					structuredOutput: { name: "example", count: 42 },
-				}),
-			]);
-
-			const outputSchema = Type.Object({
-				name: Type.String(),
-				count: Type.Number(),
-			});
-
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-			const result = await ctx.runAgent({
-				agent: "worker",
-				task: "implement",
-				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-			});
-
-			assert.equal(result.exitCode, 0);
-			assert.deepEqual(result.structuredOutput, { name: "example", count: 42 });
-			assert.equal(mockExec.callCount(), 2, "should have made main call + extraction call");
-		});
-
-		it("handles failed structured output extraction gracefully", async () => {
-			const sessionFile = path.join(tempDir, "session.jsonl");
-			fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n', "utf-8");
-
-			const mockExec = createMockExecute();
-			// Main call + 3 extraction attempts (default maxStructuredOutputAttempts=3)
-			// Each extraction returns no structuredOutput, so all 3 attempts are tried
-			mockExec.setResponses([
-				makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
-				makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-				makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-				makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-			]);
-
-			const outputSchema = Type.Object({ key: Type.String() });
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-			const result = await ctx.runAgent({
-				agent: "worker",
-				task: "implement",
-				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-			});
-
-			// Should NOT throw — failed extraction is handled internally
-			assert.equal(result.exitCode, 0);
-			assert.equal(result.structuredOutput, undefined, "structuredOutput should be undefined when extraction fails");
-			// 1 main call + 3 extraction retries = 4
-			assert.equal(mockExec.callCount(), 4);
-		});
-
-		it("retries structured output extraction with maxStructuredOutputAttempts", async () => {
-			const sessionFile = path.join(tempDir, "session.jsonl");
-			fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n', "utf-8");
-
-			const mockExec = createMockExecute();
-			mockExec.setResponses([
-				// Main call
-				makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
-				// Extraction attempt 1: throws
-				makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-				// Extraction attempt 2: success
-				makeSingleResult({
-					agent: "worker",
-					output: "extracted",
-					exitCode: 0,
-					structuredOutput: { result: "retry success" },
-				}),
-			]);
-
-			const outputSchema = Type.Object({ result: Type.String() });
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-			const result = await ctx.runAgent({
-				agent: "worker",
-				task: "implement",
-				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-				maxStructuredOutputAttempts: 3,
-			});
-
-			// 1 main + 2 extractions = 3 calls
-			assert.equal(mockExec.callCount(), 3);
-			assert.deepEqual(result.structuredOutput, { result: "retry success" });
-		});
-
-		it("uses default maxStructuredOutputAttempts (3) when not specified", async () => {
-			const sessionFile = path.join(tempDir, "session.jsonl");
-			fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n', "utf-8");
-
-			const mockExec = createMockExecute();
-			// All extraction attempts fail
-			const responses: AgentToolResult<Details>[] = [
-				makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
-			];
-			for (let i = 0; i < 3; i++) {
-				responses.push(makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }));
-			}
-			mockExec.setResponses(responses);
-
-			const outputSchema = Type.Object({ key: Type.String() });
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-			const result = await ctx.runAgent({
-				agent: "worker",
-				task: "implement",
-				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-			});
-
-			// 1 main + up to 3 extraction attempts = 4 calls (default is 3)
-			assert.equal(mockExec.callCount(), 4);
-			assert.equal(result.structuredOutput, undefined);
-		});
-
-		it("skips structured output extraction when no session file is available", async () => {
-			const mockExec = createMockExecute();
-			// sessionFile is NOT set
-			mockExec.setResponses([
-				makeSingleResult({ agent: "worker", output: "implemented", exitCode: 0 }),
-			]);
-
-			const outputSchema = Type.Object({ key: Type.String() });
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-			const result = await ctx.runAgent({
-				agent: "worker",
-				task: "implement",
-				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-			});
-
-			assert.equal(result.exitCode, 0);
-			assert.equal(result.structuredOutput, undefined);
-			assert.equal(mockExec.callCount(), 1, "should not attempt extraction without sessionFile");
-		});
-
-		it("skips structured output extraction when exitCode is non-zero", async () => {
-			const mockExec = createMockExecute();
-			mockExec.setResponses([
-				makeSingleResult({ agent: "worker", exitCode: 1, error: "failed", sessionFile: "/nonexistent/file.jsonl" }),
-			]);
-
-			const outputSchema = Type.Object({ key: Type.String() });
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-			await assert.rejects(
-				() => ctx.runAgent({
-					agent: "worker",
-					task: "implement",
-					outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-				}),
-				/OrchestratorAgentError/,
-			);
-
-			// No extraction attempt — failed immediately
-			assert.equal(mockExec.callCount(), 1);
-		});
-
-		it("extracts structured output from messages when structuredOutput field is not set", async () => {
-			// Simulates the real-world orchestrator scenario where the extraction
-			// subagent does not have structuredOutput capture configured, but the
-			// force-structured-output extension causes the model to call the
-			// structured_output tool. The arguments should be in messages.
-			const sessionFile = path.join(tempDir, "session.jsonl");
-			fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n', "utf-8");
-
-			const mockExec = createMockExecute();
-			mockExec.setResponses([
-				// Main call
-				makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
-				// Extraction call: structuredOutput is NOT set on SingleResult,
-				// but messages contain the tool call with arguments.
-				{
-					content: [{ type: "text", text: "extracted" }],
-					details: {
-						mode: "single" as const,
-						results: [{
-							agent: "worker",
-							task: "extract",
-							exitCode: 0,
-							messages: [
-								{ role: "assistant", content: [
-									{ type: "toolCall", id: "t1", name: "structured_output", arguments: { name: "test", count: 42 } },
-								], api: "test", provider: "test", model: "test", responseId: "r1",
-									usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
-									stopReason: "toolUse" as const, timestamp: 1,
-								},
-							],
-							usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
-							output: "extracted",
-							finalOutput: "extracted",
-							// structuredOutput is intentionally NOT set
-						}],
-					},
-					isError: false,
-				} as AgentToolResult<Details>,
-			]);
-
-			const outputSchema = Type.Object({ name: Type.String(), count: Type.Number() });
-			const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-			const result = await ctx.runAgent({
-				agent: "worker",
-				task: "implement",
-				outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-			});
-
-			assert.equal(result.exitCode, 0);
-			assert.deepEqual(result.structuredOutput, { name: "test", count: 42 });
-			assert.equal(mockExec.callCount(), 2, "main call + 1 extraction");
 		});
 	});
 
@@ -670,78 +440,6 @@ describe("orchestrator context", () => {
 });
 
 
-// ── extractStructuredOutputFromMessages unit tests ────────────────────────────
-
-describe("extractStructuredOutputFromMessages", () => {
-	it("returns arguments from last structured_output tool call", () => {
-		const messages = [
-			{ role: "user" as const, content: "extract data", timestamp: 1 },
-			{ role: "assistant" as const, content: [
-				{ type: "toolCall" as const, id: "t1", name: "structured_output", arguments: { name: "test", count: 42 } },
-			], api: "test", provider: "test", model: "test", responseId: "r1",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
-				stopReason: "toolUse" as const, timestamp: 2,
-			},
-		];
-		const result = extractStructuredOutputFromMessages(messages);
-		assert.deepEqual(result, { name: "test", count: 42 });
-	});
-
-	it("returns arguments from last structured_output when multiple tool calls exist", () => {
-		const messages = [
-			{ role: "assistant" as const, content: [
-				{ type: "toolCall" as const, id: "t1", name: "structured_output", arguments: { first: true } },
-			], api: "test", provider: "test", model: "test", responseId: "r1",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
-				stopReason: "toolUse" as const, timestamp: 1,
-			},
-			{ role: "assistant" as const, content: [
-				{ type: "text" as const, text: "retrying" },
-				{ type: "toolCall" as const, id: "t2", name: "structured_output", arguments: { last: true, value: 99 } },
-			], api: "test", provider: "test", model: "test", responseId: "r2",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
-				stopReason: "toolUse" as const, timestamp: 2,
-			},
-		];
-		const result = extractStructuredOutputFromMessages(messages);
-		assert.deepEqual(result, { last: true, value: 99 });
-	});
-
-	it("returns undefined when no structured_output tool call exists", () => {
-		const messages = [
-			{ role: "assistant" as const, content: [
-				{ type: "text" as const, text: "analysis" },
-			], api: "test", provider: "test", model: "test", responseId: "r1",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
-				stopReason: "stop" as const, timestamp: 1,
-			},
-		];
-		const result = extractStructuredOutputFromMessages(messages);
-		assert.equal(result, undefined);
-	});
-
-	it("returns undefined for empty messages", () => {
-		assert.equal(extractStructuredOutputFromMessages([]), undefined);
-	});
-
-	it("returns undefined for undefined input", () => {
-		assert.equal(extractStructuredOutputFromMessages(undefined), undefined);
-	});
-
-	it("ignores non-structured_output tool calls", () => {
-		const messages = [
-			{ role: "assistant" as const, content: [
-				{ type: "toolCall" as const, id: "t1", name: "read", arguments: { path: "/tmp" } },
-			], api: "test", provider: "test", model: "test", responseId: "r1",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0 } },
-				stopReason: "toolUse" as const, timestamp: 1,
-			},
-		];
-		const result = extractStructuredOutputFromMessages(messages);
-		assert.equal(result, undefined);
-	});
-});
-
 // ── Step results persistence ─────────────────────────────────────────
 
 describe("step results persistence", () => {
@@ -758,75 +456,7 @@ describe("step results persistence", () => {
 		removeTempDir(tempDir);
 	});
 
-	it("writes step result file after main agent (before extraction)", async () => {
-		const sessionFile = path.join(tempDir, "session.jsonl");
-		fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant"}}\n', "utf-8");
-
-		const mockExec = createMockExecute();
-		mockExec.setResponses([
-			makeSingleResult({ agent: "scout", output: "scan done", sessionFile, exitCode: 0 }),
-			makeSingleResult({ agent: "scout", output: "extracted", exitCode: 0, structuredOutput: { key: "val" } }),
-		]);
-
-		const outputSchema = Type.Object({ key: Type.String() });
-		const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-		const result = await ctx.runAgent({
-			agent: "scout",
-			task: "scan",
-			outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-		});
-
-		// Final result should have structuredOutput from extraction
-		assert.deepEqual(result.structuredOutput, { key: "val" });
-
-		// step-results/0.json should exist
-		const stepFile = path.join(chainDir, "step-results", "0.json");
-		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist");
-
-		const saved = JSON.parse(fs.readFileSync(stepFile, "utf-8"));
-		assert.equal(saved.agent, "scout");
-		assert.equal(saved.exitCode, 0);
-		assert.deepEqual(saved.structuredOutput, { key: "val" }, "final save should include structuredOutput");
-	});
-
-	it("saves preliminary result before extraction (survives extraction failure)", async () => {
-		const sessionFile = path.join(tempDir, "session.jsonl");
-		fs.writeFileSync(sessionFile, '{"type":"message","message":{"role":"assistant"}}\n', "utf-8");
-
-		const mockExec = createMockExecute();
-		// Main agent succeeds, but all extraction attempts throw
-		mockExec.setResponses([
-			makeSingleResult({ agent: "worker", output: "implemented", sessionFile, exitCode: 0 }),
-			makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-			makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-			makeSingleResult({ agent: "worker", exitCode: 1, error: "extraction failed", output: "no data" }),
-		]);
-
-		const outputSchema = Type.Object({ key: Type.String() });
-		const ctx = createContext(mockExec, { chainDir, cwd: tempDir });
-
-		const result = await ctx.runAgent({
-			agent: "worker",
-			task: "implement",
-			outputSchema: JSON.parse(JSON.stringify(outputSchema)),
-		});
-
-		// Extraction failed, but main agent succeeded
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.structuredOutput, undefined);
-
-		// step-results/0.json should still exist (final save after extraction)
-		const stepFile = path.join(chainDir, "step-results", "0.json");
-		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist even when extraction fails");
-
-		const saved = JSON.parse(fs.readFileSync(stepFile, "utf-8"));
-		assert.equal(saved.agent, "worker");
-		assert.equal(saved.exitCode, 0);
-		assert.equal(saved.structuredOutput, undefined, "structuredOutput should be undefined after failed extraction");
-	});
-
-	it("writes step result for agent without outputSchema", async () => {
+	it("writes step result for agent", async () => {
 		const mockExec = createMockExecute();
 		mockExec.setResponses([
 			makeSingleResult({ agent: "scout", output: "scan done", exitCode: 0 }),
@@ -836,7 +466,7 @@ describe("step results persistence", () => {
 		await ctx.runAgent({ agent: "scout", task: "scan" });
 
 		const stepFile = path.join(chainDir, "step-results", "0.json");
-		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist for non-outputSchema agents");
+		assert.ok(fs.existsSync(stepFile), "step-results/0.json should exist");
 
 		const saved = JSON.parse(fs.readFileSync(stepFile, "utf-8"));
 		assert.equal(saved.agent, "scout");

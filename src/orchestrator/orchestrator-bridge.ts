@@ -117,30 +117,18 @@ export function generateFlowSummary(
 			mdLines[3] = `**Status**: ${statusIcon} | **Duration**: ${(totalDuration / 1000).toFixed(1)}s | **Steps**: ${rs.length}`;
 			mdLines.push(`**Tokens**: ${totalTokens} | **Cost**: $${totalCost.toFixed(4)}`);
 
-			const hasExtraction = rs.some((r) => r.extractionDurationMs != null);
 			mdLines.push(
 				"",
-				hasExtraction
-					? "| # | Agent | Exit | Duration | Extraction | Tokens | Cost | Model |"
-					: "| # | Agent | Exit | Duration | Tokens | Cost | Model |",
-				hasExtraction
-					? "|---|-------|------|----------|------------|--------|------|-------|"
-					: "|---|-------|------|----------|--------|------|-------|",
+				"| # | Agent | Exit | Duration | Tokens | Cost | Model |",
+				"|---|-------|------|----------|--------|------|-------|",
 			);
 
 			for (const r of rs) {
 				const dur = r.durationMs ? `${(r.durationMs / 1000).toFixed(1)}s` : "-";
-				const extr = r.extractionDurationMs
-					? `${(r.extractionDurationMs / 1000).toFixed(1)}s`
-					: "-";
 				const tok = (r.usage?.input ?? 0) + (r.usage?.output ?? 0) || "-";
 				const cost = r.usage?.cost != null ? `$${r.usage.cost.toFixed(4)}` : "-";
 				const icon = r.exitCode === 0 ? "✅" : "❌";
-				if (hasExtraction) {
-					mdLines.push(`| ${rs.indexOf(r)} | ${r.agent} | ${icon} ${r.exitCode} | ${dur} | ${extr} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
-				} else {
-					mdLines.push(`| ${rs.indexOf(r)} | ${r.agent} | ${icon} ${r.exitCode} | ${dur} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
-				}
+				mdLines.push(`| ${rs.indexOf(r)} | ${r.agent} | ${icon} ${r.exitCode} | ${dur} | ${tok} | ${cost} | ${r.model ?? "-"} |`);
 			}
 		}
 
