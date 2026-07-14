@@ -1,11 +1,53 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { Message } from "@earendil-works/pi-ai";
 import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
 
 export interface SingleOutputSnapshot {
 	exists: boolean;
 	mtimeMs?: number;
 	size?: number;
+}
+
+/**
+ * Content the child itself sent to the configured output path, taken from its
+ * last `write` tool call whose tool result reports success. Unlike reading the
+ * path from disk, this cannot be polluted by a sibling run writing the same
+ * path (#420); requiring the successful tool result keeps failed, cancelled,
+ * or unanswered write calls from counting as authored output. Returns
+ * undefined when no such write exists (e.g. bash or edit-based construction),
+ * in which case callers must not assume file authorship.
+ */
+export function extractChildWrittenOutput(
+	messages: Message[] | undefined,
+	outputPath: string | undefined,
+	cwd?: string,
+): string | undefined {
+	if (!messages?.length || !outputPath) return undefined;
+	const resolvedTarget = path.resolve(cwd ?? ".", outputPath);
+	const comparableTarget = process.platform === "win32" ? resolvedTarget.toLowerCase() : resolvedTarget;
+	const successfulCallIds = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "toolResult" && message.isError === false && typeof message.toolCallId === "string") {
+			successfulCallIds.add(message.toolCallId);
+		}
+	}
+	let content: string | undefined;
+	for (const message of messages) {
+		if (message.role !== "assistant") continue;
+		for (const part of message.content) {
+			if (part.type !== "toolCall" || part.name !== "write" || !successfulCallIds.has(part.id)) continue;
+			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
+				? part.arguments as Record<string, unknown>
+				: {};
+			if (typeof args.path !== "string" || typeof args.content !== "string") continue;
+			const resolvedWritePath = path.resolve(cwd ?? ".", args.path);
+			const comparableWritePath = process.platform === "win32" ? resolvedWritePath.toLowerCase() : resolvedWritePath;
+			if (comparableWritePath !== comparableTarget) continue;
+			content = args.content;
+		}
+	}
+	return content;
 }
 
 export function normalizeSingleOutputOverride(

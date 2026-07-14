@@ -8,7 +8,7 @@ import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../s
 import { consumeInterruptRequest, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, stepSteerInboxDir, watchAsyncControlInbox, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
-import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
 	type ArtifactConfig,
@@ -1198,7 +1198,7 @@ async function runSingleStep(
 	const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
 		? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
 		: { fullOutput: outputForPersistence };
-	const output = resolvedOutput.fullOutput;
+	const output = stripAcceptanceReport(resolvedOutput.fullOutput);
 	const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, output) : undefined;
 	let outputForSummary = output;
 	if (attemptNotes.length > 0) {
@@ -1213,6 +1213,9 @@ async function runSingleStep(
 		outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
 	}
 	const outputForAcceptance = rawOutput;
+	const childWrittenOutput = step.outputPath
+		? extractChildWrittenOutput(finalResult?.messages, step.outputPath, step.cwd ?? ctx.cwd)
+		: undefined;
 	const finalizedOutput = finalizeSingleOutput({
 		fullOutput: outputForSummary,
 		outputPath: step.outputPath,
@@ -1227,6 +1230,9 @@ async function runSingleStep(
 		? await evaluateAcceptance({
 			acceptance: step.effectiveAcceptance,
 			output: outputForAcceptance,
+			fileOutput: childWrittenOutput !== undefined && step.outputPath
+				? { content: childWrittenOutput, path: step.outputPath, authoritative: step.outputMode === "file-only" }
+				: undefined,
 			cwd: step.cwd ?? ctx.cwd,
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
 			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",

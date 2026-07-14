@@ -448,7 +448,10 @@ function parseGenericJsonAcceptanceReportBody(body: string): AcceptanceReport | 
 	return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
 }
 
+export const ACCEPTANCE_REPORT_NOT_FOUND = "Structured acceptance report not found.";
+
 export function parseAcceptanceReport(output: string): { report?: AcceptanceReport; error?: string } {
+	const explicitFencePresent = /```acceptance-report\b/i.test(output);
 	const fenced = fencedBlocks(output, "acceptance-report");
 	const parseErrors: string[] = [];
 	for (const body of fenced) {
@@ -461,6 +464,9 @@ export function parseAcceptanceReport(output: string): { report?: AcceptanceRepo
 		}
 	}
 	if (parseErrors.length > 0) return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
+	if (explicitFencePresent) {
+		return { error: "Failed to parse acceptance-report: Empty or unterminated acceptance-report fence." };
+	}
 	for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {
 		try {
 			const report = parseGenericJsonAcceptanceReportBody(body);
@@ -473,22 +479,46 @@ export function parseAcceptanceReport(output: string): { report?: AcceptanceRepo
 	const markerIndex = output.search(/ACCEPTANCE_REPORT\s*:/i);
 	if (markerIndex !== -1) {
 		const jsonStart = output.indexOf("{", markerIndex);
-			if (jsonStart !== -1) {
-				const json = extractBalancedJson(output, jsonStart);
-				if (json) {
-					try {
-						const parsed = JSON.parse(json) as unknown;
-						const report = unwrapAcceptanceReport(parsed);
-						const validation = validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
-						if (validation.report) return { report: validation.report };
-						return { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
-					} catch (error) {
-						return { error: error instanceof Error ? error.message : String(error) };
-					}
-				}
-			}
+		if (jsonStart === -1) {
+			return { error: "Failed to parse acceptance-report: Expected a JSON object after ACCEPTANCE_REPORT:." };
 		}
-	return { error: "Structured acceptance report not found." };
+		const json = extractBalancedJson(output, jsonStart);
+		if (!json) {
+			return { error: "Failed to parse acceptance-report: Unterminated JSON object after ACCEPTANCE_REPORT:." };
+		}
+		try {
+			const parsed = JSON.parse(json) as unknown;
+			const report = unwrapAcceptanceReport(parsed);
+			const validation = validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+			if (validation.report) return { report: validation.report };
+			return { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return { error: `Failed to parse acceptance-report: ${message}` };
+		}
+	}
+	return { error: ACCEPTANCE_REPORT_NOT_FOUND };
+}
+
+function parseAcceptanceReportSources(
+	output: string,
+	fileOutput: { content: string; path: string; authoritative?: boolean } | undefined,
+): { report?: AcceptanceReport; error?: string } {
+	const fromText = () => parseAcceptanceReport(output);
+	const fromFile = () => {
+		if (!fileOutput) return { error: ACCEPTANCE_REPORT_NOT_FOUND };
+		const parsed = parseAcceptanceReport(fileOutput.content);
+		return parsed.report || parsed.error === ACCEPTANCE_REPORT_NOT_FOUND
+			? parsed
+			: { error: `${parsed.error} (in configured output ${fileOutput.path})` };
+	};
+	const [primary, secondary] = fileOutput?.authoritative ? [fromFile, fromText] : [fromText, fromFile];
+	const first = primary();
+	// A malformed report in the primary source is a defect to surface, not a
+	// miss to paper over with the secondary source; only a genuinely absent
+	// report falls through.
+	if (first.report || first.error !== ACCEPTANCE_REPORT_NOT_FOUND) return first;
+	return secondary();
 }
 
 export function stripAcceptanceReport(output: string): string {
@@ -788,6 +818,13 @@ export async function evaluateAcceptance(input: {
 	acceptance: ResolvedAcceptanceConfig;
 	output: string;
 	cwd: string;
+	/**
+	 * Content the child sent to its configured output file (from its own write
+	 * tool calls, not from disk, so a concurrent writer to the same path cannot
+	 * be misattributed). Searched for the acceptance report; searched before
+	 * the assistant output when `authoritative` (outputMode "file-only").
+	 */
+	fileOutput?: { content: string; path: string; authoritative?: boolean };
 	report?: AcceptanceReport;
 	reviewResult?: AcceptanceReviewResult;
 	signal?: AbortSignal;
@@ -805,7 +842,7 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.report ? { report: input.report } : parseAcceptanceReport(input.output);
+	const parsed = input.report ? { report: input.report } : parseAcceptanceReportSources(input.output, input.fileOutput);
 	if (parsed.report) {
 		ledger.childReport = parsed.report;
 		ledger.status = "attested";
