@@ -761,6 +761,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.modelAttempts?.length, 2);
 		assert.equal(result.modelAttempts?.[0]?.success, false);
 		assert.equal(result.modelAttempts?.[1]?.success, true);
+		assert.ok(result.modelAttempts?.every((attempt) => attempt.phaseTiming?.childSpawnedAt !== undefined));
+		assert.equal(result.phaseTiming, undefined);
+		assert.equal(result.progress.phaseTiming, undefined);
 		assert.equal(result.usage.turns, 2);
 		assert.equal(mockPi.callCount(), 2);
 	});
@@ -1806,6 +1809,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.error, "Subagent timed out after 150ms.");
 		assert.match(result.finalOutput ?? "", /Subagent timed out after 150ms\./);
 		assert.equal(result.progress.status, "failed");
+	});
+
+	it("preserves phase telemetry when timeout expires before spawn", async () => {
+		const agents = makeAgentConfigs(["slow"]);
+		const result = await runSync(tempDir, agents, "slow", "Slow task", {
+			timeoutMs: 1,
+			deadlineAt: Date.now() - 1,
+		});
+
+		assert.equal(result.timedOut, true);
+		assert.ok(result.phaseTiming?.launchedAt !== undefined);
+		assert.ok(result.phaseTiming?.completedAt !== undefined);
+		assert.equal(result.phaseTiming?.childSpawnedAt, undefined);
+		assert.equal(result.progress.phaseTiming?.childSpawnedAt, undefined);
 	});
 
 	it("allows a foreground run to finish on the final turn-budget grace turn", async () => {

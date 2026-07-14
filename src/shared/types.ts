@@ -216,7 +216,7 @@ export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFAC
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "status" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
+	"agent" | "status" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "activityKind" | "activityStartedAt" | "latestVisibleMessagePreview" | "latestVisibleMessageAt" | "attentionReason" | "recentToolActivities" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -227,9 +227,25 @@ export type CostSummary = {
 	costUsd: number;
 };
 
+/** Snapshot-safe observable activity; unlike ActivityState this describes what was observed. */
+export type AsyncActivityKind = "reasoning" | "tool" | "quiet";
+export interface AsyncToolActivity {
+	tool: string;
+	endMs: number;
+	outcome: "success" | "failed";
+	toolCallId?: string;
+	args?: string;
+	path?: string;
+	failureSummary?: string;
+	startedAt?: number;
+	durationMs?: number;
+}
+export const MAX_ASYNC_VISIBLE_TEXT = 240;
+export const MAX_ASYNC_TOOL_ACTIVITIES = 5;
+
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
+	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "activityKind" | "activityStartedAt" | "latestVisibleMessagePreview" | "latestVisibleMessageAt" | "attentionReason" | "recentToolActivities" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -278,6 +294,17 @@ export interface ChildWatchdogProgress {
 	timedOut?: boolean;
 }
 
+export interface PhaseTiming {
+	/** Timestamp milestones observed locally; absent phases were not observable. */
+	launchedAt?: number;
+	runnerStartedAt?: number;
+	childSpawnedAt?: number;
+	firstChildEventAt?: number;
+	firstAssistantEventAt?: number;
+	completedAt?: number;
+	resultDeliveredAt?: number;
+}
+
 export interface AgentProgress {
 	index: number;
 	agent: string;
@@ -296,6 +323,7 @@ export interface AgentProgress {
 	turnCount?: number;
 	tokens: number;
 	durationMs: number;
+	phaseTiming?: PhaseTiming;
 	error?: string;
 	failedTool?: string;
 	watchdog?: ChildWatchdogProgress;
@@ -322,6 +350,8 @@ export interface ModelAttempt {
 	exitCode?: number | null;
 	error?: string;
 	usage?: Usage;
+	/** Per-attempt telemetry; use this instead of run-level timing after retries. */
+	phaseTiming?: PhaseTiming;
 }
 
 export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
@@ -511,6 +541,7 @@ export interface SingleResult {
 	transcriptError?: string;
 	children?: NestedRunSummary[];
 	watchdog?: ChildWatchdogProgress;
+	phaseTiming?: PhaseTiming;
 }
 
 export interface Details {
@@ -602,6 +633,12 @@ export interface NestedStepSummary {
 	transcriptPath?: string;
 	transcriptError?: string;
 	activityState?: ActivityState;
+	activityKind?: AsyncActivityKind;
+	activityStartedAt?: number;
+	latestVisibleMessagePreview?: string;
+	latestVisibleMessageAt?: number;
+	attentionReason?: string;
+	recentToolActivities?: AsyncToolActivity[];
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
@@ -643,6 +680,12 @@ export interface NestedRunSummary extends NestedRunAddress {
 	steps?: NestedStepSummary[];
 	children?: NestedRunSummary[];
 	activityState?: ActivityState;
+	activityKind?: AsyncActivityKind;
+	activityStartedAt?: number;
+	latestVisibleMessagePreview?: string;
+	latestVisibleMessageAt?: number;
+	attentionReason?: string;
+	recentToolActivities?: AsyncToolActivity[];
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
@@ -690,6 +733,7 @@ export interface AsyncStartedEvent {
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
 	nestedRoute?: NestedRouteInfo;
+	phaseTiming?: PhaseTiming;
 }
 
 export interface AsyncStatus {
@@ -700,6 +744,12 @@ export interface AsyncStatus {
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	error?: string;
 	activityState?: ActivityState;
+	activityKind?: AsyncActivityKind;
+	activityStartedAt?: number;
+	latestVisibleMessagePreview?: string;
+	latestVisibleMessageAt?: number;
+	attentionReason?: string;
+	recentToolActivities?: AsyncToolActivity[];
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
@@ -708,6 +758,7 @@ export interface AsyncStatus {
 	toolCount?: number;
 	steerCount?: number;
 	lastSteerAt?: number;
+	phaseTiming?: PhaseTiming;
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate?: number;
@@ -739,6 +790,12 @@ export interface AsyncStatus {
 		transcriptPath?: string;
 		transcriptError?: string;
 		activityState?: ActivityState;
+		activityKind?: AsyncActivityKind;
+		activityStartedAt?: number;
+		latestVisibleMessagePreview?: string;
+		latestVisibleMessageAt?: number;
+		attentionReason?: string;
+		recentToolActivities?: AsyncToolActivity[];
 		lastActivityAt?: number;
 		currentTool?: string;
 		currentToolArgs?: string;
@@ -768,6 +825,7 @@ export interface AsyncStatus {
 		totalCost?: CostSummary;
 		steerCount?: number;
 		lastSteerAt?: number;
+		phaseTiming?: PhaseTiming;
 		error?: string;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
@@ -793,7 +851,15 @@ export interface AsyncJobState {
 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	pid?: number;
 	sessionId?: string;
+	error?: string;
+	endedAt?: number;
 	activityState?: ActivityState;
+	activityKind?: AsyncActivityKind;
+	activityStartedAt?: number;
+	latestVisibleMessagePreview?: string;
+	latestVisibleMessageAt?: number;
+	attentionReason?: string;
+	recentToolActivities?: AsyncToolActivity[];
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
@@ -827,6 +893,7 @@ export interface AsyncJobState {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	totalCost?: CostSummary;
 	sessionFile?: string;
 	controlEventCursor?: number;
 	nestedRoute?: NestedRouteInfo;
@@ -1026,6 +1093,8 @@ export interface ScheduledRunsConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Enables bounded, explicitly-visible assistant preview text in async snapshots. */
+	observability?: { assistantMessagePreviews?: boolean };
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
 	forceTopLevelAsync?: boolean;

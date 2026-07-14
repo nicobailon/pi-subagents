@@ -811,6 +811,7 @@ function appendStepToAsyncChain(input: {
 		currentModelProvider: input.ctx.model?.provider,
 		currentModel: input.ctx.model,
 		modelScope: discoveredForAppend.modelScope,
+		assistantMessagePreviews: input.deps.config.observability?.assistantMessagePreviews !== false,
 	};
 	const built = buildAsyncRunnerSteps(resolved.id, {
 		chain: wrapChainTasksForFork(input.params.chain, contextPolicy),
@@ -1173,6 +1174,7 @@ async function resumeAsyncRun(input: {
 				currentModelProvider: input.ctx.model?.provider,
 				currentModel: input.ctx.model,
 				modelScope,
+				assistantMessagePreviews: input.deps.config.observability?.assistantMessagePreviews !== false,
 			},
 			availableModels,
 			cwd: effectiveCwd,
@@ -1220,6 +1222,7 @@ async function resumeAsyncRun(input: {
 			currentModelProvider: input.ctx.model?.provider,
 			currentModel: input.ctx.model,
 			modelScope,
+			assistantMessagePreviews: input.deps.config.observability?.assistantMessagePreviews !== false,
 		},
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput,
@@ -1875,6 +1878,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		currentModelProvider: ctx.model?.provider,
 		currentModel: ctx.model,
 		modelScope: data.modelScope,
+		assistantMessagePreviews: deps.config.observability?.assistantMessagePreviews !== false,
 	};
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
@@ -2112,6 +2116,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			currentModelProvider: ctx.model?.provider,
 			currentModel: ctx.model,
 			modelScope: data.modelScope,
+			assistantMessagePreviews: deps.config.observability?.assistantMessagePreviews !== false,
 		};
 		const asyncChain = wrapChainTasksForFork(chainResult.requestedAsync.chain, contextPolicy);
 		return executeAsyncChain(id, {
@@ -2586,6 +2591,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
 				modelScope: data.modelScope,
+				assistantMessagePreviews: deps.config.observability?.assistantMessagePreviews !== false,
 			};
 			const parallelTasks = tasks.map((t, i) => {
 				const taskText = shouldForkAgent(contextPolicy, t.agent) ? wrapForkTask(taskTexts[i]!) : taskTexts[i]!;
@@ -2902,6 +2908,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
 				modelScope: data.modelScope,
+				assistantMessagePreviews: deps.config.observability?.assistantMessagePreviews !== false,
 			};
 			return executeAsyncSingle(id, {
 				agent: params.agent!,

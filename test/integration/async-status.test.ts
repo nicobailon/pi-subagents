@@ -53,6 +53,32 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("renders persisted phase timing without changing legacy status fields", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-phases-"));
+		try {
+			createAsyncDir(root, "run-phases", {
+				runId: "run-phases",
+				mode: "single",
+				state: "complete",
+				startedAt: 10,
+				endedAt: 2_000,
+				phaseTiming: { launchedAt: 0, runnerStartedAt: 10, completedAt: 2_000, resultDeliveredAt: 2_050 },
+				steps: [{
+					agent: "worker",
+					status: "complete",
+					startedAt: 20,
+					endedAt: 1_200,
+					phaseTiming: { childSpawnedAt: 20, firstChildEventAt: 120, firstAssistantEventAt: 620 },
+				}],
+			});
+			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["complete"] }));
+			assert.match(text, /phases: launch→runner 10ms · completion→delivery 50ms/);
+			assert.match(text, /phases: spawn→event 100ms · event→assistant 500ms · assistant→done 580ms/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("formats model thinking in step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-model-thinking-"));
 		try {

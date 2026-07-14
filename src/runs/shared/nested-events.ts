@@ -14,7 +14,10 @@ import {
 	type NestedStepSummary,
 	type SubagentRunMode,
 	type SubagentState,
+	type AsyncToolActivity,
+	MAX_ASYNC_TOOL_ACTIVITIES,
 } from "../../shared/types.ts";
+import { sanitizeObservableText } from "../background/live-observability.ts";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, type NestedPathEntry } from "./nested-path.ts";
 import {
 	SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
@@ -174,6 +177,32 @@ function stringValue(value: unknown, max = 512): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value.slice(0, max) : undefined;
 }
 
+function observableText(value: unknown): string | undefined {
+	return sanitizeObservableText(value);
+}
+
+function sanitizeToolActivities(value: unknown): AsyncToolActivity[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	return value.map((item): AsyncToolActivity | undefined => {
+		if (!item || typeof item !== "object") return undefined;
+		const raw = item as Record<string, unknown>;
+		const tool = stringValue(raw.tool, 128);
+		const endMs = clampNumber(raw.endMs);
+		if (!tool || endMs === undefined || (raw.outcome !== "success" && raw.outcome !== "failed")) return undefined;
+		return {
+			tool,
+			endMs,
+			outcome: raw.outcome,
+			...(stringValue(raw.toolCallId, 256) ? { toolCallId: stringValue(raw.toolCallId, 256) } : {}),
+			...(observableText(raw.args) ? { args: observableText(raw.args) } : {}),
+			...(observableText(raw.path) ? { path: observableText(raw.path) } : {}),
+			...(observableText(raw.failureSummary) ? { failureSummary: observableText(raw.failureSummary) } : {}),
+			...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
+			...(clampNumber(raw.durationMs) !== undefined ? { durationMs: clampNumber(raw.durationMs) } : {}),
+		};
+	}).filter((item): item is AsyncToolActivity => Boolean(item)).slice(-MAX_ASYNC_TOOL_ACTIVITIES);
+}
+
 function sanitizeTokenUsage(value: unknown): NestedRunSummary["totalTokens"] | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
@@ -233,6 +262,12 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		status,
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
+		...(raw.activityKind === "reasoning" || raw.activityKind === "tool" || raw.activityKind === "quiet" ? { activityKind: raw.activityKind } : {}),
+		...(clampNumber(raw.activityStartedAt) !== undefined ? { activityStartedAt: clampNumber(raw.activityStartedAt) } : {}),
+		...(observableText(raw.latestVisibleMessagePreview) ? { latestVisibleMessagePreview: observableText(raw.latestVisibleMessagePreview) } : {}),
+		...(clampNumber(raw.latestVisibleMessageAt) !== undefined ? { latestVisibleMessageAt: clampNumber(raw.latestVisibleMessageAt) } : {}),
+		...(observableText(raw.attentionReason) ? { attentionReason: observableText(raw.attentionReason) } : {}),
+		...(sanitizeToolActivities(raw.recentToolActivities) ? { recentToolActivities: sanitizeToolActivities(raw.recentToolActivities) } : {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
 		...(stringValue(raw.currentTool, 128) ? { currentTool: stringValue(raw.currentTool, 128) } : {}),
 		...(clampNumber(raw.currentToolStartedAt) !== undefined ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) } : {}),
@@ -285,6 +320,12 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(clampNumber(raw.currentStep) !== undefined ? { currentStep: clampNumber(raw.currentStep) } : {}),
 		...(clampNumber(raw.chainStepCount) !== undefined ? { chainStepCount: clampNumber(raw.chainStepCount) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
+		...(raw.activityKind === "reasoning" || raw.activityKind === "tool" || raw.activityKind === "quiet" ? { activityKind: raw.activityKind } : {}),
+		...(clampNumber(raw.activityStartedAt) !== undefined ? { activityStartedAt: clampNumber(raw.activityStartedAt) } : {}),
+		...(observableText(raw.latestVisibleMessagePreview) ? { latestVisibleMessagePreview: observableText(raw.latestVisibleMessagePreview) } : {}),
+		...(clampNumber(raw.latestVisibleMessageAt) !== undefined ? { latestVisibleMessageAt: clampNumber(raw.latestVisibleMessageAt) } : {}),
+		...(observableText(raw.attentionReason) ? { attentionReason: observableText(raw.attentionReason) } : {}),
+		...(sanitizeToolActivities(raw.recentToolActivities) ? { recentToolActivities: sanitizeToolActivities(raw.recentToolActivities) } : {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
 		...(stringValue(raw.currentTool, 128) ? { currentTool: stringValue(raw.currentTool, 128) } : {}),
 		...(clampNumber(raw.currentToolStartedAt) !== undefined ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) } : {}),
@@ -851,6 +892,12 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
 		...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
 		...(status.activityState ? { activityState: status.activityState } : {}),
+		...(status.activityKind ? { activityKind: status.activityKind } : {}),
+		...(status.activityStartedAt !== undefined ? { activityStartedAt: status.activityStartedAt } : {}),
+		...(sanitizeObservableText(status.latestVisibleMessagePreview) ? { latestVisibleMessagePreview: sanitizeObservableText(status.latestVisibleMessagePreview) } : {}),
+		...(status.latestVisibleMessageAt !== undefined ? { latestVisibleMessageAt: status.latestVisibleMessageAt } : {}),
+		...(sanitizeObservableText(status.attentionReason) ? { attentionReason: sanitizeObservableText(status.attentionReason) } : {}),
+		...(sanitizeToolActivities(status.recentToolActivities) ? { recentToolActivities: sanitizeToolActivities(status.recentToolActivities) } : {}),
 		...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
 		...(status.currentTool ? { currentTool: status.currentTool } : {}),
 		...(status.currentToolStartedAt !== undefined ? { currentToolStartedAt: status.currentToolStartedAt } : {}),
@@ -875,6 +922,12 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			status: step.status,
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.activityState ? { activityState: step.activityState } : {}),
+			...(step.activityKind ? { activityKind: step.activityKind } : {}),
+			...(step.activityStartedAt !== undefined ? { activityStartedAt: step.activityStartedAt } : {}),
+			...(sanitizeObservableText(step.latestVisibleMessagePreview) ? { latestVisibleMessagePreview: sanitizeObservableText(step.latestVisibleMessagePreview) } : {}),
+			...(step.latestVisibleMessageAt !== undefined ? { latestVisibleMessageAt: step.latestVisibleMessageAt } : {}),
+			...(sanitizeObservableText(step.attentionReason) ? { attentionReason: sanitizeObservableText(step.attentionReason) } : {}),
+			...(sanitizeToolActivities(step.recentToolActivities) ? { recentToolActivities: sanitizeToolActivities(step.recentToolActivities) } : {}),
 			...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
 			...(step.currentTool ? { currentTool: step.currentTool } : {}),
 			...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),

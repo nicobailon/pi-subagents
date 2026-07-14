@@ -19,6 +19,7 @@ import {
 	type ArtifactPaths,
 	type ControlEvent,
 	type ModelAttempt,
+	type PhaseTiming,
 	type RunSyncOptions,
 	type SingleResult,
 	type Usage,
@@ -254,6 +255,7 @@ async function runSingleAttempt(
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 	};
 	const startTime = Date.now();
+	const phaseTiming: PhaseTiming = { launchedAt: startTime };
 	if (options.structuredOutput) {
 		try {
 			if (existsSync(options.structuredOutput.outputPath)) unlinkSync(options.structuredOutput.outputPath);
@@ -286,10 +288,13 @@ async function runSingleAttempt(
 		tokens: 0,
 		durationMs: 0,
 		lastActivityAt: startTime,
+		phaseTiming,
 	};
 	result.progress = progress;
 	const attemptTimeout = resolveAttemptTimeout(options);
 	if (attemptTimeout?.remainingMs === 0) {
+		phaseTiming.completedAt = Date.now();
+		result.phaseTiming = phaseTiming;
 		result.exitCode = 1;
 		result.timedOut = true;
 		result.error = attemptTimeout.message;
@@ -314,6 +319,8 @@ async function runSingleAttempt(
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
 		});
+		phaseTiming.childSpawnedAt = Date.now();
+		progress.phaseTiming = phaseTiming;
 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
 		let buf = "";
 		let processClosed = false;
@@ -663,6 +670,8 @@ async function runSingleAttempt(
 			}
 
 			const now = Date.now();
+			phaseTiming.firstChildEventAt ??= now;
+			progress.phaseTiming = phaseTiming;
 			progress.durationMs = now - startTime;
 			progress.lastActivityAt = now;
 			updateActivityState(now);
@@ -706,6 +715,8 @@ async function runSingleAttempt(
 			if (evt.type === "message_end" && evt.message) {
 				result.messages.push(evt.message);
 				if (evt.message.role === "assistant") {
+					phaseTiming.firstAssistantEventAt ??= now;
+					progress.phaseTiming = phaseTiming;
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
 					const stopReason = (evt.message as { stopReason?: string }).stopReason;
@@ -1004,7 +1015,10 @@ async function runSingleAttempt(
 	}
 
 	progress.status = result.exitCode === 0 ? "completed" : "failed";
-	progress.durationMs = Date.now() - startTime;
+	phaseTiming.completedAt = Date.now();
+	progress.phaseTiming = phaseTiming;
+	result.phaseTiming = phaseTiming;
+	progress.durationMs = phaseTiming.completedAt - startTime;
 	if (result.error) {
 		progress.error = result.error;
 		if (progress.currentTool) {
@@ -1229,6 +1243,7 @@ export async function runSync(
 			exitCode: result.exitCode,
 			error: result.error,
 			usage: { ...result.usage },
+			phaseTiming: result.phaseTiming,
 		};
 		modelAttempts.push(attempt);
 		if (result.detached || result.timedOut || result.turnBudgetExceeded) {
@@ -1255,6 +1270,11 @@ export async function runSync(
 	result.usage = aggregateUsage;
 	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
 	result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
+	// Run duration is aggregate; retain timing per attempt rather than pairing it with a retry aggregate.
+	if (modelAttempts.length > 1) {
+		result.phaseTiming = undefined;
+		if (result.progress) result.progress.phaseTiming = undefined;
+	}
 	result.progressSummary = {
 		toolCount: totalToolCount,
 		tokens: aggregateUsage.input + aggregateUsage.output,
@@ -1286,6 +1306,7 @@ export async function runSync(
 				attemptedModels: result.attemptedModels,
 				modelAttempts: result.modelAttempts,
 				durationMs: result.progressSummary?.durationMs,
+				phaseTiming: result.phaseTiming,
 				toolCount: result.progressSummary?.toolCount,
 				error: result.error,
 				...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),

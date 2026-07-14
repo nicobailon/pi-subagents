@@ -50,6 +50,8 @@ interface AsyncStatusPayload {
 	lifecycleArtifactVersion?: number;
 	sessionId?: string;
 	activityState?: string;
+	activityKind?: string;
+	attentionReason?: string;
 	currentTool?: string;
 	currentPath?: string;
 	state?: string;
@@ -70,6 +72,10 @@ interface AsyncStatusPayload {
 		structured?: boolean;
 		skills?: string[];
 		activityState?: string;
+		activityKind?: string;
+		attentionReason?: string;
+		latestVisibleMessagePreview?: string;
+		recentOutput?: string[];
 		currentTool?: string;
 		status?: string;
 		exitCode?: number;
@@ -267,6 +273,19 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 	return resultPath;
 }
 
+async function waitForAsyncStatus(id: string, predicate: (status: AsyncStatusPayload) => boolean = () => true, timeoutMs = 5_000): Promise<AsyncStatusPayload> {
+	const statusPath = path.join(ASYNC_DIR, id, "status.json");
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() <= deadline) {
+		if (fs.existsSync(statusPath)) {
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatusPayload;
+			if (predicate(status)) return status;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	assert.fail(`Timed out waiting for async status: ${statusPath}`);
+}
+
 async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_000): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
@@ -417,6 +436,25 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		} finally {
 			process.execPath = originalExecPath;
 		}
+	});
+
+	it("records async child spawn at the child process boundary", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "timed" });
+		const id = `async-phase-spawn-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Report timing.",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+		await waitForAsyncResultFile(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as { steps?: Array<{ phaseTiming?: { childSpawnedAt?: number; firstChildEventAt?: number } }> };
+		assert.ok(typeof status.steps?.[0]?.phaseTiming?.childSpawnedAt === "number");
+		assert.ok(typeof status.steps?.[0]?.phaseTiming?.firstChildEventAt === "number");
 	});
 
 	it("readStatus returns null for missing directory", () => {
@@ -1653,6 +1691,175 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(statusPayload.steps?.[0]?.exitCode, 0);
 	});
 
+	it("correlates concurrent ID and legacy FIFO tool events in both arrival orders and clears terminal activity", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ jsonl: [
+			events.toolStart("read", { path: "one" }, "id-1"),
+			events.toolStart("read", { path: "two" }, "id-2"),
+			events.toolResult("read", "second result", false, "id-2"),
+			events.toolEnd("read", "id-1", true),
+			events.toolResult("read", "first result", false, "id-1"),
+			events.toolEnd("read", "id-2", false),
+			events.toolStart("bash", { command: "one" }),
+			events.toolStart("bash", { command: "two" }),
+			events.toolEnd("bash", undefined, true),
+			events.toolEnd("bash"),
+			events.toolResult("bash", "command failed", false),
+			events.toolResult("bash", "legacy second", false),
+			events.assistantMessage("done"),
+		] });
+		const id = `async-tool-correlation-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Use tools", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 99_999, activeNoticeAfterTurns: 99, activeNoticeAfterMs: 99_999, activeNoticeAfterTokens: 99_999, failedToolAttemptsBeforeAttention: 1, notifyOn: ["needs_attention"], notifyChannels: ["event"] },
+		});
+		await waitForAsyncResultFile(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8")) as AsyncStatusPayload & { steps?: Array<NonNullable<AsyncStatusPayload["steps"]>[number] & { recentToolActivities?: Array<{ tool: string; toolCallId?: string; outcome: string; failureSummary?: string }>; activityKind?: string; activityStartedAt?: number; currentTool?: string; totalCost?: { costUsd: number } }> };
+		const activities = status.steps?.[0]?.recentToolActivities ?? [];
+		assert.deepEqual(activities.map((item) => [item.tool, item.toolCallId, item.outcome]), [
+			["read", "id-1", "failed"], ["read", "id-2", "success"], ["bash", undefined, "failed"], ["bash", undefined, "success"],
+		]);
+		assert.equal(status.steps?.[0]?.currentTool, undefined);
+		assert.equal(status.steps?.[0]?.activityKind, undefined);
+		assert.equal(status.steps?.[0]?.activityStartedAt, undefined);
+		assert.equal(status.activityKind, undefined);
+		assert.equal(status.currentTool, undefined);
+		assert.equal(status.steps?.[0]?.totalCost?.costUsd, 0.001);
+		assert.equal(status.steps?.[0]?.activityState, undefined);
+		assert.equal(status.steps?.[0]?.attentionReason, undefined);
+	});
+
+	it("never persists any split acceptance marker or long protocol tail and flushes unresolved carry", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const update = (delta: string) => ({ type: "message_update", message: { role: "assistant" }, assistantMessageEvent: { type: "text_delta", delta } });
+		const markers = ["```acceptance-report", "ACCEPTANCE_REPORT:"] as const;
+		const cases = markers.flatMap((marker) => Array.from({ length: marker.length - 1 }, (_, index) => ({ marker, split: index + 1 })));
+		const runnerSteps: Array<{ delay?: number; jsonl: object[] }> = [];
+		for (const [index, { marker, split }] of cases.entries()) {
+			runnerSteps.push({ jsonl: [{ type: "message_start", message: { role: "assistant", content: [] } }, update(`case-${index} ${marker.slice(0, split)}`)] });
+			runnerSteps.push({ delay: 200, jsonl: [update(`${marker.slice(split)} ${"private protocol tail ".repeat(500)}`)] });
+			// Keep the protocol-open state observable before the next message_start
+			// resets it; intermediate message_end events would terminate the mock turn.
+			runnerSteps.push({ delay: 300, jsonl: [] });
+		}
+		// No complete final text is available here, so message_end must restore the
+		// unresolved one-character marker carry before resetting per-message state.
+		runnerSteps.push({ jsonl: [{ type: "message_start", message: { role: "assistant", content: [] } }, update("ordinary unresolved A")] });
+		runnerSteps.push({ delay: 200, jsonl: [{ type: "message_end", message: { role: "assistant", content: [{ type: "thinking", text: "hidden" }] } }] });
+		mockPi.onCall({ steps: runnerSteps });
+		const id = `async-stream-preview-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Report", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+		});
+		let status: AsyncStatusPayload;
+		for (let index = 0; index < cases.length; index++) {
+			status = await waitForAsyncStatus(id, (candidate) => candidate.steps?.[0]?.latestVisibleMessagePreview === `case-${index}`);
+			assert.equal(status.steps?.[0]?.latestVisibleMessagePreview, `case-${index}`);
+			await new Promise((resolve) => setTimeout(resolve, 250));
+			status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8")) as AsyncStatusPayload;
+			assert.equal(status.steps?.[0]?.latestVisibleMessagePreview, `case-${index}`);
+			assert.ok((status.steps?.[0]?.latestVisibleMessagePreview?.length ?? 0) <= 4_000);
+		}
+		await waitForAsyncResultFile(id, 30_000);
+		status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8")) as AsyncStatusPayload;
+		assert.equal(status.steps?.[0]?.latestVisibleMessagePreview, "ordinary unresolved A");
+		assert.doesNotMatch((status.steps?.[0]?.recentOutput ?? []).join("\n"), /private protocol/i);
+	});
+
+	it("never persists opt-out assistant previews", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const update = (delta: string) => ({ type: "message_update", message: { role: "assistant" }, assistantMessageEvent: { type: "text_delta", delta } });
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "message_start", message: { role: "assistant", content: [] } }, update("private preview") ] },
+			{ delay: 350, jsonl: [events.assistantMessage("private final")] },
+		] });
+		const optOutId = `async-preview-optout-${Date.now().toString(36)}`;
+		executeAsyncSingle(optOutId, {
+			agent: "worker", task: "Private", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1", assistantMessagePreviews: false },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+		});
+		let status = await waitForAsyncStatus(optOutId, (candidate) => candidate.steps?.[0]?.status === "running");
+		assert.equal(status.steps?.[0]?.latestVisibleMessagePreview, undefined);
+		await waitForAsyncResultFile(optOutId);
+		status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, optOutId, "status.json"), "utf8")) as AsyncStatusPayload;
+		assert.equal(status.steps?.[0]?.latestVisibleMessagePreview, undefined);
+		assert.doesNotMatch((status.steps?.[0]?.recentOutput ?? []).join("\n"), /private/);
+	});
+
+	it("persists live usage cost before a running child finishes", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.assistantMessage("first usage")] },
+			{ delay: 500, jsonl: [events.assistantMessage("done")] },
+		] });
+		const id = `async-live-cost-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Cost", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+		});
+		const status = await waitForAsyncStatus(id, (candidate) => candidate.state === "running" && candidate.steps?.[0]?.totalCost?.costUsd === 0.001);
+		assert.equal(status.state, "running");
+		assert.equal(status.steps?.[0]?.totalCost?.costUsd, 0.001);
+		assert.equal(status.totalCost?.costUsd, 0.001);
+		await waitForAsyncResultFile(id);
+	});
+
+	it("initializes observed quiet activity before the first child event", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [{ delay: 500, jsonl: [events.assistantMessage("done")] }] });
+		const id = `async-initial-quiet-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Wait", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+		});
+		const statusPath = path.join(ASYNC_DIR, id, "status.json");
+		const deadline = Date.now() + 3_000;
+		let observed: AsyncStatusPayload | undefined;
+		while (Date.now() < deadline) {
+			if (fs.existsSync(statusPath)) {
+				const candidate = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatusPayload;
+				if (candidate.steps?.[0]?.status === "running" && (candidate.steps[0] as { activityKind?: string }).activityKind === "quiet") { observed = candidate; break; }
+			}
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal((observed?.steps?.[0] as { activityKind?: string })?.activityKind, "quiet");
+		assert.equal(typeof (observed?.steps?.[0] as { activityStartedAt?: number })?.activityStartedAt, "number");
+		assert.equal(observed?.activityKind, "quiet");
+		await waitForAsyncResultFile(id);
+	});
+
+	it("mirrors inactivity attention reasons at step and run level", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [{ delay: 1_500, jsonl: [events.assistantMessage("done")] }] });
+		const id = `async-inactivity-attention-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Wait", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 100, activeNoticeAfterTurns: 99, activeNoticeAfterMs: 99_999, activeNoticeAfterTokens: 99_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["needs_attention"], notifyChannels: ["event"] },
+		});
+		const statusPath = path.join(ASYNC_DIR, id, "status.json");
+		const deadline = Date.now() + 4_000;
+		let observed: AsyncStatusPayload | undefined;
+		while (Date.now() < deadline) {
+			if (fs.existsSync(statusPath)) {
+				const candidate = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatusPayload;
+				if (candidate.activityState === "needs_attention") { observed = candidate; break; }
+			}
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.equal(observed?.attentionReason, "no observable activity");
+		assert.equal((observed?.steps?.[0] as { attentionReason?: string })?.attentionReason, "no observable activity");
+		await waitForAsyncResultFile(id);
+	});
+
 	it("background runs keep provider errors failed when followed only by empty assistant output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [
@@ -2839,6 +3046,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(statusDuringEvent, "expected status.json to expose needs_attention while the run is still active");
 		assert.equal(statusDuringEvent.activityState, "needs_attention");
 		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
+		assert.equal(statusDuringEvent.attentionReason, "repeated mutating tool failures");
+		assert.equal((statusDuringEvent.steps?.[0] as { attentionReason?: string })?.attentionReason, "repeated mutating tool failures");
 
 		const doneDeadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {

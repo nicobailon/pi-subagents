@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type NestedRunSummary, type SubagentRunMode, type TokenUsage, type TurnBudgetState } from "../../shared/types.ts";
+import { type ActivityState, type AsyncActivityKind, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type AsyncToolActivity, type CostSummary, type NestedRunSummary, type PhaseTiming, type SubagentRunMode, type TokenUsage, type TurnBudgetState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -18,6 +18,12 @@ interface AsyncRunStepSummary {
 	structured?: boolean;
 	status: AsyncJobStep["status"];
 	activityState?: ActivityState;
+	activityKind?: AsyncActivityKind;
+	activityStartedAt?: number;
+	latestVisibleMessagePreview?: string;
+	latestVisibleMessageAt?: number;
+	attentionReason?: string;
+	recentToolActivities?: AsyncToolActivity[];
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolArgs?: string;
@@ -29,7 +35,10 @@ interface AsyncRunStepSummary {
 	toolCount?: number;
 	steerCount?: number;
 	lastSteerAt?: number;
+	startedAt?: number;
+	endedAt?: number;
 	durationMs?: number;
+	phaseTiming?: PhaseTiming;
 	tokens?: TokenUsage;
 	totalCost?: CostSummary;
 	skills?: string[];
@@ -52,6 +61,12 @@ export interface AsyncRunSummary {
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	error?: string;
 	activityState?: ActivityState;
+	activityKind?: AsyncActivityKind;
+	activityStartedAt?: number;
+	latestVisibleMessagePreview?: string;
+	latestVisibleMessageAt?: number;
+	attentionReason?: string;
+	recentToolActivities?: AsyncToolActivity[];
 	lastActivityAt?: number;
 	currentTool?: string;
 	currentToolStartedAt?: number;
@@ -60,6 +75,7 @@ export interface AsyncRunSummary {
 	toolCount?: number;
 	steerCount?: number;
 	lastSteerAt?: number;
+	phaseTiming?: PhaseTiming;
 	mode: SubagentRunMode;
 	cwd?: string;
 	startedAt: number;
@@ -171,6 +187,12 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.structured ? { structured: step.structured } : {}),
 			status: step.status,
 			...(stepActivityState ? { activityState: stepActivityState } : {}),
+			...(step.activityKind ? { activityKind: step.activityKind } : {}),
+			...(step.activityStartedAt !== undefined ? { activityStartedAt: step.activityStartedAt } : {}),
+			...(step.latestVisibleMessagePreview ? { latestVisibleMessagePreview: step.latestVisibleMessagePreview } : {}),
+			...(step.latestVisibleMessageAt !== undefined ? { latestVisibleMessageAt: step.latestVisibleMessageAt } : {}),
+			...(step.attentionReason ? { attentionReason: step.attentionReason } : {}),
+			...(step.recentToolActivities ? { recentToolActivities: step.recentToolActivities.map((activity) => ({ ...activity })) } : {}),
 			...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
 			...(step.currentTool ? { currentTool: step.currentTool } : {}),
 			...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
@@ -182,7 +204,10 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
 			...(step.steerCount !== undefined ? { steerCount: step.steerCount } : {}),
 			...(step.lastSteerAt !== undefined ? { lastSteerAt: step.lastSteerAt } : {}),
+			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 			...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
+			...(step.phaseTiming ? { phaseTiming: { ...step.phaseTiming } } : {}),
 			...(step.tokens ? { tokens: step.tokens } : {}),
 			...(step.totalCost ? { totalCost: step.totalCost } : {}),
 			...(step.skills ? { skills: step.skills } : {}),
@@ -206,6 +231,12 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		state: status.state,
 		...(status.error ? { error: status.error } : {}),
 		activityState,
+		...(status.activityKind ? { activityKind: status.activityKind } : {}),
+		...(status.activityStartedAt !== undefined ? { activityStartedAt: status.activityStartedAt } : {}),
+		...(status.latestVisibleMessagePreview ? { latestVisibleMessagePreview: status.latestVisibleMessagePreview } : {}),
+		...(status.latestVisibleMessageAt !== undefined ? { latestVisibleMessageAt: status.latestVisibleMessageAt } : {}),
+		...(status.attentionReason ? { attentionReason: status.attentionReason } : {}),
+		...(status.recentToolActivities ? { recentToolActivities: status.recentToolActivities.map((activity) => ({ ...activity })) } : {}),
 		lastActivityAt,
 		currentTool: status.currentTool,
 		currentToolStartedAt: status.currentToolStartedAt,
@@ -214,6 +245,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		toolCount: status.toolCount,
 		steerCount: status.steerCount,
 		lastSteerAt: status.lastSteerAt,
+		...(status.phaseTiming ? { phaseTiming: { ...status.phaseTiming } } : {}),
 		mode: status.mode,
 		cwd: status.cwd,
 		startedAt: status.startedAt,
@@ -329,6 +361,20 @@ function formatActivityFacts(input: { activityState?: ActivityState; lastActivit
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
 
+export function formatPhaseTiming(timing: PhaseTiming | undefined, completedAt?: number): string | undefined {
+	if (!timing) return undefined;
+	const phases: string[] = [];
+	const add = (label: string, from: number | undefined, to: number | undefined) => {
+		if (from !== undefined && to !== undefined) phases.push(`${label} ${formatDuration(Math.max(0, to - from))}`);
+	};
+	add("launch→runner", timing.launchedAt, timing.runnerStartedAt);
+	add("spawn→event", timing.childSpawnedAt, timing.firstChildEventAt);
+	add("event→assistant", timing.firstChildEventAt, timing.firstAssistantEventAt);
+	add("assistant→done", timing.firstAssistantEventAt, timing.completedAt ?? completedAt);
+	add("completion→delivery", timing.completedAt ?? completedAt, timing.resultDeliveredAt);
+	return phases.length ? `phases: ${phases.join(" · ")}` : undefined;
+}
+
 function formatStepLine(step: AsyncRunStepSummary): string {
 	const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 	const phase = step.phase ? `[${step.phase}] ` : "";
@@ -338,6 +384,8 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	if (modelThinking) parts.push(modelThinking);
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
+	const phaseTiming = formatPhaseTiming(step.phaseTiming, step.endedAt);
+	if (phaseTiming) parts.push(phaseTiming);
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	return parts.join(" | ");
 }
@@ -373,7 +421,8 @@ function formatRunHeader(run: AsyncRunSummary): string {
 	const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
 	const activity = formatActivityFacts(run);
 	const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
-	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
+	const phaseTiming = formatPhaseTiming(run.phaseTiming, run.endedAt);
+	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${phaseTiming ? ` | ${phaseTiming}` : ""}${pending} | ${cwd}`;
 }
 
 export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active async runs"): string {

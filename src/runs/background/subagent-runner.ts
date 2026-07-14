@@ -75,6 +75,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { parseSessionTokens } from "../../shared/session-tokens.ts";
+import { appendStreamingAcceptancePreview, appendToolActivity, emptyStreamingAcceptancePreviewState, finalizeStreamingAcceptancePreview, sanitizeObservableText, visibleAssistantText } from "./live-observability.ts";
 import type { TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
@@ -138,6 +139,9 @@ interface SubagentRunConfig {
 	toolBudget?: ResolvedToolBudget;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
+	observability?: { assistantMessagePreviews?: boolean };
+	/** Set by the launcher before the detached runner is spawned. */
+	launchedAt?: number;
 }
 
 interface StepResult {
@@ -310,13 +314,43 @@ function isTerminalAssistantStop(message: Message): boolean {
 	return stopReason === "stop" && !hasToolCall;
 }
 
-function resetStepLiveDetail(step: RunnerStatusStep): void {
+function clearStepLiveActivity(step: RunnerStatusStep): void {
 	step.currentTool = undefined;
 	step.currentToolArgs = undefined;
 	step.currentToolStartedAt = undefined;
 	step.currentPath = undefined;
+	step.activityKind = undefined;
+	step.activityStartedAt = undefined;
+}
+
+/** Clear transient attention on terminal success/stop without discarding factual failure/pause reasons. */
+function finalizeStepLiveActivity(step: RunnerStatusStep): void {
+	clearStepLiveActivity(step);
+	step.activityState = undefined;
+	if (step.status === "complete" || step.status === "completed" || step.status === "stopped") step.attentionReason = undefined;
+}
+
+function resetStepLiveDetail(step: RunnerStatusStep, startedAt: number): void {
+	clearStepLiveActivity(step);
 	step.recentTools = [];
+	step.recentToolActivities = [];
+	step.latestVisibleMessagePreview = undefined;
+	step.latestVisibleMessageAt = undefined;
+	step.attentionReason = undefined;
 	step.recentOutput = [];
+	step.activityKind = "quiet";
+	step.activityStartedAt = startedAt;
+}
+
+function clearRunLiveActivity(status: RunnerStatusPayload): void {
+	status.currentTool = undefined;
+	status.currentToolStartedAt = undefined;
+	status.currentPath = undefined;
+	status.activityKind = undefined;
+	status.activityStartedAt = undefined;
+	status.latestVisibleMessagePreview = undefined;
+	status.latestVisibleMessageAt = undefined;
+	status.recentToolActivities = undefined;
 }
 
 interface ChildEventContext {
@@ -346,7 +380,10 @@ interface ChildEvent {
 	type?: string;
 	message?: ChildMessage;
 	toolName?: string;
+	toolCallId?: string;
+	isError?: boolean;
 	args?: Record<string, unknown>;
+	assistantMessageEvent?: { type?: string; delta?: unknown; text?: unknown };
 }
 
 interface RunPiStreamingResult {
@@ -386,6 +423,7 @@ function runPiStreaming(
 	registerStop?: (stop: (() => void) | undefined) => void,
 	stopMessage?: string,
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
+	onChildSpawn?: () => void,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
@@ -400,6 +438,7 @@ function runPiStreaming(
 			env: spawnEnv,
 			windowsHide: true,
 		});
+		onChildSpawn?.();
 		let stderr = "";
 		let stdoutBuf = "";
 		let stderrBuf = "";
@@ -876,6 +915,7 @@ interface SingleStepContext {
 	nestedRoute?: NestedRouteInfo;
 	onAttemptStart?: (attempt: { model?: string; thinking?: string }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
+	onChildSpawn?: () => void;
 	skipAcceptance?: () => boolean;
 }
 
@@ -1101,6 +1141,7 @@ async function runSingleStep(
 			ctx.registerStop,
 			ctx.stopMessage,
 			ctx.registerTurnBudgetAbort,
+			ctx.onChildSpawn,
 		);
 		if (run.turnBudget) turnBudget = run.turnBudget;
 		else if (ctx.turnBudget) {
@@ -1577,6 +1618,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		state: "running",
 		lastActivityAt: overallStartTime,
 		startedAt: overallStartTime,
+		phaseTiming: {
+			...(config.launchedAt !== undefined ? { launchedAt: config.launchedAt } : {}),
+			runnerStartedAt: overallStartTime,
+		},
 		lastUpdate: overallStartTime,
 		...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
@@ -1877,7 +1922,27 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const emittedControlEventKeys = new Set<string>();
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
-	const pendingToolResults: Array<{ tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined> = initialStatusSteps.map(() => undefined);
+	type PendingTool = { tool: string; toolCallId?: string; args?: string; path?: string; mutates: boolean; startedAt?: number; endMs?: number; isError?: boolean; resultText?: string; resultIsError?: boolean };
+	// Tool calls may overlap. Correlate by ID when supplied; older children omit it,
+	// for which event order is the only stable contract (FIFO).
+	const pendingToolResults: PendingTool[][] = initialStatusSteps.map(() => []);
+	const assistantPreviewStates = initialStatusSteps.map(() => emptyStreamingAcceptancePreviewState());
+	const findPendingTool = (flatIndex: number, eventKind: "end" | "result", toolCallId: unknown, toolName?: unknown): PendingTool | undefined => {
+		const pending = pendingToolResults[flatIndex] ?? [];
+		const awaitingEvent = (tool: PendingTool) => eventKind === "end" ? tool.endMs === undefined : tool.resultText === undefined;
+		// Modern events correlate strictly by call ID. Legacy streams use a
+		// deterministic event-specific FIFO so overlapping same-name calls do not
+		// consume the same record twice while awaiting the other event kind.
+		if (typeof toolCallId === "string") return pending.find((tool) => tool.toolCallId === toolCallId && awaitingEvent(tool));
+		if (typeof toolName === "string") return pending.find((tool) => tool.tool === toolName && awaitingEvent(tool));
+		return pending.find(awaitingEvent);
+	};
+	const removePendingTool = (flatIndex: number, tool: PendingTool): void => {
+		const pending = pendingToolResults[flatIndex];
+		if (!pending) return;
+		const index = pending.indexOf(tool);
+		if (index >= 0) pending.splice(index, 1);
+	};
 	const mutatingFailureWindowMs = 5 * 60_000;
 	const appendControlEvent = (event: ReturnType<typeof buildControlEvent>) => {
 		if (!controlConfig.enabled) return;
@@ -1907,6 +1972,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.currentTool = activeStep?.currentTool;
 		statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
 		statusPayload.currentPath = activeStep?.currentPath;
+		const observable = activeStep ?? statusPayload.steps.filter((step) => step.status === "running").sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0];
+		statusPayload.activityKind = observable?.activityKind;
+		statusPayload.activityStartedAt = observable?.activityStartedAt;
+		statusPayload.latestVisibleMessagePreview = observable?.latestVisibleMessagePreview;
+		statusPayload.latestVisibleMessageAt = observable?.latestVisibleMessageAt;
+		statusPayload.attentionReason = observable?.attentionReason;
+		statusPayload.recentToolActivities = observable?.recentToolActivities;
 	};
 	const maybeEmitActiveLongRunning = (flatIndex: number, now: number): boolean => {
 		if (!controlConfig.enabled || activeLongRunningSteps.has(flatIndex)) return false;
@@ -2038,10 +2110,21 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.turn_budget_exceeded", ts: now, runId: id, stepIndex: flatIndex, agent: step.agent, turnCount, maxTurns: budget.maxTurns, graceTurns: budget.graceTurns, message }));
 		activeChildTurnBudgetAborts.get(flatIndex)?.(message, exceededState);
 	};
+	const recordChildSpawn = (flatIndex: number): void => {
+		const step = statusPayload.steps[flatIndex];
+		if (!step) return;
+		step.phaseTiming ??= {};
+		step.phaseTiming.childSpawnedAt ??= Date.now();
+		statusPayload.lastUpdate = step.phaseTiming.childSpawnedAt;
+		writeStatusPayload();
+	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
 		const now = Date.now();
+		step.phaseTiming ??= {};
+		step.phaseTiming.firstChildEventAt ??= now;
+		if (event.type === "message_end" && event.message?.role === "assistant") step.phaseTiming.firstAssistantEventAt ??= now;
 		statusPayload.currentStep = flatIndex;
 		if (isChildWatchdogStatusEvent(event)) {
 			const next = acceptChildWatchdogEvent({
@@ -2068,26 +2151,44 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount);
 				statusPayload.toolBudget = step.toolBudget;
 			}
-			step.currentTool = event.toolName;
-			step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
+				step.currentTool = event.toolName;
+			step.currentToolArgs = sanitizeObservableText(extractToolArgsPreview(event.args ?? {}));
 			step.currentToolStartedAt = now;
 			step.currentPath = currentPath;
-			pendingToolResults[flatIndex] = { tool: event.toolName, path: currentPath, mutates, startedAt: now };
+			step.activityKind = "tool";
+			step.activityStartedAt = now;
+			pendingToolResults[flatIndex] ??= [];
+			pendingToolResults[flatIndex]!.push({ tool: event.toolName, toolCallId: event.toolCallId, args: step.currentToolArgs, path: currentPath, mutates, startedAt: now });
 			statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
 			syncTopLevelCurrentTool();
 		} else if (event.type === "tool_execution_end") {
-			if (step.currentTool) {
+			const toolSnapshot = findPendingTool(flatIndex, "end", event.toolCallId, event.toolName);
+			if (toolSnapshot) {
+				toolSnapshot.endMs = now;
+				toolSnapshot.isError = event.isError === true;
 				step.recentTools ??= [];
-				step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
+				step.recentTools.push({ tool: toolSnapshot.tool, args: toolSnapshot.args || "", endMs: now });
+				// A result can arrive before its execution-end marker. Keep the
+				// correlated snapshot until both pieces are known.
+				if (toolSnapshot.resultText !== undefined) {
+					const failed = toolSnapshot.isError === true || toolSnapshot.resultIsError === true;
+					step.recentToolActivities = appendToolActivity(step.recentToolActivities, { tool: toolSnapshot.tool, endMs: now, outcome: failed ? "failed" : "success", ...(toolSnapshot.toolCallId ? { toolCallId: toolSnapshot.toolCallId } : {}), ...(toolSnapshot.args ? { args: toolSnapshot.args } : {}), ...(toolSnapshot.path ? { path: toolSnapshot.path } : {}), ...(failed && sanitizeObservableText(toolSnapshot.resultText) ? { failureSummary: sanitizeObservableText(toolSnapshot.resultText) } : {}), ...(toolSnapshot.startedAt ? { startedAt: toolSnapshot.startedAt, durationMs: Math.max(0, now - toolSnapshot.startedAt) } : {}) });
+					removePendingTool(flatIndex, toolSnapshot);
+				}
 			}
-			step.currentTool = undefined;
-			step.currentToolArgs = undefined;
-			step.currentToolStartedAt = undefined;
-			step.currentPath = undefined;
+			const newest = (pendingToolResults[flatIndex] ?? []).filter((tool) => tool.endMs === undefined).at(-1);
+			step.currentTool = newest?.tool;
+			step.currentToolArgs = newest?.args;
+			step.currentToolStartedAt = newest?.startedAt;
+			step.currentPath = newest?.path;
+			step.activityKind = newest ? "tool" : "quiet";
+			step.activityStartedAt = now;
 			syncTopLevelCurrentTool();
 		} else if (event.type === "tool_result_end" && event.message) {
-			const toolSnapshot = pendingToolResults[flatIndex];
-			pendingToolResults[flatIndex] = undefined;
+			const resultMessage = event.message as ChildMessage & { toolCallId?: unknown; toolName?: unknown; isError?: unknown };
+			const resultToolCallId = event.toolCallId ?? resultMessage.toolCallId;
+			const resultToolName = event.toolName ?? resultMessage.toolName;
+			const toolSnapshot = findPendingTool(flatIndex, "result", resultToolCallId, resultToolName);
 			const resultText = extractTextFromContent(event.message.content);
 			if (toolSnapshot && resultText.includes("Tool budget hard limit reached")) {
 				const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
@@ -2099,6 +2200,17 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				}
 			}
 			appendRecentStepOutput(step, resultText.split("\n").slice(-10));
+			if (toolSnapshot) {
+				toolSnapshot.resultText = resultText;
+				toolSnapshot.resultIsError = resultMessage.isError === true;
+				// Finalize only after execution-end so a late end.isError cannot turn
+				// an already persisted failure into a false success.
+				if (toolSnapshot.endMs !== undefined) {
+					const failed = toolSnapshot.isError === true || toolSnapshot.resultIsError;
+					step.recentToolActivities = appendToolActivity(step.recentToolActivities, { tool: toolSnapshot.tool, endMs: toolSnapshot.endMs, outcome: failed ? "failed" : "success", ...(toolSnapshot.toolCallId ? { toolCallId: toolSnapshot.toolCallId } : {}), ...(toolSnapshot.args ? { args: toolSnapshot.args } : {}), ...(toolSnapshot.path ? { path: toolSnapshot.path } : {}), ...(failed && sanitizeObservableText(resultText) ? { failureSummary: sanitizeObservableText(resultText) } : {}), ...(toolSnapshot.startedAt ? { startedAt: toolSnapshot.startedAt, durationMs: Math.max(0, toolSnapshot.endMs - toolSnapshot.startedAt) } : {}) });
+					removePendingTool(flatIndex, toolSnapshot);
+				}
+			}
 			if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
 				const state = mutatingFailureStates[flatIndex]!;
 				recordMutatingFailure(state, {
@@ -2110,7 +2222,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				if (controlConfig.enabled && shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention) && step.activityState !== "needs_attention") {
 					const previous = step.activityState;
 					step.activityState = "needs_attention";
+					step.attentionReason = "repeated mutating tool failures";
 					statusPayload.activityState = "needs_attention";
+					statusPayload.attentionReason = step.attentionReason;
 					appendControlEvent(buildControlEvent({
 						type: "needs_attention",
 						from: previous,
@@ -2133,8 +2247,52 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			} else if (toolSnapshot?.mutates) {
 				resetMutatingFailureState(mutatingFailureStates[flatIndex]!);
 			}
+		} else if (event.type === "message_start" && event.message?.role === "assistant") {
+			assistantPreviewStates[flatIndex] = emptyStreamingAcceptancePreviewState();
+			step.activityKind = "reasoning";
+			step.activityStartedAt = now;
+			if (config.observability?.assistantMessagePreviews === false) {
+				step.latestVisibleMessagePreview = undefined;
+				step.latestVisibleMessageAt = undefined;
+			}
+		} else if (event.type === "message_update") {
+			const delta = visibleAssistantText(event) ?? "";
+			const previewState = appendStreamingAcceptancePreview(assistantPreviewStates[flatIndex] ?? emptyStreamingAcceptancePreviewState(), delta);
+			assistantPreviewStates[flatIndex] = previewState;
+			const preview = stripAcceptanceReport(previewState.visibleText);
+			if (config.observability?.assistantMessagePreviews !== false && preview) {
+				step.latestVisibleMessagePreview = sanitizeObservableText(preview);
+				step.latestVisibleMessageAt = now;
+			} else {
+				step.latestVisibleMessagePreview = undefined;
+				step.latestVisibleMessageAt = undefined;
+			}
 		} else if (event.type === "message_end" && event.message?.role === "assistant") {
-			appendRecentStepOutput(step, stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10));
+			const completeText = visibleAssistantText(event);
+			const activePreviewState = assistantPreviewStates[flatIndex] ?? emptyStreamingAcceptancePreviewState();
+			// An already-open protocol remains authoritative through message_end;
+			// some providers send only a tail rather than the full final text.
+			const previewState = finalizeStreamingAcceptancePreview(
+				activePreviewState.protocolOpen || completeText === undefined
+					? activePreviewState
+					: appendStreamingAcceptancePreview(emptyStreamingAcceptancePreviewState(), completeText),
+			);
+			const preview = stripAcceptanceReport(previewState.visibleText);
+			if (config.observability?.assistantMessagePreviews !== false && preview) {
+				step.latestVisibleMessagePreview = sanitizeObservableText(preview);
+				step.latestVisibleMessageAt = now;
+			} else {
+				step.latestVisibleMessagePreview = undefined;
+				step.latestVisibleMessageAt = undefined;
+			}
+			// Protocol-open state is per-message and must not suppress the next turn.
+			assistantPreviewStates[flatIndex] = emptyStreamingAcceptancePreviewState();
+			step.activityKind = "quiet";
+			step.activityStartedAt = now;
+			// Preview opt-out applies to every assistant-derived legacy field too.
+			if (config.observability?.assistantMessagePreviews !== false) {
+				appendRecentStepOutput(step, stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10));
+			}
 			step.turnCount = (step.turnCount ?? 0) + 1;
 			const usage = event.message.usage;
 			if (usage) {
@@ -2146,6 +2304,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				const totalInput = statusPayload.totalTokens?.input ?? 0;
 				const totalOutput = statusPayload.totalTokens?.output ?? 0;
 				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output };
+				const suppliedCost = usage.cost?.total;
+				const cost = typeof suppliedCost === "number" && Number.isFinite(suppliedCost) ? suppliedCost : 0;
+				if (input !== 0 || output !== 0 || cost !== 0) {
+					const stepCost = step.totalCost ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+					step.totalCost = { inputTokens: stepCost.inputTokens + input, outputTokens: stepCost.outputTokens + output, costUsd: stepCost.costUsd + cost };
+					const runCost = statusPayload.totalCost ?? { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+					statusPayload.totalCost = { inputTokens: runCost.inputTokens + input, outputTokens: runCost.outputTokens + output, costUsd: runCost.costUsd + cost };
+				}
 			}
 			statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
 			updateStepTurnBudget(flatIndex, step.turnCount, now, isTerminalAssistantStop(event.message));
@@ -2179,6 +2345,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			if (idleState === "needs_attention") {
 				const previous = step.activityState;
 				step.activityState = "needs_attention";
+				step.attentionReason = "no observable activity";
 				if (previous !== "needs_attention") {
 					appendControlEvent(buildControlEvent({
 						from: previous,
@@ -2199,14 +2366,17 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.lastActivityAt = runLastActivityAt;
 			changed = true;
 		}
-		const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
+		const attentionStep = statusPayload.steps.find((step) => step.status === "running" && step.activityState === "needs_attention");
+		const nextRunState = attentionStep
 			? "needs_attention"
 			: statusPayload.steps.some((step) => step.activityState === "active_long_running")
 				? "active_long_running"
 				: undefined;
-		if (nextRunState !== currentActivityState) {
+		const nextAttentionReason = attentionStep?.attentionReason;
+		if (nextRunState !== currentActivityState || statusPayload.attentionReason !== nextAttentionReason) {
 			currentActivityState = nextRunState;
 			statusPayload.activityState = nextRunState;
+			statusPayload.attentionReason = nextAttentionReason;
 			changed = true;
 		}
 		statusPayload.lastUpdate = now;
@@ -2230,11 +2400,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.state = "paused";
 		currentActivityState = undefined;
 		statusPayload.activityState = undefined;
+		statusPayload.attentionReason = undefined;
+		clearRunLiveActivity(statusPayload);
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
 			if (step.status === "running") {
 				step.status = "paused";
-				step.activityState = undefined;
+				finalizeStepLiveActivity(step);
 				step.endedAt = now;
 				step.durationMs = step.startedAt ? now - step.startedAt : undefined;
 				step.lastActivityAt = now;
@@ -2258,6 +2430,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.error = stopMessage;
 		currentActivityState = undefined;
 		statusPayload.activityState = undefined;
+		statusPayload.attentionReason = undefined;
+		clearRunLiveActivity(statusPayload);
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
 			if (step.status !== "running" && step.status !== "pending") continue;
@@ -2265,7 +2439,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			step.error = stopMessage;
 			step.exitCode = 1;
 			step.stopped = true;
-			step.activityState = undefined;
+			finalizeStepLiveActivity(step);
 			step.endedAt = now;
 			step.durationMs = step.startedAt ? now - step.startedAt : 0;
 			step.lastActivityAt = now;
@@ -2291,6 +2465,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.error = message;
 		currentActivityState = undefined;
 		statusPayload.activityState = undefined;
+		statusPayload.attentionReason = undefined;
+		clearRunLiveActivity(statusPayload);
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
 			if (step.status !== "running" && step.status !== "pending") continue;
@@ -2298,7 +2474,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			step.error = message;
 			step.exitCode = 1;
 			step.timedOut = true;
-			step.activityState = undefined;
+			finalizeStepLiveActivity(step);
 			step.endedAt = now;
 			step.durationMs = step.startedAt ? now - step.startedAt : 0;
 			step.lastActivityAt = now;
@@ -2491,7 +2667,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 			}
 			mutatingFailureStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => createMutatingFailureState()));
-			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => undefined));
+			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => []));
+			assistantPreviewStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => emptyStreamingAcceptancePreviewState()));
 			const materializedDelta = dynamicStatusSteps.length - 1;
 			for (const group of statusPayload.parallelGroups) {
 				if (group.stepIndex === stepIndex) {
@@ -2554,12 +2731,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				statusPayload.steps[fi].status = "running";
 				statusPayload.steps[fi].error = undefined;
 				statusPayload.steps[fi].activityState = undefined;
-				resetStepLiveDetail(statusPayload.steps[fi]);
+				resetStepLiveDetail(statusPayload.steps[fi], taskStartTime);
 				statusPayload.steps[fi].startedAt = taskStartTime;
+				statusPayload.steps[fi].phaseTiming = {};
 				statusPayload.steps[fi].lastActivityAt = taskStartTime;
 				statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
 				statusPayload.lastActivityAt = taskStartTime;
 				statusPayload.lastUpdate = taskStartTime;
+				syncTopLevelCurrentTool();
 				writeStatusPayload();
 				appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent }));
 				flushPendingStepSteers(fi);
@@ -2587,12 +2766,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					turnBudget: config.turnBudget,
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
+					onChildSpawn: () => recordChildSpawn(fi),
 					skipAcceptance: () => timedOut || stopped,
 				});
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
 				const childStopped = singleResult.stopped === true;
 				statusPayload.steps[fi].status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+				finalizeStepLiveActivity(statusPayload.steps[fi]);
+				syncTopLevelCurrentTool();
 				statusPayload.steps[fi].endedAt = taskEndTime;
 				statusPayload.steps[fi].durationMs = taskEndTime - taskStartTime;
 				statusPayload.steps[fi].exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
@@ -2842,14 +3024,16 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						statusPayload.steps[fi].status = "running";
 						statusPayload.steps[fi].error = undefined;
 						statusPayload.steps[fi].activityState = undefined;
-						resetStepLiveDetail(statusPayload.steps[fi]);
+						resetStepLiveDetail(statusPayload.steps[fi], taskStartTime);
 						statusPayload.steps[fi].startedAt = taskStartTime;
+						statusPayload.steps[fi].phaseTiming = {};
 						statusPayload.steps[fi].endedAt = undefined;
 						statusPayload.steps[fi].durationMs = undefined;
 						statusPayload.steps[fi].lastActivityAt = taskStartTime;
 						statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
 						statusPayload.lastActivityAt = taskStartTime;
 						statusPayload.lastUpdate = taskStartTime;
+						syncTopLevelCurrentTool();
 						writeStatusPayload();
 
 						appendJsonl(eventsPath, JSON.stringify({
@@ -2886,6 +3070,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							turnBudget: config.turnBudget,
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
+							onChildSpawn: () => recordChildSpawn(fi),
 							skipAcceptance: () => timedOut || stopped,
 						});
 						if (task.sessionFile) {
@@ -2898,6 +3083,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						const childStopped = singleResult.stopped === true;
 
 						statusPayload.steps[fi].status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+						finalizeStepLiveActivity(statusPayload.steps[fi]);
+						syncTopLevelCurrentTool();
 						statusPayload.steps[fi].endedAt = taskEndTime;
 						statusPayload.steps[fi].durationMs = taskDuration;
 						statusPayload.steps[fi].exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
@@ -3049,13 +3236,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			statusPayload.steps[flatIndex].status = "running";
 			statusPayload.steps[flatIndex].activityState = undefined;
 			statusPayload.activityState = undefined;
-			resetStepLiveDetail(statusPayload.steps[flatIndex]);
+			resetStepLiveDetail(statusPayload.steps[flatIndex], stepStartTime);
 			statusPayload.steps[flatIndex].skills = seqStep.skills;
 			statusPayload.steps[flatIndex].startedAt = stepStartTime;
+			statusPayload.steps[flatIndex].phaseTiming = {};
 			statusPayload.steps[flatIndex].lastActivityAt = stepStartTime;
 			statusPayload.lastActivityAt = stepStartTime;
 			statusPayload.lastUpdate = stepStartTime;
 			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
+			syncTopLevelCurrentTool();
 			writeStatusPayload();
 
 			appendJsonl(eventsPath, JSON.stringify({
@@ -3091,6 +3280,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				turnBudget: config.turnBudget,
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
+				onChildSpawn: () => recordChildSpawn(flatIndex),
 				skipAcceptance: () => timedOut || stopped,
 			});
 			if (seqStep.sessionFile) {
@@ -3161,6 +3351,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			const stepEndTime = Date.now();
 			const childInterrupted = singleResult.interrupted === true;
 			statusPayload.steps[flatIndex].status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+			finalizeStepLiveActivity(statusPayload.steps[flatIndex]);
+			syncTopLevelCurrentTool();
 			statusPayload.steps[flatIndex].endedAt = stepEndTime;
 			statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
 			statusPayload.steps[flatIndex].exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
@@ -3296,6 +3488,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const runEndedAt = Date.now();
 	statusPayload.state = stopped ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
 	statusPayload.activityState = undefined;
+	statusPayload.attentionReason = undefined;
+	clearRunLiveActivity(statusPayload);
+	for (const step of statusPayload.steps) finalizeStepLiveActivity(step);
 	if (stopped) {
 		statusPayload.stopped = true;
 		statusPayload.error = stopMessage;
@@ -3309,6 +3504,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		statusPayload.error = budget ? turnBudgetExceededMessage(budget, budget.turnCount) : "Subagent exceeded turn budget.";
 	}
 	statusPayload.endedAt = runEndedAt;
+	statusPayload.phaseTiming.completedAt = runEndedAt;
 	statusPayload.lastUpdate = runEndedAt;
 	statusPayload.sessionFile = effectiveSessionFile;
 	statusPayload.totalCost = finalTotalCost;
@@ -3333,6 +3529,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,
 			totalCost: finalTotalCost,
+			phaseTiming: statusPayload.phaseTiming,
 		}),
 	);
 	writeRunLog(logPath, {
@@ -3406,6 +3603,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			exitCode: stopped || timedOut || turnBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
 			timestamp: runEndedAt,
 			durationMs: runEndedAt - overallStartTime,
+			phaseTiming: statusPayload.phaseTiming,
 			totalTokens: statusPayload.totalTokens,
 			totalCost: finalTotalCost,
 			truncated,

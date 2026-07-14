@@ -167,21 +167,22 @@ export const events = {
 		};
 	},
 
-	toolStart(toolName: string, args: Record<string, unknown> = {}): object {
-		return { type: "tool_execution_start", toolName, args };
+	toolStart(toolName: string, args: Record<string, unknown> = {}, toolCallId?: string): object {
+		return { type: "tool_execution_start", toolName, args, ...(toolCallId ? { toolCallId } : {}) };
 	},
 
-	toolEnd(toolName: string): object {
-		return { type: "tool_execution_end", toolName };
+	toolEnd(toolName: string, toolCallId?: string, isError = false): object {
+		return { type: "tool_execution_end", toolName, isError, ...(toolCallId ? { toolCallId } : {}) };
 	},
 
-	toolResult(toolName: string, text: string, isError = false): object {
+	toolResult(toolName: string, text: string, isError = false, toolCallId?: string): object {
 		return {
 			type: "tool_result_end",
 			message: {
 				role: "toolResult",
 				toolName,
 				isError,
+				...(toolCallId ? { toolCallId } : {}),
 				content: [{ type: "text", text }],
 			},
 		};

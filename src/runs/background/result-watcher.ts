@@ -17,6 +17,8 @@ import {
 	resolveSubagentResultStatus,
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
+import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { readStatus } from "../../shared/utils.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -63,6 +65,7 @@ type ResultFileData = {
 	sessionFile?: string;
 	asyncDir?: string;
 	intercomTarget?: string;
+	phaseTiming?: import("../../shared/types.ts").PhaseTiming;
 };
 
 function sanitizeNestedResultChildren(value: unknown, resultPath: string, label: string): NestedRunSummary[] | undefined {
@@ -199,6 +202,21 @@ export function createResultWatcher(
 				}
 			}
 
+			// This is the parent-facing delivery boundary, not the runner's completion boundary.
+			const resultDeliveredAt = Date.now();
+			data.phaseTiming = { ...(data.phaseTiming ?? {}), resultDeliveredAt };
+			if (data.asyncDir) {
+				try {
+					const status = readStatus(data.asyncDir);
+					if (status) writeAtomicJson(path.join(data.asyncDir, "status.json"), {
+						...status,
+						phaseTiming: { ...(status.phaseTiming ?? {}), resultDeliveredAt },
+						lastUpdate: resultDeliveredAt,
+					});
+				} catch (error) {
+					console.error(`Failed to record subagent result delivery timing for '${resultPath}':`, error);
+				}
+			}
 			pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 				...data,
 				runId,

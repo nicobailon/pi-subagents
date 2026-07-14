@@ -70,6 +70,42 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("records completion-to-delivery timing at the parent delivery boundary", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-timing-"));
+		const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-timing-"));
+		try {
+			const emitted: unknown[] = [];
+			const pi = { events: { on: () => () => {}, emit: (_event: string, data: unknown) => emitted.push(data) } };
+			const state = createState();
+			state.currentSessionId = "session-current";
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "timing-run", mode: "single", state: "complete", startedAt: 1, endedAt: 50,
+				phaseTiming: { completedAt: 50 }, steps: [],
+			}), "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "timing-run.json"), JSON.stringify({
+				id: "timing-run", sessionId: "session-current", success: true, summary: "done", asyncDir,
+				phaseTiming: { completedAt: 50 },
+			}), "utf-8");
+
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+			try {
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			const payload = emitted[0] as { phaseTiming?: { completedAt?: number; resultDeliveredAt?: number } };
+			assert.equal(payload.phaseTiming?.completedAt, 50);
+			assert.ok(typeof payload.phaseTiming?.resultDeliveredAt === "number");
+			const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { phaseTiming?: { resultDeliveredAt?: number } };
+			assert.equal(persisted.phaseTiming?.resultDeliveredAt, payload.phaseTiming?.resultDeliveredAt);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
 	it("delivers result files only to the exact owning session when another watcher shares the same repo", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scope-"));
 		const createPi = () => {
