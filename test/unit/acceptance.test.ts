@@ -51,6 +51,19 @@ describe("acceptance gates", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }).level, "reviewed");
 	});
 
+	it("keeps async read-only agents attested when their task mentions risky code", () => {
+		const resolved = resolveEffectiveAcceptance({
+			agentName: "task-scout",
+			task: "Read-only migration and security scan. Inspect update and delete paths; do not edit project files.",
+			mode: "single",
+			async: true,
+			explicit: "attested",
+		});
+
+		assert.equal(resolved.level, "attested");
+		assert.deepEqual(resolved.evidence, ["review-findings", "residual-risks"]);
+	});
+
 	it("explicit acceptance can strengthen inferred policy", () => {
 		const resolved = resolveEffectiveAcceptance({
 			agentName: "reviewer",

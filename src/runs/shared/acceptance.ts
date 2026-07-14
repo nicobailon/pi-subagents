@@ -86,6 +86,15 @@ function inferLevel(input: {
 		|| Boolean(input.dynamicGroup)
 		|| /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task);
 
+	if (readOnlyAgent) {
+		reasons.push("read-only/reviewer-style agent");
+		return {
+			level: "attested",
+			reasons,
+			criteria: ["Return concrete findings with file paths and severity when applicable"],
+			evidence: ["review-findings", "residual-risks"],
+		};
+	}
 	if (risky) {
 		reasons.push(input.async ? "async write-capable or risky run" : "risky write-capable run");
 		if (input.dynamic || input.dynamicGroup) reasons.push("dynamic fanout context");
@@ -106,8 +115,8 @@ function inferLevel(input: {
 			evidence: requiredEvidenceForLevel("checked"),
 		};
 	}
-	if (readOnlyAgent || readOnlyTask) {
-		reasons.push(readOnlyAgent ? "read-only/reviewer-style agent" : "read-only task wording");
+	if (readOnlyTask) {
+		reasons.push("read-only task wording");
 		return {
 			level: "attested",
 			reasons,
