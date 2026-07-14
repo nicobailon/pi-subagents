@@ -70,7 +70,7 @@ export function projectAsyncWidget(jobs: AsyncJobState[], previewsEnabled = true
 }
 
 export function formatWidgetDuration(ms: number): string {
-	const safeMs = Math.max(0, ms);
+	const safeMs = Math.max(100, ms);
 	if (safeMs < 1000) return `${safeMs / 1000}s`;
 	if (safeMs < 60_000) return `${(safeMs / 1000).toFixed(1).replace(/\.0$/, "")}s`;
 	return `${Math.floor(safeMs / 60_000)}m${Math.floor((safeMs % 60_000) / 1000)}s`;
