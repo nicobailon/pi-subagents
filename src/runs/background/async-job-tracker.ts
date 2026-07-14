@@ -34,6 +34,7 @@ const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
 
 export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: SubagentState, asyncDirRoot: string, options: AsyncJobTrackerOptions = {}): {
 	ensurePoller: () => void;
+	refreshWidget: (ctx: ExtensionContext) => void;
 	handleStarted: (data: unknown) => void;
 	handleComplete: (data: unknown) => void;
 	resetJobs: (ctx?: ExtensionContext) => void;
@@ -46,6 +47,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
 		ctx.ui.requestRender?.();
 	};
+	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);
 	const restoredControlEventCursor = (asyncDir: string) => {
 		try {
 			return fs.statSync(path.join(asyncDir, "events.jsonl")).size;
@@ -441,5 +443,5 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);
 	};
 
-	return { ensurePoller, handleStarted, handleComplete, resetJobs, restoreActiveJobs };
+	return { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs };
 }

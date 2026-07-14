@@ -440,11 +440,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 			assert.equal(result.isError, undefined);
 			assert.match(result.content[0]?.text ?? "", /Attached async subagent/);
-			const startedEvent = events.emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT)?.payload as { agent?: string; agents?: string[]; chain?: string[]; chainStepCount?: number } | undefined;
+			const startedEvent = events.emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT)?.payload as { agent?: string; agents?: string[]; chain?: string[]; chainStepCount?: number; goal?: string } | undefined;
 			assert.equal(startedEvent?.agent, "worker");
 			assert.deepEqual(startedEvent?.agents, ["worker", "reviewer"]);
 			assert.deepEqual(startedEvent?.chain, ["worker", "reviewer"]);
 			assert.equal(startedEvent?.chainStepCount, 2);
+			assert.equal(startedEvent?.goal, "Review this root result: {previous}");
 			const attachedId = result.details?.asyncId;
 			assert.ok(attachedId, "expected attached chain async id");
 			assert.match(result.details?.asyncDir ?? "", new RegExp(`${attachedId}$`));
@@ -583,7 +584,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				sessionFile,
 				steps: [{ agent: "worker", status: "complete" }],
 			}, null, 2), "utf-8");
-			const { executor } = makeExecutor();
+			const { executor, events } = makeExecutor();
 
 			const result = await executor.execute(
 				"resume-revive",
@@ -601,6 +602,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
 			const revivedId = result.details?.asyncId;
 			assert.ok(revivedId, "expected revived async id");
+			const startedEvent = events.emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT && (entry.payload as { id?: string }).id === revivedId)?.payload as { goal?: string } | undefined;
+			assert.equal(startedEvent?.goal, "What changed?");
 			const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
 			const deadline = Date.now() + 10_000;
 			while (!fs.existsSync(resultPath)) {

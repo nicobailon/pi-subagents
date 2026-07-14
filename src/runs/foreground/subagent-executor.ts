@@ -98,6 +98,7 @@ import {
 	type SubagentState,
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
+	DEFAULT_FORK_PREAMBLE,
 	RESULTS_DIR,
 	SUBAGENT_ACTIONS,
 	SUBAGENT_CONTROL_EVENT,
@@ -1193,11 +1194,14 @@ async function resumeAsyncRun(input: {
 		const artifactConfig: ArtifactConfig = { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
 		const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 		const contextPolicy = resolveExplicitContextPolicy(input.params);
+		const workflowTask = (input.params.task ?? followUp) || undefined;
+		const goal = resolveAsyncEventGoal(workflowTask, attachChain);
 		const chain = wrapChainTasksForFork(attachChain, contextPolicy);
 		const normalized = normalizeSkillInput(input.params.skill);
 		const result = executeAsyncChain(runId, {
 			chain,
-			task: (input.params.task ?? followUp) || undefined,
+			task: workflowTask,
+			goal,
 			attachRoot: {
 				runId: target.runId,
 				asyncDir: target.asyncDir ?? path.join(ASYNC_DIR, target.runId),
@@ -1253,6 +1257,7 @@ async function resumeAsyncRun(input: {
 	const result = executeAsyncSingle(runId, {
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target, followUp),
+		goal: followUp,
 		agentConfig,
 		ctx: {
 			pi: input.deps.pi,
@@ -1770,6 +1775,30 @@ function collectChainThinkingOverrides(
 	return thinkingOverrides;
 }
 
+function firstChainAgent(chain: ChainStep[]): string | undefined {
+	const first = chain[0];
+	if (!first) return undefined;
+	if (isParallelStep(first)) return first.parallel[0]?.agent;
+	if (isDynamicParallelStep(first)) return first.parallel.agent;
+	return (first as SequentialStep).agent;
+}
+
+function firstRawChainTask(chain: ChainStep[]): string | undefined {
+	const first = chain[0];
+	if (!first) return undefined;
+	if (isParallelStep(first)) return first.parallel[0]?.task;
+	if (isDynamicParallelStep(first)) return first.parallel.task;
+	return (first as SequentialStep).task;
+}
+
+function resolveAsyncEventGoal(workflowTask: string | undefined, rawChain: ChainStep[], unwrapForkFallback = false): string {
+	if (workflowTask?.trim()) return workflowTask;
+	const fallback = firstRawChainTask(rawChain) || "";
+	if (!unwrapForkFallback) return fallback;
+	const forkPrefix = `${DEFAULT_FORK_PREAMBLE}\n\nTask:\n`;
+	return fallback.startsWith(forkPrefix) ? fallback.slice(forkPrefix.length) : fallback;
+}
+
 function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultContextPolicy): ChainStep[] {
 	return chain.map((step, stepIndex) => {
 		if (isParallelStep(step)) {
@@ -1940,6 +1969,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 				worktree: params.worktree,
 			}],
 			resultMode: "parallel",
+			goal: params.tasks[0]?.task ?? "",
 			agents,
 			ctx: asyncCtx,
 			availableModels,
@@ -1971,10 +2001,12 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	if (hasChain && params.chain) {
 		const normalized = normalizeSkillInput(params.skill);
 		const chainSkills = normalized === false ? [] : (normalized ?? []);
-		const chain = wrapChainTasksForFork(params.chain as ChainStep[], contextPolicy);
+		const rawChain = params.chain as ChainStep[];
+		const chain = wrapChainTasksForFork(rawChain, contextPolicy);
 		return executeAsyncChain(id, {
 			chain,
 			task: params.task,
+			goal: resolveAsyncEventGoal(params.task, rawChain),
 			agents,
 			ctx: asyncCtx,
 			availableModels,
@@ -2023,6 +2055,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
+			goal: params.task ?? "",
 			agentConfig: a,
 			ctx: asyncCtx,
 			availableModels,
@@ -2145,10 +2178,13 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			currentModel: ctx.model,
 			modelScope: data.modelScope,
 		};
-		const asyncChain = wrapChainTasksForFork(chainResult.requestedAsync.chain, contextPolicy);
+		const rawAsyncChain = chainResult.requestedAsync.chain;
+		const asyncChain = wrapChainTasksForFork(rawAsyncChain, contextPolicy);
+		const firstAgent = firstChainAgent(rawAsyncChain);
 		return executeAsyncChain(id, {
 			chain: asyncChain,
 			task: params.task,
+			goal: resolveAsyncEventGoal(params.task, rawAsyncChain, firstAgent ? shouldForkAgent(contextPolicy, firstAgent) : false),
 			agents,
 			ctx: asyncCtx,
 			availableModels: ctx.modelRegistry.getAvailable().map(toModelInfo),
@@ -2641,6 +2677,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			return executeAsyncChain(id, {
 				chain: [{ parallel: parallelTasks, concurrency: parallelConcurrency, worktree: params.worktree }],
 				resultMode: "parallel",
+				goal: taskTexts[0] ?? "",
 				agents,
 				ctx: asyncCtx,
 				availableModels,
@@ -2941,6 +2978,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			return executeAsyncSingle(id, {
 				agent: params.agent!,
 				task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(task) : task,
+				goal: task,
 				agentConfig,
 				ctx: asyncCtx,
 				availableModels,

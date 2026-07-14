@@ -114,6 +114,8 @@ interface AsyncExecutionContext {
 interface AsyncChainParams {
 	chain: ChainStep[];
 	task?: string;
+	/** Raw caller-facing goal used only by the started event. */
+	goal?: string;
 	attachRoot?: ImportedAsyncRoot & { agent: string; outputName?: string; label?: string };
 	resultMode?: Exclude<SubagentRunMode, "single">;
 	agents: AgentConfig[];
@@ -150,6 +152,8 @@ interface AsyncChainParams {
 interface AsyncSingleParams {
 	agent: string;
 	task?: string;
+	/** Raw caller-facing goal used only by the started event. */
+	goal?: string;
 	agentConfig: AgentConfig;
 	ctx: AsyncExecutionContext;
 	cwd?: string;
@@ -911,7 +915,7 @@ export function executeAsyncChain(
 			: isDynamicParallelStep(eventFirstStep)
 				? eventFirstStep.parallel.task
 				: (eventFirstStep as SequentialStep).task;
-		const workflowGoal = params.task?.trim() || firstTask;
+		const workflowGoal = params.goal ?? (params.task?.trim() || firstTask);
 		const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 		const flatAgents: string[] = [];
 		let flatStepStart = 0;
@@ -1215,7 +1219,7 @@ export function executeAsyncSingle(
 			mode: "single",
 			agent,
 			task: task?.slice(0, 50),
-			goal: task?.slice(0, 120),
+			goal: (params.goal ?? task).slice(0, 120),
 			cwd: runnerCwd,
 			asyncDir,
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),

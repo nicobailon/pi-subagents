@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createEventBus, createMockPi, createTempDir, events, removeTempDir, tryImport } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT } from "../../src/shared/types.ts";
+import { DEFAULT_FORK_PREAMBLE, INTERCOM_DETACH_REQUEST_EVENT, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 
 interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
@@ -1063,6 +1063,134 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.details?.mode, "parallel");
 		assert.ok(result.details?.asyncId, "expected an asyncId for background top-level parallel runs");
 		assert.match(result.content[0]?.text ?? "", /Async parallel:/);
+	});
+
+	it("keeps raw goals at fork-wrapped async executor boundaries", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+		const rawSingleGoal = "Direct forked single raw goal";
+		const rawParallelGoal = "Top-level forked first child raw goal";
+		const rawParallelChainGoal = "Parallel chain first child raw goal";
+		const paddedWorkflowGoal = "  preserve this workflow padding  ";
+		const literalPreambleGoal = `${DEFAULT_FORK_PREAMBLE}\n\nTask:\nliteral fresh-context text`;
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "echo", description: "Echo", defaultContext: "fork" },
+				{ name: "second", description: "Second" },
+			],
+			projectAgentsDir: null,
+		}));
+		const started: Array<{ id?: string; goal?: string }> = [];
+		executor.eventsApi.on(SUBAGENT_ASYNC_STARTED_EVENT, (event: unknown) => started.push(event as { id?: string; goal?: string }));
+		const forkManager = () => makeForkingSessionManagerRecorder({
+			sessionFile: path.join(tempDir, "parent-fork-goal.jsonl"),
+			leafId: "fork-goal-leaf",
+		}).manager;
+
+		for (const testCase of [
+			{
+				name: "direct single",
+				goal: rawSingleGoal,
+				params: { agent: "echo", task: rawSingleGoal, async: true, clarify: false },
+			},
+			{
+				name: "top-level parallel",
+				goal: rawParallelGoal,
+				params: { tasks: [{ agent: "echo", task: rawParallelGoal }, { agent: "second", task: "Second child" }], async: true, clarify: false },
+			},
+			{
+				name: "parallel chain whitespace workflow fallback",
+				goal: rawParallelChainGoal,
+				params: { task: "   ", chain: [{ parallel: [{ agent: "echo", task: rawParallelChainGoal }, { agent: "second", task: "Second chain child" }] }], async: true, clarify: false },
+			},
+			{
+				name: "padded workflow goal",
+				goal: paddedWorkflowGoal,
+				params: { task: paddedWorkflowGoal, chain: [{ agent: "echo", task: "Forked child" }], async: true, clarify: false },
+			},
+			{
+				name: "literal preamble in fresh child",
+				goal: literalPreambleGoal.slice(0, 120),
+				allowsLiteralPreamble: true,
+				params: { chain: [{ agent: "second", task: literalPreambleGoal }], async: true, clarify: false },
+			},
+		]) {
+			const result = await executor.execute(
+				`fork-goal-${testCase.name}`,
+				testCase.params,
+				new AbortController().signal,
+				undefined,
+				makeCtx(forkManager()),
+			);
+			assert.equal(result.isError, undefined, testCase.name);
+			assert.ok(result.details?.asyncId, `${testCase.name}: expected an async id`);
+			const event = started.find((entry) => entry.id === result.details?.asyncId);
+			assert.ok(event, `${testCase.name}: missing async-started event for ${result.details?.asyncId}`);
+			assert.equal(event.goal, testCase.goal, testCase.name);
+			if (!("allowsLiteralPreamble" in testCase)) {
+				assert.doesNotMatch(event.goal ?? "", /delegated subagent running from a fork/, testCase.name);
+			}
+		}
+	});
+
+	it("uses edited raw goals when clarification switches each mode to background", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "echo", description: "Echo", defaultContext: "fork" },
+				{ name: "second", description: "Second" },
+			],
+			projectAgentsDir: null,
+		}));
+		const started: Array<{ id?: string; goal?: string }> = [];
+		executor.eventsApi.on(SUBAGENT_ASYNC_STARTED_EVENT, (event: unknown) => started.push(event as { id?: string; goal?: string }));
+
+		for (const testCase of [
+			{
+				name: "single",
+				goal: "Edited single goal",
+				params: { agent: "echo", task: "Original single", async: true, clarify: true },
+				templates: ["Edited single goal"],
+			},
+			{
+				name: "parallel",
+				goal: "Edited parallel goal",
+				params: { tasks: [{ agent: "echo", task: "Original parallel" }, { agent: "second", task: "Second child" }], async: true, clarify: true },
+				templates: ["Edited parallel goal", "Second child"],
+			},
+			{
+				name: "chain",
+				goal: "Edited chain goal",
+				params: { chain: [{ agent: "echo", task: "Original chain" }], async: true, clarify: true },
+				templates: ["Edited chain goal"],
+			},
+		]) {
+			const forkManager = makeForkingSessionManagerRecorder({
+				sessionFile: path.join(tempDir, `parent-clarify-${testCase.name}.jsonl`),
+				leafId: `clarify-${testCase.name}-leaf`,
+			}).manager;
+			const ctx = {
+				...makeCtx(forkManager),
+				hasUI: true,
+				ui: {
+					custom: async () => ({
+						confirmed: true,
+						templates: testCase.templates,
+						behaviorOverrides: testCase.templates.map(() => undefined),
+						runInBackground: true,
+					}),
+				},
+			};
+			const result = await executor.execute(
+				`clarify-goal-${testCase.name}`,
+				testCase.params,
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, undefined, testCase.name);
+			assert.ok(result.details?.asyncId, `${testCase.name}: expected an async id`);
+			const event = started.find((entry) => entry.id === result.details?.asyncId);
+			assert.equal(event?.goal, testCase.goal, testCase.name);
+			assert.doesNotMatch(event?.goal ?? "", /delegated subagent running from a fork/, testCase.name);
+		}
 	});
 
 	it("runs async chain requests in the background when clarify is omitted", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
