@@ -16,6 +16,7 @@ import {
 	finalizeSlashResult,
 } from "./slash-live-state.ts";
 import { persistOrchSessionSnapshot } from "../orchestrator/orchestrator-session.ts";
+import { discoverSavedOrchestrators } from "../orchestrator/orchestrator-discovery.ts";
 import {
 	ORCHESTRATOR_REQUEST_EVENT,
 	ORCHESTRATOR_RESPONSE_EVENT,
@@ -588,13 +589,43 @@ export function registerSlashCommands(
 		},
 	});
 
+	const makeOrchCompletions = (state: SubagentState) => (prefix: string) => {
+		if (!state.baseCwd) return null;
+		if (prefix.includes(" ")) return null;
+		return discoverSavedOrchestrators(state.baseCwd)
+			.filter((o) => o.name.startsWith(prefix))
+			.map((o) => ({ value: o.name, label: `${o.name} — ${o.description || o.scriptPath}` }));
+	};
+
 	pi.registerCommand("pi-orch", {
-		description: "Run a TypeScript orchestrator script: /pi-orch path/to/script.ts",
+		description: "Run a TypeScript orchestrator script: /pi-orch <name|path> [args...]",
+		getArgumentCompletions: makeOrchCompletions(state),
 		handler: async (args, ctx) => {
-			const scriptPath = args.trim();
-			if (!scriptPath) {
-				ctx.ui.notify("Usage: /pi-orch <path/to/script.ts>", "error");
+			const rawArgs = args.trim();
+			if (!rawArgs) {
+				ctx.ui.notify("Usage: /pi-orch <name|path> [args...]", "error");
 				return;
+			}
+
+			// Parsuj pierwszy token jako nazwę/ścieżkę, resztę jako dodatkowe argumenty
+			const firstSpace = rawArgs.indexOf(" ");
+			const firstToken = firstSpace === -1 ? rawArgs : rawArgs.slice(0, firstSpace);
+			const extraArgs = firstSpace === -1 ? [] : rawArgs.slice(firstSpace + 1).split(/\s+/).filter(Boolean);
+
+			let scriptPath: string;
+
+			// Sprawdź czy firstToken to nazwa zapisanego orchestratora
+			if (state.baseCwd) {
+				const savedOrch = discoverSavedOrchestrators(state.baseCwd).find((o) => o.name === firstToken);
+				if (savedOrch) {
+					scriptPath = path.isAbsolute(savedOrch.scriptPath)
+						? savedOrch.scriptPath
+						: path.resolve(state.baseCwd, savedOrch.scriptPath);
+				} else {
+					scriptPath = firstToken;
+				}
+			} else {
+				scriptPath = firstToken;
 			}
 
 			ctx.ui.setStatus("orch", "loading script...");
@@ -639,7 +670,7 @@ export function registerSlashCommands(
 					};
 
 					const unsubResponse = pi.events.on(ORCHESTRATOR_RESPONSE_EVENT, onResponse) as () => void;
-					pi.events.emit(ORCHESTRATOR_REQUEST_EVENT, { requestId, scriptPath });
+					pi.events.emit(ORCHESTRATOR_REQUEST_EVENT, { requestId, scriptPath, args: extraArgs });
 				});
 
 				ctx.ui.setStatus("orch", undefined);

@@ -29,6 +29,7 @@ import { createOrchestratorContext, OrchestratorAgentError, type OrchestratorCon
 interface OrchestratorRequest {
 	requestId: string;
 	scriptPath: string;
+	args?: string[];
 }
 
 interface OrchestratorResponse {
@@ -155,7 +156,7 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 		if (!data || typeof data !== "object") return;
 		const request = data as Partial<OrchestratorRequest>;
 		if (typeof request.requestId !== "string" || typeof request.scriptPath !== "string") return;
-		const { requestId, scriptPath } = request as OrchestratorRequest;
+		const { requestId, scriptPath, args } = request as OrchestratorRequest;
 
 		const ctx = options.getContext();
 		if (!ctx) {
@@ -199,7 +200,9 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 
 			// Załaduj skrypt — format: export default { flow, settings? }
 			const jiti = createJiti(import.meta.url, { interopDefault: true, cache: false });
-			const mod = await jiti.import(resolvedPath, { default: true });
+			// Cache-buster zapewnia rekompilację przy każdym wywołaniu
+			const importPath = `${resolvedPath}?update=${Date.now()}`;
+			const mod = await jiti.import(importPath, { default: true });
 			let script: OrchestratorScript;
 			if (mod && typeof mod === "object" && typeof (mod as Record<string, unknown>).flow === "function") {
 				script = mod as OrchestratorScript;
@@ -215,6 +218,7 @@ export function registerOrchestratorBridge(options: OrchestratorBridgeOptions): 
 				runId: requestId,
 				cwd: ctx.cwd,
 				timeoutMs,
+				args: args ?? [],
 			});
 
 			const flowStartTime = new Date().toISOString();

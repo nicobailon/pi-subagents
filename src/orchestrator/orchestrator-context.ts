@@ -163,6 +163,8 @@ export interface OrchestratorContext {
 	cwd: string;
 	/** Timeout całego flow w ms */
 	timeoutMs: number;
+	/** Dodatkowe argumenty przekazane z /pi-orch (po nazwie/ścieżce skryptu) */
+	args: string[];
 	/** Log do debugu */
 	log(message: string): void;
 }
@@ -182,6 +184,7 @@ export interface OrchestratorContextDeps {
 	runId: string;
 	cwd: string;
 	timeoutMs: number;
+	args: string[];
 }
 
 export function createOrchestratorContext(deps: OrchestratorContextDeps): OrchestratorContext {
@@ -434,6 +437,7 @@ export function createOrchestratorContext(deps: OrchestratorContextDeps): Orches
 		runId: deps.runId,
 		cwd: deps.cwd,
 		timeoutMs: deps.timeoutMs,
+		args: deps.args,
 		log,
 	};
 }
