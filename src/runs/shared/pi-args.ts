@@ -105,6 +105,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const toolExtensionPaths: string[] = [];
 	if (input.tools?.length) {
 		const builtinTools = [...declaredBuiltinTools];
+		if (input.structuredOutput && !builtinTools.includes("structured_output")) {
+			builtinTools.push("structured_output");
+		}
 		for (const tool of input.tools) {
 			if (!declaredBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
 				toolExtensionPaths.push(tool);

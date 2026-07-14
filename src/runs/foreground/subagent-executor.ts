@@ -71,6 +71,7 @@ import {
 	type Details,
 	type ExtensionConfig,
 	type IntercomEventBus,
+	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
 	type NestedRunSummary,
@@ -89,6 +90,7 @@ import {
 	resolveCurrentMaxSubagentDepth,
 	wrapForkTask,
 } from "../../shared/types.ts";
+import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete"]);
@@ -141,6 +143,8 @@ export interface SubagentParamsLike {
 	sessionFile?: string;
 	/** Extension paths to append to the agent's default extensions for this run */
 	extraExtensions?: string[];
+	/** JSON Schema for structured output validation */
+	outputSchema?: JsonSchemaObject;
 }
 
 interface ExecutorDeps {
@@ -2060,6 +2064,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 		: undefined;
 
+	const structuredRuntime = params.outputSchema
+		? createStructuredOutputRuntime(params.outputSchema, params.chainDir)
+		: undefined;
+
 	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
 		cwd: effectiveCwd,
 		signal,
@@ -2088,9 +2096,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		availableModels,
 		preferredModelProvider: currentProvider,
 		skills: effectiveSkills,
+		structuredOutput: structuredRuntime,
 		acceptance: params.acceptance,
 		acceptanceContext: { mode: "single" },
 	});
+	cleanupStructuredOutputRuntime(structuredRuntime);
 	if (foregroundControl?.currentIndex === 0) {
 		foregroundControl.interrupt = undefined;
 		foregroundControl.currentActivityState = r.progress?.activityState;
