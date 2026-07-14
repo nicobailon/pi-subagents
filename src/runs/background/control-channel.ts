@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
+import { resolveWatchPath } from "../../shared/utils.ts";
 
 /**
  * Opportunistic fast-path interrupt signal. On Unix `SIGUSR2` is trapped by the
@@ -27,7 +28,7 @@ import { POLL_INTERVAL_MS } from "../../shared/types.ts";
  */
 export const INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
-export type ControlChannelFs = Pick<typeof fs, "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync">;
+export type ControlChannelFs = Pick<typeof fs, "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync" | "realpathSync">;
 export type ControlChannelTimers = { setInterval: typeof setInterval; clearInterval: typeof clearInterval };
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => unknown;
 
@@ -358,7 +359,7 @@ export function watchAsyncControlInbox(
 
 	let watcher: fs.FSWatcher | undefined;
 	try {
-		watcher = fsImpl.watch(dir, () => check());
+		watcher = fsImpl.watch(resolveWatchPath(dir, fsImpl.realpathSync.native), () => check());
 		watcher.on?.("error", () => {
 			// fs.watch can emit on transient FS errors; the interval poll keeps us live.
 		});

@@ -17,6 +17,18 @@ const DEFAULT_CONFIG_DIR_NAME = ".pi";
 const PI_CODING_AGENT_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 export const PI_CODING_AGENT_PACKAGE_ROOT_ENV = "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT";
 
+export function resolveWatchPath(
+	watchPath: string,
+	nativeRealpath: (filePath: string) => string = fs.realpathSync.native,
+): string {
+	// libuv's Windows watcher cannot mix 8.3 registration paths with long event paths.
+	try {
+		return nativeRealpath(watchPath);
+	} catch {
+		return watchPath;
+	}
+}
+
 function validConfigDirName(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value : undefined;
 }

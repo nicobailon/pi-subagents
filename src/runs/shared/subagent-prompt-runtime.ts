@@ -7,6 +7,7 @@ import { SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.t
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
+import { resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 
@@ -192,7 +193,10 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	});
 }
 
-function registerSteeringInbox(pi: ExtensionAPI): void {
+export function registerSteeringInbox(
+	pi: ExtensionAPI,
+	deps: { watch?: typeof fs.watch; nativeRealpath?: (filePath: string) => string } = {},
+): void {
 	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
 	if (!steerInbox) return;
 	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
@@ -231,7 +235,7 @@ function registerSteeringInbox(pi: ExtensionAPI): void {
 		}
 		started = true;
 		try {
-			watcher = fs.watch(steerInbox, () => flush());
+			watcher = (deps.watch ?? fs.watch)(resolveWatchPath(steerInbox, deps.nativeRealpath), () => flush());
 			watcher.on("error", () => {});
 		} catch {
 			watcher = undefined;

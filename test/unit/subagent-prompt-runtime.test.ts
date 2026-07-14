@@ -22,6 +22,7 @@ import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
+	registerSteeringInbox,
 	rewriteSubagentPrompt,
 	stripInheritedSkills,
 	stripParentOnlySubagentMessages,
@@ -134,6 +135,40 @@ describe("subagent prompt runtime", () => {
 			reason: "Tool budget hard limit reached after 3 tool calls (hard 2). The 'read' tool is blocked so you can finalize from the context you already have.",
 		});
 		assert.equal(toolCall({ toolName: "write" }), undefined);
+	});
+
+	it("registers the native canonical steering inbox path", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-watch-runtime-"));
+		try {
+			const inbox = path.join(dir, "steer");
+			const nativeInbox = path.join(dir, "native-steer");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			let watchedDir: fs.PathLike | undefined;
+			const fakeWatcher = { on() { return fakeWatcher; }, close() {} } as fs.FSWatcher;
+
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				sendUserMessage() {},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, {
+				nativeRealpath(target) {
+					assert.equal(target, inbox);
+					return nativeInbox;
+				},
+				watch: ((target: fs.PathLike) => {
+					watchedDir = target;
+					return fakeWatcher;
+				}) as typeof fs.watch,
+			});
+
+			handlers.get("session_start")?.({});
+			assert.equal(watchedDir, nativeInbox);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("delivers steering inbox requests as mid-run user messages", () => {

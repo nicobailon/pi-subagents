@@ -13,6 +13,7 @@
 - Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
 
 ### Fixed
+- Canonicalized native `fs.watch` registration paths for async results, control inboxes, and child steering inboxes so Windows 8.3 short paths do not conflict with long-form libuv event paths. Thanks to NahidaChan (@KawaiiNahida) for #455.
 - Made configured output instructions capability-aware: read-only children now return the complete artifact for runtime persistence instead of treating an unavailable write tool as a supervisor blocker. Thanks to Alexander Gerdes (@Avg8888) for #426.
 - Bounded live child JSONL lines and stderr tails in foreground and async runners, preserving split UTF-8 and final unterminated events while returning structured `protocol_output_limit` failures for oversized lines. Completion now honors `agent_end.willRetry` and prefers `agent_settled` without removing the legacy terminal-message fallback. Thanks to Luke Parke (@LukasParke) for #444 and #445.
 - Made `subagent_wait({ id })` track remembered detached foreground runs, defer acceptance until the child exits, and wake the originating session with recovered output so parents do not launch duplicate replacements after supervisor coordination. Thanks to Ramin Hazegh (@rhazegh) for #456.
