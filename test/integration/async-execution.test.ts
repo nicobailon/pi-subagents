@@ -851,7 +851,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.match(singleResult.content[0]?.text ?? "", /call subagent_wait\(\)/);
 		assert.match(singleResult.content[0]?.text ?? "", /there is no next turn, so use subagent_wait\(\)/);
-		assert.equal((emitted.at(-1)?.data as { goal?: string }).goal, "Do work");
+		assert.equal((emitted.at(-1)?.data as { task?: string; goal?: string }).task, "Do work");
+		assert.equal((emitted.at(-1)?.data as { task?: string; goal?: string }).goal, "Do work");
 		await waitForAsyncResultFile(singleId, 30_000);
 
 		mockPi.onCall({ output: "parallel one done" });
@@ -874,15 +875,19 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		mockPi.onCall({ output: "chain done" });
 		const chainId = `async-handoff-chain-${Date.now().toString(36)}`;
+		const chainGoal = `Coordinate the complete workflow ${"goal ".repeat(30)}`;
+		const chainChildTask = `Do chained work ${"child ".repeat(15)}`;
 		const chainResult = executeAsyncChain(chainId, {
-			task: "Coordinate the complete workflow",
-			chain: [{ agent: "worker", task: "Do chained work" }],
+			task: chainGoal,
+			chain: [{ agent: "worker", task: chainChildTask }],
 			agents: [makeAgent("worker")],
 			...commonParams,
 		});
 		assert.match(chainResult.content[0]?.text ?? "", /Async chain:/);
 		assert.match(chainResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
-		assert.equal((emitted.at(-1)?.data as { goal?: string }).goal, "Coordinate the complete workflow");
+		const chainEvent = emitted.at(-1)?.data as { task?: string; goal?: string };
+		assert.equal(chainEvent.task, chainChildTask.slice(0, 50));
+		assert.equal(chainEvent.goal, chainGoal.slice(0, 120));
 		await waitForAsyncResultFile(chainId, 10_000);
 	});
 

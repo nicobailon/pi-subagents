@@ -1507,7 +1507,7 @@ Async events:
 - `subagent:async-started`
 - `subagent:async-complete`
 
-The `subagent:async-started` payload includes `task`, the backwards-compatible truncated first child task, and `goal`, the workflow-level caller task (falling back to the first child task). Companion UI extensions can combine `goal`, `workflowGraph`, and the live lifecycle artifacts under `asyncDir` without scraping terminal output.
+The `subagent:async-started` payload includes `task`, the backwards-compatible first child task truncated to 50 characters, and `goal`, the workflow-level caller task truncated to 120 characters (falling back to the first child task). Companion UI extensions can combine `goal`, `workflowGraph`, and the live lifecycle artifacts under `asyncDir` without scraping terminal output.
 
 Intercom delivery events:
 
