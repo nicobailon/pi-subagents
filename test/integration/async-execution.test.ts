@@ -828,8 +828,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			includeMetadata: false,
 			cleanupDays: 7,
 		};
+		const emitted: Array<{ channel: string; data: unknown }> = [];
 		const commonParams = {
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			ctx: {
+				pi: { events: { emit(channel: string, data: unknown) { emitted.push({ channel, data }); } } },
+				cwd: tempDir,
+				currentSessionId: "session-1",
+			},
 			artifactConfig,
 			shareEnabled: false,
 			maxSubagentDepth: 2,
@@ -846,6 +851,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.match(singleResult.content[0]?.text ?? "", /call subagent_wait\(\)/);
 		assert.match(singleResult.content[0]?.text ?? "", /there is no next turn, so use subagent_wait\(\)/);
+		assert.equal((emitted.at(-1)?.data as { goal?: string }).goal, "Do work");
 		await waitForAsyncResultFile(singleId, 30_000);
 
 		mockPi.onCall({ output: "parallel one done" });
@@ -860,6 +866,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(parallelResult.content[0]?.text ?? "", /Async parallel:/);
 		assert.match(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.match(parallelResult.content[0]?.text ?? "", /call subagent_wait\(\)/);
+		assert.equal((emitted.at(-1)?.data as { goal?: string }).goal, "Do one");
 		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);
 		const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as { agent?: string; mode?: string };
 		assert.equal(parallelPayload.mode, "parallel");
@@ -868,12 +875,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "chain done" });
 		const chainId = `async-handoff-chain-${Date.now().toString(36)}`;
 		const chainResult = executeAsyncChain(chainId, {
+			task: "Coordinate the complete workflow",
 			chain: [{ agent: "worker", task: "Do chained work" }],
 			agents: [makeAgent("worker")],
 			...commonParams,
 		});
 		assert.match(chainResult.content[0]?.text ?? "", /Async chain:/);
 		assert.match(chainResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
+		assert.equal((emitted.at(-1)?.data as { goal?: string }).goal, "Coordinate the complete workflow");
 		await waitForAsyncResultFile(chainId, 10_000);
 	});
 

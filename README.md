@@ -1234,6 +1234,14 @@ Controls the parent-facing `subagent` tool description registered at startup. `f
 
 Makes top-level calls use background execution when the request does not explicitly set `async`. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
+### `asyncWidget`
+
+```json
+{ "asyncWidget": false }
+```
+
+Controls the above-editor widget for background runs. The default is `true`. Set it to `false` when another extension renders async lifecycle data in a custom footer, status line, or dashboard; status tracking, completion notifications, `/subagents-fleet`, and lifecycle events continue to work.
+
 ### `waitTool`
 
 ```json
@@ -1498,6 +1506,8 @@ Async events:
 
 - `subagent:async-started`
 - `subagent:async-complete`
+
+The `subagent:async-started` payload includes `task`, the backwards-compatible truncated first child task, and `goal`, the workflow-level caller task (falling back to the first child task). Companion UI extensions can combine `goal`, `workflowGraph`, and the live lifecycle artifacts under `asyncDir` without scraping terminal output.
 
 Intercom delivery events:
 

@@ -906,6 +906,12 @@ export function executeAsyncChain(
 			: isDynamicParallelStep(eventFirstStep)
 				? [eventFirstStep.parallel.agent]
 			: [(eventFirstStep as SequentialStep).agent];
+		const firstTask = isParallelStep(eventFirstStep)
+			? eventFirstStep.parallel[0]?.task
+			: isDynamicParallelStep(eventFirstStep)
+				? eventFirstStep.parallel.task
+				: (eventFirstStep as SequentialStep).task;
+		const workflowGoal = params.task?.trim() || firstTask;
 		const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 		const flatAgents: string[] = [];
 		let flatStepStart = 0;
@@ -968,11 +974,8 @@ export function executeAsyncChain(
 			mode: resultMode,
 			agent: firstAgents[0],
 			agents: flatAgents,
-			task: isParallelStep(eventFirstStep)
-				? eventFirstStep.parallel[0]?.task?.slice(0, 50)
-				: isDynamicParallelStep(eventFirstStep)
-					? eventFirstStep.parallel.task?.slice(0, 50)
-				: (eventFirstStep as SequentialStep).task?.slice(0, 50),
+			task: firstTask?.slice(0, 50),
+			goal: workflowGoal?.slice(0, 120),
 			chain: eventChain.map((s) =>
 				isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : (s as SequentialStep).agent,
 			),
@@ -1212,6 +1215,7 @@ export function executeAsyncSingle(
 			mode: "single",
 			agent,
 			task: task?.slice(0, 50),
+			goal: task?.slice(0, 120),
 			cwd: runnerCwd,
 			asyncDir,
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),

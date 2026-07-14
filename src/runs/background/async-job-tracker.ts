@@ -23,6 +23,7 @@ interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
 	pollIntervalMs?: number;
 	resultsDir?: string;
+	widgetEnabled?: boolean;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 }
@@ -42,7 +43,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
-		renderWidget(ctx, jobs);
+		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
 		ctx.ui.requestRender?.();
 	};
 	const restoredControlEventCursor = (asyncDir: string) => {

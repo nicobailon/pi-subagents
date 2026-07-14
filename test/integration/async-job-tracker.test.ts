@@ -13,6 +13,7 @@ interface AsyncJobTrackerModule {
 			completionRetentionMs?: number;
 			pollIntervalMs?: number;
 			resultsDir?: string;
+			widgetEnabled?: boolean;
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
 		},
@@ -126,6 +127,27 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.asyncJobs.size, 0);
 			assert.ok(ui.renderRequests > 0, "expected widget cleanup to request a rerender");
 			assert.equal(ui.widgets.at(-1), undefined);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("keeps the async widget cleared when it is disabled", () => {
+		const asyncRoot = createTempDir("pi-async-job-widget-disabled-");
+		try {
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				widgetEnabled: false,
+			});
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-hidden", asyncDir: path.join(asyncRoot, "run-hidden"), agent: "worker" });
+
+			assert.equal(state.asyncJobs.size, 1, "disabled rendering must not disable lifecycle tracking");
+			assert.ok(ui.widgets.length > 0, "expected widget clear calls");
+			assert.ok(ui.widgets.every((widget) => widget === undefined), "disabled widget must stay cleared");
+			tracker.resetJobs(ui.ctx as never);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
