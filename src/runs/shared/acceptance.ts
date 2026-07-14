@@ -331,7 +331,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
 		"```acceptance-report",
 		JSON.stringify({
-			criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "specific proof" }],
+			criteriaSatisfied: acceptance.criteria.map((criterion) => ({ id: criterion.id, status: "satisfied", evidence: `specific proof for ${criterion.id}` })),
 			changedFiles: ["src/file.ts"],
 			testsAddedOrUpdated: ["test/file.test.ts"],
 			commandsRun: [{ command: "command", result: "passed", summary: "short result" }],

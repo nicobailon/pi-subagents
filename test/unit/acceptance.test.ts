@@ -78,6 +78,19 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
 	});
 
+	it("includes every required criterion in the acceptance report example", () => {
+		const resolved = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement a risky migration",
+			async: true,
+			explicit: "verified",
+		});
+		const prompt = formatAcceptancePrompt(resolved);
+
+		assert.match(prompt, /"id": "criterion-1"/);
+		assert.match(prompt, /"id": "criterion-2"/);
+	});
+
 	it("parses acceptance-report fences and ignores unrelated json fences", () => {
 		const parsed = parseAcceptanceReport(report());
 
