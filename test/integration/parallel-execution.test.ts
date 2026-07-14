@@ -306,6 +306,28 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	for (const outputOverride of [undefined, true] as const) {
+		it(`rejects foreground inherited output collisions (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const executor = makeExecutor([makeAgent("echo", { output: "context.md" })]);
+			const tasks = [
+				{ agent: "echo", task: "Write A", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
+				{ agent: "echo", task: "Write B", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
+			];
+
+			const result = await executor.execute(
+				`parallel-inherited-output-${outputOverride === true ? "true" : "omitted"}`,
+				{ tasks },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /resolve output to the same path/);
+			assert.equal(mockPi.callCount(), 0);
+		});
+	}
+
 	it("treats string false as disabled output in top-level parallel runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Review done" });
 		const executor = makeExecutor();

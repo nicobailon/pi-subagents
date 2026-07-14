@@ -28,6 +28,8 @@ export interface RunnerSubagentStep {
 	inheritSkills: boolean;
 	skills?: string[];
 	outputPath?: string;
+	/** Defer the authoritative output instruction until a dynamic fanout item is materialized. */
+	namespaceOutputPath?: boolean;
 	outputMode?: "inline" | "file-only";
 	sessionFile?: string;
 	maxSubagentDepth?: number;
