@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { findModelInfo, type ModelInfo } from "./model-info.ts";
 
 type SubagentExecutionContext = "fresh" | "fork";
 
@@ -35,6 +36,9 @@ interface ForkableSessionManager {
 
 interface ForkContextResolverOptions {
 	openSession?: (path: string, sessionDir?: string) => BranchSessionManager;
+	/** Decide per child index whether a sanitized transcript must also disable the child's
+	 * thinking. Defaults to true (the pre-existing conservative behavior) when omitted. */
+	forceThinkingOffForIndex?: (index: number) => boolean;
 }
 
 interface ForkContextResolution {
@@ -49,6 +53,20 @@ interface ForkContextResolver {
 
 export function resolveSubagentContext(value: unknown): SubagentExecutionContext {
 	return value === "fork" ? "fork" : "fresh";
+}
+
+/** Decide whether a resolved child model uses Anthropic's provider or message API, which
+ * requires the sanitized fork to disable thinking. Unknown models stay conservative. */
+export function forkedChildRequiresThinkingOff(
+	model: string | undefined,
+	availableModels?: ModelInfo[],
+	preferredProvider?: string,
+): boolean {
+	if (!model) return true;
+	const info = findModelInfo(model, availableModels, preferredProvider);
+	if (!info) return true;
+	return info.provider.toLowerCase() === "anthropic"
+		|| info.api?.toLowerCase() === "anthropic-messages";
 }
 
 function isUnsafeAnthropicThinkingBlock(message: BranchSessionEntry["message"], block: unknown): boolean {
@@ -94,7 +112,6 @@ function sanitizeUnsafeThinkingBlocks(entries: BranchSessionEntry[]): boolean {
 		entry.message.content = filtered;
 		sanitized = true;
 	}
-	if (sanitized) appendThinkingOffEntry(entries);
 	return sanitized;
 }
 
@@ -150,6 +167,8 @@ export function createForkContextResolver(
 			if (!sessionFile) {
 				throw new Error("Session manager did not return a forked session file.");
 			}
+			const forceThinkingOff = (sanitized: boolean): boolean =>
+				sanitized && (options.forceThinkingOffForIndex?.(index) ?? true);
 			let thinkingOverride: "off" | undefined;
 			if (!fs.existsSync(sessionFile)) {
 				const header = sourceManager.getHeader?.();
@@ -157,13 +176,19 @@ export function createForkContextResolver(
 				if (!header || !entries) {
 					throw new Error(`Session manager returned a forked session file that does not exist and cannot be persisted by fallback: ${sessionFile}`);
 				}
-				if (sanitizeUnsafeThinkingBlocks(entries)) thinkingOverride = "off";
+				if (forceThinkingOff(sanitizeUnsafeThinkingBlocks(entries))) {
+					appendThinkingOffEntry(entries);
+					thinkingOverride = "off";
+				}
 				fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 				fs.writeFileSync(sessionFile, `${[header, ...entries].map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
 			} else {
 				const entries = readSessionEntries(sessionFile);
 				if (sanitizeUnsafeThinkingBlocks(entries)) {
-					thinkingOverride = "off";
+					if (forceThinkingOff(true)) {
+						appendThinkingOffEntry(entries);
+						thinkingOverride = "off";
+					}
 					fs.writeFileSync(sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
 				}
 			}

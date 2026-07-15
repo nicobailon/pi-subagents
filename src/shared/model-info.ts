@@ -6,6 +6,7 @@ export interface ModelInfo {
 	provider: string;
 	id: string;
 	fullId: string;
+	api?: string;
 	reasoning?: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
 }
@@ -13,6 +14,7 @@ export interface ModelInfo {
 interface RegistryModelLike {
 	provider: string;
 	id: string;
+	api?: string;
 	reasoning?: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
 }
@@ -22,6 +24,7 @@ export function toModelInfo(model: RegistryModelLike): ModelInfo {
 		provider: model.provider,
 		id: model.id,
 		fullId: `${model.provider}/${model.id}`,
+		api: model.api,
 		reasoning: model.reasoning,
 		thinkingLevelMap: model.thinkingLevelMap,
 	};

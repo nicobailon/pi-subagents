@@ -2555,6 +2555,94 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
+	it("background chains treat empty step models as parent inheritance", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+
+		const id = `async-chain-empty-model-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "worker", task: "Do work", model: "" }],
+			agents: [makeAgent("worker", { model: "anthropic/claude-sonnet-4-5", thinking: "high" })],
+			ctx: {
+				pi: { events: { emit() {} } },
+				cwd: tempDir,
+				currentSessionId: "session-1",
+				currentModelProvider: "openai",
+				currentModel: { provider: "openai", id: "gpt-5-mini" },
+			},
+			availableModels: [
+				{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5", api: "anthropic-messages" },
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", api: "openai-responses" },
+			],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0].model, "openai/gpt-5-mini:high");
+		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high"]);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+	});
+
+	it("background chains keep agent fallback models inherited for scope warnings", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		try {
+			for (const [index, requestedModel] of [undefined, "", "inherit"].entries()) {
+				const id = `async-chain-no-parent-${index}-${Date.now().toString(36)}`;
+				executeAsyncChain(id, {
+					chain: [{ agent: "worker", task: "Do work", ...(requestedModel !== undefined ? { model: requestedModel } : {}) }],
+					agents: [makeAgent("worker", { model: "openai/gpt-5-mini", thinking: "high" })],
+					ctx: {
+						pi: { events: { emit() {} } },
+						cwd: tempDir,
+						currentSessionId: "session-1",
+						modelScope: { enforce: true, allow: ["anthropic/*"] },
+					},
+					availableModels: [
+						{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", api: "openai-responses" },
+					],
+					artifactConfig: {
+						enabled: false,
+						includeInput: false,
+						includeOutput: false,
+						includeJsonl: false,
+						includeMetadata: false,
+						cleanupDays: 7,
+					},
+					shareEnabled: false,
+					sessionRoot: path.join(tempDir, "sessions"),
+					maxSubagentDepth: 2,
+				});
+
+				const resultPath = await waitForAsyncResultFile(id, 10_000);
+				const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+				assert.equal(payload.success, true);
+				assert.equal(payload.results[0].model, "openai/gpt-5-mini:high");
+				assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high"]);
+				const args = readMockPiArgs(mockPi, index);
+				assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+			}
+			assert.equal(warnings.length, 3);
+			assert.equal(warnings.every((warning) => warning.includes("outside the configured subagent model scope")), true);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
 	it("background runs resolve skills from the effective task cwd", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 		const taskCwd = createTempDir("pi-subagent-async-task-cwd-");

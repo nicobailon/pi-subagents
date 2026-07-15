@@ -15,7 +15,7 @@ import { clearPendingForegroundControlNotices } from "../../extension/control-no
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
-import { resolveModelCandidate, resolveSubagentModelOverride } from "../shared/model-fallback.ts";
+import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
@@ -39,7 +39,7 @@ import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
-import { createForkContextResolver } from "../../shared/fork-context.ts";
+import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
@@ -190,6 +190,9 @@ interface ExecutorDeps {
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
+type ForkSessionFileForTask = (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
+type ForkThinkingOverrideForTask = (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
+
 interface ExecutionContextData {
 	params: SubagentParamsLike;
 	effectiveCwd: string;
@@ -202,8 +205,8 @@ interface ExecutionContextData {
 	sessionRoot: string;
 	sessionDirForIndex: (idx?: number) => string;
 	sessionFileForIndex: (idx?: number) => string | undefined;
-	sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
-	thinkingOverrideForTask: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
+	sessionFileForTask: ForkSessionFileForTask;
+	thinkingOverrideForTask: ForkThinkingOverrideForTask;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
 	backgroundRequestedWhileClarifying: boolean;
@@ -1694,6 +1697,19 @@ function withForkContext(
 	};
 }
 
+function withForkThinkingNotes(
+	result: AgentToolResult<Details>,
+	downgrades: Map<number, string>,
+): AgentToolResult<Details> {
+	if (downgrades.size === 0) return result;
+	const children = [...downgrades.entries()]
+		.sort(([a], [b]) => a - b)
+		.map(([index, agent]) => `${agent} (child ${index})`)
+		.join(", ");
+	const note = `Note: fork context forced thinking off for ${children}. The forked transcript contained signed Anthropic thinking blocks that were sanitized, and Anthropic children cannot resume such a transcript with thinking enabled. Use context: "fresh" when an Anthropic child needs thinking.`;
+	return { ...result, content: [...result.content, { type: "text", text: note }] };
+}
+
 function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): AgentToolResult<Details> {
 	const message = error instanceof Error ? error.message : String(error);
 	return withForkContext(
@@ -1708,7 +1724,7 @@ function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): Age
 
 function collectChainSessionFiles(
 	chain: ChainStep[],
-	sessionFileForTask: (agentName: string, idx?: number) => string | undefined,
+	sessionFileForTask: ForkSessionFileForTask,
 	dynamicFanoutMaxItems?: number,
 ): (string | undefined)[] {
 	const sessionFiles: (string | undefined)[] = [];
@@ -1716,7 +1732,7 @@ function collectChainSessionFiles(
 	for (const step of chain) {
 		if (isParallelStep(step)) {
 			for (const task of step.parallel) {
-				sessionFiles.push(sessionFileForTask(task.agent, flatIndex));
+				sessionFiles.push(sessionFileForTask(task.agent, flatIndex, task.model));
 				flatIndex++;
 			}
 			continue;
@@ -1724,12 +1740,13 @@ function collectChainSessionFiles(
 		if (isDynamicParallelStep(step)) {
 			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
 			for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) {
-				sessionFiles.push(sessionFileForTask(step.parallel.agent, flatIndex));
+				sessionFiles.push(sessionFileForTask(step.parallel.agent, flatIndex, step.parallel.model));
 				flatIndex++;
 			}
 			continue;
 		}
-		sessionFiles.push(sessionFileForTask((step as SequentialStep).agent, flatIndex));
+		const sequential = step as SequentialStep;
+		sessionFiles.push(sessionFileForTask(sequential.agent, flatIndex, sequential.model));
 		flatIndex++;
 	}
 	return sessionFiles;
@@ -1737,7 +1754,7 @@ function collectChainSessionFiles(
 
 function collectChainThinkingOverrides(
 	chain: ChainStep[],
-	thinkingOverrideForTask: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined,
+	thinkingOverrideForTask: ForkThinkingOverrideForTask,
 	dynamicFanoutMaxItems?: number,
 ): (AgentConfig["thinking"] | undefined)[] {
 	const thinkingOverrides: (AgentConfig["thinking"] | undefined)[] = [];
@@ -1745,7 +1762,7 @@ function collectChainThinkingOverrides(
 	for (const step of chain) {
 		if (isParallelStep(step)) {
 			for (const task of step.parallel) {
-				thinkingOverrides.push(thinkingOverrideForTask(task.agent, flatIndex));
+				thinkingOverrides.push(thinkingOverrideForTask(task.agent, flatIndex, task.model));
 				flatIndex++;
 			}
 			continue;
@@ -1753,12 +1770,13 @@ function collectChainThinkingOverrides(
 		if (isDynamicParallelStep(step)) {
 			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
 			for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) {
-				thinkingOverrides.push(thinkingOverrideForTask(step.parallel.agent, flatIndex));
+				thinkingOverrides.push(thinkingOverrideForTask(step.parallel.agent, flatIndex, step.parallel.model));
 				flatIndex++;
 			}
 			continue;
 		}
-		thinkingOverrides.push(thinkingOverrideForTask((step as SequentialStep).agent, flatIndex));
+		const sequential = step as SequentialStep;
+		thinkingOverrides.push(thinkingOverrideForTask(sequential.agent, flatIndex, sequential.model));
 		flatIndex++;
 	}
 	return thinkingOverrides;
@@ -1825,17 +1843,17 @@ function wrapChainTasksForFork(chain: ChainStep[], contextPolicy: AgentDefaultCo
 function preflightForkSessionsForStaticTasks(
 	params: SubagentParamsLike,
 	contextPolicy: AgentDefaultContextPolicy,
-	sessionFileForTask: (agentName: string, idx?: number) => string | undefined,
+	sessionFileForTask: ForkSessionFileForTask,
 	dynamicFanoutMaxItems?: number,
 ): void {
 	if (!contextPolicy.usesFork) return;
 	if (params.agent) {
-		if (shouldForkAgent(contextPolicy, params.agent)) sessionFileForTask(params.agent, 0);
+		if (shouldForkAgent(contextPolicy, params.agent)) sessionFileForTask(params.agent, 0, params.model);
 		return;
 	}
 	if (params.tasks) {
 		params.tasks.forEach((task, index) => {
-			if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, index);
+			if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, index, task.model);
 		});
 		return;
 	}
@@ -1844,7 +1862,7 @@ function preflightForkSessionsForStaticTasks(
 	for (const step of params.chain) {
 		if (isParallelStep(step)) {
 			for (const task of step.parallel) {
-				if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, flatIndex);
+				if (shouldForkAgent(contextPolicy, task.agent)) sessionFileForTask(task.agent, flatIndex, task.model);
 				flatIndex++;
 			}
 			continue;
@@ -1852,13 +1870,13 @@ function preflightForkSessionsForStaticTasks(
 		if (isDynamicParallelStep(step)) {
 			const maxItems = step.expand.maxItems ?? dynamicFanoutMaxItems ?? 0;
 			if (shouldForkAgent(contextPolicy, step.parallel.agent)) {
-				for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) sessionFileForTask(step.parallel.agent, flatIndex + itemIndex);
+				for (let itemIndex = 0; itemIndex < maxItems; itemIndex++) sessionFileForTask(step.parallel.agent, flatIndex + itemIndex, step.parallel.model);
 			}
 			flatIndex += maxItems;
 			continue;
 		}
 		const sequential = step as SequentialStep;
-		if (shouldForkAgent(contextPolicy, sequential.agent)) sessionFileForTask(sequential.agent, flatIndex);
+		if (shouldForkAgent(contextPolicy, sequential.agent)) sessionFileForTask(sequential.agent, flatIndex, sequential.model);
 		flatIndex++;
 	}
 }
@@ -1933,16 +1951,12 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	const childIntercomTarget = intercomBridge.active ? (agent: string, index: number) => resolveSubagentIntercomTarget(id, agent, index) : undefined;
 
 	if (hasTasks && params.tasks) {
-		const agentConfigs = params.tasks.map((task) => agents.find((agent) => agent.name === task.agent));
-		const modelOverrides = params.tasks.map((task, index) =>
-			resolveSubagentModelOverride(task.model ?? agentConfigs[index]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: task.model ? "explicit" : "inherited" }),
-		);
 		const skillOverrides = params.tasks.map((task) => normalizeSkillInput(task.skill));
 		const parallelTasks = params.tasks.map((task, index) => ({
 			agent: task.agent,
 			task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task) : task.task,
 			cwd: task.cwd,
-			...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
+			...(task.model !== undefined ? { model: task.model } : {}),
 			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
 			...(task.output !== undefined && task.output !== true ? { output: task.output } : {}),
 			...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
@@ -1969,8 +1983,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			shareEnabled,
 			sessionRoot,
 			chainSkills: [],
-			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index)),
-			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index)),
+			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index, task.model)),
+			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, task.model)),
 			maxSubagentDepth: currentMaxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -2040,7 +2054,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
 		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
-		const modelOverride = resolveSubagentModelOverride((params.model as string | undefined) ?? a.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: (params.model as string | undefined) ? "explicit" : "inherited" });
+		const modelOverride = resolveEffectiveSubagentModel(params.model as string | undefined, a.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope });
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
@@ -2054,13 +2068,13 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			artifactConfig,
 			shareEnabled,
 			sessionRoot,
-			sessionFile: sessionFileForTask(params.agent!, 0),
+			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
 			skills,
 			output: effectiveOutput,
 			outputMode: effectiveOutputMode,
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
-			thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
+			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
 			maxSubagentDepth,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -2244,8 +2258,8 @@ interface ForegroundParallelRunInput {
 	runId: string;
 	sessionDirForIndex: (idx?: number) => string | undefined;
 	sessionFileForIndex: (idx?: number) => string | undefined;
-	sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
-	thinkingOverrideForTask: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
+	sessionFileForTask: ForkSessionFileForTask;
+	thinkingOverrideForTask: ForkThinkingOverrideForTask;
 	shareEnabled: boolean;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
@@ -2387,9 +2401,8 @@ function findDuplicateParallelOutputPath(input: {
 async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Promise<SingleResult[]> {
 	// Pre-warm fork session files sequentially before concurrent dispatch to avoid
 	// races where multiple workers simultaneously try to branch the same parent session.
-	// sessionFileForIndex caches results, so these calls return instantly inside mapConcurrent.
 	for (let i = 0; i < input.tasks.length; i++) {
-		input.sessionFileForIndex(i);
+		input.sessionFileForTask(input.tasks[i]!.agent, i, input.modelOverrides[i]);
 	}
 	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
 		const behavior = input.behaviors[index];
@@ -2432,7 +2445,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			runId: input.runId,
 			index,
 			sessionDir: input.sessionDirForIndex(index),
-			sessionFile: input.sessionFileForTask(task.agent, index),
+			sessionFile: input.sessionFileForTask(task.agent, index, input.modelOverrides[index]),
 			share: input.shareEnabled,
 			artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
 			artifactConfig: input.artifactConfig,
@@ -2447,7 +2460,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 			nestedRoute: input.foregroundControl?.nestedRoute,
 			modelOverride: input.modelOverrides[index],
-			thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
+			thinkingOverride: input.thinkingOverrideForTask(task.agent, index, input.modelOverrides[index]),
 			availableModels: input.availableModels,
 			preferredModelProvider: input.ctx.model?.provider,
 			modelScope: input.modelScope,
@@ -2578,10 +2591,10 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
 		...(task.progress !== undefined ? { progress: task.progress } : {}),
 		...(skillOverrides[index] !== undefined ? { skills: skillOverrides[index] } : {}),
-		...(task.model ? { model: task.model } : {}),
+		...(task.model !== undefined ? { model: task.model } : {}),
 	}));
 	const modelOverrides: (string | undefined)[] = tasks.map((_, i) =>
-		resolveSubagentModelOverride(behaviorOverrides[i]?.model ?? agentConfigs[i]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: behaviorOverrides[i]?.model ? "explicit" : "inherited" }),
+		resolveEffectiveSubagentModel(behaviorOverrides[i]?.model, agentConfigs[i]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope }),
 	);
 
 	if (params.clarify === true && ctx.hasUI) {
@@ -2615,8 +2628,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		taskTexts = result.templates;
 		for (let i = 0; i < result.behaviorOverrides.length; i++) {
 			const override = result.behaviorOverrides[i];
-			if (override?.model) {
-				modelOverrides[i] = resolveSubagentModelOverride(override.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: "explicit" });
+			if (override?.model !== undefined) {
+				modelOverrides[i] = resolveEffectiveSubagentModel(override.model, agentConfigs[i]?.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope });
 				behaviorOverrides[i]!.model = override.model;
 			}
 			if (override?.output !== undefined) behaviorOverrides[i]!.output = override.output;
@@ -2653,7 +2666,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 					agent: t.agent,
 					task: taskText,
 					cwd: t.cwd,
-					...(modelOverrides[i] ? { model: modelOverrides[i] } : {}),
+					...(behaviorOverrides[i]?.model !== undefined ? { model: behaviorOverrides[i]!.model } : {}),
 					...(skillOverrides[i] !== undefined ? { skill: skillOverrides[i] } : {}),
 					...(behaviorOverrides[i]?.output !== undefined ? { output: behaviorOverrides[i]!.output } : {}),
 					...(behaviorOverrides[i]?.outputMode !== undefined ? { outputMode: behaviorOverrides[i]!.outputMode } : {}),
@@ -2677,8 +2690,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				shareEnabled,
 				sessionRoot,
 				chainSkills: [],
-				sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index)),
-				thinkingOverridesByFlatIndex: tasks.map((task, index) => thinkingOverrideForTask(task.agent, index)),
+				sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index, modelOverrides[index])),
+				thinkingOverridesByFlatIndex: tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, modelOverrides[index])),
 				maxSubagentDepth: currentMaxSubagentDepth,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -2900,12 +2913,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
-	let modelOverride: string | undefined = resolveSubagentModelOverride(
-		(params.model as string | undefined) ?? agentConfig.model,
+	let modelOverride: string | undefined = resolveEffectiveSubagentModel(
+		params.model as string | undefined,
+		agentConfig.model,
 		ctx.model,
 		availableModels,
 		currentProvider,
-		{ scope: data.modelScope, source: (params.model as string | undefined) ? "explicit" : "inherited" },
+		{ scope: data.modelScope },
 	);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
@@ -2942,7 +2956,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 		task = result.templates[0]!;
 		const override = result.behaviorOverrides[0];
-		if (override?.model) modelOverride = resolveSubagentModelOverride(override.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope, source: "explicit" });
+		if (override?.model !== undefined) modelOverride = resolveEffectiveSubagentModel(override.model, agentConfig.model, ctx.model, availableModels, currentProvider, { scope: data.modelScope });
 		if (override?.output !== undefined) effectiveOutput = normalizeSingleOutputOverride(override.output, agentConfig.output);
 		if (override?.skills !== undefined) skillOverride = override.skills;
 
@@ -2977,13 +2991,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				artifactConfig,
 				shareEnabled,
 				sessionRoot,
-				sessionFile: sessionFileForTask(params.agent!, 0),
+				sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
 				skills: skillOverride === false ? [] : skillOverride,
 				output: effectiveOutput,
 				outputMode: effectiveOutputMode,
 				outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 				modelOverride,
-				thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
+				thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
 				maxSubagentDepth,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -3061,7 +3075,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		intercomEvents: deps.pi.events,
 		runId,
 		sessionDir: sessionDirForIndex(0),
-		sessionFile: sessionFileForTask(params.agent!, 0),
+		sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
 		share: shareEnabled,
 		artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 		artifactConfig,
@@ -3077,7 +3091,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		nestedRoute: foregroundControl?.nestedRoute,
 		index: 0,
 		modelOverride,
-		thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
+		thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
 		availableModels,
 		preferredModelProvider: currentProvider,
 		modelScope: data.modelScope,
@@ -3542,8 +3556,35 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
+		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string): void => {};
+		const forkThinkingRequirements = new Map<number, boolean>();
+		const forkThinkingDowngrades = new Map<number, string>();
 		try {
-			const forkContextResolver = createForkContextResolver(ctx.sessionManager, contextPolicy.usesFork ? "fork" : undefined);
+			const forkAvailableModels = contextPolicy.usesFork ? ctx.modelRegistry.getAvailable().map(toModelInfo) : [];
+			prepareForkThinking = (agentName, index, modelOverride) => {
+				const agentConfig = agents.find((agent) => agent.name === agentName);
+				const primaryModel = resolveEffectiveSubagentModel(
+					modelOverride,
+					agentConfig?.model,
+					ctx.model,
+					forkAvailableModels,
+					ctx.model?.provider,
+				);
+				const candidates = buildModelCandidates(
+					primaryModel,
+					agentConfig?.fallbackModels,
+					forkAvailableModels,
+					ctx.model?.provider,
+				);
+				forkThinkingRequirements.set(
+					index,
+					candidates.length === 0
+						|| candidates.some((candidate) => forkedChildRequiresThinkingOff(candidate, forkAvailableModels, ctx.model?.provider)),
+				);
+			};
+			const forkContextResolver = createForkContextResolver(ctx.sessionManager, contextPolicy.usesFork ? "fork" : undefined, {
+				forceThinkingOffForIndex: (index) => forkThinkingRequirements.get(index) ?? true,
+			});
 			forkSessionFileForIndex = forkContextResolver.sessionFileForIndex;
 			forkThinkingOverrideForIndex = forkContextResolver.thinkingOverrideForIndex;
 		} catch (error) {
@@ -3580,16 +3621,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		const sessionDirForIndex = (idx?: number) =>
 			path.join(sessionRoot, `run-${idx ?? 0}`);
-		const forkSessionFileForTask = (agentName: string, idx?: number) =>
-			shouldForkAgent(contextPolicy, agentName) ? forkSessionFileForIndex(idx) : undefined;
-		const forkThinkingOverrideForTask = (agentName: string, idx?: number) =>
-			shouldForkAgent(contextPolicy, agentName) ? forkThinkingOverrideForIndex(idx) : undefined;
-		const childSessionFileForTask = (agentName: string, idx?: number) =>
-			forkSessionFileForTask(agentName, idx) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
+		const forkSessionFileForTask: ForkSessionFileForTask = (agentName, idx = 0, modelOverride) => {
+			if (!shouldForkAgent(contextPolicy, agentName)) return undefined;
+			prepareForkThinking(agentName, idx, modelOverride);
+			return forkSessionFileForIndex(idx);
+		};
+		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride) => {
+			if (!shouldForkAgent(contextPolicy, agentName)) return undefined;
+			prepareForkThinking(agentName, idx, modelOverride);
+			const override = forkThinkingOverrideForIndex(idx);
+			if (override === "off") forkThinkingDowngrades.set(idx, agentName);
+			return override;
+		};
+		const childSessionFileForTask: ForkSessionFileForTask = (agentName, idx, modelOverride) =>
+			forkSessionFileForTask(agentName, idx, modelOverride) ?? path.join(sessionDirForIndex(idx), "session.jsonl");
 		const childSessionFileForIndex = (idx?: number) =>
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
-			preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
+			if (!(effectiveParams.clarify === true && ctx.hasUI)) {
+				preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
+			}
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		}
@@ -3721,7 +3772,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let nestedForegroundStarted = false;
 		try {
 			const asyncResult = runAsyncPath(execData, deps);
-			if (asyncResult) return withForkContext(asyncResult, effectiveParams.context);
+			if (asyncResult) return withForkContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), effectiveParams.context);
 			if (foregroundControl) {
 				writeNestedForegroundEvent("subagent.nested.started");
 				nestedForegroundStarted = true;
@@ -3729,20 +3780,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (hasChain && effectiveParams.chain) {
 				const result = await runChainPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(result, effectiveParams.context);
+				return withForkContext(withForkThinkingNotes(result, forkThinkingDowngrades), effectiveParams.context);
 			}
 			if (hasTasks && effectiveParams.tasks) {
 				const result = await runParallelPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(result, effectiveParams.context);
+				return withForkContext(withForkThinkingNotes(result, forkThinkingDowngrades), effectiveParams.context);
 			}
 			if (hasSingle) {
 				const result = await runSinglePath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(result, effectiveParams.context);
+				return withForkContext(withForkThinkingNotes(result, forkThinkingDowngrades), effectiveParams.context);
 			}
 		} catch (error) {
-			const errorResult = toExecutionErrorResult(effectiveParams, error);
+			const errorResult = withForkThinkingNotes(toExecutionErrorResult(effectiveParams, error), forkThinkingDowngrades);
 			if (nestedForegroundStarted) writeNestedForegroundEvent("subagent.nested.completed", errorResult);
 			return errorResult;
 		} finally {

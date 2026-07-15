@@ -63,7 +63,7 @@ import {
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
-import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
+import { resolveEffectiveSubagentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { injectSingleOutputInstruction, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
@@ -109,8 +109,8 @@ interface ParallelChainRunInput {
 	globalTaskIndex: number;
 	sessionDirForIndex: (idx?: number) => string | undefined;
 	sessionFileForIndex?: (idx?: number) => string | undefined;
-	sessionFileForTask?: (agentName: string, idx?: number) => string | undefined;
-	thinkingOverrideForTask?: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
+	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
+	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
 	shareEnabled: boolean;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
@@ -230,6 +230,21 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 	const concurrency = input.step.concurrency ?? MAX_CONCURRENCY;
 	const failFast = input.step.failFast ?? false;
 	let aborted = false;
+	const effectiveModels = input.step.parallel.map((task) => {
+		const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
+		return resolveEffectiveSubagentModel(
+			task.model,
+			taskAgentConfig?.model,
+			input.ctx.model,
+			input.availableModels,
+			input.ctx.model?.provider,
+			{ scope: input.modelScope },
+		);
+	});
+	for (let taskIndex = 0; taskIndex < input.step.parallel.length; taskIndex++) {
+		const task = input.step.parallel[taskIndex]!;
+		input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModels[taskIndex]);
+	}
 
 	const parallelResults = await mapConcurrent(
 		input.step.parallel,
@@ -264,13 +279,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const cleanTask = taskStr;
 			taskStr = prefix + taskStr + suffix;
 
-			const effectiveModel = resolveSubagentModelOverride(
-				task.model ?? taskAgentConfig?.model,
-				input.ctx.model,
-				input.availableModels,
-				input.ctx.model?.provider,
-				{ scope: input.modelScope, source: task.model ? "explicit" : "inherited" },
-			);
+			const effectiveModel = effectiveModels[taskIndex];
 			const maxSubagentDepth = resolveChildMaxSubagentDepth(input.maxSubagentDepth, taskAgentConfig?.maxSubagentDepth);
 			const toolBudget = resolveChainToolBudget({ stepBudget: task.toolBudget, runBudget: input.toolBudget, agentBudget: taskAgentConfig?.toolBudget, configBudget: input.configToolBudget });
 			if (toolBudget.error) throw new Error(toolBudget.error);
@@ -311,9 +320,9 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				runId: input.runId,
 				index: input.globalTaskIndex + taskIndex,
 				sessionDir: input.sessionDirForIndex(input.globalTaskIndex + taskIndex),
-				sessionFile: input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex)
+				sessionFile: input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModel)
 					?? input.sessionFileForIndex?.(input.globalTaskIndex + taskIndex),
-				thinkingOverride: input.thinkingOverrideForTask?.(task.agent, input.globalTaskIndex + taskIndex),
+				thinkingOverride: input.thinkingOverrideForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModel),
 				share: input.shareEnabled,
 				artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
 				artifactConfig: input.artifactConfig,
@@ -413,8 +422,8 @@ interface ChainExecutionParams {
 	shareEnabled: boolean;
 	sessionDirForIndex: (idx?: number) => string | undefined;
 	sessionFileForIndex?: (idx?: number) => string | undefined;
-	sessionFileForTask?: (agentName: string, idx?: number) => string | undefined;
-	thinkingOverrideForTask?: (agentName: string, idx?: number) => AgentConfig["thinking"] | undefined;
+	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
+	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
 	artifactsDir: string;
 	artifactConfig: ArtifactConfig;
 	includeProgress?: boolean;
@@ -628,7 +637,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				return {
 					...step,
 					task: result.templates[i]!,
-					...(override?.model ? { model: override.model } : {}),
+					...(override?.model !== undefined ? { model: override.model } : {}),
 					...(override?.output !== undefined ? { output: override.output } : {}),
 					...("outputMode" in step && step.outputMode !== undefined ? { outputMode: step.outputMode } : {}),
 					...(override?.reads !== undefined ? { reads: override.reads } : {}),
@@ -1111,12 +1120,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			stepTask = prefix + stepTask + suffix;
 
 			const explicitStepModel = tuiOverride?.model ?? seqStep.model;
-			const effectiveModel = resolveSubagentModelOverride(
-				explicitStepModel ?? agentConfig.model,
+			const effectiveModel = resolveEffectiveSubagentModel(
+				explicitStepModel,
+				agentConfig.model,
 				ctx.model,
 				availableModels,
 				ctx.model?.provider,
-				{ scope: modelScope, source: explicitStepModel ? "explicit" : "inherited" },
+				{ scope: modelScope },
 			);
 
 			const outputPath = typeof behavior.output === "string"
@@ -1174,9 +1184,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				runId,
 				index: childIndex,
 				sessionDir: sessionDirForIndex(childIndex),
-				sessionFile: sessionFileForTask?.(seqStep.agent, childIndex)
+				sessionFile: sessionFileForTask?.(seqStep.agent, childIndex, effectiveModel)
 					?? sessionFileForIndex?.(childIndex),
-				thinkingOverride: thinkingOverrideForTask?.(seqStep.agent, childIndex),
+				thinkingOverride: thinkingOverrideForTask?.(seqStep.agent, childIndex, effectiveModel),
 				share: shareEnabled,
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,

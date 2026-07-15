@@ -5,6 +5,7 @@ import {
 	fuzzyResolveModel,
 	isRetryableModelFailure,
 	normalizeModelSegment,
+	resolveEffectiveSubagentModel,
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
@@ -160,6 +161,29 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		// the global default.
 		assert.notEqual(resolveSubagentModelOverride("inherit", parentModel, availableModels), "inherit");
 		assert.notEqual(resolveSubagentModelOverride("inherit", undefined, availableModels), "inherit");
+	});
+});
+
+describe("resolveEffectiveSubagentModel", () => {
+	const availableModels = [
+		{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+	];
+
+	it("falls back to the agent model when inheritance has no parent", () => {
+		assert.equal(resolveEffectiveSubagentModel("", "openai/gpt-5-mini", undefined, availableModels), "openai/gpt-5-mini");
+		assert.equal(resolveEffectiveSubagentModel("inherit", "openai/gpt-5-mini", undefined, availableModels), "openai/gpt-5-mini");
+	});
+
+	it("keeps agent models inherited for scope enforcement", () => {
+		const warnings: string[] = [];
+		assert.equal(
+			resolveEffectiveSubagentModel(undefined, "openai/gpt-5-mini", undefined, availableModels, undefined, {
+				scope: { enforce: true, allow: ["anthropic/*"] },
+				onWarn: (violation) => warnings.push(violation.message),
+			}),
+			"openai/gpt-5-mini",
+		);
+		assert.equal(warnings.length, 1);
 	});
 });
 

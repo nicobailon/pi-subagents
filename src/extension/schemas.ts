@@ -238,7 +238,7 @@ const SubagentParamsSchema = Type.Object({
 	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume' or non-terminal guidance for action='steer'. Use index to choose a child from multi-child runs." })),
 	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
 	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for action='watchdog.configure'. Defaults to main. Use target='child' with agent for a per-agent child watchdog override." })),
-	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh, inherit, or false for off)." })),
+	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
 	schedule: Type.Optional(Type.String({ description: "Explicit one-shot schedule for action='schedule'. Only honored when scheduledRuns.enabled is true. Use '+10m' or a future ISO timestamp with timezone; scheduled runs always launch async with fresh context." })),
 	scheduleName: Type.Optional(Type.String({ description: "Optional display name for action='schedule'." })),
 	// Chain identifier for management (can't reuse 'chain' — that's the execution array)

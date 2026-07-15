@@ -277,6 +277,25 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		};
 	}
 
+	function makeSignedThinkingSessionManager(childSessionFile: string) {
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		return {
+			getSessionId: () => "session-123",
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "assistant-1",
+			openSession: () => ({
+				createBranchedSession: () => {
+					fs.writeFileSync(childSessionFile, [
+						{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
+						{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4-5", content: [{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" }, { type: "text", text: "answer" }] } },
+					].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf-8");
+					return childSessionFile;
+				},
+			}),
+		};
+	}
+
 	it("runs a single agent when task is omitted", async () => {
 		const { manager } = makeSessionManagerRecorder();
 		const executor = makeExecutor();
@@ -419,17 +438,373 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			projectAgentsDir: null,
 		}));
 
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true },
+					{ provider: "anthropic", id: "claude-sonnet-4", api: "anthropic-messages", reasoning: true },
+				],
+			},
+		};
 		const result = await executor.execute(
 			"id",
 			{ agent: "worker", task: "test" },
 			new AbortController().signal,
 			undefined,
-			makeCtx(manager),
+			ctx,
 		);
 
 		assert.equal(result.isError, undefined);
 		const modelArgs = readAllCallArgs().map((args) => args[args.indexOf("--model") + 1]);
 		assert.deepEqual(modelArgs, ["openai/gpt-5-mini:off", "anthropic/claude-sonnet-4:off"]);
+	});
+
+	it("keeps requested thinking for non-Anthropic forked children without Anthropic fallbacks", async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const childSessionFile = path.join(tempDir, "fork-keep-thinking.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		const manager = {
+			getSessionId: () => "session-123",
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "assistant-1",
+			openSession: () => ({
+				createBranchedSession: () => {
+					fs.writeFileSync(childSessionFile, [
+						{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
+						{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4-5", content: [{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" }, { type: "text", text: "answer" }] } },
+					].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf-8");
+					return childSessionFile;
+				},
+			}),
+		};
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true }],
+			},
+		};
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+		const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.deepEqual(entries[1].message.content, [{ type: "text", text: "answer" }]);
+		assert.equal(entries.length, 2);
+		const text = result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+		assert.equal(text.includes("fork context forced thinking off"), false);
+	});
+
+	it("keeps inherited model-scope violations as warnings in fork mode", async () => {
+		const childSessionFile = path.join(tempDir, "fork-model-scope-warning.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini:high", thinking: "high" },
+			],
+			projectAgentsDir: null,
+			modelScope: { enforce: true, allow: ["anthropic/*"] },
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true }],
+			},
+		};
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		try {
+			const result = await executor.execute(
+				"id",
+				{ agent: "worker", task: "test" },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+
+			assert.equal(result.isError, undefined);
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0]!, /outside the configured subagent model scope/);
+			const args = readCallArgs();
+			assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("warns when empty inheritance falls back to an out-of-scope agent model", async () => {
+		const childSessionFile = path.join(tempDir, "fork-empty-model-scope-warning.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini", thinking: "high" },
+			],
+			projectAgentsDir: null,
+			modelScope: { enforce: true, allow: ["anthropic/*"] },
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true }],
+			},
+		};
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		try {
+			for (const model of ["", "inherit"]) {
+				const result = await executor.execute(
+					"id",
+					{ agent: "worker", task: "test", model },
+					new AbortController().signal,
+					undefined,
+					ctx,
+				);
+				assert.equal(result.isError, undefined);
+			}
+
+			assert.equal(warnings.length, 2);
+			assert.equal(warnings.every((warning) => warning.includes("outside the configured subagent model scope")), true);
+			for (const args of readAllCallArgs()) {
+				assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+			}
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("notes the forced thinking downgrade in the result for Anthropic forked children", async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const childSessionFile = path.join(tempDir, "fork-note-downgrade.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		const manager = {
+			getSessionId: () => "session-123",
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "assistant-1",
+			openSession: () => ({
+				createBranchedSession: () => {
+					fs.writeFileSync(childSessionFile, [
+						{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
+						{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4-5", content: [{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" }, { type: "text", text: "answer" }] } },
+					].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf-8");
+					return childSessionFile;
+				},
+			}),
+		};
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-5", api: "anthropic-messages", reasoning: true }],
+			},
+		};
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		const text = result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+		assert.equal(text.includes("fork context forced thinking off for worker (child 0)"), true);
+	});
+
+	it("resolves inherit before classifying a forked child", async () => {
+		const childSessionFile = path.join(tempDir, "fork-inherit-thinking.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			model: { provider: "anthropic", id: "claude-sonnet-4-5" },
+			modelRegistry: {
+				getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-5", api: "anthropic-messages", reasoning: true }],
+			},
+		};
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test", model: "inherit" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
+	});
+
+	it("classifies empty parallel model overrides as parent inheritance", async () => {
+		const childSessionFile = path.join(tempDir, "fork-empty-parallel-model.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			model: { provider: "openai", id: "gpt-5-mini" },
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "anthropic", id: "claude-sonnet-4-5", api: "anthropic-messages", reasoning: true },
+					{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true },
+				],
+			},
+		};
+
+		const result = await executor.execute(
+			"id",
+			{ tasks: [{ agent: "worker", task: "test", model: "" }] },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+		const text = result.content.filter((block) => block.text).map((block) => block.text).join("\n");
+		assert.equal(text.includes("fork context forced thinking off"), false);
+	});
+
+	it("classifies the agent model when empty inheritance has no parent model", async () => {
+		const childSessionFile = path.join(tempDir, "fork-empty-model-without-parent.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "openai/gpt-5-mini", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true }],
+			},
+		};
+
+		const result = await executor.execute(
+			"id",
+			{ tasks: [{ agent: "worker", task: "test", model: "" }] },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini:high");
+		const text = result.content.filter((block) => block.text).map((block) => block.text).join("\n");
+		assert.equal(text.includes("fork context forced thinking off"), false);
+	});
+
+	it("classifies the effective model selected in Clarify", async () => {
+		const childSessionFile = path.join(tempDir, "fork-clarify-thinking.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			hasUI: true,
+			ui: {
+				custom: async () => ({
+					confirmed: true,
+					runInBackground: false,
+					templates: ["test"],
+					behaviorOverrides: [{ model: "openai-codex/gpt-5.6-sol:high" }],
+				}),
+			},
+			model: { provider: "anthropic", id: "claude-sonnet-4-5" },
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "anthropic", id: "claude-sonnet-4-5", api: "anthropic-messages", reasoning: true },
+					{ provider: "openai-codex", id: "gpt-5.6-sol", api: "openai-responses", reasoning: true },
+				],
+			},
+		};
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test", clarify: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "openai-codex/gpt-5.6-sol:high");
+		const text = result.content.filter((block) => block.text).map((block) => block.text).join("\n");
+		assert.equal(text.includes("fork context forced thinking off"), false);
+	});
+
+	it("includes the fork-thinking downgrade note on failed results", async () => {
+		mockPi.reset();
+		mockPi.onCall({ stderr: "task failed", exitCode: 1 });
+		const childSessionFile = path.join(tempDir, "fork-failed-thinking.jsonl");
+		const manager = makeSignedThinkingSessionManager(childSessionFile);
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork", model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
+			],
+			projectAgentsDir: null,
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-5", api: "anthropic-messages", reasoning: true }],
+			},
+		};
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, true);
+		const text = result.content.filter((block) => block.text).map((block) => block.text).join("\n");
+		assert.equal(text.includes("fork context forced thinking off for worker (child 0)"), true);
 	});
 
 	it("keeps default-fork context on run-path errors", async () => {
@@ -1063,6 +1438,79 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(result.details?.mode, "parallel");
 		assert.ok(result.details?.asyncId, "expected an asyncId for background top-level parallel runs");
 		assert.match(result.content[0]?.text ?? "", /Async parallel:/);
+	});
+
+	it("keeps inherited model-scope warnings non-fatal in async parallel conversion", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [{ name: "worker", description: "Worker", model: "openai/gpt-5-mini" }],
+			projectAgentsDir: null,
+			modelScope: { enforce: true, allow: ["anthropic/*"] },
+		}));
+		const ctx = {
+			...makeCtx(makeSessionManagerRecorder().manager),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true }],
+			},
+		};
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		try {
+			const result = await executor.execute(
+				"id",
+				{ tasks: [{ agent: "worker", task: "test" }], async: true },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, undefined);
+			assert.ok(result.details?.asyncId);
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0]!, /outside the configured subagent model scope/);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("keeps inherited model-scope warnings non-fatal after Clarify switches parallel work to background", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [{ name: "worker", description: "Worker", model: "openai/gpt-5-mini" }],
+			projectAgentsDir: null,
+			modelScope: { enforce: true, allow: ["anthropic/*"] },
+		}));
+		const ctx = {
+			...makeCtx(makeSessionManagerRecorder().manager),
+			hasUI: true,
+			ui: {
+				custom: async () => ({
+					confirmed: true,
+					runInBackground: true,
+					templates: ["test"],
+					behaviorOverrides: [{}],
+				}),
+			},
+			modelRegistry: {
+				getAvailable: () => [{ provider: "openai", id: "gpt-5-mini", api: "openai-responses", reasoning: true }],
+			},
+		};
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		try {
+			const result = await executor.execute(
+				"id",
+				{ tasks: [{ agent: "worker", task: "test" }], clarify: true },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, undefined);
+			assert.ok(result.details?.asyncId);
+			assert.equal(warnings.length, 2);
+			assert.equal(warnings.every((warning) => warning.includes("outside the configured subagent model scope")), true);
+		} finally {
+			console.warn = originalWarn;
+		}
 	});
 
 	it("keeps raw goals at fork-wrapped async executor boundaries", { skip: !asyncAvailable ? "jiti not available" : undefined }, async () => {

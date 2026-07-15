@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, type ModelInfo } from "../../src/shared/model-info.ts";
+import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, toModelInfo, type ModelInfo } from "../../src/shared/model-info.ts";
 
 describe("model info helpers", () => {
 	const ambiguousModels: ModelInfo[] = [
@@ -18,6 +18,10 @@ describe("model info helpers", () => {
 
 	it("matches provider-qualified model metadata before bare ids", () => {
 		assert.equal(findModelInfo("openai/gpt-5-mini:high", ambiguousModels, "github-copilot")?.fullId, "openai/gpt-5-mini");
+	});
+
+	it("preserves registry API metadata", () => {
+		assert.equal(toModelInfo({ provider: "gateway", id: "model", api: "anthropic-messages" }).api, "anthropic-messages");
 	});
 
 	it("keeps the legacy thinking list for models without per-level metadata", () => {

@@ -19,7 +19,7 @@ import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
-import { buildModelCandidates, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
+import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
@@ -549,7 +549,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(s.reads !== undefined ? { reads: s.reads } : {}),
 			...(s.progress !== undefined ? { progress: s.progress } : {}),
 			...(stepSkillInput !== undefined ? { skills: stepSkillInput } : {}),
-			...(s.model ? { model: s.model } : {}),
+			...(s.model !== undefined ? { model: s.model } : {}),
 		};
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }) => {
@@ -602,8 +602,14 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const taskText = `${readInstructions.prefix}${taskTemplate}${progressInstructions.suffix}`;
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
-		const requestedModel = behavior.model ?? a.model;
-		const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
+		const primaryModel = resolveEffectiveSubagentModel(
+			s.model,
+			a.model,
+			ctx.currentModel,
+			availableModels,
+			ctx.currentModelProvider,
+			{ scope: ctx.modelScope },
+		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		const effectiveThinking = thinkingOverride ?? a.thinking;
 		const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);

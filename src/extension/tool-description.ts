@@ -22,6 +22,7 @@ EXECUTION (use exactly ONE mode):
 • CHAIN: { chain: [{agent:"agent-a"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional parallel fan-out
 • PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
 • Optional context: { context: "fresh" | "fork" } (explicit value overrides every child; when omitted, each requested agent uses its own defaultContext, otherwise "fresh"; inspect agent defaults via { action: "list" })
+• Fork thinking: model strings accept a thinking suffix (provider/model:off|minimal|low|medium|high|xhigh|max). Forking over a parent transcript that carries signed Anthropic thinking blocks forces thinking off only when a child's effective primary or fallback model resolves to the Anthropic provider or anthropic-messages API; unresolved models are treated conservatively. The result notes affected children, including on failures. Use fresh context when an Anthropic child needs thinking.
 • Optional timeout: { timeoutMs } or { maxRuntimeMs } sets a run-level max runtime for foreground and async/background runs
 • If { action: "list" } shows proactive skill subagent suggestions, consider a small fresh-context fanout for broad tasks where one of those skills would materially help
 
@@ -40,7 +41,7 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "get", agent: "name" } - full detail; packaged agents use dotted runtime names like "package.agent"
 • { action: "models", agent?: "name" } - show the runtime-loaded builtin subagent model mapping, optionally filtered to one builtin
 • { action: "watchdog.status" | "watchdog.check" | "watchdog.recommend-model" } - inspect the opt-in subagent watchdog and its strong complementary model recommendation
-• { action: "watchdog.configure", model: "recommended" | "inherit" | "provider/model[:thinking]", scope?: "session" | "user" | "project", target?: "main" | "children" | "child", agent?: "name", thinking?: "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" } - configure watchdog model selection; default scope is session, use persistent scopes only when the user asks
+• { action: "watchdog.configure", model: "recommended" | "inherit" | "provider/model[:thinking]", scope?: "session" | "user" | "project", target?: "main" | "children" | "child", agent?: "name", thinking?: "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" } - configure watchdog model selection; default scope is session, use persistent scopes only when the user asks
 • { action: "create", config: { name: "custom-agent", package: "code-analysis", systemPrompt, systemPromptMode, inheritProjectContext, inheritSkills, defaultContext, acceptance, ... } }
 • { action: "update", agent: "code-analysis.custom-agent", config: { package: "analysis", ... } } - merge
 • { action: "delete", agent: "code-analysis.custom-agent" }

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fork-context sanitization no longer disables thinking for every child. Forking over a transcript with signed Anthropic thinking blocks now classifies each child’s effective primary and fallback models through registry provider/API metadata, forces thinking off for Anthropic-backed or unresolved candidates, and reports every downgrade even when the run fails. Other resolved providers keep their requested thinking level. The tool description also documents thinking suffixes, including `max`, and the fork/thinking interaction. Thanks to Jeff (@jefftheai) for #476.
+
 ### Added
 - Added acknowledged async steering: action `steer` returns a correlated request id and waits up to three seconds for child-Pi input acceptance, supports scheduled pending children, records a bounded steering ledger, and fail-closed single-run recovery after confirmed pause within a further 15-second bound. Chain, parallel, and nested runs report per-child partial/failure states without automatic interruption.
 - Added a native, live-refreshing, inspection-only fleet opened by `/subagents-fleet` or `Ctrl+Alt+F`, with current-session foreground and recent async child navigation, transcript detail, and completed output/session paths. The textual status view remains available without a TUI, while stop, steer, and resume stay in explicit commands. Thanks to Jakub Neumann (@neumie) for #454 and Manfred Liiv (@manfredlift) for #412.
