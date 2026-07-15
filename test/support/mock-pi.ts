@@ -22,6 +22,7 @@ interface MockPiResponse {
 		stderr?: string;
 	}>;
 	echoEnv?: string[];
+	missingTools?: string[];
 	matchArgIncludes?: string | string[];
 	/** Files the mock child writes to disk before emitting output, standing in for its write-tool side effects. */
 	writeFiles?: Array<{ path: string; content: string }>;

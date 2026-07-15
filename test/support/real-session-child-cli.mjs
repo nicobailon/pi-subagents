@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
 	fauxAssistantMessage,
 	fauxText,
+	fauxToolCall,
 	registerFauxProvider,
 } from "@earendil-works/pi-ai";
 import {
@@ -112,6 +113,7 @@ function createSessionManager(parsed, cwd) {
 async function main() {
 	const parsed = parseArgs(process.argv.slice(2));
 	const responseText = process.env.PI_SUBAGENTS_E2E_CHILD_TEXT ?? "CHILD_REAL_SESSION_OK";
+	const reportChildTools = process.env.PI_SUBAGENTS_E2E_REPORT_CHILD_TOOLS === "1";
 	const cwd = process.cwd();
 	const ownedAgentDir = process.env.PI_CODING_AGENT_DIR
 		? undefined
@@ -123,8 +125,11 @@ async function main() {
 		models: [{ id: "child", contextWindow: 200_000 }],
 	});
 	const model = faux.getModel();
+	let session;
 	faux.setResponses([
-		() => fauxAssistantMessage(fauxText(responseText), { stopReason: "stop" }),
+		() => process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE
+			? fauxAssistantMessage(fauxToolCall("structured_output", { value: { marker: "STRUCTURED_OUTPUT_OK" } }), { stopReason: "toolUse" })
+			: fauxAssistantMessage(fauxText(reportChildTools ? `ACTIVE_TOOLS:${session?.getActiveToolNames().sort().join(",") ?? ""}` : responseText), { stopReason: "stop" }),
 	]);
 
 	const settingsManager = SettingsManager.inMemory({
@@ -146,7 +151,7 @@ async function main() {
 
 	try {
 		await loader.reload();
-		const { session } = await createAgentSession({
+		const created = await createAgentSession({
 			cwd,
 			agentDir,
 			model,
@@ -156,6 +161,7 @@ async function main() {
 			settingsManager,
 			tools: parsed.tools,
 		});
+		session = created.session;
 
 		session.subscribe((event) => {
 			if (

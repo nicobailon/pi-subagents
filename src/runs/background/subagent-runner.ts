@@ -57,6 +57,7 @@ import {
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.ts";
+import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
@@ -1108,7 +1109,7 @@ async function runSingleStep(
 				childIndex: ctx.flatIndex,
 			})
 			: undefined;
-		const { args, env, tempDir } = buildPiArgs({
+		const { args, env, tempDir, toolDiagnosticPath } = buildPiArgs({
 			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
 			task,
@@ -1175,18 +1176,21 @@ async function runSingleStep(
 				);
 			}
 		}
+		const toolAvailabilityError = run.exitCode === 0 && !run.error
+			? readChildToolDiagnosticError(toolDiagnosticPath)
+			: undefined;
 		cleanupTempDir(tempDir);
 
-		const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
+		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError ? detectSubagentError(run.messages) : null;
 		const missingStructuredOutput = effectiveStructuredOutput
 			? !fs.existsSync(effectiveStructuredOutput.outputPath)
 			: false;
-		const emptyOutputError = run.exitCode === 0 && !run.error && !hiddenError?.hasError && !run.finalOutput.trim() && (!effectiveStructuredOutput || missingStructuredOutput)
+		const emptyOutputError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !run.finalOutput.trim() && (!effectiveStructuredOutput || missingStructuredOutput)
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
-		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !hiddenError?.hasError && !emptyOutputError) {
+		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !emptyOutputError) {
 			const structured = readStructuredOutput({
 				schema: effectiveStructuredOutput.schema,
 				schemaPath: effectiveStructuredOutput.schemaPath,
@@ -1195,7 +1199,7 @@ async function runSingleStep(
 			if (structured.error) structuredError = structured.error;
 			else structuredOutput = structured.value;
 		}
-		const completionGuard = run.exitCode === 0 && !run.error && !hiddenError?.hasError && !emptyOutputError && step.completionGuard !== false
+		const completionGuard = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !emptyOutputError && step.completionGuard !== false
 			? evaluateCompletionMutationGuard({
 				agent: step.agent,
 				task: taskForCompletionGuard,
@@ -1208,18 +1212,17 @@ async function runSingleStep(
 		const completionGuardError = completionGuardTriggered
 			? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
 			: undefined;
-		const effectiveExitCode = completionGuardTriggered
+		const effectiveExitCode = toolAvailabilityError || completionGuardTriggered || structuredError
 			? 1
-			: structuredError
-				? 1
-				: hiddenError?.hasError
+			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
 				: emptyOutputError
 					? 1
 					: run.error && run.exitCode === 0
 						? 1
 						: run.exitCode;
-		const error = completionGuardError
+		const error = toolAvailabilityError
+			?? completionGuardError
 			?? structuredError
 			?? (hiddenError?.hasError
 				? hiddenError.details

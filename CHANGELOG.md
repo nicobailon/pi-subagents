@@ -16,6 +16,7 @@
 - Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
 
 ### Fixed
+- Kept explicit child tool allowlists strict while surfacing actionable errors when named extension tools are requested without a loaded provider. Internal `structured_output` is now admitted automatically when an output schema is active, and direct and chained children share the same registry check. Thanks to DesertThief (@DesertThief) for #429 and Chris-Kode (@Chris-Kode) for confirming the structured-output case.
 - Prevented model fallback retries for trailing child tool failures even when their details resemble provider outages, and retried provider streams that end without `finish_reason`. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #436.
 - Recognized Pi's `max` thinking level in child model suffixes, Clarify selection, watchdog settings, and status formatting, while exposing it only when model metadata explicitly supports it. Thanks to mapleluv (@mapleluvr) for #423.
 - Labeled every chain-clarification shortcut with its action, made the background state explicit, and kept primary actions in a separate footer without widening the fixed 84-column overlay. Thanks to GonzaloRocca (@gonzalonicolasr) for #430.

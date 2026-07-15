@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
@@ -457,7 +458,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 	});
 
 	it("emits explicit builtin tool allowlists", () => {
-		const { args } = buildPiArgs({
+		const { args, env, toolDiagnosticPath } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
@@ -468,6 +469,27 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		const toolsArg = args[args.indexOf("--tools") + 1];
 		assert.equal(toolsArg, "read,grep,find,ls,bash,edit,write,contact_supervisor");
+		assert.deepEqual(JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"), toolsArg.split(","));
+		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
+	});
+
+	it("keeps structured_output available under explicit tool allowlists", () => {
+		const { args, env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read", "fixture_search"],
+			structuredOutput: {
+				schema: { type: "object", properties: {}, additionalProperties: false },
+				schemaPath: "/tmp/schema.json",
+				outputPath: "/tmp/output.json",
+			},
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,fixture_search,structured_output");
+		assert.deepEqual(JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"), ["read", "fixture_search", "structured_output"]);
 	});
 
 	it("adds read to explicit tool allowlists when skills must be loaded lazily", () => {

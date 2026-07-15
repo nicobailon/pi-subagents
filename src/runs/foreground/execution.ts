@@ -52,6 +52,7 @@ import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { readStructuredOutput } from "../shared/structured-output.ts";
+import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
@@ -204,7 +205,7 @@ async function runSingleAttempt(
 			childIndex: options.index ?? 0,
 		})
 		: undefined;
-	const { args, env: sharedEnv, tempDir } = buildPiArgs({
+	const { args, env: sharedEnv, tempDir, toolDiagnosticPath } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
 		sessionEnabled: shared.sessionEnabled,
@@ -289,6 +290,7 @@ async function runSingleAttempt(
 	result.progress = progress;
 	const attemptTimeout = resolveAttemptTimeout(options);
 	if (attemptTimeout?.remainingMs === 0) {
+		cleanupTempDir(tempDir);
 		result.exitCode = 1;
 		result.timedOut = true;
 		result.error = attemptTimeout.message;
@@ -863,11 +865,12 @@ async function runSingleAttempt(
 			void jsonlWriter.close().catch(() => {
 				// JSONL artifact flush is best effort.
 			});
+			const toolDiagnosticError = readChildToolDiagnosticError(toolDiagnosticPath);
 			cleanupTempDir(tempDir);
 			stdoutReader.end();
 			stderrReader.end();
 			const stderr = stderrTail.text();
-			let closeError = result.error ?? assistantError;
+			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();

@@ -8,6 +8,7 @@ import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./s
 import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
+import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, REQUIRED_CHILD_TOOLS_ENV } from "./tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV, encodeChildWatchdogConfig, type ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 
 const TASK_ARG_LIMIT = 8000;
@@ -79,6 +80,7 @@ interface BuildPiArgsResult {
 	args: string[];
 	env: Record<string, string | undefined>;
 	tempDir?: string;
+	toolDiagnosticPath?: string;
 }
 
 function sanitizeSupervisorChannelSegment(value: string): string {
@@ -125,18 +127,21 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		: declaredBuiltinToolsBase;
 	const fanoutAuthorized = declaredBuiltinTools.includes("subagent");
 	const toolExtensionPaths: string[] = [];
+	let requiredChildTools: string[] = [];
 	if (input.tools?.length) {
-		const builtinTools = [...declaredBuiltinTools];
+		const allowedTools = [...declaredBuiltinTools];
 		for (const tool of input.tools) {
 			if (!declaredBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
 				toolExtensionPaths.push(tool);
 			}
 		}
-		if (builtinTools.length > 0) {
+		if (allowedTools.length > 0) {
 			if (input.mcpDirectTools?.length) {
-				builtinTools.push(...resolveMcpDirectToolNames(input.mcpDirectTools, input.cwd));
+				allowedTools.push(...resolveMcpDirectToolNames(input.mcpDirectTools, input.cwd));
 			}
-			args.push("--tools", builtinTools.join(","));
+			if (input.structuredOutput) allowedTools.push("structured_output");
+			requiredChildTools = [...new Set(allowedTools)];
+			args.push("--tools", requiredChildTools.join(","));
 		}
 	}
 
@@ -179,6 +184,13 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 
 	const env: Record<string, string | undefined> = {};
+	let toolDiagnosticPath: string | undefined;
+	if (requiredChildTools.length > 0) {
+		if (!tempDir) tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+		toolDiagnosticPath = path.join(tempDir, "tool-diagnostic.json");
+		env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(requiredChildTools);
+		env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = toolDiagnosticPath;
+	}
 	env[SUBAGENT_CHILD_ENV] = "1";
 	env[SUBAGENT_FANOUT_CHILD_ENV] = fanoutAuthorized ? "1" : "0";
 	const inheritedNestedRoute = Boolean(process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] && process.env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV] && process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV]);
@@ -260,7 +272,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 
-	return { args, env, tempDir };
+	return { args, env, tempDir, toolDiagnosticPath };
 }
 
 export const parseParentPathEnv = parseNestedPathEnv;

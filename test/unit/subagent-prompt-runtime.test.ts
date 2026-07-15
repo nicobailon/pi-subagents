@@ -16,6 +16,7 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 import registerSubagentPromptRuntime, {
@@ -39,6 +40,8 @@ const envSnapshot = {
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
 	PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
+	PI_SUBAGENT_REQUIRED_TOOLS: process.env.PI_SUBAGENT_REQUIRED_TOOLS,
+	PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH: process.env.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH,
 	PI_SUBAGENT_ORCHESTRATOR_TARGET: process.env.PI_SUBAGENT_ORCHESTRATOR_TARGET,
 	PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: process.env.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
 	PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: process.env.PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR,
@@ -84,6 +87,10 @@ afterEach(() => {
 	else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
 	if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
 	else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
+	if (envSnapshot.PI_SUBAGENT_REQUIRED_TOOLS === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
+	else process.env[REQUIRED_CHILD_TOOLS_ENV] = envSnapshot.PI_SUBAGENT_REQUIRED_TOOLS;
+	if (envSnapshot.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH === undefined) delete process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV];
+	else process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = envSnapshot.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH;
 	if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_TARGET === undefined) delete process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV];
 	else process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = envSnapshot.PI_SUBAGENT_ORCHESTRATOR_TARGET;
 	if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID === undefined) delete process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV];
@@ -500,6 +507,42 @@ describe("subagent prompt runtime", () => {
 
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
 		assert.deepEqual(registered, ["contact_supervisor", "intercom"]);
+	});
+
+	it("records and explains requested tools missing from the child registry", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-tool-diagnostic-"));
+		try {
+			const diagnosticPath = path.join(dir, "tools.json");
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const available = ["read"];
+			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "fixture_search"]);
+			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "extension-worker";
+
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				getAllTools: () => available.map((name) => ({ name })),
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }> });
+
+			const missing = await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT }) as { systemPrompt?: string } | undefined;
+			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
+				agent: "extension-worker",
+				required: ["read", "fixture_search"],
+				available: ["read"],
+				missing: ["fixture_search"],
+			});
+			assert.match(missing?.systemPrompt ?? "", /requested unavailable child tools: fixture_search/);
+			assert.match(missing?.systemPrompt ?? "", /subagentOnlyExtensions/);
+
+			available.push("fixture_search");
+			const resolved = await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
+			assert.equal(fs.existsSync(diagnosticPath), false);
+			assert.equal(resolved, undefined);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("sets the child intercom session name from env during agent startup", async () => {

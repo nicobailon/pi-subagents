@@ -1772,6 +1772,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 	});
 
+	it("fails with actionable diagnostics when a requested extension tool is not loaded", async () => {
+		mockPi.onCall({ output: "Model incorrectly claimed success", missingTools: ["fixture_search"] });
+		const agents = [makeAgent("extension-worker", { tools: ["read", "fixture_search"], fallbackModels: ["mock/fallback-model"] })];
+
+		const result = await runSync(tempDir, agents, "extension-worker", "Use fixture search", { runId: "missing-extension-tool" });
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /requested unavailable child tools: fixture_search/);
+		assert.match(result.error ?? "", /subagentOnlyExtensions/);
+		assert.match(result.error ?? "", /strict allowlist/);
+		assert.equal(result.modelAttempts?.length, 1);
+	});
+
 	it("passes custom tool extensions through even when explicit extensions are allowlisted", { skip: process.platform === "win32" ? "extension path resolution intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = [makeAgent("echo", {

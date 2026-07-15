@@ -177,6 +177,22 @@ function writeDeclaredFiles(response) {
 	}
 }
 
+function writeToolDiagnostic(response) {
+	if (!Array.isArray(response.missingTools) || response.missingTools.length === 0) return;
+	const diagnosticPath = process.env.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH;
+	const required = JSON.parse(process.env.PI_SUBAGENT_REQUIRED_TOOLS ?? "[]");
+	if (!diagnosticPath || !Array.isArray(required)) return;
+	const missing = response.missingTools.filter((name) => typeof name === "string" && required.includes(name));
+	const available = required.filter((name) => !missing.includes(name));
+	fs.mkdirSync(path.dirname(diagnosticPath), { recursive: true });
+	fs.writeFileSync(diagnosticPath, JSON.stringify({
+		agent: process.env.PI_SUBAGENT_CHILD_AGENT,
+		required,
+		available,
+		missing,
+	}), "utf-8");
+}
+
 function isJsonMode(args) {
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === "--mode") {
@@ -302,6 +318,7 @@ async function main() {
 		process.on("SIGTERM", () => {});
 	}
 	writeSessionFile(args);
+	writeToolDiagnostic(response);
 	fs.writeFileSync(
 		path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`),
 		JSON.stringify({ args, systemPrompts: readSystemPromptRecords(args) }),
