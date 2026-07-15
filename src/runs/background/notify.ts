@@ -16,7 +16,7 @@ import {
 	createCompletionBatcher,
 	resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
 
 interface ChainStepResult {
 	agent: string;
@@ -27,6 +27,7 @@ interface ChainStepResult {
 export interface SubagentNotifyDetails {
 	agent: string;
 	status: "completed" | "failed" | "paused";
+	source?: "async" | "foreground";
 	taskInfo?: string;
 	resultPreview: string;
 	durationMs?: number;
@@ -36,6 +37,7 @@ export interface SubagentNotifyDetails {
 
 interface SubagentResult {
 	id: string | null;
+	source?: "async" | "foreground";
 	agent: string | null;
 	success: boolean;
 	summary: string;
@@ -72,8 +74,9 @@ function formatSessionLine(details: SubagentNotifyDetails): string | undefined {
 
 export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 	const sessionLine = formatSessionLine(details);
+	const taskKind = details.source === "foreground" ? "Detached foreground task" : "Background task";
 	return [
-		`Background task ${details.status}: **${details.agent}**${details.taskInfo ?? ""}`,
+		`${taskKind} ${details.status}: **${details.agent}**${details.taskInfo ?? ""}`,
 		"",
 		details.resultPreview.trim() ? details.resultPreview : "(no output)",
 		sessionLine ? "" : undefined,
@@ -81,6 +84,37 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 	]
 		.filter((line) => line !== undefined)
 		.join("\n");
+}
+
+export function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | undefined {
+	const lines = content.split("\n");
+	const match = (lines[0] ?? "").match(/^(Background task|Detached foreground task) (completed|failed|paused): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
+	if (!match) return undefined;
+	const body = lines.slice(2);
+	let sessionIndex = -1;
+	for (let i = body.length - 1; i >= 1; i--) {
+		if (body[i - 1]?.trim() === "" && /^(Session|Session file|Session share error):\s+/.test(body[i]!)) {
+			sessionIndex = i;
+			break;
+		}
+	}
+	const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
+	const resultPreview = (sessionIndex >= 0 ? body.slice(0, sessionIndex) : body).join("\n").trim() || "(no output)";
+	let sessionLabel: string | undefined;
+	let sessionValue: string | undefined;
+	if (sessionLine) {
+		const separator = sessionLine.indexOf(":");
+		sessionLabel = sessionLine.slice(0, separator).toLowerCase();
+		sessionValue = sessionLine.slice(separator + 1).trim();
+	}
+	return {
+		agent: match[3]!,
+		status: match[2] as SubagentNotifyDetails["status"],
+		...(match[1] === "Detached foreground task" ? { source: "foreground" as const } : {}),
+		...(match[4] ? { taskInfo: match[4] } : {}),
+		resultPreview,
+		...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
+	};
 }
 
 export function formatGroupedCompletion(details: SubagentNotifyDetails[]): string {
@@ -147,6 +181,7 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
 	return {
 		agent,
 		status,
+		...(result.source ? { source: result.source } : {}),
 		...(taskInfo ? { taskInfo } : {}),
 		resultPreview: summary,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
@@ -199,6 +234,10 @@ export default function registerSubagentNotify(
 		if (markSeenWithTtl(seen, key, now, ttlMs)) return;
 
 		const details = buildCompletionDetails(result);
+		if (result.source === "foreground") {
+			sendCompletion(pi, [details]);
+			return;
+		}
 		const batchKey = completionBatchKey(result);
 		let batcher = batchers.get(batchKey);
 		if (!batcher) {
@@ -221,5 +260,11 @@ export default function registerSubagentNotify(
 		batcher.push(details);
 	};
 
-	globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
+	const unsubscribers = [
+		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
+		pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, handleComplete),
+	].filter((unsubscribe): unsubscribe is () => void => typeof unsubscribe === "function");
+	globalStore[unsubscribeStoreKey] = () => {
+		for (const unsubscribe of unsubscribers) unsubscribe();
+	};
 }

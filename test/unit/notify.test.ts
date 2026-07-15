@@ -5,10 +5,11 @@ import registerSubagentNotify, {
 	buildCompletionDetails,
 	formatGroupedCompletion,
 	formatSingleCompletion,
+	parseSubagentNotifyContent,
 	type RegisterSubagentNotifyOptions,
 	type SubagentNotifyDetails,
 } from "../../src/runs/background/notify.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
 function createPi(currentSessionId = "session-1", registerOptions: RegisterSubagentNotifyOptions = {}) {
 	const events = new EventEmitter();
@@ -115,6 +116,46 @@ describe("registerSubagentNotify", () => {
 			},
 			options: { triggerTurn: true },
 		});
+	});
+
+	it("wakes the originating session with recovered detached foreground output", () => {
+		const { events, sent } = createPi();
+
+		events.emit(SUBAGENT_FOREGROUND_COMPLETE_EVENT, {
+			id: "foreground-run:0",
+			runId: "foreground-run",
+			source: "foreground",
+			agent: "reviewer",
+			success: true,
+			summary: "Recovered final review",
+			exitCode: 0,
+			timestamp: 123,
+			sessionId: "session-1",
+		});
+
+		assert.equal(sent.length, 1);
+		assert.deepEqual(sent[0], {
+			message: {
+				customType: "subagent-notify",
+				content: "Detached foreground task completed: **reviewer**\n\nRecovered final review",
+				display: true,
+			},
+			options: { triggerTurn: true },
+		});
+	});
+
+	it("does not deliver detached foreground completion to another active session", () => {
+		const { events, sent } = createPi("session-2");
+		events.emit(SUBAGENT_FOREGROUND_COMPLETE_EVENT, {
+			id: "foreground-run:0",
+			source: "foreground",
+			agent: "reviewer",
+			success: true,
+			summary: "Recovered final review",
+			timestamp: 123,
+			sessionId: "session-1",
+		});
+		assert.equal(sent.length, 0);
 	});
 
 	it("preserves non-empty completion summaries", () => {
@@ -290,6 +331,25 @@ describe("completion formatting helpers", () => {
 			sessionValue: "/tmp/session.jsonl",
 		});
 		assert.equal(content, "Background task completed: **worker** (2/3)\n\nDone\n\nSession file: /tmp/session.jsonl");
+	});
+
+	it("parses detached foreground notification content for the custom renderer", () => {
+		const content = formatSingleCompletion({
+			agent: "reviewer",
+			status: "failed",
+			source: "foreground",
+			resultPreview: "Acceptance rejected",
+			sessionLabel: "Session file",
+			sessionValue: "/tmp/reviewer.jsonl",
+		});
+		assert.deepEqual(parseSubagentNotifyContent(content), {
+			agent: "reviewer",
+			status: "failed",
+			source: "foreground",
+			resultPreview: "Acceptance rejected",
+			sessionLabel: "session file",
+			sessionValue: "/tmp/reviewer.jsonl",
+		});
 	});
 
 	it("formatGroupedCompletion lists each agent with its summary and session", () => {

@@ -350,7 +350,7 @@ Async does not mean parallel writes. Do not edit the same active worktree while 
 
 Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed.
 
-When there is no independent work left and you just need the next async result, **call `subagent_wait()`** rather than `sleep`/status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery. Use `subagent_wait({ all: true })` to drain every active run, `subagent_wait({ id: "..." })` to block on one run, and `subagent_wait({ timeoutMs })` to cap how long you block.
+When there is no independent work left and you just need the next async result, **call `subagent_wait()`** rather than `sleep`/status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery. Use `subagent_wait({ all: true })` to drain every active async run, `subagent_wait({ id: "..." })` to block on one async run or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap how long you block. If a foreground child detaches for supervisor coordination, reply first, then wait on its id; do not resume or launch a replacement while it remains detached.
 
 Prefer `subagent_wait()` over ending the turn whenever you must keep going to finish the job — inside a skill that has to run to completion, or in any non-interactive run (`pi -p ...`) where the whole task is a single turn. In those cases ending the turn abandons the still-running children, because there is no next turn to receive their completion. Only end the turn to wait when you are in an interactive session and are certain the user will prompt you again; then Pi will wake you when the run finishes.
 
@@ -728,7 +728,7 @@ When you have launched async runs and have no independent work left but must kee
 
 - `subagent_wait()` — return when the next active async run in this session finishes or needs attention.
 - `subagent_wait({ all: true })` — block until every active async run in this session finishes or one needs attention.
-- `subagent_wait({ id: "..." })` — block on one run (id or prefix).
+- `subagent_wait({ id: "..." })` — block on one async run or remembered detached foreground run (id or prefix). For a detached foreground child, reply to the supervisor request first; completion wakes the originating session with recovered output.
 - `subagent_wait({ timeoutMs })` — cap the block; the runs keep going if it elapses.
 
 `subagent_wait()` is the correct way to keep N workers in flight: launch N, call `subagent_wait()`, react to the result, launch a replacement if needed, then call `subagent_wait()` again. Use `subagent_wait({ all: true })` only when you intentionally want to drain the fleet to zero. Reserve ending-the-turn-to-wait for interactive sessions where the user will prompt you again; in a skill that must complete or a non-interactive `pi -p` run there is no next turn, so `subagent_wait()` is required to avoid abandoning live children.

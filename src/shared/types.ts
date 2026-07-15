@@ -442,6 +442,7 @@ export interface AcceptanceReviewResult {
 }
 
 export type AcceptanceLedgerStatus =
+	| "pending"
 	| "not-required"
 	| "claimed"
 	| "attested"
@@ -839,6 +840,7 @@ export interface ForegroundResumeChild {
 	sessionFile?: string;
 	status: SubagentResultStatus;
 	exitCode?: number;
+	error?: string;
 	finalOutput?: string;
 	outputMode?: OutputMode;
 	savedOutputPath?: string;
@@ -847,6 +849,7 @@ export interface ForegroundResumeChild {
 	transcriptPath?: string;
 	transcriptError?: string;
 	detachedReason?: string;
+	acceptance?: AcceptanceLedger;
 	updatedAt?: number;
 }
 
@@ -854,6 +857,8 @@ export interface ForegroundResumeRun {
 	runId: string;
 	mode: SubagentRunMode;
 	cwd: string;
+	/** Originating parent session. Detached exits can outlive the active session. */
+	sessionId?: string;
 	updatedAt: number;
 	children: ForegroundResumeChild[];
 }
@@ -926,6 +931,7 @@ export const INTERCOM_DETACH_REQUEST_EVENT = "pi-intercom:detach-request";
 export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";

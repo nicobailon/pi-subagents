@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
-import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
+import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
+import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -21,7 +22,7 @@ interface ExecutorResult {
 	details?: {
 		mode?: string;
 		runId?: string;
-		results?: Array<{ agent?: string; finalOutput?: string }>;
+		results?: Array<{ agent?: string; finalOutput?: string; acceptance?: { status?: string } }>;
 		asyncId?: string;
 	};
 }
@@ -317,7 +318,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		assert.equal(detachEmitted, true);
 		assert.match(result.content[0]?.text ?? "", /Chain detached for intercom coordination/);
-		assert.doesNotMatch(result.content[0]?.text ?? "", /resume/);
+		assert.match(result.content[0]?.text ?? "", /do not resume or launch a replacement/);
 		assert.equal(bus.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
 		assert.equal(mockPi.callCount(), 1);
 	});
@@ -681,6 +682,144 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.match(transcriptText, /final recovered answer/);
 	});
 
+	it("keeps detached acceptance pending and emits recovered foreground completion to the originating session", async () => {
+		const acceptanceReport = [
+			"final recovered answer",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "review completed" }],
+				changedFiles: ["src/review.ts"],
+				testsAddedOrUpdated: ["test/review.test.ts"],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				validationOutput: ["npm test passed"],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 75, jsonl: [events.assistantMessage(acceptanceReport)] },
+			],
+		});
+		const { executor, events: bus, state } = makeExecutor({ agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })] });
+		let detachEmitted = false;
+		const original = await executor.execute(
+			"foreground-detached-completion-original",
+			{ agent: "a", task: "ask supervisor", acceptance: { level: "checked", criteria: ["Review completed"] } },
+			new AbortController().signal,
+			(update: { details?: { progress?: Array<{ currentTool?: string }> } }) => {
+				if (detachEmitted || !update.details?.progress?.some((entry) => entry.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				bus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "single-detached-completion" });
+			},
+			makeMinimalCtx(tempDir),
+		);
+		const runId = original.details?.runId;
+		assert.ok(runId, "expected foreground run id");
+		assert.equal(original.details?.results?.[0]?.acceptance?.status, "pending");
+		assert.match(original.content[0]?.text ?? "", /subagent_wait\(\{ id:/);
+
+		const waited = await waitForSubagents({ id: runId, timeoutMs: 5000 }, undefined, {
+			state: state as never,
+			events: bus,
+			asyncDirRoot: path.join(tempDir, "async-runs"),
+			resultsDir: path.join(tempDir, "results"),
+		});
+		assert.equal(waited.isError, undefined);
+		assert.match(waited.content[0]?.text ?? "", /remembered detached foreground run/);
+
+		const completion = bus.emitted.find((event) => event.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT);
+		assert.ok(completion, "expected a foreground completion event");
+		const payload = completion.payload as {
+			runId?: string;
+			sessionId?: string;
+			source?: string;
+			summary?: string;
+			success?: boolean;
+		};
+		assert.equal(payload.runId, runId);
+		assert.equal(payload.sessionId, "session-123");
+		assert.equal(payload.source, "foreground");
+		assert.equal(payload.success, true);
+		assert.match(payload.summary ?? "", /final recovered answer/);
+
+		const status = await executor.execute(
+			"foreground-detached-completion-status",
+			{ action: "status", id: runId },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.match(status.content[0]?.text ?? "", /acceptance: checked/);
+	});
+
+	it("preserves deferred acceptance failure details in foreground completion and status", async () => {
+		const rejectedReport = [
+			"final answer with rejected acceptance evidence",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "not-satisfied", evidence: "review found a blocker" }],
+				changedFiles: ["src/review.ts"],
+				testsAddedOrUpdated: ["test/review.test.ts"],
+				commandsRun: [{ command: "npm test", result: "failed", summary: "blocker remains" }],
+				validationOutput: ["blocker remains"],
+				residualRisks: ["review blocker"],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 75, jsonl: [events.assistantMessage(rejectedReport)] },
+			],
+		});
+		const { executor, events: bus, state } = makeExecutor({ agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })] });
+		let detachEmitted = false;
+		const original = await executor.execute(
+			"foreground-detached-failed-acceptance",
+			{ agent: "a", task: "ask supervisor", acceptance: { level: "checked", criteria: ["Review completed"] } },
+			new AbortController().signal,
+			(update: { details?: { progress?: Array<{ currentTool?: string }> } }) => {
+				if (detachEmitted || !update.details?.progress?.some((entry) => entry.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				bus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "single-detached-failed-acceptance" });
+			},
+			makeMinimalCtx(tempDir),
+		);
+		const runId = original.details?.runId;
+		assert.ok(runId);
+		assert.equal(original.details?.results?.[0]?.acceptance?.status, "pending");
+
+		const waited = await waitForSubagents({ id: runId, timeoutMs: 5000 }, undefined, {
+			state: state as never,
+			events: bus,
+			asyncDirRoot: path.join(tempDir, "async-runs"),
+			resultsDir: path.join(tempDir, "results"),
+		});
+		assert.equal(waited.isError, undefined);
+		assert.match(waited.content[0]?.text ?? "", /1 failed/);
+
+		const completion = bus.emitted.find((event) => event.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT);
+		assert.ok(completion);
+		const payload = completion.payload as { success?: boolean; summary?: string };
+		assert.equal(payload.success, false);
+		assert.match(payload.summary ?? "", /Acceptance rejected/);
+		assert.match(payload.summary ?? "", /final answer with rejected acceptance evidence/);
+
+		const status = await executor.execute(
+			"foreground-detached-failed-status",
+			{ action: "status", id: runId },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.match(status.content[0]?.text ?? "", /acceptance: rejected/);
+		assert.match(status.content[0]?.text ?? "", /error: Acceptance rejected/);
+	});
+
 	it("status recovers remembered detached chain output after child exit", async () => {
 		mockPi.onCall({
 			steps: [
@@ -797,6 +936,45 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.match(transcript.content[0]?.text ?? "", /second recovered answer/);
 	});
 
+	it("blocks sibling resume while any remembered foreground child remains detached", async () => {
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a"), makeAgent("b")] });
+		const siblingSession = path.join(tempDir, "completed-sibling.jsonl");
+		fs.writeFileSync(siblingSession, "", "utf-8");
+		state.foregroundRuns.set("mixed-detached-run", {
+			runId: "mixed-detached-run",
+			mode: "parallel",
+			cwd: tempDir,
+			sessionId: "session-123",
+			updatedAt: Date.now(),
+			children: [
+				{ agent: "a", index: 0, status: "detached", updatedAt: Date.now() },
+				{ agent: "b", index: 1, status: "completed", sessionFile: siblingSession, updatedAt: Date.now() },
+			],
+		});
+
+		const status = await executor.execute(
+			"mixed-detached-status",
+			{ action: "status", id: "mixed-detached-run" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const statusText = status.content[0]?.text ?? "";
+		assert.match(statusText, /do not resume or launch a replacement while any child remains detached/);
+		assert.doesNotMatch(statusText, /Revive child:/);
+
+		const resumed = await executor.execute(
+			"mixed-detached-resume",
+			{ action: "resume", id: "mixed-detached-run", index: 1, message: "replace sibling" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(resumed.isError, true);
+		assert.match(resumed.content[0]?.text ?? "", /cannot be revived safely while any child may still be live/);
+		assert.match(resumed.content[0]?.text ?? "", /do not launch a replacement/);
+	});
+
 	it("resume action rejects detached foreground children that may still be live", async () => {
 		mockPi.onCall({
 			steps: [
@@ -848,6 +1026,50 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.doesNotMatch(resumed.content[0]?.text ?? "", /revive only/);
 	});
 
+	it("does not inspect or resume remembered foreground runs from another parent session", async () => {
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
+		const sessionFile = path.join(tempDir, "other-session-child.jsonl");
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		state.foregroundRuns.set("other-session-run", {
+			runId: "other-session-run",
+			mode: "single",
+			cwd: tempDir,
+			sessionId: "session-other",
+			updatedAt: Date.now(),
+			children: [{ agent: "a", index: 0, status: "completed", sessionFile }],
+		});
+
+		const status = await executor.execute(
+			"other-session-status",
+			{ action: "status", id: "other-session-run" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(status.isError, true);
+		assert.doesNotMatch(status.content[0]?.text ?? "", /State: remembered foreground/);
+
+		const fleet = await executor.execute(
+			"other-session-fleet",
+			{ action: "status", view: "fleet" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.doesNotMatch(fleet.content[0]?.text ?? "", /other-session-run/);
+
+		const resumed = await executor.execute(
+			"other-session-resume",
+			{ action: "resume", id: "other-session-run", message: "Follow up" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(resumed.isError, true);
+		assert.doesNotMatch(resumed.content[0]?.text ?? "", /Revived foreground subagent/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("resume action keeps exact foreground validation errors over async prefix matches", async () => {
 		const base = `exact-invalid-${Date.now()}`;
 		const asyncSession = path.join(tempDir, "async-exact-prefix.jsonl");
@@ -869,6 +1091,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				runId: base,
 				mode: "single",
 				cwd: tempDir,
+				sessionId: "session-123",
 				updatedAt: Date.now(),
 				children: [{ agent: "a", index: 0, status: "completed" }],
 			});
@@ -910,6 +1133,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				runId: `${base}-foreground`,
 				mode: "single",
 				cwd: tempDir,
+				sessionId: "session-123",
 				updatedAt: Date.now(),
 				children: [{ agent: "a", index: 0, status: "completed", sessionFile: foregroundSession }],
 			});
@@ -958,6 +1182,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				runId: `${base}-foreground`,
 				mode: "single",
 				cwd: tempDir,
+				sessionId: "session-123",
 				updatedAt: Date.now(),
 				children: [{ agent: "a", index: 0, status: "completed", sessionFile: foregroundSession }],
 			});
@@ -1003,6 +1228,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				runId: foregroundId,
 				mode: "single",
 				cwd: tempDir,
+				sessionId: "session-123",
 				updatedAt: Date.now(),
 				children: [{ agent: "a", index: 0, status: "completed", sessionFile: foregroundSession }],
 			});

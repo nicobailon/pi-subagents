@@ -110,6 +110,18 @@ function resolveAttemptTimeout(options: RunSyncOptions): { timeoutMs: number; re
 	};
 }
 
+function buildPendingAcceptanceLedger(acceptance: ResolvedAcceptanceConfig): AcceptanceLedger {
+	return {
+		status: "pending",
+		explicit: acceptance.explicit,
+		effectiveAcceptance: acceptance,
+		inferredReason: acceptance.inferredReason,
+		criteria: acceptance.criteria,
+		runtimeChecks: [],
+		verifyRuns: [],
+	};
+}
+
 function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfig, input: { id: string; message: string }): AcceptanceLedger {
 	return {
 		status: acceptance.level === "none" ? "not-required" : "rejected",
@@ -851,7 +863,12 @@ async function runSingleAttempt(
 					tokens: recoveredProgress.tokens,
 					durationMs: recoveredProgress.durationMs,
 				};
-				let fullOutput = stripAcceptanceReport(getFinalOutput(recoveredResult.messages ?? []));
+				const acceptanceOutput = getFinalOutput(recoveredResult.messages ?? []).trim()
+					|| recoveredResult.error
+					|| recoveredResult.finalOutput
+					|| "Detached child exited without final output.";
+				acceptanceOutputByResult.set(recoveredResult, acceptanceOutput);
+				let fullOutput = stripAcceptanceReport(acceptanceOutput);
 				fullOutput = fullOutput.trim() || recoveredResult.error || recoveredResult.finalOutput || "Detached child exited without final output.";
 				recoveredResult.outputMode = options.outputMode ?? "inline";
 				if (options.outputPath && recoveredResult.exitCode === 0) {
@@ -1198,12 +1215,49 @@ export async function runSync(
 		}
 	}
 
+	const detachedAwareOptions: RunSyncOptions = options.onDetachedExit
+		? {
+			...options,
+			onDetachedExit: (recoveredResult) => {
+				void (async () => {
+					const childWrittenOutput = options.outputPath
+						? extractChildWrittenOutput(recoveredResult.messages, options.outputPath, options.cwd ?? runtimeCwd)
+						: undefined;
+					recoveredResult.acceptance = await evaluateAcceptance({
+						acceptance: effectiveAcceptance,
+						output: acceptanceOutputByResult.get(recoveredResult) ?? recoveredResult.finalOutput ?? "",
+						fileOutput: childWrittenOutput !== undefined && options.outputPath
+							? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
+							: undefined,
+						cwd: options.cwd ?? runtimeCwd,
+					});
+					const acceptanceFailure = acceptanceFailureMessage(recoveredResult.acceptance);
+					stripAcceptanceReportsFromMessages(recoveredResult.messages);
+					if (acceptanceFailure && recoveredResult.acceptance.explicit && recoveredResult.exitCode === 0) {
+						recoveredResult.exitCode = 1;
+						recoveredResult.error = recoveredResult.error ? `${recoveredResult.error}\n${acceptanceFailure}` : acceptanceFailure;
+						if (recoveredResult.progress) {
+							recoveredResult.progress.status = "failed";
+							recoveredResult.progress.error = recoveredResult.error;
+						}
+					}
+					options.onDetachedExit?.(recoveredResult);
+				})().catch((error) => {
+					const message = error instanceof Error ? error.message : String(error);
+					recoveredResult.exitCode = 1;
+					recoveredResult.error = recoveredResult.error ? `${recoveredResult.error}\nAcceptance evaluation failed: ${message}` : `Acceptance evaluation failed: ${message}`;
+					options.onDetachedExit?.(recoveredResult);
+				});
+			},
+		}
+		: options;
+
 	let lastResult: SingleResult | undefined;
 	const modelsToTry = candidates.length > 0 ? candidates : [undefined];
 	for (let i = 0; i < modelsToTry.length; i++) {
 		const candidate = modelsToTry[i];
 		const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-		const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, options, {
+		const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, detachedAwareOptions, {
 			sessionEnabled,
 			systemPrompt,
 			resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
@@ -1317,7 +1371,7 @@ export async function runSync(
 		? extractChildWrittenOutput(result.messages, options.outputPath, options.cwd ?? runtimeCwd)
 		: undefined;
 	result.acceptance = result.detached
-		? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "detached", message: "Acceptance was not evaluated because the subagent detached for intercom coordination before task completion." })
+		? buildPendingAcceptanceLedger(effectiveAcceptance)
 		: result.timedOut
 			? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." })
 			: result.turnBudgetExceeded

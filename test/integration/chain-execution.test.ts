@@ -1420,7 +1420,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.equal(result.isError, undefined);
 		assert.match(result.content[0]?.text ?? "", /Chain detached for intercom coordination/);
-		assert.doesNotMatch(result.content[0]?.text ?? "", /resume/);
+		assert.match(result.content[0]?.text ?? "", /do not resume or launch a replacement/);
 		assert.equal(detachEmitted, true);
 		assert.equal(result.details.results.some((entry) => entry.detached === true && entry.exitCode === -2), true);
 	});
@@ -1460,7 +1460,7 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.equal(result.isError, undefined);
 		assert.match(result.content[0]?.text ?? "", /Chain detached for intercom coordination/);
-		assert.doesNotMatch(result.content[0]?.text ?? "", /resume/);
+		assert.match(result.content[0]?.text ?? "", /do not resume or launch a replacement/);
 		assert.equal(detachEmitted, true);
 		assert.equal(mockPi.callCount(), 1);
 	});

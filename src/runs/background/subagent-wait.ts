@@ -1,6 +1,6 @@
 /**
- * `subagent_wait` tool: block the current turn until outstanding async
- * subagent runs finish (or another completion notification arrives).
+ * `subagent_wait` tool: block the current turn until outstanding async runs
+ * or a named remembered detached foreground run finishes.
  *
  * Background subagent runs are detached. In an interactive session the parent
  * can end its turn and Pi will wake it with a completion notification. That
@@ -18,8 +18,8 @@
  * manager can use it in a rolling-replacement loop: launch N workers, wait for
  * the next one to finish, spawn its replacement, then call `subagent_wait`
  * again — keeping N in flight instead of draining to zero between batches.
- * Pass `all: true` to block until every tracked run is terminal, or `id` to
- * block on one specific run.
+ * Pass `all: true` to block until every tracked async run is terminal, or `id`
+ * to block on one specific async or remembered detached foreground run.
  *
  * `subagent_wait` also returns when a run needs attention — not just on
  * completion. A child that goes idle or blocks for a decision surfaces
@@ -44,10 +44,12 @@ import {
 	ASYNC_DIR,
 	RESULTS_DIR,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
 	type Details,
+	type ForegroundResumeRun,
 	type SubagentState,
 	type WaitToolConfig,
 } from "../../shared/types.ts";
@@ -137,6 +139,7 @@ export interface SubagentWaitDeps {
 /** Bus channels that indicate a run changed state or needs attention. */
 const WAKE_CHANNELS = [
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
@@ -201,6 +204,26 @@ function matchesId(run: AsyncRunSummary, id: string): boolean {
 	return run.id === id || run.id.startsWith(id);
 }
 
+function activeDetachedForegroundRuns(params: SubagentWaitParams, deps: SubagentWaitDeps): ForegroundResumeRun[] {
+	if (!params.id || !deps.state.foregroundRuns) return [];
+	const sessionId = deps.state.currentSessionId;
+	if (!sessionId) return [];
+	return [...deps.state.foregroundRuns.values()].filter((run) =>
+		(run.runId === params.id || run.runId.startsWith(params.id!))
+		&& run.sessionId === sessionId
+		&& run.children.some((child) => child.status === "detached")
+	);
+}
+
+function summarizeForegroundChildren(run: ForegroundResumeRun, indices: Set<number>): string {
+	const counts = new Map<string, number>();
+	for (const child of run.children) {
+		if (!indices.has(child.index) || child.status === "detached") continue;
+		counts.set(child.status, (counts.get(child.status) ?? 0) + 1);
+	}
+	return [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(", ");
+}
+
 /** A running run that has flagged it needs the parent's attention. */
 function needsAttention(run: AsyncRunSummary): boolean {
 	return run.activityState === "needs_attention";
@@ -259,9 +282,48 @@ function result(text: string, isError = false): AgentToolResult<Details> {
 	};
 }
 
+async function waitForDetachedForegroundRun(
+	run: ForegroundResumeRun,
+	signal: AbortSignal | undefined,
+	deps: SubagentWaitDeps,
+	startedAt: number,
+	now: () => number,
+	pollIntervalMs: number,
+	timeoutMs: number,
+): Promise<AgentToolResult<Details>> {
+	const initialDetachedIndices = new Set(run.children.filter((child) => child.status === "detached").map((child) => child.index));
+	while (true) {
+		if (deps.state.currentSessionId !== run.sessionId) {
+			return result(`Wait stopped because the active session changed while remembered foreground run "${run.runId}" was still detached. Return to the originating session to inspect or wait for it.`, true);
+		}
+		const current = deps.state.foregroundRuns?.get(run.runId);
+		if (!current || current.sessionId !== run.sessionId) {
+			return result(`Remembered foreground run "${run.runId}" disappeared before a terminal child result was recorded. Completion cannot be confirmed; do not launch a replacement without checking the originating child session.`, true);
+		}
+		const pending = current.children.filter((child) => initialDetachedIndices.has(child.index) && child.status === "detached");
+		if (pending.length === 0) {
+			const outcome = summarizeForegroundChildren(current, initialDetachedIndices);
+			return result(
+				`Waited ${formatDuration(now() - startedAt)} for remembered detached foreground run "${run.runId}"; done. Outcome: ${outcome || "no recovered child status"}. Completion event observed; inspect with subagent({ action: "status", id: "${run.runId}" }) for recovered output.`,
+			);
+		}
+		if (signal?.aborted) {
+			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Remembered foreground run "${run.runId}" remains detached.`, true);
+		}
+		if (now() - startedAt >= timeoutMs) {
+			return result(
+				`Wait timed out after ${formatDuration(timeoutMs)} with remembered foreground run "${run.runId}" still detached. Reply to any pending supervisor request, then call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
+				true,
+			);
+		}
+		await waitForWake(pollIntervalMs, signal, deps);
+	}
+}
+
 /**
- * Block until the targeted async runs finish, the timeout elapses, or the turn
- * is aborted. Resolves with a short human-readable summary either way.
+ * Block until the targeted async or remembered detached foreground run finishes,
+ * the timeout elapses, or the turn is aborted. Resolves with a short
+ * human-readable summary either way.
  */
 export async function waitForSubagents(
 	params: SubagentWaitParams,
@@ -282,10 +344,29 @@ export async function waitForSubagents(
 	const waitForAll = params.id ? true : params.all === true;
 
 	let active: AsyncRunSummary[];
+	let foreground: ForegroundResumeRun[];
 	try {
 		active = activeRunsForSession(params, deps);
+		foreground = activeDetachedForegroundRuns(params, deps);
 	} catch (error) {
 		return result(error instanceof Error ? error.message : String(error), true);
+	}
+
+	if (params.id) {
+		const candidates = [
+			...active.map((run) => ({ kind: "async" as const, id: run.id, run })),
+			...foreground.map((run) => ({ kind: "foreground" as const, id: run.runId, run })),
+		];
+		const exact = candidates.filter((candidate) => candidate.id === params.id);
+		const matches = exact.length > 0 ? exact : candidates;
+		if (matches.length > 1) {
+			return result(`Ambiguous subagent run id prefix "${params.id}" matched ${matches.length} active runs: ${matches.map((candidate) => candidate.id).join(", ")}. Pass a longer id.`, true);
+		}
+		const selected = matches[0];
+		if (selected?.kind === "foreground") {
+			return waitForDetachedForegroundRun(selected.run, signal, deps, startedAt, now, pollIntervalMs, timeoutMs);
+		}
+		active = selected?.kind === "async" ? [selected.run] : [];
 	}
 
 	if (active.length === 0) {
@@ -293,13 +374,6 @@ export async function waitForSubagents(
 			? `No active run matched "${params.id}". Nothing to wait for.`
 			: "No active async runs in this session. Nothing to wait for.";
 		return result(finished);
-	}
-	if (params.id) {
-		const exact = active.filter((run) => run.id === params.id);
-		if (exact.length === 1) active = exact;
-		else if (active.length > 1) {
-			return result(`Ambiguous async run id prefix "${params.id}" matched ${active.length} active runs: ${active.map((run) => run.id).join(", ")}. Pass a longer id.`, true);
-		}
 	}
 	const waitParams = params.id ? { ...params, id: active[0]!.id } : params;
 

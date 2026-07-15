@@ -589,7 +589,9 @@ You can combine them in either order:
 /run reviewer "review this diff" --bg --fork
 ```
 
-Background runs are detached. If the parent agent has other independent work, it should keep working. When it has nothing useful to do until a background result arrives, it should call `subagent_wait` instead of running sleep or status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery; use `subagent_wait({ all: true })` to drain every active run, `subagent_wait({ id })` for one run, and `subagent_wait({ timeoutMs })` to cap the block.
+Background runs are detached. If the parent agent has other independent work, it should keep working. When it has nothing useful to do until a background result arrives, it should call `subagent_wait` instead of running sleep or status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery; use `subagent_wait({ all: true })` to drain every active async run, `subagent_wait({ id })` for one async run or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block.
+
+A foreground child can detach while it waits for a supervisor reply. Reply first, then call `subagent_wait({ id: runId })`. The remembered run stays pending until the child exits, then emits a session-scoped completion notification with recovered output and remains inspectable through `subagent({ action: "status", id: runId })`. Do not call `resume` or launch a replacement while the child remains detached.
 
 `subagent_wait` is what lets a background-launching skill keep moving in a single turn, including non-interactive `pi -p` invocations where there is no subsequent turn to receive a completion notification. Ending the turn to wait for a completion only works in an interactive session where the user will prompt the agent again; in a run-to-completion skill or a non-interactive run, use `subagent_wait` so the still-running children are not abandoned.
 
