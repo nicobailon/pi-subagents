@@ -1211,7 +1211,7 @@ export async function runSync(
 	if (memoryInjection) {
 		systemPrompt = systemPrompt ? `${systemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	}
-	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
+	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath, agent);
 
 	const candidates = buildModelCandidates(
 		options.modelOverride ?? agent.model,

@@ -100,13 +100,11 @@ interface CompletionMutationGuardResult {
 
 type TaskMutationIntent = { kind: "implementation" } | { kind: "read-only" } | { kind: "unknown" };
 
-type ToolMutationCapability = { kind: "mutation-capable" } | { kind: "read-only" };
-
 function stripFrameworkInstructions(task: string): string {
 	return task
 		.split("\n")
 		.filter((line) => !/^\s*\[(?:Write to|Read from):/i.test(line))
-		.filter((line) => !/^\s*(?:Create and maintain progress at:|Update progress at:|\*\*Output:\*\*|Write your findings to(?: exactly this path)?:|This path is authoritative for this run\.|Ignore any other output filename or output path mentioned elsewhere)/i.test(line))
+		.filter((line) => !/^\s*(?:Create and maintain progress at:|Update progress at:|\*\*Output:\*\*|Write your findings to(?: exactly this path)?:|Return the complete artifact in your final response\.|The runtime will persist it to exactly this path:|Do not call contact_supervisor merely because no write-capable tool is available\.|This path is authoritative for this run\.|Ignore any other output filename or output path mentioned elsewhere)/i.test(line))
 		.join("\n");
 }
 
@@ -128,9 +126,9 @@ function taskHasReadOnlyDeliverable(taskText: string): boolean {
 	return READ_ONLY_DELIVERABLE_PATTERNS.some((pattern) => pattern.test(taskText));
 }
 
-function toolMutationCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): ToolMutationCapability {
-	if (tools === undefined || tools.length === 0 || (mcpDirectTools?.length ?? 0) > 0) return { kind: "mutation-capable" };
-	return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool)) ? { kind: "read-only" } : { kind: "mutation-capable" };
+export function hasMutationToolCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {
+	if (tools === undefined || tools.length === 0 || (mcpDirectTools?.length ?? 0) > 0) return true;
+	return !tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
 }
 
 function classifyTaskMutationIntent(agent: string, task: string): TaskMutationIntent {
@@ -171,9 +169,9 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
-	const expectedMutation = toolMutationCapability(input.tools, input.mcpDirectTools).kind === "read-only"
-		? false
-		: expectsImplementationMutation(input.agent, input.task);
+	const expectedMutation = hasMutationToolCapability(input.tools, input.mcpDirectTools)
+		? expectsImplementationMutation(input.agent, input.task)
+		: false;
 	const attemptedMutation = hasMutationToolCall(input.messages);
 	return {
 		expectedMutation,

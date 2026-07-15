@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
+import { hasMutationToolCapability } from "./completion-guard.ts";
 
 export interface SingleOutputSnapshot {
 	exists: boolean;
@@ -75,22 +76,34 @@ export function resolveSingleOutputPath(
 	return path.resolve(baseCwd, output);
 }
 
-function formatOutputPathInstruction(outputPath: string): string {
+interface OutputInstructionCapabilities {
+	tools?: string[];
+	mcpDirectTools?: string[];
+}
+
+function formatOutputPathInstruction(outputPath: string, capabilities?: OutputInstructionCapabilities): string {
+	const delivery = !capabilities || hasMutationToolCapability(capabilities.tools, capabilities.mcpDirectTools)
+		? `Write your findings to exactly this path: ${outputPath}`
+		: [
+			"Return the complete artifact in your final response.",
+			`The runtime will persist it to exactly this path: ${outputPath}`,
+			"Do not call contact_supervisor merely because no write-capable tool is available.",
+		].join("\n");
 	return [
-		`Write your findings to exactly this path: ${outputPath}`,
+		delivery,
 		"This path is authoritative for this run.",
 		"Ignore any other output filename or output path mentioned elsewhere, including output destinations in the base agent prompt, system prompt, or task instructions.",
 	].join("\n");
 }
 
-export function injectSingleOutputInstruction(task: string, outputPath: string | undefined): string {
+export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
 	if (!outputPath) return task;
-	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath)}`;
+	return `${task}\n\n---\n**Output:**\n${formatOutputPathInstruction(outputPath, capabilities)}`;
 }
 
-export function injectOutputPathSystemPrompt(systemPrompt: string, outputPath: string | undefined): string {
+export function injectOutputPathSystemPrompt(systemPrompt: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
 	if (!outputPath) return systemPrompt;
-	const instruction = `Runtime output path override:\n${formatOutputPathInstruction(outputPath)}`;
+	const instruction = `Runtime output path override:\n${formatOutputPathInstruction(outputPath, capabilities)}`;
 	return systemPrompt ? `${systemPrompt}\n\n${instruction}` : instruction;
 }
 

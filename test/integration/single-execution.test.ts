@@ -1353,6 +1353,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(systemPrompt, /Ignore any other output filename or output path mentioned elsewhere/);
 	});
 
+	it("persists read-only file-only output without requiring a child write tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "complete read-only analysis" });
+		const outputPath = path.join(tempDir, "read-only-analysis.md");
+		const executor = makeExecutor([makeAgent("analyst", {
+			tools: ["read", "grep", "find", "ls"],
+			systemPrompt: "Analyze without modifying files.",
+		})]);
+
+		const result = await executor.execute(
+			"single-read-only-output",
+			{ agent: "analyst", task: "Analyze the runtime", output: outputPath, outputMode: "file-only", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const call = readCall();
+		const taskArg = call.args.at(-1) ?? "";
+		const systemPrompt = call.systemPrompts[0]?.text ?? "";
+		assert.equal(result.isError, undefined);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "complete read-only analysis");
+		assert.match(result.content[0]?.text ?? "", /Output saved to:/);
+		for (const instruction of [taskArg, systemPrompt]) {
+			assert.match(instruction, /Return the complete artifact in your final response\./);
+			assert.match(instruction, /runtime will persist it to exactly this path:/);
+			assert.match(instruction, /Do not call contact_supervisor merely because no write-capable tool is available\./);
+			assert.doesNotMatch(instruction, /Write your findings to exactly this path/);
+		}
+	});
+
 	it("treats string false as disabled output in foreground single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "inline report" });
 		const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);

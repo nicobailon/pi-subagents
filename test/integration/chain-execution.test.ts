@@ -313,7 +313,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 	it("passes file-only saved-output references through {previous}", async () => {
 		mockPi.onCall({ output: "full chain output\nwith details" });
-		const agents = [makeAgent("analyst"), makeAgent("reporter")];
+		const agents = [makeAgent("analyst", { tools: ["read", "grep", "find", "ls"] }), makeAgent("reporter")];
 
 		const result = await executeChain(
 			makeChainParams(
@@ -327,6 +327,13 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const firstTaskArg = readCallArgs(0).at(-1) ?? "";
+		assert.match(firstTaskArg, /Return the complete artifact in your final response\./);
+		assert.match(firstTaskArg, /runtime will persist it to exactly this path: .*analysis\.md/);
+		assert.match(firstTaskArg, /Do not call contact_supervisor merely because no write-capable tool is available\./);
+		assert.doesNotMatch(firstTaskArg, /\[Write to:|Write your findings to exactly this path/);
+		assert.ok(result.details.results[0]?.savedOutputPath);
+		assert.equal(fs.readFileSync(result.details.results[0].savedOutputPath, "utf-8"), "full chain output\nwith details");
 		assert.match(result.details.results[0]?.finalOutput ?? "", /Output saved to:/);
 		assert.doesNotMatch(result.details.results[0]?.finalOutput ?? "", /full chain output/);
 		const secondTaskArg = readCallArgs(1).at(-1) ?? "";

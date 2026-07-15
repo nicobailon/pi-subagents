@@ -2379,9 +2379,11 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			? buildChainInstructions({ ...behavior, output: false, reads: false }, input.progressDir, index === input.firstProgressIndex)
 			: { prefix: "", suffix: "" };
 		const outputPath = resolveSingleOutputPath(behavior?.output, input.ctx.cwd, taskCwd, input.outputBaseDir);
+		const agentConfig = input.agents.find((agent) => agent.name === task.agent);
 		const taskText = injectSingleOutputInstruction(
 			`${readInstructions.prefix}${input.taskTexts[index]!}${progressInstructions.suffix}`,
 			outputPath,
+			agentConfig,
 		);
 		const interruptController = new AbortController();
 		if (input.foregroundControl) {
@@ -2397,7 +2399,6 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				return true;
 			};
 		}
-		const agentConfig = input.agents.find((agent) => agent.name === task.agent);
 		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			cwd: taskCwd,
@@ -2981,7 +2982,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (validationError) {
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
 	}
-	task = injectSingleOutputInstruction(task, outputPath);
+	task = injectSingleOutputInstruction(task, outputPath, agentConfig);
 
 	let effectiveSkills: string[] | undefined;
 	if (skillOverride === false) {

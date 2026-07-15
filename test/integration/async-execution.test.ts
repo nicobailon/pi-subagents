@@ -937,7 +937,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		it(`async top-level parallel isolates inherited output (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 			mockPi.onCall({ matchArgIncludes: "Write the first report", output: "first async report" });
 			mockPi.onCall({ matchArgIncludes: "Write the second report", output: "second async report" });
-			const agent = makeAgent("worker", { output: "context.md" });
+			const agent = makeAgent("worker", { output: "context.md", tools: ["read", "grep", "find", "ls"] });
 			const executor = makeAsyncExecutor([agent]);
 			const tasks = [
 				{ agent: "worker", task: "Write the first report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
@@ -970,8 +970,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(fs.readFileSync(artifactPaths[1], "utf-8"), "second async report");
 			const calls = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).sort();
 			const taskArgs = calls.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args?.at(-1) ?? "");
-			assert.ok(taskArgs.find((task) => task.includes("Write the first report"))?.includes(path.join("parallel-0", "0-worker", "context.md")));
-			assert.ok(taskArgs.find((task) => task.includes("Write the second report"))?.includes(path.join("parallel-0", "1-worker", "context.md")));
+			const firstTask = taskArgs.find((task) => task.includes("Write the first report")) ?? "";
+			const secondTask = taskArgs.find((task) => task.includes("Write the second report")) ?? "";
+			assert.ok(firstTask.includes(path.join("parallel-0", "0-worker", "context.md")));
+			assert.ok(secondTask.includes(path.join("parallel-0", "1-worker", "context.md")));
+			for (const taskArg of [firstTask, secondTask]) {
+				assert.match(taskArg, /Return the complete artifact in your final response\./);
+				assert.match(taskArg, /Do not call contact_supervisor merely because no write-capable tool is available\./);
+				assert.doesNotMatch(taskArg, /Write your findings to exactly this path/);
+			}
 		});
 	}
 
@@ -1999,9 +2006,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 		const outputPath = path.join(tempDir, "async-file-only.md");
 		const run = executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Do work",
-			agentConfig: makeAgent("worker"),
+			agent: "analyst",
+			task: "Analyze without modifying files",
+			agentConfig: makeAgent("analyst", { tools: ["read", "grep", "find", "ls"] }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -2019,6 +2026,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 
 		assert.equal(run.details.asyncId, id);
+		const call = await waitForMockPiCall(mockPi, 0);
+		const taskArg = call.args.at(-1) ?? "";
+		const systemPrompt = call.systemPrompts[0]?.text ?? "";
+		for (const instruction of [taskArg, systemPrompt]) {
+			assert.match(instruction, /Return the complete artifact in your final response\./);
+			assert.match(instruction, /runtime will persist it to exactly this path:/);
+			assert.match(instruction, /Do not call contact_supervisor merely because no write-capable tool is available\./);
+			assert.doesNotMatch(instruction, /Write your findings to exactly this path/);
+		}
 		const deadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);

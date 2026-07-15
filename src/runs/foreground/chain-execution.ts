@@ -65,7 +65,7 @@ import {
 } from "../../shared/types.ts";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
-import { validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectSingleOutputInstruction, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -248,9 +248,10 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 
 			const taskTemplate = input.parallelTemplates[taskIndex] ?? "{previous}";
 			const behavior = suppressProgressForReadOnlyTask(input.parallelBehaviors[taskIndex]!, taskTemplate, input.originalTask);
+			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
 			const templateHasPrevious = taskTemplate.includes("{previous}");
 			const { prefix, suffix } = buildChainInstructions(
-				behavior,
+				{ ...behavior, output: false },
 				input.chainDir,
 				false,
 				templateHasPrevious ? undefined : input.prev,
@@ -263,7 +264,6 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const cleanTask = taskStr;
 			taskStr = prefix + taskStr + suffix;
 
-			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
 			const effectiveModel = resolveSubagentModelOverride(
 				task.model ?? taskAgentConfig?.model,
 				input.ctx.model,
@@ -282,6 +282,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(input.chainDir, behavior.output))
 				: undefined;
+			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
 			if (input.foregroundControl) {
 				input.foregroundControl.currentAgent = task.agent;
@@ -1096,7 +1097,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 
 			const templateHasPrevious = stepTemplate.includes("{previous}");
 			const { prefix, suffix } = buildChainInstructions(
-				behavior,
+				{ ...behavior, output: false },
 				chainDir,
 				isFirstProgress,
 				templateHasPrevious ? undefined : prev,
@@ -1121,6 +1122,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
 				: undefined;
+			stepTask = injectSingleOutputInstruction(stepTask, outputPath, agentConfig);
 			const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Chain step ${stepIndex + 1} (${seqStep.agent})`);
 			if (validationError) {
 				return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));

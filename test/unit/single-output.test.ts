@@ -82,11 +82,19 @@ describe("resolveSingleOutputPath", () => {
 });
 
 describe("injectSingleOutputInstruction", () => {
-	it("appends output instruction with resolved path", () => {
-		const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md");
+	it("appends direct-write instructions for mutation-capable agents", () => {
+		const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] });
 		assert.match(output, /Write your findings to exactly this path: \/tmp\/report.md/);
 		assert.match(output, /This path is authoritative for this run\./);
 		assert.match(output, /Ignore any other output filename or output path mentioned elsewhere/);
+	});
+
+	it("tells read-only agents to return the artifact for runtime persistence", () => {
+		const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "grep", "find", "ls"] });
+		assert.match(output, /Return the complete artifact in your final response\./);
+		assert.match(output, /runtime will persist it to exactly this path: \/tmp\/report\.md/);
+		assert.match(output, /Do not call contact_supervisor merely because no write-capable tool is available\./);
+		assert.doesNotMatch(output, /Write your findings to exactly this path/);
 	});
 });
 
@@ -97,6 +105,13 @@ describe("injectOutputPathSystemPrompt", () => {
 		assert.match(output, /Runtime output path override:/);
 		assert.match(output, /Write your findings to exactly this path: \/tmp\/new\.md/);
 		assert.match(output, /Ignore any other output filename or output path mentioned elsewhere/);
+	});
+
+	it("uses runtime-persistence instructions in read-only system prompts", () => {
+		const output = injectOutputPathSystemPrompt("Analyze only", "/tmp/new.md", { tools: ["read"] });
+		assert.match(output, /Return the complete artifact in your final response\./);
+		assert.match(output, /runtime will persist it to exactly this path: \/tmp\/new\.md/);
+		assert.doesNotMatch(output, /Write your findings to exactly this path/);
 	});
 
 	it("leaves prompts unchanged when no output path is active", () => {

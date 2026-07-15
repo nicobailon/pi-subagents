@@ -2501,8 +2501,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				const taskText = task.task ?? step.parallel.task;
 				return {
 					...step.parallel,
-					task: step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath) : taskText,
-					systemPrompt: step.parallel.namespaceOutputPath ? injectOutputPathSystemPrompt(step.parallel.systemPrompt ?? "", outputPath) : step.parallel.systemPrompt,
+					task: step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText,
+					systemPrompt: step.parallel.namespaceOutputPath ? injectOutputPathSystemPrompt(step.parallel.systemPrompt ?? "", outputPath, step.parallel) : step.parallel.systemPrompt,
 					outputPath,
 					label: task.label ?? step.parallel.label,
 					...(step.sessionFiles?.[itemIndex] ? { sessionFile: step.sessionFiles[itemIndex] } : {}),

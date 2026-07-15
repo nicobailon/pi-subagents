@@ -453,14 +453,14 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (behavior.progress) progressInstructionCreated = true;
 		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
 		const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, instructionCwd, outputBaseDir);
-		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath);
+		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, a);
 		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
 		let taskTemplate = s.task ?? "{previous}";
 		taskTemplate = taskTemplate.replace(/\{task\}/g, originalTask ?? "");
 		taskTemplate = taskTemplate.replace(/\{chain_dir\}/g, runnerCwd);
 		const taskText = `${readInstructions.prefix}${taskTemplate}${progressInstructions.suffix}`;
-		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath);
+		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
 		const requestedModel = behavior.model ?? a.model;
 		const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
@@ -928,11 +928,11 @@ export function executeAsyncSingle(
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
-	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath);
+	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
-	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath);
+	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath, agentConfig);
 	const primaryModel = resolveSubagentModelOverride(
 		params.modelOverride ?? agentConfig.model,
 		ctx.currentModel,
