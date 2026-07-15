@@ -39,7 +39,7 @@ import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "../runs/background/subagent-wait.ts";
-import registerSubagentNotify, { type SubagentNotifyDetails } from "../runs/background/notify.ts";
+import registerSubagentNotify, { parseSubagentNotifyContent, type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
@@ -177,38 +177,6 @@ function createSlashResultComponent(
 		return Container.prototype.render.call(container, width);
 	};
 	return container;
-}
-
-function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | undefined {
-	const lines = content.split("\n");
-	const header = lines[0] ?? "";
-	const match = header.match(/^Background task (completed|failed|paused): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
-	if (!match) return undefined;
-	const body = lines.slice(2);
-	let sessionIndex = -1;
-	for (let i = body.length - 1; i >= 1; i--) {
-		if (body[i - 1]?.trim() === "" && /^(Session|Session file|Session share error):\s+/.test(body[i]!)) {
-			sessionIndex = i;
-			break;
-		}
-	}
-	const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
-	const resultLines = sessionIndex >= 0 ? body.slice(0, sessionIndex) : body;
-	const resultPreview = resultLines.join("\n").trim() || "(no output)";
-	let sessionLabel: string | undefined;
-	let sessionValue: string | undefined;
-	if (sessionLine) {
-		const separator = sessionLine.indexOf(":");
-		sessionLabel = sessionLine.slice(0, separator).toLowerCase();
-		sessionValue = sessionLine.slice(separator + 1).trim();
-	}
-	return {
-		agent: match[2]!,
-		status: match[1] as SubagentNotifyDetails["status"],
-		...(match[3] ? { taskInfo: match[3] } : {}),
-		resultPreview,
-		...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
-	};
 }
 
 class SubagentControlNoticeComponent implements Component {
@@ -528,7 +496,7 @@ Use this after launching async subagents when you have no independent work left 
 
 • { } — return as soon as the FIRST active run finishes (default). Ideal for a rolling fleet: launch N, wait, spawn a replacement for the one that finished, then call subagent_wait again — keeping N in flight.
 • { all: true } — block until EVERY active run in this session is finished.
-• { id: "..." } — wait for one specific run (id or prefix) to finish.
+• { id: "..." } — wait for one specific async run or remembered detached foreground run (id or prefix) to finish.
 • { timeoutMs: 600000 } — stop waiting after N ms (the runs keep going regardless; default 30 min)
 
 subagent_wait also returns when a run needs attention (a child that went idle or blocked for a decision), not only on completion — so a stuck child never stalls the loop; the summary names the run(s) to inspect/nudge/resume/interrupt. It wakes the instant a completion or control event arrives (subscribed to Pi's event bus, with a poll fallback that reconciles crashed runners), keeps the turn alive for normal notification delivery, and resolves early if the turn is aborted.${waitToolConfig.enabled ? "" : "\n\nConfigured behavior: subagent_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`,

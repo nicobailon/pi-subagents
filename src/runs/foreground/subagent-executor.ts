@@ -102,6 +102,7 @@ import {
 	SUBAGENT_ACTIONS,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	checkSubagentDepth,
 	resolveMaxSubagentSpawnsPerSession,
 	resolveTopLevelParallelConcurrency,
@@ -213,6 +214,7 @@ interface ExecutionContextData {
 	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
 	modelScope?: ModelScopeConfig;
+	parentSessionId: string | null;
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -320,13 +322,15 @@ function foregroundStatusResult(control: SubagentState["foregroundControls"] ext
 function trimRememberedForegroundRuns(state: SubagentState): void {
 	if (!state.foregroundRuns) return;
 	while (state.foregroundRuns.size > 50) {
-		const oldest = [...state.foregroundRuns.values()].sort((left, right) => left.updatedAt - right.updatedAt)[0];
-		if (!oldest) break;
-		state.foregroundRuns.delete(oldest.runId);
+		const oldestTerminal = [...state.foregroundRuns.values()]
+			.filter((run) => !run.children.some((child) => child.status === "detached"))
+			.sort((left, right) => left.updatedAt - right.updatedAt)[0];
+		if (!oldestTerminal) break;
+		state.foregroundRuns.delete(oldestTerminal.runId);
 	}
 }
 
-function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; results: SingleResult[] }): void {
+function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[] }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -334,6 +338,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 		runId: input.runId,
 		mode: input.mode,
 		cwd: input.cwd,
+		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		updatedAt,
 		children: input.results.map((result, index) => {
 			const child = {
@@ -342,6 +347,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
 				updatedAt,
 				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+				...(result.error ? { error: result.error } : {}),
 				...(result.finalOutput ? { finalOutput: result.finalOutput } : {}),
 				...(result.outputMode ? { outputMode: result.outputMode } : {}),
 				...(result.savedOutputPath ? { savedOutputPath: result.savedOutputPath } : {}),
@@ -351,6 +357,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.transcriptPath ? { transcriptPath: result.transcriptPath } : {}),
 				...(result.transcriptError ? { transcriptError: result.transcriptError } : {}),
 				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
+				...(result.acceptance ? { acceptance: result.acceptance } : {}),
 			};
 			const recovered = previous?.children[index];
 			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
@@ -359,12 +366,12 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 	trimRememberedForegroundRuns(state);
 }
 
-function updateRememberedForegroundChild(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; index: number; result: SingleResult }): void {
+function updateRememberedForegroundChild(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; index: number; result: SingleResult; events: IntercomEventBus }): void {
 	state.foregroundRuns ??= new Map();
 	const updatedAt = Date.now();
 	let run = state.foregroundRuns.get(input.runId);
 	if (!run) {
-		run = { runId: input.runId, mode: input.mode, cwd: input.cwd, updatedAt, children: [] };
+		run = { runId: input.runId, mode: input.mode, cwd: input.cwd, ...(input.sessionId ? { sessionId: input.sessionId } : {}), updatedAt, children: [] };
 		state.foregroundRuns.set(input.runId, run);
 	}
 	run.updatedAt = updatedAt;
@@ -373,9 +380,12 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...child,
 		agent: input.result.agent,
 		index: input.index,
-		status: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
+		status: input.result.acceptance?.status === "rejected"
+			? "failed"
+			: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
 		updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
+		...(input.result.error ? { error: input.result.error } : {}),
 		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
 		outputMode: input.result.outputMode,
 		savedOutputPath: input.result.savedOutputPath,
@@ -385,24 +395,47 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.transcriptPath ? { transcriptPath: input.result.transcriptPath } : {}),
 		...(input.result.transcriptError ? { transcriptError: input.result.transcriptError } : {}),
 		...(input.result.detachedReason ? { detachedReason: input.result.detachedReason } : {}),
+		...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 	};
 	trimRememberedForegroundRuns(state);
+	const output = getSingleResultOutput(input.result).trim();
+	const success = input.result.exitCode === 0 && input.result.acceptance?.status !== "rejected";
+	const summary = !success && input.result.error
+		? `${input.result.error}${output ? `\n\nOutput:\n${output}` : ""}`
+		: output || input.result.error || "Detached child exited without final output.";
+	input.events.emit(SUBAGENT_FOREGROUND_COMPLETE_EVENT, {
+		id: `${input.runId}:${input.index}`,
+		runId: input.runId,
+		source: "foreground",
+		mode: input.mode,
+		agent: input.result.agent,
+		success,
+		summary,
+		exitCode: input.result.exitCode,
+		state: success ? "complete" : "failed",
+		timestamp: updatedAt,
+		cwd: input.cwd,
+		sessionFile: input.result.sessionFile,
+		sessionId: input.sessionId,
+		taskIndex: input.index,
+	});
 }
 
 function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; intercomTarget: string; cwd: string; sessionFile: string } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
-	if (!requested || !state.foregroundRuns?.size) return undefined;
-	const direct = state.foregroundRuns.get(requested);
-	const matches = direct ? [direct] : [...state.foregroundRuns.values()].filter((run) => run.runId.startsWith(requested));
+	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
+	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId);
+	const direct = sessionRuns.find((run) => run.runId === requested);
+	const matches = direct ? [direct] : sessionRuns.filter((run) => run.runId.startsWith(requested));
 	if (matches.length === 0) return undefined;
 	if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((run) => run.runId).join(", ")}. Provide a longer id.`);
 	const run = matches[0]!;
+	if (run.children.some((child) => child.status === "detached")) throw new Error(`Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); use status to recover the result and do not launch a replacement while it remains detached.`);
 	if (run.children.length > 1 && params.index === undefined) throw new Error(`Foreground run '${run.runId}' has ${run.children.length} children. Provide index to choose one.`);
 	const index = params.index ?? 0;
 	if (!Number.isInteger(index)) throw new Error(`Foreground run '${run.runId}' index must be an integer.`);
 	if (index < 0 || index >= run.children.length) throw new Error(`Foreground run '${run.runId}' has ${run.children.length} children. Index ${index} is out of range.`);
 	const child = run.children[index]!;
-	if (child.status === "detached") throw new Error(`Foreground run '${run.runId}' child ${index} is detached for intercom coordination and cannot be revived safely from the remembered foreground state. Reply to the supervisor request first; after the child exits, start a fresh follow-up if needed.`);
 	if (!child.sessionFile) throw new Error(`Foreground run '${run.runId}' child ${index} does not have a persisted session file to resume from.`);
 	if (path.extname(child.sessionFile) !== ".jsonl") throw new Error(`Foreground run '${run.runId}' child ${index} session file must be a .jsonl file: ${child.sessionFile}`);
 	const sessionFile = path.resolve(child.sessionFile);
@@ -1028,6 +1061,7 @@ async function resumeAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+	input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
 
 	let target: ResumeSourceTarget;
 	const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
@@ -2089,7 +2123,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		timeoutMs: data.timeoutMs,
 		deadlineAt: data.deadlineAt,
 		turnBudget: data.turnBudget,
-		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, index, result }),
+		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events }),
 		toolBudget: data.toolBudget,
 		configToolBudget: data.configToolBudget,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
@@ -2153,7 +2187,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		rawChainDetails.totalCost = sumResultsCost(rawChainDetails.results);
 	}
 	const chainDetails = rawChainDetails ? compactForegroundDetails(rawChainDetails) : undefined;
-	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, results: chainDetails.results });
+	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, results: chainDetails.results });
 	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached)
 		? await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
@@ -2182,6 +2216,7 @@ interface ForegroundParallelRunInput {
 	ctx: ExtensionContext;
 	state: SubagentState;
 	intercomEvents: IntercomEventBus;
+	parentSessionId: string | null;
 	signal: AbortSignal;
 	runId: string;
 	sessionDirForIndex: (idx?: number) => string | undefined;
@@ -2383,7 +2418,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			maxSubagentDepth: input.maxSubagentDepths[index],
 			controlConfig: input.controlConfig,
 			onControlEvent: input.onControlEvent,
-			onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, index, result }),
+			onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, sessionId: input.parentSessionId, index, result, events: input.intercomEvents }),
 			intercomSessionName: input.childIntercomTarget?.(task.agent, index),
 			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 			nestedRoute: input.foregroundControl?.nestedRoute,
@@ -2683,6 +2718,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			ctx,
 			state: deps.state,
 			intercomEvents: deps.pi.events,
+			parentSessionId: data.parentSessionId,
 			signal,
 			runId,
 			sessionDirForIndex,
@@ -2742,7 +2778,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			totalChildUsage: sumResultsUsage(results),
 			totalCost: sumResultsCost(results),
 		});
-		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, results: details.results });
+		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
 		if (interrupted) {
 			return {
 				content: [{ type: "text", text: `Parallel run paused after interrupt (${interrupted.agent}). Waiting for explicit next action.` }],
@@ -2753,7 +2789,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const detached = detachedIndex >= 0 ? results[detachedIndex] : undefined;
 		if (detached) {
 			return {
-				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
+				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
 				details,
 			};
 		}
@@ -3022,7 +3058,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		skills: effectiveSkills,
 		acceptance: params.acceptance,
 		acceptanceContext: { mode: "single" },
-		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, index: 0, result }),
+		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
 		timeoutMs: data.timeoutMs,
 		deadlineAt,
 		turnBudget: data.turnBudget,
@@ -3072,7 +3108,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		totalChildUsage: sumResultsUsage([r]),
 		totalCost: sumResultsCost([r]),
 	});
-	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, results: details.results });
+	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
 
 	if (!r.detached && !r.interrupted) {
 		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
@@ -3095,7 +3131,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	if (r.detached) {
 		return {
-			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first. Status: subagent({ action: "status", id: "${runId}" }). After the child exits, start a fresh follow-up if needed.` }],
+			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
 			details,
 		};
 	}
@@ -3222,6 +3258,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 			}
 			if (action === "status") {
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
@@ -3573,6 +3610,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			configToolBudget: configToolBudget.toolBudget,
 			contextPolicy,
 			modelScope,
+			parentSessionId: deps.state.currentSessionId,
 		};
 
 		const foregroundControl = effectiveAsync

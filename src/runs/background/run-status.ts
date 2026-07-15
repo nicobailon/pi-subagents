@@ -108,6 +108,8 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 			`${child.index + 1}. ${child.agent} ${child.status}`,
 			child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
 			child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
+			child.acceptance ? `acceptance: ${child.acceptance.status}` : undefined,
+			child.error ? `error: ${child.error}` : undefined,
 			output ? `output: ${output.slice(0, 160)}` : undefined,
 		].filter(Boolean);
 		lines.push(parts.join(", "));
@@ -121,13 +123,14 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 	lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
 	if (run.children.length === 1) lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", view: "transcript" })`);
 	else lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", index: 0, view: "transcript" })`);
-	const resumable = run.children.find((child) => child.status !== "detached" && hasExistingSessionFile(child.sessionFile));
-	if (resumable) {
+	const detached = run.children.some((child) => child.status === "detached");
+	const resumable = run.children.find((child) => hasExistingSessionFile(child.sessionFile));
+	if (detached) {
+		lines.push(`Recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
+	} else if (resumable) {
 		lines.push(run.children.length === 1
 			? `Revive: subagent({ action: "resume", id: "${run.runId}", message: "..." })`
 			: `Revive child: subagent({ action: "resume", id: "${run.runId}", index: ${resumable.index}, message: "..." })`);
-	} else if (run.children.some((child) => child.status === "detached")) {
-		lines.push("Recovery: child detached for intercom coordination; status will show recovered output after the child exits when Pi can observe it.");
 	} else {
 		lines.push("Resume: unavailable; no child session file was persisted.");
 	}

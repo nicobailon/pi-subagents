@@ -264,7 +264,7 @@ function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
 		const childSummary = detachedChildren.map((child) => `${child.agent} #${child.index}`).join(", ");
 		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
-		lines.push(`  recovery: reply to the supervisor request first; status will recover output after the child exits.`);
+		lines.push(`  recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
 	}
 	return lines;
 }
@@ -333,7 +333,7 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 	const foregroundControls = deps.state ? [...deps.state.foregroundControls.values()] : [];
 	const activeForegroundIds = new Set(foregroundControls.map((control) => control.runId));
 	const detachedForegroundRuns = deps.state?.foregroundRuns
-		? [...deps.state.foregroundRuns.values()].filter((run) => !activeForegroundIds.has(run.runId) && run.children.some((child) => child.status === "detached"))
+		? [...deps.state.foregroundRuns.values()].filter((run) => run.sessionId === deps.state?.currentSessionId && !activeForegroundIds.has(run.runId) && run.children.some((child) => child.status === "detached"))
 		: [];
 	const total = foregroundControls.length + detachedForegroundRuns.length + asyncRuns.length;
 	if (total === 0) {
