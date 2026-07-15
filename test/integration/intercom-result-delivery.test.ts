@@ -615,6 +615,59 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("revives from the persisted contract when the agent definition was removed", async () => {
+		mockPi.onCall({ output: "descriptor-backed answer" });
+		const runId = `resume-descriptor-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, "descriptor-child.jsonl");
+		let revivedId: string | undefined;
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: tempDir,
+				steps: [{ agent: "removed-worker", status: "paused", sessionFile }],
+			}, null, 2), "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
+				version: 1,
+				sourceRunId: runId,
+				agent: "removed-worker",
+				cwd: tempDir,
+				model: "anthropic/claude-sonnet-4:high",
+				tools: ["read"],
+				systemPrompt: "Original persisted prompt",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 1,
+				share: false,
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor({ agents: [] });
+
+			const result = await executor.execute(
+				"resume-descriptor",
+				{ action: "resume", id: runId, message: "Continue safely." },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined);
+			revivedId = result.details.asyncId;
+			assert.ok(revivedId);
+			const args = await readMockCallArgs(0);
+			assert.equal(args[args.indexOf("--session") + 1], sessionFile);
+			assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4:high");
+			assert.equal(args[args.indexOf("--tools") + 1], "read");
+			assert.equal(args.includes("--system-prompt"), true);
+			assert.equal(args.includes("--append-system-prompt"), false);
+			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects concurrent direct revival of the same completed async session and releases ownership", async () => {
 		const releasePath = path.join(tempDir, "release-async-revival");
 		mockPi.onCall({ waitForPath: releasePath, output: "first revived answer" });

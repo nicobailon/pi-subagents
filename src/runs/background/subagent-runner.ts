@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
-import { consumeInterruptRequest, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, stepSteerInboxDir, watchAsyncControlInbox, type SteerRequest } from "./control-channel.ts";
+import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -28,6 +28,9 @@ import {
 	type TurnBudgetState,
 	type Usage,
 	type WorkflowGraphSnapshot,
+	type SteeringStatus,
+	type SteeringTargetState,
+	type SteeringTargetStatus,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -61,6 +64,7 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
+import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
@@ -916,6 +920,8 @@ interface SingleStepContext {
 	flatStepCount: number;
 	outputFile: string;
 	steerInboxDir?: string;
+	steerCapabilityPath?: string;
+	steerAckDir?: string;
 	transcriptPath?: string;
 	piPackageRoot?: string;
 	piArgv1?: string;
@@ -1138,6 +1144,8 @@ async function runSingleStep(
 			parentRootRunId: ctx.nestedRoute?.rootRunId,
 			parentCapabilityToken: ctx.nestedRoute?.capabilityToken,
 			steerInboxDir: ctx.steerInboxDir,
+			steerCapabilityPath: ctx.steerCapabilityPath,
+			steerAckDir: ctx.steerAckDir,
 			structuredOutput: effectiveStructuredOutput,
 			toolBudget: step.toolBudget,
 			childWatchdog,
@@ -1565,6 +1573,7 @@ async function runSubagent(
 	const activeChildStops = new Map<number, () => void>();
 	const activeChildTurnBudgetAborts = new Map<number, (message: string, state?: TurnBudgetState) => void>();
 	const pendingStepSteers: SteerRequest[] = [];
+	const steeringCapabilities = new Map<number, SteerCapability>();
 	let interrupted = false;
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
@@ -1655,7 +1664,9 @@ async function runSubagent(
 		runId: id,
 		...(config.sessionId ? { sessionId: config.sessionId } : {}),
 		mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
+		...(config.nestedRoute ? { isNested: true } : {}),
 		state: "running",
+		steering: createSteeringStatus(),
 		lastActivityAt: overallStartTime,
 		startedAt: overallStartTime,
 		lastUpdate: overallStartTime,
@@ -2025,48 +2036,125 @@ async function runSubagent(
 		appendControlEvent(event);
 		return true;
 	};
+	const steeringMarkerPath = (requestId: string): string => path.join(asyncDir, "control", "steer-recovery", `${Buffer.from(requestId).toString("base64url")}.json`);
+	const markSteeringAttention = (index: number): void => {
+		const step = statusPayload.steps[index];
+		if (step) step.activityState = "needs_attention";
+		statusPayload.activityState = "needs_attention";
+	};
+	const emitSteeringEvent = (type: string, request: SteerRequest, index?: number, extra: Record<string, unknown> = {}): void => {
+		appendJsonl(eventsPath, JSON.stringify({ type, ts: Date.now(), runId: id, requestId: request.id, ...(index !== undefined ? { index } : {}), ...extra }));
+	};
+	const emitSteeringNotice = (requestId: string, state: "failed" | "partial" | "recovered", message: string): void => {
+		appendJsonl(eventsPath, JSON.stringify({ type: "subagent.steering.notice", ts: Date.now(), runId: id, requestId, state, message, ...(config.sessionId ? { currentSessionId: config.sessionId } : {}) }));
+	};
+	const recordSteeringLifecycle = (request: SteerRequest, targets: Array<{ index: number; state: SteeringTargetState; reason?: string }>): void => {
+		const lifecycle = steeringStatus(statusPayload);
+		recordSteeringRequest(lifecycle, { id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets });
+		for (const target of targets) {
+			const step = statusPayload.steps[target.index];
+			if (!step) continue;
+			step.steering ??= createSteeringStatus();
+			recordSteeringRequest(step.steering, { id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets: [target] });
+		}
+	};
+	const updateSteeringLifecycleTarget = (
+		requestId: string,
+		index: number,
+		state: SteeringTargetState,
+		now: number,
+		fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId"> = {},
+	): SteeringTargetStatus | undefined => {
+		const updated = updateSteeringTarget(steeringStatus(statusPayload), requestId, index, state, now, fields);
+		const step = statusPayload.steps[index];
+		if (step?.steering) updateSteeringTarget(step.steering, requestId, index, state, now, fields);
+		return updated;
+	};
+	const emitTerminalSteeringNotice = (requestId: string, failureMessage: string): void => {
+		const state = terminalSteeringNoticeState(steeringStatus(statusPayload), requestId);
+		if (state === "partial") emitSteeringNotice(requestId, "partial", `Steering partially delivered for run ${id}.`);
+		else if (state === "failed") emitSteeringNotice(requestId, "failed", failureMessage);
+	};
 	const deliverSteerRequest = (request: SteerRequest): void => {
-		if (statusPayload.state !== "running") return;
+		if (statusPayload.state !== "running") {
+			const reason = `run became ${statusPayload.state} before steering request was consumed`;
+			const indexes = request.targetIndex !== undefined
+				? [request.targetIndex]
+				: request.targetIndexes?.length
+					? request.targetIndexes
+					: statusPayload.steps.map((_, index) => index);
+			const targets = indexes.map((index) => ({ index, state: "failed" as const, reason }));
+			recordSteeringLifecycle(request, targets);
+			emitSteeringEvent("subagent.steer.requested", request, undefined, { targets });
+			for (const target of targets) emitSteeringEvent("subagent.steer.failed", request, target.index, { reason });
+			emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: ${reason}.`);
+			statusPayload.lastUpdate = Date.now();
+			writeStatusPayload();
+			return;
+		}
 		const runningIndexes = statusPayload.steps
 			.map((step, index) => ({ step, index }))
 			.filter(({ step }) => step.status === "running")
 			.map(({ index }) => index);
-		const targets = request.targetIndex !== undefined ? [request.targetIndex] : runningIndexes;
+		const targets = request.targetIndex !== undefined
+			? [request.targetIndex]
+			: request.targetIndexes?.length
+				? request.targetIndexes
+				: runningIndexes.length > 0
+					? runningIndexes
+					: statusPayload.mode === "single" && statusPayload.steps[0]?.status === "pending"
+						? [0]
+						: [];
 		const now = Date.now();
-		const accepted: number[] = [];
-		const rejected: Array<{ index: number; reason: string }> = [];
-		for (const index of targets) {
+		const targetStates = targets.map((index) => {
 			const step = statusPayload.steps[index];
-			if (!step) {
-				rejected.push({ index, reason: "child index out of range" });
-				continue;
+			if (!step) return { index, state: "failed" as const, reason: "child index out of range" };
+			if (step.status === "pending") return { index, state: "scheduled" as const };
+			if (step.status !== "running") return { index, state: "failed" as const, reason: `child is ${step.status}` };
+			if (steeringCapabilities.get(index)?.supported === false) return { index, state: "failed" as const, reason: "child Pi session does not support steering" };
+			return { index, state: "routed" as const };
+		});
+		recordSteeringLifecycle(request, targetStates);
+		emitSteeringEvent("subagent.steer.requested", request, undefined, { targets: targetStates });
+		for (const target of targetStates) {
+			if (target.state === "routed") {
+				try {
+					enqueueStepSteer(asyncDir, target.index, request);
+					updateSteeringLifecycleTarget(request.id, target.index, "routed", now);
+					emitSteeringEvent("subagent.steer.routed", request, target.index);
+				} catch (error) {
+					markSteeringAttention(target.index);
+					updateSteeringLifecycleTarget(request.id, target.index, "failed", now, { reason: error instanceof Error ? error.message : String(error) });
+					emitSteeringEvent("subagent.steer.failed", request, target.index, { reason: error instanceof Error ? error.message : String(error) });
+				}
+			} else if (target.state === "failed") {
+				markSteeringAttention(target.index);
+				emitSteeringEvent("subagent.steer.failed", request, target.index, { reason: target.reason });
+			} else {
+				emitSteeringEvent("subagent.steer.scheduled", request, target.index);
 			}
-			if (step.status !== "running") {
-				rejected.push({ index, reason: `child is ${step.status}` });
-				continue;
-			}
-			enqueueStepSteer(asyncDir, index, request);
-			step.steerCount = (step.steerCount ?? 0) + 1;
-			step.lastSteerAt = now;
-			accepted.push(index);
 		}
-		if (accepted.length > 0) {
-			statusPayload.steerCount = (statusPayload.steerCount ?? 0) + accepted.length;
-			statusPayload.lastSteerAt = now;
-			statusPayload.lastUpdate = now;
-			writeStatusPayload();
+		emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: no requested child remained steerable.`);
+		statusPayload.lastUpdate = now;
+		writeStatusPayload();
+	};
+	const consumeSteerAck = (ack: SteerAck): void => {
+		const lifecycle = steeringStatus(statusPayload);
+		const request = lifecycle.recent.find((candidate) => candidate.id === ack.requestId);
+		if (!request || !request.targets.some((target) => target.index === ack.index)) return;
+		const late = fs.existsSync(steeringMarkerPath(ack.requestId));
+		const now = Date.now();
+		if (ack.state === "delivered") {
+			updateSteeringLifecycleTarget(ack.requestId, ack.index, late ? "late" : "delivered", now, { reason: late ? "acknowledged after recovery commit" : undefined });
+			emitSteeringEvent("subagent.steer.delivered", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { late, message: ack.message });
+		} else {
+			markSteeringAttention(ack.index);
+			updateSteeringLifecycleTarget(ack.requestId, ack.index, "failed", now, { reason: ack.message });
+			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { reason: ack.message });
 		}
-		appendJsonl(eventsPath, JSON.stringify({
-			type: "subagent.steer.requested",
-			ts: now,
-			runId: id,
-			requestId: request.id,
-			message: request.message,
-			...(request.source ? { source: request.source } : {}),
-			...(request.targetIndex !== undefined ? { targetIndex: request.targetIndex } : {}),
-			acceptedIndexes: accepted,
-			...(rejected.length ? { rejected } : {}),
-		}));
+		emitTerminalSteeringNotice(ack.requestId, `Steering failed for run ${id}: ${ack.message}`);
+		statusPayload.lastUpdate = now;
+		writeStatusPayload();
 	};
 	const flushPendingStepSteers = (flatIndex: number): void => {
 		const remaining: SteerRequest[] = [];
@@ -2407,10 +2495,33 @@ async function runSubagent(
 		onStop: stopRunner,
 		onSteer: (request) => {
 			const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
-			if (targetStep?.status === "pending") pendingStepSteers.push(request);
-			else if (request.targetIndex !== undefined || statusPayload.steps.some((step) => step.status === "running")) deliverSteerRequest(request);
-			else pendingStepSteers.push(request);
+			if (targetStep?.status === "pending") {
+				deliverSteerRequest(request);
+				pendingStepSteers.push(request);
+			} else if (request.targetIndexes !== undefined || request.targetIndex !== undefined || statusPayload.steps.some((step) => step.status === "running")) {
+				deliverSteerRequest(request);
+			} else {
+				deliverSteerRequest(request);
+				pendingStepSteers.push(request);
+			}
 		},
+		onSteerCapability: (capability) => {
+			steeringCapabilities.set(capability.index, capability);
+			if (!capability.supported) {
+				const now = Date.now();
+				const lifecycle = steeringStatus(statusPayload);
+				for (const request of lifecycle.recent) {
+					if (!request.targets.some((target) => target.index === capability.index && (target.state === "routed" || target.state === "scheduled"))) continue;
+					markSteeringAttention(capability.index);
+					updateSteeringLifecycleTarget(request.id, capability.index, "failed", now, { reason: "child Pi session does not support steering" });
+					emitSteeringEvent("subagent.steer.failed", { type: "steer", id: request.id, ts: request.requestedAt, message: "child Pi session does not support steering" }, capability.index, { reason: "child Pi session does not support steering" });
+					emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: child ${capability.index} does not support steering.`);
+				}
+				statusPayload.lastUpdate = now;
+				writeStatusPayload();
+			}
+		},
+		onSteerAck: consumeSteerAck,
 	});
 	if (config.deadlineAt !== undefined) {
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
@@ -2661,6 +2772,8 @@ async function runSubagent(
 					flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
 					outputFile: path.join(asyncDir, `output-${fi}.log`),
 					steerInboxDir: stepSteerInboxDir(asyncDir, fi),
+					steerCapabilityPath: steerCapabilityPath(asyncDir, fi),
+					steerAckDir: steerAcksDir(asyncDir, fi),
 					piPackageRoot: config.piPackageRoot,
 					piArgv1: config.piArgv1,
 					childIntercomTarget: config.childIntercomTargets?.[fi],
@@ -2962,6 +3075,8 @@ async function runSubagent(
 							flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
 							outputFile: path.join(asyncDir, `output-${fi}.log`),
 							steerInboxDir: stepSteerInboxDir(asyncDir, fi),
+							steerCapabilityPath: steerCapabilityPath(asyncDir, fi),
+							steerAckDir: steerAcksDir(asyncDir, fi),
 							piPackageRoot: config.piPackageRoot,
 							piArgv1: config.piArgv1,
 							childIntercomTarget: config.childIntercomTargets?.[fi],
@@ -3169,6 +3284,8 @@ async function runSubagent(
 				flatIndex, flatStepCount: Math.max(statusPayload.steps.length, 1),
 				outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
 				steerInboxDir: stepSteerInboxDir(asyncDir, flatIndex),
+				steerCapabilityPath: steerCapabilityPath(asyncDir, flatIndex),
+				steerAckDir: steerAcksDir(asyncDir, flatIndex),
 				piPackageRoot: config.piPackageRoot,
 				piArgv1: config.piArgv1,
 				childIntercomTarget: config.childIntercomTargets?.[flatIndex],
@@ -3387,10 +3504,24 @@ async function runSubagent(
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
 	}
-	disposeControlInbox();
-	const effectiveSessionFile = sessionFile ?? latestSessionFile;
-	const runEndedAt = Date.now();
 	statusPayload.state = stopped ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
+	closeSteerInbox(asyncDir, statusPayload.state);
+	disposeControlInbox();
+	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
+	const effectiveSessionFile = sessionFile ?? latestSessionFile;
+	const steeringLifecycle = steeringStatus(statusPayload);
+	for (const request of steeringLifecycle.recent) {
+		let changed = false;
+		for (const target of request.targets) {
+			if (target.state !== "scheduled" && target.state !== "routed") continue;
+			changed = true;
+			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason: "child terminated before steering delivery" });
+			markSteeringAttention(target.index);
+			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: request.id, ts: request.requestedAt, message: "child terminated before steering delivery" }, target.index, { reason: "child terminated before steering delivery" });
+		}
+		if (changed) emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: child terminated before delivery.`);
+	}
+	const runEndedAt = Date.now();
 	statusPayload.activityState = undefined;
 	if (stopped) {
 		statusPayload.stopped = true;

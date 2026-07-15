@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { writeSteerRequestToDir } from "../../src/runs/background/control-channel.ts";
+import { consumeSteerAcks, writeSteerRequestToDir } from "../../src/runs/background/control-channel.ts";
 import {
 	SUBAGENT_CHILD_AGENT_ENV,
 	SUBAGENT_CHILD_INDEX_ENV,
@@ -11,6 +11,8 @@ import {
 	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
 	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
 	SUBAGENT_RUN_ID_ENV,
+	SUBAGENT_STEER_ACK_DIR_ENV,
+	SUBAGENT_STEER_CAPABILITY_ENV,
 	SUBAGENT_STEER_INBOX_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
@@ -37,6 +39,8 @@ const envSnapshot = {
 	PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
 	PI_SUBAGENT_FANOUT_CHILD: process.env.PI_SUBAGENT_FANOUT_CHILD,
 	PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
+	PI_SUBAGENT_STEER_CAPABILITY: process.env.PI_SUBAGENT_STEER_CAPABILITY,
+	PI_SUBAGENT_STEER_ACK_DIR: process.env.PI_SUBAGENT_STEER_ACK_DIR,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
 	PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
@@ -81,6 +85,10 @@ afterEach(() => {
 	else process.env.PI_SUBAGENT_FANOUT_CHILD = envSnapshot.PI_SUBAGENT_FANOUT_CHILD;
 	if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined) delete process.env[SUBAGENT_STEER_INBOX_ENV];
 	else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
+	if (envSnapshot.PI_SUBAGENT_STEER_CAPABILITY === undefined) delete process.env[SUBAGENT_STEER_CAPABILITY_ENV];
+	else process.env[SUBAGENT_STEER_CAPABILITY_ENV] = envSnapshot.PI_SUBAGENT_STEER_CAPABILITY;
+	if (envSnapshot.PI_SUBAGENT_STEER_ACK_DIR === undefined) delete process.env[SUBAGENT_STEER_ACK_DIR_ENV];
+	else process.env[SUBAGENT_STEER_ACK_DIR_ENV] = envSnapshot.PI_SUBAGENT_STEER_ACK_DIR;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
 	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
@@ -204,6 +212,84 @@ describe("subagent prompt runtime", () => {
 			assert.match(sent[0]?.content ?? "", /Mid-run steering/);
 			assert.match(sent[0]?.content ?? "", /Focus on tests\./);
 			assert.deepEqual(fs.readdirSync(inbox).filter((entry) => entry.endsWith(".json")), []);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not acknowledge sendUserMessage until the correlated Pi input event arrives", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-ack-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			const capability = path.join(dir, "capability.json");
+			const ackDir = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = capability;
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = ackDir;
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: string[] = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string) { sent.push(content); },
+			} as never);
+			handlers.get("session_start")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "first", ts: 1, message: "Focus on tests." });
+			handlers.get("message_start")?.({});
+			assert.equal(sent.length, 1);
+			assert.deepEqual(fs.existsSync(ackDir) ? fs.readdirSync(ackDir) : [], []);
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "steer", text: sent[0] });
+			const acks = consumeSteerAcks(dir);
+			assert.equal(acks.length, 1);
+			assert.equal(acks[0]?.requestId, "first");
+			assert.equal(acks[0]?.state, "delivered");
+			assert.equal(acks[0]?.message, "Pi accepted the correlated steering input.");
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("correlates duplicate guidance FIFO without a visible marker", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-fifo-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: string[] = [];
+			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); }, sendUserMessage(content: string) { sent.push(content); } } as never);
+			handlers.get("session_start")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "one", ts: 1, message: "same guidance" });
+			writeSteerRequestToDir(inbox, { type: "steer", id: "two", ts: 2, message: "same guidance" });
+			handlers.get("message_start")?.({});
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "steer", text: sent[0] });
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "steer", text: sent[1] });
+			assert.deepEqual(consumeSteerAcks(dir).map((ack) => ack.requestId), ["one", "two"]);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("publishes an unsupported capability and failed acknowledgments without sendUserMessage", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-unsupported-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); } } as never);
+			handlers.get("session_start")?.({});
+			assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "capability.json"), "utf-8")).supported, false);
+			writeSteerRequestToDir(inbox, { type: "steer", id: "unsupported", ts: 1, message: "guidance" });
+			handlers.get("message_start")?.({});
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "failed");
+			handlers.get("session_shutdown")?.({});
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

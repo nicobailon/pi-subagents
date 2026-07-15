@@ -42,6 +42,35 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("rejects unknown, cross-run, and wrong-agent recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-descriptor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-descriptor");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-descriptor", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			const descriptor = {
+				version: 1, sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
+				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+			};
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, agent: "another-agent" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /not 'worker'/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects stopped runs instead of reviving them", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-stopped-"));
 		try {

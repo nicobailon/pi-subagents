@@ -59,11 +59,36 @@ export interface SteerRequest {
 	ts: number;
 	message: string;
 	targetIndex?: number;
+	targetIndexes?: number[];
 	source?: string;
+}
+
+export interface SteerCapability {
+	type: "steer-capability";
+	protocolVersion: 1;
+	index: number;
+	pid: number;
+	readyAt: number;
+	supported: boolean;
+}
+
+export interface SteerAck {
+	type: "steer-ack";
+	protocolVersion: 1;
+	requestId: string;
+	index: number;
+	ts: number;
+	state: "delivered" | "failed";
+	message: string;
 }
 
 const STEER_REQUESTS_DIR = "steer-requests";
 const STEER_TARGETS_DIR = "steer-targets";
+const STEER_CAPABILITIES_DIR = "steer-capabilities";
+const STEER_ACKS_DIR = "steer-acks";
+const STEER_INBOX_CLOSED_FILE = "steer-inbox-closed.json";
+const MAX_STEER_MESSAGE_BYTES = 128 * 1024;
+const MAX_STEER_REQUEST_ID_LENGTH = 256;
 
 /** Control inbox directory inside an async run dir. */
 export function controlInboxDir(asyncDir: string): string {
@@ -90,19 +115,106 @@ export function steerRequestsDir(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), STEER_REQUESTS_DIR);
 }
 
+export function steerInboxClosedPath(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), STEER_INBOX_CLOSED_FILE);
+}
+
+export function closeSteerInbox(asyncDir: string, state: string): void {
+	writeAtomicJson(steerInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now(), state });
+}
+
 /** Per-child inbox consumed by the child prompt runtime inside the Pi process. */
 export function stepSteerInboxDir(asyncDir: string, index: number): string {
+	assertChildIndex(index);
 	return path.join(controlInboxDir(asyncDir), STEER_TARGETS_DIR, String(index));
+}
+
+export function steerCapabilitiesDir(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), STEER_CAPABILITIES_DIR);
+}
+
+export function steerCapabilityPath(asyncDir: string, index: number): string {
+	assertChildIndex(index);
+	return path.join(steerCapabilitiesDir(asyncDir), `${index}.json`);
+}
+
+export function steerAcksDir(asyncDir: string, index: number): string {
+	assertChildIndex(index);
+	return path.join(controlInboxDir(asyncDir), STEER_ACKS_DIR, String(index));
+}
+
+function steerAckFileName(requestId: string): string {
+	return `${Buffer.from(requestId).toString("base64url")}.json`;
+}
+
+export function steerAckPathFromDir(dir: string, requestId: string): string {
+	if (!/^[^\s]+$/.test(requestId) || requestId.length > 256) throw new Error("steer acknowledgment requestId is invalid.");
+	return path.join(dir, steerAckFileName(requestId));
+}
+
+function assertChildIndex(index: number): void {
+	if (!Number.isInteger(index) || index < 0 || index > 1_000_000) throw new Error("steer child index must be a non-negative integer.");
 }
 
 function steerRequestFileName(request: SteerRequest): string {
 	return `${String(request.ts).padStart(13, "0")}-${Buffer.from(request.id).toString("base64url")}.json`;
 }
 
+function validSteerRequest(request: Partial<SteerRequest>): request is SteerRequest {
+	return request.type === "steer"
+		&& typeof request.id === "string"
+		&& /^[^\s]+$/.test(request.id)
+		&& request.id.length <= MAX_STEER_REQUEST_ID_LENGTH
+		&& typeof request.ts === "number"
+		&& Number.isFinite(request.ts)
+		&& request.ts > 0
+		&& typeof request.message === "string"
+		&& Boolean(request.message.trim())
+		&& Buffer.byteLength(request.message, "utf8") <= MAX_STEER_MESSAGE_BYTES
+		&& (request.targetIndex === undefined || (Number.isInteger(request.targetIndex) && request.targetIndex >= 0 && request.targetIndex <= 1_000_000))
+		&& (request.targetIndexes === undefined || (
+			request.targetIndex === undefined
+			&& Array.isArray(request.targetIndexes)
+			&& request.targetIndexes.length > 0
+			&& request.targetIndexes.length <= 1_000
+			&& request.targetIndexes.every((index) => Number.isInteger(index) && index >= 0 && index <= 1_000_000)
+			&& new Set(request.targetIndexes).size === request.targetIndexes.length
+		))
+		&& (request.source === undefined || (typeof request.source === "string" && Boolean(request.source.trim()) && request.source.length <= 256));
+}
+
 export function writeSteerRequestToDir(dir: string, request: SteerRequest): string {
+	if (!validSteerRequest(request)) throw new Error("steer request is malformed or exceeds transport limits.");
 	const requestPath = path.join(dir, steerRequestFileName(request));
 	writeAtomicJson(requestPath, request);
 	return requestPath;
+}
+
+export function writeSteerCapabilityAt(filePath: string, capability: Omit<SteerCapability, "type" | "protocolVersion">): string {
+	assertChildIndex(capability.index);
+	if (!Number.isInteger(capability.pid) || capability.pid <= 0) throw new Error("steer capability pid must be a positive integer.");
+	if (!Number.isFinite(capability.readyAt) || capability.readyAt <= 0) throw new Error("steer capability readyAt must be a finite timestamp.");
+	const record: SteerCapability = { type: "steer-capability", protocolVersion: 1, ...capability };
+	writeAtomicJson(filePath, record);
+	return filePath;
+}
+
+export function writeSteerCapability(asyncDir: string, capability: Omit<SteerCapability, "type" | "protocolVersion">): string {
+	return writeSteerCapabilityAt(steerCapabilityPath(asyncDir, capability.index), capability);
+}
+
+export function writeSteerAckAt(filePath: string, ack: Omit<SteerAck, "type" | "protocolVersion">): string {
+	assertChildIndex(ack.index);
+	if (!/^[^\s]+$/.test(ack.requestId) || ack.requestId.length > 256) throw new Error("steer acknowledgment requestId is invalid.");
+	if (!Number.isFinite(ack.ts) || ack.ts <= 0) throw new Error("steer acknowledgment ts must be a finite timestamp.");
+	if (!ack.message.trim() || ack.message.length > 1000) throw new Error("steer acknowledgment message is invalid.");
+	const record: SteerAck = { type: "steer-ack", protocolVersion: 1, ...ack, message: ack.message.trim() };
+	writeAtomicJson(filePath, record);
+	return filePath;
+}
+
+export function writeSteerAck(asyncDir: string, ack: Omit<SteerAck, "type" | "protocolVersion">): string {
+	return writeSteerAckAt(path.join(steerAcksDir(asyncDir, ack.index), steerAckFileName(ack.requestId)), ack);
 }
 
 /**
@@ -144,44 +256,124 @@ export function requestAsyncStop(
 
 export function requestAsyncSteer(
 	asyncDir: string,
-	payload: { message: string; targetIndex?: number; source?: string; id?: string; ts?: number },
+	payload: { message: string; targetIndex?: number; targetIndexes?: number[]; source?: string; id?: string; ts?: number },
 	deps: { now?: () => number; randomId?: () => string } = {},
 ): string {
 	const message = payload.message.trim();
 	if (!message) throw new Error("steer message must not be empty.");
-	if (payload.targetIndex !== undefined && (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
-		throw new Error("steer targetIndex must be a non-negative integer.");
+	if (Buffer.byteLength(message, "utf8") > MAX_STEER_MESSAGE_BYTES) throw new Error(`steer message exceeds ${MAX_STEER_MESSAGE_BYTES} UTF-8 bytes.`);
+	if (payload.targetIndex !== undefined && (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0 || payload.targetIndex > 1_000_000)) {
+		throw new Error("steer targetIndex must be an integer between 0 and 1000000.");
 	}
+	if (payload.targetIndexes !== undefined && (
+		!Array.isArray(payload.targetIndexes)
+		|| payload.targetIndex !== undefined
+		|| payload.targetIndexes.length === 0
+		|| payload.targetIndexes.length > 1_000
+		|| payload.targetIndexes.some((index) => !Number.isInteger(index) || index < 0 || index > 1_000_000)
+		|| new Set(payload.targetIndexes).size !== payload.targetIndexes.length
+	)) {
+		throw new Error("steer targetIndexes must contain 1-1000 unique non-negative integers and cannot be combined with targetIndex.");
+	}
+	const closedPath = steerInboxClosedPath(asyncDir);
+	if (fs.existsSync(closedPath)) throw new Error("Async run no longer accepts steering requests.");
 	const request: SteerRequest = {
 		type: "steer",
 		id: payload.id ?? deps.randomId?.() ?? randomUUID(),
 		ts: payload.ts ?? deps.now?.() ?? Date.now(),
 		message,
 		...(payload.targetIndex !== undefined ? { targetIndex: payload.targetIndex } : {}),
+		...(payload.targetIndexes !== undefined ? { targetIndexes: [...payload.targetIndexes] } : {}),
 		...(payload.source ? { source: payload.source } : {}),
 	};
-	return writeSteerRequestToDir(steerRequestsDir(asyncDir), request);
+	const requestPath = writeSteerRequestToDir(steerRequestsDir(asyncDir), request);
+	if (fs.existsSync(closedPath)) {
+		fs.rmSync(requestPath, { force: true });
+		throw new Error("Async run stopped accepting steering before the request was committed.");
+	}
+	return requestPath;
 }
 
 export function enqueueStepSteer(asyncDir: string, index: number, request: SteerRequest): string {
-	if (!Number.isInteger(index) || index < 0) throw new Error("steer child index must be a non-negative integer.");
-	return writeSteerRequestToDir(stepSteerInboxDir(asyncDir, index), { ...request, targetIndex: index, type: "steer" });
+	assertChildIndex(index);
+	const { targetIndexes: _targetIndexes, ...singleTargetRequest } = request;
+	return writeSteerRequestToDir(stepSteerInboxDir(asyncDir, index), { ...singleTargetRequest, targetIndex: index, type: "steer" });
+}
+
+function parseSteerCapability(raw: unknown): SteerCapability | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const input = raw as Partial<SteerCapability>;
+	if (input.type !== "steer-capability" || input.protocolVersion !== 1) return undefined;
+	if (!Number.isInteger(input.index) || input.index < 0 || input.index > 1_000_000) return undefined;
+	if (!Number.isInteger(input.pid) || input.pid <= 0 || !Number.isFinite(input.readyAt) || input.readyAt <= 0 || typeof input.supported !== "boolean") return undefined;
+	return { type: "steer-capability", protocolVersion: 1, index: input.index, pid: input.pid, readyAt: input.readyAt, supported: input.supported };
+}
+
+function parseSteerAck(raw: unknown): SteerAck | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const input = raw as Partial<SteerAck>;
+	if (input.type !== "steer-ack" || input.protocolVersion !== 1 || typeof input.requestId !== "string" || !/^[^\s]+$/.test(input.requestId) || input.requestId.length > 256) return undefined;
+	if (!Number.isInteger(input.index) || input.index < 0 || input.index > 1_000_000 || !Number.isFinite(input.ts) || input.ts <= 0) return undefined;
+	if (input.state !== "delivered" && input.state !== "failed") return undefined;
+	if (typeof input.message !== "string" || !input.message.trim() || input.message.length > 1000) return undefined;
+	return { type: "steer-ack", protocolVersion: 1, requestId: input.requestId, index: input.index, ts: input.ts, state: input.state, message: input.message.trim() };
+}
+
+export function readSteerCapability(asyncDir: string, index: number): SteerCapability | undefined {
+	try {
+		return parseSteerCapability(JSON.parse(fs.readFileSync(steerCapabilityPath(asyncDir, index), "utf-8")));
+	} catch {
+		return undefined;
+	}
+}
+
+export function consumeSteerCapabilities(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync"> = fs): SteerCapability[] {
+	const dir = steerCapabilitiesDir(asyncDir);
+	if (!fsImpl.existsSync(dir)) return [];
+	const capabilities: SteerCapability[] = [];
+	for (const entry of fsImpl.readdirSync(dir).filter((name) => /^\d+\.json$/.test(name)).sort()) {
+		try {
+			const capability = parseSteerCapability(JSON.parse(fsImpl.readFileSync(path.join(dir, entry), "utf-8")));
+			if (capability) capabilities.push(capability);
+		} catch {
+			// A partially written or malformed capability is ignored until a valid one arrives.
+		}
+	}
+	return capabilities;
+}
+
+export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs): SteerAck[] {
+	const root = path.join(controlInboxDir(asyncDir), STEER_ACKS_DIR);
+	if (!fsImpl.existsSync(root)) return [];
+	const acks: SteerAck[] = [];
+	let indexNames: string[];
+	try { indexNames = fsImpl.readdirSync(root).filter((name) => /^\d+$/.test(name)); } catch { return []; }
+	for (const indexName of indexNames) {
+		const dir = path.join(root, indexName);
+		let entries: string[];
+		try { entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort(); } catch { continue; }
+		for (const entry of entries) {
+			const target = path.join(dir, entry);
+			let ack: SteerAck | undefined;
+			try { ack = parseSteerAck(JSON.parse(fsImpl.readFileSync(target, "utf-8"))); } catch { ack = undefined; }
+			try { fsImpl.rmSync(target, { force: true }); } catch { continue; }
+			if (ack) acks.push(ack);
+		}
+	}
+	return acks;
 }
 
 function parseSteerRequest(raw: unknown): SteerRequest | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const input = raw as Partial<SteerRequest>;
-	if (input.type !== "steer") return undefined;
-	if (typeof input.id !== "string" || !input.id.trim()) return undefined;
-	if (typeof input.ts !== "number" || !Number.isFinite(input.ts)) return undefined;
-	if (typeof input.message !== "string" || !input.message.trim()) return undefined;
-	if (input.targetIndex !== undefined && (!Number.isInteger(input.targetIndex) || input.targetIndex < 0)) return undefined;
+	if (!validSteerRequest(input)) return undefined;
 	return {
 		type: "steer",
 		id: input.id.trim(),
 		ts: input.ts,
 		message: input.message.trim(),
 		...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}),
+		...(input.targetIndexes !== undefined ? { targetIndexes: [...input.targetIndexes] } : {}),
 		...(typeof input.source === "string" && input.source.trim() ? { source: input.source } : {}),
 	};
 }
@@ -327,6 +519,8 @@ export function watchAsyncControlInbox(
 		onTimeout?: () => void;
 		onStop?: () => void;
 		onSteer?: (request: SteerRequest) => void;
+		onSteerCapability?: (capability: SteerCapability) => void;
+		onSteerAck?: (ack: SteerAck) => void;
 		pollIntervalMs?: number;
 		fs?: ControlChannelFs;
 		timers?: ControlChannelTimers;
@@ -349,6 +543,8 @@ export function watchAsyncControlInbox(
 			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
 			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
 			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
+			for (const capability of consumeSteerCapabilities(asyncDir, fsImpl)) opts.onSteerCapability?.(capability);
+			for (const ack of consumeSteerAcks(asyncDir, fsImpl)) opts.onSteerAck?.(ack);
 		} catch {
 			// Never let inbox errors crash the runner.
 		}
