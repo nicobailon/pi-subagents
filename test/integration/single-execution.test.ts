@@ -1419,6 +1419,50 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /Write your findings to(?: exactly this path)?:/);
 	});
 
+	it("rejects explicit reviewed acceptance at every execution nesting level before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const cases = [
+			{ agent: "echo", task: "Review", acceptance: "reviewed" },
+			{ agent: "echo", task: "Review", acceptance: { level: "reviewed" } },
+			{ tasks: [{ agent: "echo", task: "Review", acceptance: "reviewed" }] },
+			{ chain: [{ agent: "echo", task: "Review", acceptance: { level: "reviewed" } }] },
+			{ chain: [{ parallel: [{ agent: "echo", task: "Review", acceptance: "reviewed" }] }] },
+			{ chain: [{ expand: { from: { output: "targets", path: "/items" } }, parallel: { agent: "echo", acceptance: { level: "reviewed" } }, collect: { as: "reviews" } }] },
+		];
+		for (const [index, params] of cases.entries()) {
+			const executor = makeExecutor();
+			const result = await executor.execute(
+				`reviewed-acceptance-${index}`,
+				params,
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /cannot be requested explicitly.*independent reviewer result/i);
+		}
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects explicit reviewed acceptance before appending a chain step", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			"append-reviewed-acceptance",
+			{
+				action: "append-step",
+				id: "missing-run",
+				chain: [{ agent: "echo", task: "Review the previous work", acceptance: { level: "reviewed" } }],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Cannot append step:.*cannot be requested explicitly.*independent reviewer result/i);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects mismatched foreground timeout aliases before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor();
 

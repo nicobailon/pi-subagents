@@ -211,6 +211,27 @@ describe("ScheduledRunManager create/list/status/cancel", () => {
 		assert.match(none.content[0]!.text, /exactly one execution mode/);
 	});
 
+	it("rejects explicit reviewed acceptance at every scheduled nesting level before persisting a job", async () => {
+		const harness = freshHarness();
+		const cases = [
+			{ agent: "scout", task: "review later", acceptance: "reviewed" },
+			{ agent: "scout", task: "review later", acceptance: { level: "reviewed" } },
+			{ tasks: [{ agent: "scout", task: "review later", acceptance: "reviewed" }] },
+			{ chain: [{ agent: "scout", task: "review later", acceptance: { level: "reviewed" } }] },
+			{ chain: [{ parallel: [{ agent: "scout", task: "review later", acceptance: "reviewed" }] }] },
+		];
+		for (const params of cases) {
+			const result = await harness.manager.handleToolCall({
+				action: "schedule",
+				schedule: "+10m",
+				...params,
+			}, harness.ctx);
+			assert.equal(isError(result), true);
+			assert.match(result.content[0]!.text, /cannot be requested explicitly.*independent reviewer result/i);
+		}
+		assert.equal(harness.timers.pendingCount(), 0);
+	});
+
 	it("requires a schedule and rejects fork/async-false/clarify-true", async () => {
 		const harness = freshHarness();
 		const noSchedule = await harness.manager.handleToolCall({ action: "schedule", agent: "scout", task: "x" }, harness.ctx);

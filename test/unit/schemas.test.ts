@@ -501,6 +501,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ tasks: [{ agent: "worker", task: "Fix" }], maxRuntimeMs: 1000 },
 			{ chain: [{ agent: "worker", task: "Fix" }], timeoutMs: 1000, maxRuntimeMs: 1000 },
 			{ agent: "worker", task: "Fix", acceptance: "checked" },
+			{ agent: "worker", task: "Fix", acceptance: "reviewed" },
 			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
 			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },

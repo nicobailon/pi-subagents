@@ -43,6 +43,7 @@ const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
+const EXPLICIT_REVIEWED_UNAVAILABLE = "cannot be requested explicitly because this run cannot supply an independent reviewer result; use checked/verified and orchestrate the reviewer separately, or omit acceptance for read-only review tasks.";
 
 function normalizeLevel(level: AcceptanceLevel | undefined): Exclude<AcceptanceLevel, "auto"> | "auto" {
 	return level ?? "auto";
@@ -142,6 +143,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (typeof input === "string") {
 		if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
 		else if (input === "none") errors.push(`${pathLabel} level "none" requires a reason; use { level: "none", reason: "..." }.`);
+		else if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -158,6 +160,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (value.level === "none" && (typeof value.reason !== "string" || !value.reason.trim())) {
 		errors.push(`${pathLabel}.reason is required when level is none.`);
 	}
+	if (value.level === "reviewed") errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 	if (value.reason !== undefined && typeof value.reason !== "string") errors.push(`${pathLabel}.reason must be a string.`);
 	if (value.criteria !== undefined && !Array.isArray(value.criteria)) errors.push(`${pathLabel}.criteria must be an array.`);
 	if (Array.isArray(value.criteria)) {
@@ -249,6 +252,31 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	return errors;
 }
 
+export function validateExecutionAcceptance(input: {
+	acceptance?: unknown;
+	tasks?: Array<{ acceptance?: unknown }>;
+	chain?: Array<{
+		acceptance?: unknown;
+		parallel?: Array<{ acceptance?: unknown }> | { acceptance?: unknown };
+	}>;
+}): string[] {
+	const errors = validateAcceptanceInput(input.acceptance, "acceptance");
+	for (const [index, task] of (input.tasks ?? []).entries()) {
+		errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
+	}
+	for (const [stepIndex, step] of (input.chain ?? []).entries()) {
+		errors.push(...validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`));
+		if (Array.isArray(step.parallel)) {
+			for (const [taskIndex, task] of step.parallel.entries()) {
+				errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
+			}
+		} else if (step.parallel) {
+			errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
+		}
+	}
+	return errors;
+}
+
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {
 	return (criteria ?? []).map((criterion, index) => {
 		if (typeof criterion === "string") {
@@ -286,7 +314,7 @@ export function resolveEffectiveAcceptance(input: {
 		evidence,
 	);
 	let review = explicit.review !== undefined ? explicit.review : inferred.review;
-	if (level === "reviewed" && explicitLevel !== "auto" && explicitLevel !== "reviewed" && explicit.review === undefined && review && review !== false) {
+	if (level === "reviewed" && input.explicit !== undefined && explicitLevel !== "reviewed" && explicit.review === undefined && review && review !== false) {
 		review = { ...review, required: false };
 	}
 	return {

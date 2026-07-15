@@ -367,6 +367,26 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("resume action rejects explicit reviewed acceptance before launching", async () => {
+		for (const [index, params] of [
+			{ message: "Continue", acceptance: "reviewed" },
+			{ chain: [{ agent: "reviewer", task: "Review {previous}", acceptance: { level: "reviewed" } }] },
+		].entries()) {
+			const { executor, events } = makeExecutor({ agents: [makeAgent("reviewer")] });
+			const result = await executor.execute(
+				`resume-invalid-acceptance-${index}`,
+				{ action: "resume", id: "missing-source-run", ...params },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Cannot resume:.*cannot be requested explicitly.*independent reviewer result/i);
+			assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
+		}
+	});
+
 	it("resume action can attach a live async child as the first step of a new chain", async () => {
 		const sourceRunId = `resume-chain-root-${Date.now()}`;
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);

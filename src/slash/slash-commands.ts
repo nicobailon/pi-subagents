@@ -999,7 +999,7 @@ function validateInlineAcceptanceInput(value: string, agent: string): void {
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
 	if (errors.length > 0) throw new SlashParseError(errors[0]!);
 	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {
-		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none, verified, or reviewed acceptance contracts.`);
+		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none or verified acceptance contracts; reviewed is inferred-only.`);
 	}
 }
 

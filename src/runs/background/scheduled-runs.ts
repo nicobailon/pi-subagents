@@ -12,6 +12,7 @@ import {
 	type ExtensionConfig,
 } from "../../shared/types.ts";
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
+import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 
 export const SCHEDULED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "scheduled-subagent-runs");
 export const SCHEDULED_RUN_ACTIONS = ["schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
@@ -228,6 +229,8 @@ function sanitizeScheduledParams(params: SubagentParamsLike): { params?: Subagen
 	if (params.context === "fork") return { error: "Scheduled subagent runs require fresh context. Forked parent-session context is not safe at fire time." };
 	if (params.async === false) return { error: "Scheduled subagent runs are always async; omit async or set async: true." };
 	if (params.clarify === true) return { error: "Scheduled subagent runs cannot open clarify UI; omit clarify or set clarify: false." };
+	const acceptanceErrors = validateExecutionAcceptance(params);
+	if (acceptanceErrors.length > 0) return { error: acceptanceErrors.join(" ") };
 
 	const {
 		action: _action,

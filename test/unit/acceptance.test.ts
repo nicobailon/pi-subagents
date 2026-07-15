@@ -13,6 +13,7 @@ import {
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
 	validateAcceptanceInput,
+	validateExecutionAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
 import { extractChildWrittenOutput } from "../../src/runs/shared/single-output.ts";
 
@@ -369,6 +370,31 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("keeps inferred review non-blocking when explicit auto is supplied", async () => {
+		const cwd = tempRepo();
+		try {
+			for (const explicit of ["auto", { level: "auto" }] as const) {
+				const acceptance = resolveEffectiveAcceptance({
+					agentName: "worker",
+					task: "Implement the async fix",
+					async: true,
+					explicit,
+				});
+
+				assert.equal(acceptance.level, "reviewed");
+				assert.equal(acceptance.review && acceptance.review !== false ? acceptance.review.required : undefined, false);
+				const ledger = await evaluateAcceptance({ acceptance, output: report({ criteriaSatisfied: [
+					{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
+					{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
+				] }), cwd });
+				assert.equal(ledger.status, "checked");
+				assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
+			}
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("does not mark reviewed without an independent reviewer result", async () => {
 		const cwd = tempRepo();
 		try {
@@ -572,6 +598,26 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("validates explicit reviewed acceptance at every execution nesting level", () => {
+		const errors = validateExecutionAcceptance({
+			acceptance: "reviewed",
+			tasks: [{ acceptance: { level: "reviewed" } }],
+			chain: [
+				{ acceptance: "reviewed" },
+				{ parallel: [{ acceptance: { level: "reviewed" } }] },
+				{ parallel: { acceptance: "reviewed" } },
+			],
+		});
+
+		assert.equal(errors.length, 5);
+		assert.match(errors[0] ?? "", /^acceptance cannot be requested explicitly/);
+		assert.match(errors[1] ?? "", /^tasks\[0\]\.acceptance\.level cannot be requested explicitly/);
+		assert.match(errors[2] ?? "", /^chain\[0\]\.acceptance cannot be requested explicitly/);
+		assert.match(errors[3] ?? "", /^chain\[1\]\.parallel\[0\]\.acceptance\.level cannot be requested explicitly/);
+		assert.match(errors[4] ?? "", /^chain\[2\]\.parallel\.acceptance cannot be requested explicitly/);
+		assert.match(errors.join("\n"), /independent reviewer result/);
+	});
+
 	it("validates invalid disable and verify shapes", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "none" }), ["acceptance.reason is required when level is none."]);
 		assert.deepEqual(validateAcceptanceInput("none"), ["acceptance level \"none\" requires a reason; use { level: \"none\", reason: \"...\" }."]);
@@ -579,6 +625,8 @@ describe("acceptance gates", () => {
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);
 		assert.deepEqual(validateAcceptanceInput(false), []);
 		assert.deepEqual(validateAcceptanceInput("checked"), []);
+		assert.match(validateAcceptanceInput("reviewed").join("\n"), /cannot be requested explicitly.*independent reviewer result/i);
+		assert.match(validateAcceptanceInput({ level: "reviewed" }).join("\n"), /cannot be requested explicitly.*independent reviewer result/i);
 		assert.deepEqual(validateAcceptanceInput({ criteria: ["ship the fix"], review: false, stopRules: ["stay scoped"] }), []);
 		assert.match(validateAcceptanceInput({ criteria: [{ id: "missing-must" }] }).join("\n"), /acceptance\.criteria\[0\]\.must is required/);
 		assert.match(validateAcceptanceInput({ criteria: [123] }).join("\n"), /acceptance\.criteria\[0\] must be a string or an object/);
