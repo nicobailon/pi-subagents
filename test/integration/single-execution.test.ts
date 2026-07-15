@@ -28,6 +28,7 @@ import {
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
+import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -69,6 +70,7 @@ interface RunSyncResult {
 	agent: string;
 	messages: unknown[];
 	error?: string;
+	protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number };
 	model?: string;
 	skills?: string[];
 	skillsWarning?: string;
@@ -718,6 +720,59 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.model, "github-copilot/gpt-5-mini");
 		assert.deepEqual(result.attemptedModels, ["github-copilot/gpt-5-mini"]);
+	});
+
+	it("parses split UTF-8 JSON and a final unterminated protocol line", async () => {
+		const line = Buffer.from(JSON.stringify(events.assistantMessage("你好 from fragmented JSON")));
+		const unicodeStart = line.indexOf(Buffer.from("你"));
+		mockPi.onCall({ stdoutBase64Chunks: [
+			line.subarray(0, unicodeStart + 1).toString("base64"),
+			line.subarray(unicodeStart + 1).toString("base64"),
+		] });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Read fragmented output", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(getFinalOutput(result.messages), "你好 from fragmented JSON");
+	});
+
+	it("fails with protocol_output_limit when a child emits an oversized stdout line", async () => {
+		mockPi.onCall({ stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Emit malformed output", { acceptance: false });
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.protocolError?.code, "protocol_output_limit");
+		assert.equal(result.protocolError?.stream, "stdout");
+		assert.match(result.error ?? "", /protocol_output_limit/);
+	});
+
+	it("keeps only a bounded UTF-8 stderr tail", async () => {
+		mockPi.onCall({ output: "failed", stderr: `${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}终`, exitCode: 1 });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Fail noisily", { acceptance: false });
+		assert.equal(result.exitCode, 1);
+		assert.ok(Buffer.byteLength(result.error ?? "") <= MAX_CHILD_STDERR_BYTES);
+		assert.match(result.error ?? "", /终$/);
+	});
+
+	it("cancels final drain while agent_end reports a retry and waits for agent_settled", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.assistantMessage("retrying response"), { type: "agent_end", willRetry: true }] },
+			{ delay: 1400, jsonl: [events.assistantMessage("settled response"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const startedAt = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Retry once", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(getFinalOutput(result.messages), "settled response");
+		assert.ok(Date.now() - startedAt >= 1200, "foreground runner must not terminate during the retry delay");
+	});
+
+	it("treats agent_settled as a clean terminal watermark", async () => {
+		const nonTerminalMessage = events.assistantMessage("settled without a terminal assistant stop") as { message: { stopReason: string } };
+		nonTerminalMessage.message.stopReason = "length";
+		mockPi.onCall({ jsonl: [nonTerminalMessage, { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 5000 });
+		const startedAt = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Wait until settled", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(getFinalOutput(result.messages), "settled without a terminal assistant stop");
+		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
 	});
 
 	it("tracks usage from message events", async () => {
@@ -1943,6 +1998,35 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(accepted, true);
 		});
 	}
+
+	it("enforces the stdout protocol limit after foreground detachment", async () => {
+		const eventBus = createEventBus();
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+			{ delay: 100, stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) },
+			{ delay: 5000 },
+		] });
+		let detachEmitted = false;
+		let recoveredResult: RunSyncResult | undefined;
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Detach then emit malformed output", {
+			runId: "detached-protocol-limit",
+			allowIntercomDetach: true,
+			intercomEvents: eventBus,
+			acceptance: false,
+			onUpdate: (update) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((item) => item.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "detached-protocol-request" });
+			},
+			onDetachedExit: (postExit) => { recoveredResult = postExit as RunSyncResult; },
+		});
+		assert.equal(result.exitCode, -2);
+		for (let attempt = 0; attempt < 100 && !recoveredResult; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(recoveredResult?.exitCode, 1);
+		assert.equal(recoveredResult?.protocolError?.code, "protocol_output_limit");
+	});
 
 	it("does not save a detached placeholder to an explicit file-only output", async () => {
 		const eventBus = createEventBus();

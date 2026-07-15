@@ -72,6 +72,7 @@ import { acceptanceFailureMessage, evaluateAcceptance, formatAcceptancePrompt, r
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -326,7 +327,6 @@ async function runSingleAttempt(
 			windowsHide: true,
 		});
 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
-		let buf = "";
 		let processClosed = false;
 		let settled = false;
 		let detached = false;
@@ -341,6 +341,7 @@ async function runSingleAttempt(
 		let turnBudgetSoftReached = false;
 		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
 		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
+		let protocolHardKillTimer: NodeJS.Timeout | undefined;
 		const clearTurnBudgetTimers = () => {
 			if (turnBudgetTerminationTimer) {
 				clearTimeout(turnBudgetTerminationTimer);
@@ -388,6 +389,7 @@ async function runSingleAttempt(
 		let childExited = false;
 		let forcedTerminationSignal = false;
 		let cleanTerminalAssistantStopReceived = false;
+		let agentSettledReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -424,8 +426,8 @@ async function runSingleAttempt(
 				const termSent = trySignalChild(proc, "SIGTERM");
 				if (!termSent) return;
 				forcedTerminationSignal = true;
-				if (!cleanTerminalAssistantStopReceived && !assistantError) {
-					result.error = result.error ?? `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
+				if (!cleanTerminalAssistantStopReceived && !agentSettledReceived && !assistantError) {
+					result.error = result.error ?? `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its terminal event. Forcing termination.`;
 				}
 				finalHardKillTimer = setTimeout(() => {
 					if (settled || processClosed || detached) return;
@@ -436,7 +438,7 @@ async function runSingleAttempt(
 			finalDrainTimer.unref?.();
 		};
 		function armWatchdogTail(): void {
-			if (!cleanTerminalAssistantStopReceived || watchdogTailTimer || settled || processClosed || detached) return;
+			if ((!cleanTerminalAssistantStopReceived && !agentSettledReceived) || watchdogTailTimer || settled || processClosed || detached) return;
 			watchdogTailTimer = setTimeout(() => {
 				watchdogTailTimer = undefined;
 				updateChildWatchdogState({
@@ -452,6 +454,14 @@ async function runSingleAttempt(
 			}, childWatchdog?.watchdogTailTimeoutMs ?? 120_000);
 			watchdogTailTimer.unref?.();
 		}
+		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
+			if (action === "cancel-drain") {
+				clearFinalDrainTimers();
+				clearWatchdogTailTimer();
+				return;
+			}
+			if (action === "start-drain") startFinalDrain();
+		};
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || detached || processClosed) return;
@@ -477,6 +487,10 @@ async function runSingleAttempt(
 			clearStdioGuard();
 			clearTimeoutTimers();
 			clearTurnBudgetTimers();
+			if (protocolHardKillTimer) {
+				clearTimeout(protocolHardKillTimer);
+				protocolHardKillTimer = undefined;
+			}
 			if (activityTimer) {
 				clearInterval(activityTimer);
 				activityTimer = undefined;
@@ -641,15 +655,17 @@ async function runSingleAttempt(
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
 			jsonlWriter.writeLine(line);
-			let evt: { type?: string; message?: Message; toolName?: string; args?: unknown };
+			let evt: { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
 			try {
-				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
+				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
 			} catch {
 				shared.transcriptWriter?.writeStdoutLine(line);
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
+			if (evt.type === "agent_settled") agentSettledReceived = true;
+			applyChildLifecycle(projectChildLifecycle(evt));
 
 			if (isChildWatchdogStatusEvent(evt)) {
 				if (!childWatchdog) return;
@@ -667,7 +683,7 @@ async function runSingleAttempt(
 					armWatchdogTail();
 				} else {
 					clearWatchdogTailTimer();
-					if (cleanTerminalAssistantStopReceived) startFinalDrain();
+					if (cleanTerminalAssistantStopReceived || agentSettledReceived) startFinalDrain();
 				}
 				fireUpdate();
 				return;
@@ -741,7 +757,7 @@ async function runSingleAttempt(
 					if (terminalAssistantStop) {
 						if (!evt.message.errorMessage && assistantText.trim()) assistantError = undefined;
 						cleanTerminalAssistantStopReceived ||= !evt.message.errorMessage;
-						startFinalDrain();
+						applyChildLifecycle(projectChildLifecycle(evt, true));
 					}
 				}
 				updateActivityState(now);
@@ -819,17 +835,36 @@ async function runSingleAttempt(
 			timeoutTimer.unref?.();
 		}
 
-		let stderrBuf = "";
+		const stderrTail = createBoundedByteTail();
+		const failProtocol = (limit: ProtocolOutputLimit): void => {
+			if (result.protocolError) return;
+			result.protocolError = limit;
+			result.error = formatProtocolOutputLimit(limit);
+			progress.status = "failed";
+			progress.error = result.error;
+			progress.durationMs = Date.now() - startTime;
+			fireUpdate();
+			if (!childExited) {
+				trySignalChild(proc, "SIGTERM");
+				protocolHardKillTimer = setTimeout(() => {
+					if (!childExited) trySignalChild(proc, "SIGKILL");
+				}, 3000);
+				protocolHardKillTimer.unref?.();
+			}
+		};
+		const stdoutReader = createBoundedLineReader({ onLine: processLine, onLimit: failProtocol });
+		const stderrReader = createBoundedLineReader({
+			stream: "stderr",
+			maxPendingLineBytes: MAX_CHILD_STDERR_BYTES,
+			onLine: (line) => shared.transcriptWriter?.writeStderrLine(line),
+			onLimit: (limit) => shared.transcriptWriter?.writeStderrLine(formatProtocolOutputLimit(limit)),
+		});
 
 		const clearStdioGuard = attachPostExitStdioGuard(proc, { idleMs: 2000, hardMs: 8000 });
-		proc.stdout.on("data", (d) => {
-			buf += d.toString();
-			const lines = buf.split("\n");
-			buf = lines.pop() || "";
-			lines.forEach(processLine);
-		});
-		proc.stderr.on("data", (d) => {
-			stderrBuf += d.toString();
+		proc.stdout.on("data", (chunk: Buffer) => stdoutReader.push(chunk));
+		proc.stderr.on("data", (chunk: Buffer) => {
+			stderrTail.push(chunk);
+			stderrReader.push(chunk);
 		});
 		proc.on("exit", () => {
 			childExited = true;
@@ -842,12 +877,13 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			cleanupTempDir(tempDir);
-			if (buf.trim()) processLine(buf);
-			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
+			stdoutReader.end();
+			stderrReader.end();
+			const stderr = stderrTail.text();
 			let closeError = result.error ?? assistantError;
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !closeError;
-			if (code !== 0 && stderrBuf.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
-				closeError = stderrBuf.trim();
+			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
+				closeError = stderr.trim();
 			}
 			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			if (detached) {
@@ -910,7 +946,8 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			cleanupTempDir(tempDir);
-			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
+			stdoutReader.end();
+			stderrReader.end();
 			if (!result.error) {
 				result.error = error instanceof Error ? error.message : String(error);
 			}

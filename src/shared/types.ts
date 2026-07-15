@@ -470,6 +470,15 @@ export interface AcceptanceLedger {
 	};
 }
 
+export interface ProtocolOutputLimit {
+	code: "protocol_output_limit";
+	stream: "stdout" | "stderr";
+	limitBytes: number;
+	observedBytes: number;
+	diagnosticPrefix: string;
+	diagnosticTail: string;
+}
+
 export interface SingleResult {
 	agent: string;
 	task: string;
@@ -491,6 +500,7 @@ export interface SingleResult {
 	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
 	error?: string;
+	protocolError?: ProtocolOutputLimit;
 	sessionFile?: string;
 	skills?: string[];
 	skillsWarning?: string;

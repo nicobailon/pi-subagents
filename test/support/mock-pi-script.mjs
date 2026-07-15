@@ -230,6 +230,15 @@ async function writeJsonlLine(entry) {
 	await writeStdout(`${line}\n`);
 }
 
+async function writeRawStdout(entry) {
+	if (Array.isArray(entry?.stdoutBase64Chunks)) {
+		for (const chunk of entry.stdoutBase64Chunks) {
+			if (typeof chunk === "string") await writeStdout(Buffer.from(chunk, "base64"));
+		}
+	}
+	if (typeof entry?.stdoutRaw === "string") await writeStdout(entry.stdoutRaw);
+}
+
 function extractPlainText(entry) {
 	if (!entry || typeof entry !== "object") return "";
 	if (entry.type === "message_end") {
@@ -311,14 +320,17 @@ async function main() {
 				await new Promise((resolve) => setTimeout(resolve, step.delay));
 				}
 				if (Array.isArray(step?.jsonl) && step.jsonl.length > 0) {
-						await writeResponseEntries(step.jsonl, jsonMode, args);
+					await writeResponseEntries(step.jsonl, jsonMode, args);
 				}
+				await writeRawStdout(step);
 				if (typeof step?.stderr === "string" && step.stderr.length > 0) {
 					process.stderr.write(step.stderr);
 				}
 			}
 		} else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
-				await writeResponseEntries(response.jsonl, jsonMode, args);
+			await writeResponseEntries(response.jsonl, jsonMode, args);
+		} else if (Array.isArray(response.stdoutBase64Chunks) || typeof response.stdoutRaw === "string") {
+			await writeRawStdout(response);
 		} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
 			const envSnapshot = Object.fromEntries(response.echoEnv.map((key) => [key, process.env[key] ?? null]));
 				const output = withAcceptanceReport(JSON.stringify(envSnapshot), args);

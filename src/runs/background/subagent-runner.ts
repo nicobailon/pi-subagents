@@ -94,6 +94,7 @@ import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChai
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
@@ -144,6 +145,7 @@ interface StepResult {
 	agent: string;
 	output: string;
 	error?: string;
+	protocolError?: ProtocolOutputLimit;
 	success: boolean;
 	exitCode?: number | null;
 	skipped?: boolean;
@@ -347,6 +349,7 @@ interface ChildEvent {
 	message?: ChildMessage;
 	toolName?: string;
 	args?: Record<string, unknown>;
+	willRetry?: unknown;
 }
 
 interface RunPiStreamingResult {
@@ -356,6 +359,7 @@ interface RunPiStreamingResult {
 	usage: Usage;
 	model?: string;
 	error?: string;
+	protocolError?: ProtocolOutputLimit;
 	finalOutput: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
@@ -400,9 +404,8 @@ function runPiStreaming(
 			env: spawnEnv,
 			windowsHide: true,
 		});
-		let stderr = "";
-		let stdoutBuf = "";
-		let stderrBuf = "";
+		const stderrTail = createBoundedByteTail();
+		const rawStdoutTail = createBoundedByteTail();
 		const messages: Message[] = [];
 		const usage = emptyUsage();
 		let model: string | undefined;
@@ -415,9 +418,9 @@ function runPiStreaming(
 		let turnBudgetMessage: string | undefined;
 		let turnBudget: TurnBudgetState | undefined;
 		let observedMutationAttempt = false;
-		const rawStdoutLines: string[] = [];
 		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
+		let applyChildLifecycle = (_action: ChildLifecycleAction): void => {};
 		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
 			childWatchdogState = snapshot;
 		};
@@ -458,7 +461,7 @@ function runPiStreaming(
 			try {
 				event = JSON.parse(line) as ChildEvent;
 			} catch {
-				rawStdoutLines.push(line);
+				rawStdoutTail.push(`${line}\n`);
 				writeOutputLine(line);
 				appendChildLine("subagent.child.stdout", line);
 				return;
@@ -466,6 +469,8 @@ function runPiStreaming(
 
 			appendChildEvent(event);
 			transcriptWriter?.writeChildEvent(event);
+			if (event.type === "agent_settled") agentSettledReceived = true;
+			applyChildLifecycle(projectChildLifecycle(event));
 
 			if (isChildWatchdogStatusEvent(event)) {
 				if (!childWatchdogConfig) return;
@@ -491,7 +496,7 @@ function runPiStreaming(
 					armWatchdogTail();
 				} else {
 					clearWatchdogTailTimer();
-					if (cleanTerminalAssistantStopReceived) startFinalDrain();
+					if (cleanTerminalAssistantStopReceived || agentSettledReceived) startFinalDrain();
 				}
 				return;
 			}
@@ -525,21 +530,8 @@ function runPiStreaming(
 				if (isTerminalAssistantStop(event.message)) {
 					if (!event.message.errorMessage && extractTextFromContent(event.message.content).trim()) assistantError = undefined;
 					cleanTerminalAssistantStopReceived ||= !event.message.errorMessage;
-					startFinalDrain();
+					applyChildLifecycle(projectChildLifecycle(event, true));
 				}
-			}
-		};
-
-		const processStderrText = (text: string) => {
-			stderr += text;
-			stderrBuf += text;
-			outputStream.write(text);
-			if (!childEventContext) return;
-			const lines = stderrBuf.split("\n");
-			stderrBuf = lines.pop() || "";
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				appendChildLine("subagent.child.stderr", line);
 			}
 		};
 
@@ -551,24 +543,56 @@ function runPiStreaming(
 		let childExited = false;
 		let forcedTerminationSignal = false;
 		let cleanTerminalAssistantStopReceived = false;
+		let agentSettledReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
 		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
 		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
+		let protocolHardKillTimer: NodeJS.Timeout | undefined;
+		let protocolError: ProtocolOutputLimit | undefined;
 		let settled = false;
-		const clearStdioGuard = attachPostExitStdioGuard(child, { idleMs: 2000, hardMs: 8000 });
-		child.stdout.on("data", (chunk: Buffer) => {
-			const text = chunk.toString();
-			stdoutBuf += text;
-			const lines = stdoutBuf.split("\n");
-			stdoutBuf = lines.pop() || "";
-			for (const line of lines) processStdoutLine(line);
+		applyChildLifecycle = (action: ChildLifecycleAction): void => {
+			if (action === "cancel-drain") {
+				if (finalDrainTimer) {
+					clearTimeout(finalDrainTimer);
+					finalDrainTimer = undefined;
+				}
+				if (finalHardKillTimer) {
+					clearTimeout(finalHardKillTimer);
+					finalHardKillTimer = undefined;
+				}
+				clearWatchdogTailTimer();
+				return;
+			}
+			if (action === "start-drain") startFinalDrain();
+		};
+		const failProtocol = (limit: ProtocolOutputLimit): void => {
+			if (protocolError) return;
+			protocolError = limit;
+			error = formatProtocolOutputLimit(limit);
+			if (!childExited) {
+				trySignalChild(child, "SIGTERM");
+				protocolHardKillTimer = setTimeout(() => {
+					if (!settled) trySignalChild(child, "SIGKILL");
+				}, 3000);
+				protocolHardKillTimer.unref?.();
+			}
+		};
+		const stdoutReader = createBoundedLineReader({ onLine: processStdoutLine, onLimit: failProtocol });
+		const stderrReader = createBoundedLineReader({
+			stream: "stderr",
+			maxPendingLineBytes: MAX_CHILD_STDERR_BYTES,
+			onLine: (line) => appendChildLine("subagent.child.stderr", line),
+			onLimit: (limit) => appendChildLine("subagent.child.stderr", formatProtocolOutputLimit(limit)),
 		});
-
+		const clearStdioGuard = attachPostExitStdioGuard(child, { idleMs: 2000, hardMs: 8000 });
+		child.stdout.on("data", (chunk: Buffer) => stdoutReader.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => {
-			processStderrText(chunk.toString());
+			stderrTail.push(chunk);
+			stderrReader.push(chunk);
+			outputStream.write(chunk);
 		});
 		registerInterrupt?.(() => {
 			if (settled || timedOut || stopped) return;
@@ -640,6 +664,10 @@ function runPiStreaming(
 				clearTimeout(turnBudgetHardKillTimer);
 				turnBudgetHardKillTimer = undefined;
 			}
+			if (protocolHardKillTimer) {
+				clearTimeout(protocolHardKillTimer);
+				protocolHardKillTimer = undefined;
+			}
 		};
 		function startFinalDrain(): void {
 			if (childWatchdogIsActive(childWatchdogState)) {
@@ -652,8 +680,8 @@ function runPiStreaming(
 				const termSent = trySignalChild(child, "SIGTERM");
 				if (!termSent) return;
 				forcedTerminationSignal = true;
-				if (!cleanTerminalAssistantStopReceived && !error && !assistantError) {
-					error = `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
+				if (!cleanTerminalAssistantStopReceived && !agentSettledReceived && !error && !assistantError) {
+					error = `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its terminal event. Forcing termination.`;
 				}
 				finalHardKillTimer = setTimeout(() => {
 					if (settled) return;
@@ -670,7 +698,7 @@ function runPiStreaming(
 			}
 		}
 		function armWatchdogTail(): void {
-			if (!cleanTerminalAssistantStopReceived || watchdogTailTimer || settled) return;
+			if ((!cleanTerminalAssistantStopReceived && !agentSettledReceived) || watchdogTailTimer || settled) return;
 			watchdogTailTimer = setTimeout(() => {
 				watchdogTailTimer = undefined;
 				updateChildWatchdogState({
@@ -697,12 +725,13 @@ function runPiStreaming(
 			registerTurnBudgetAbort?.(undefined);
 			clearDrainTimers();
 			clearStdioGuard();
-			if (stdoutBuf.trim()) processStdoutLine(stdoutBuf);
-			if (stderrBuf.trim()) appendChildLine("subagent.child.stderr", stderrBuf);
+			stdoutReader.end();
+			stderrReader.end();
 			outputStream.end();
-			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
+			const stderr = stderrTail.text();
+			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const finalError = error ?? assistantError;
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !finalError;
+			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !finalError;
 			resolve({
 				stderr,
 				exitCode: timedOut || stopped ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
@@ -710,6 +739,7 @@ function runPiStreaming(
 				usage,
 				model,
 				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError,
+				protocolError,
 				finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput,
 				interrupted,
 				timedOut,
@@ -730,10 +760,13 @@ function runPiStreaming(
 			registerTurnBudgetAbort?.(undefined);
 			clearDrainTimers();
 			clearStdioGuard();
+			stdoutReader.end();
+			stderrReader.end();
 			outputStream.end();
-			const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
+			const stderr = stderrTail.text();
+			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
+			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
 		});
 	});
 }
@@ -1285,6 +1318,7 @@ async function runSingleStep(
 		output: outputForSummary,
 		exitCode: effectiveFinalExitCode,
 		error: effectiveFinalError,
+		protocolError: finalResult?.protocolError,
 		sessionFile: step.sessionFile,
 		intercomTarget: ctx.childIntercomTarget,
 		model: finalResult?.model,
@@ -2653,6 +2687,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					agent: pr.agent,
 					output: pr.output,
 					error: pr.error,
+					protocolError: pr.protocolError,
 					success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
 					exitCode: pr.interrupted === true ? 0 : pr.exitCode,
 					skipped: pr.skipped,
@@ -2994,6 +3029,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 						agent: pr.agent,
 						output: pr.output,
 						error: pr.error,
+						protocolError: pr.protocolError,
 						success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
 						exitCode: pr.interrupted === true ? 0 : pr.exitCode,
 						skipped: pr.skipped,
@@ -3118,6 +3154,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				agent: singleResult.agent,
 				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
+				protocolError: singleResult.protocolError,
 				success: !stopped && !childStopped && !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
 				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
 				sessionFile: singleResult.sessionFile,
@@ -3390,6 +3427,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				agent: r.agent,
 				output: r.output,
 				error: r.error,
+				protocolError: r.protocolError,
 				success: r.success,
 				skipped: r.skipped || undefined,
 				interrupted: r.interrupted || undefined,

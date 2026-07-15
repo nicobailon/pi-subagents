@@ -11,9 +11,13 @@ interface MockPiResponse {
 	keepAliveAfterFinalMessageMs?: number;
 	ignoreSigterm?: boolean;
 	jsonl?: unknown[];
+	stdoutRaw?: string;
+	stdoutBase64Chunks?: string[];
 	steps?: Array<{
 		delay?: number;
 		jsonl?: unknown[];
+		stdoutRaw?: string;
+		stdoutBase64Chunks?: string[];
 		stderr?: string;
 	}>;
 	echoEnv?: string[];
