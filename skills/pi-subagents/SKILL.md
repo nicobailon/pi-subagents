@@ -251,7 +251,7 @@ If a provider rejects model IDs with thinking suffixes, use
 builtin thinking defaults globally. A higher-precedence per-agent `thinking`
 override can opt one builtin back in.
 
-Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. Set `toolDescriptionMode` to `compact` to reduce tool-description prompt cost while keeping the execution, async/wait, child-safety, one-writer, management/action, and artifact/status guardrails. Set it to `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.
+Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. Set `toolDescriptionMode` to `compact` to reduce tool-description prompt cost while keeping the execution, async/`subagent_wait`, child-safety, one-writer, management/action, and artifact/status guardrails. Set it to `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.
 
 ## Discovery and Scope Rules
 
@@ -350,9 +350,9 @@ Async does not mean parallel writes. Do not edit the same active worktree while 
 
 Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed.
 
-When there is no independent work left and you just need the next async result, **call `wait()`** rather than `sleep`/status-polling loops. `wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery. Use `wait({ all: true })` to drain every active run, `wait({ id: "..." })` to block on one run, and `wait({ timeoutMs })` to cap how long you block.
+When there is no independent work left and you just need the next async result, **call `subagent_wait()`** rather than `sleep`/status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery. Use `subagent_wait({ all: true })` to drain every active run, `subagent_wait({ id: "..." })` to block on one run, and `subagent_wait({ timeoutMs })` to cap how long you block.
 
-Prefer `wait()` over ending the turn whenever you must keep going to finish the job — inside a skill that has to run to completion, or in any non-interactive run (`pi -p ...`) where the whole task is a single turn. In those cases ending the turn abandons the still-running children, because there is no next turn to receive their completion. Only end the turn to wait when you are in an interactive session and are certain the user will prompt you again; then Pi will wake you when the run finishes.
+Prefer `subagent_wait()` over ending the turn whenever you must keep going to finish the job — inside a skill that has to run to completion, or in any non-interactive run (`pi -p ...`) where the whole task is a single turn. In those cases ending the turn abandons the still-running children, because there is no next turn to receive their completion. Only end the turn to wait when you are in an interactive session and are certain the user will prompt you again; then Pi will wake you when the run finishes.
 
 ```typescript
 subagent({
@@ -418,7 +418,7 @@ subagent({ action: "schedule-status", id: "ab12" })
 subagent({ action: "schedule-cancel", id: "ab12" })
 ```
 
-`schedule` accepts the same execution fields as a normal async run (`agent`/`tasks`/`chain`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `wait()`, and delivers the normal completion notification.
+`schedule` accepts the same execution fields as a normal async run (`agent`/`tasks`/`chain`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `subagent_wait()`, and delivers the normal completion notification.
 
 Schedules are persisted per session and restored after a Pi restart. A job whose scheduled time passed by more than `scheduledRuns.maxLatenessMs` (default 5 minutes) while Pi was unavailable is marked `missed` instead of firing late. `scheduledRuns.maxPending` (default 20) caps pending or running scheduled jobs per session.
 
@@ -714,7 +714,7 @@ Methods: `ping`, `status`, `spawn`, `interrupt`, and `stop`. `spawn` is async-on
 - **Keep conversational authority clear.** Advisory subagents should not silently
   become second decision-makers.
 
-Runtime config can change orchestration behavior. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make `wait()` return immediately; `globalConcurrencyLimit` and `maxSubagentSpawnsPerSession` bound fanout; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. Per-run `artifacts: false` disables artifact capture for that launch. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Prefer these artifacts and `status` views over scraping terminal output.
+Runtime config can change orchestration behavior. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make `subagent_wait()` return immediately; `globalConcurrencyLimit` and `maxSubagentSpawnsPerSession` bound fanout; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. Per-run `artifacts: false` disables artifact capture for that launch. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Prefer these artifacts and `status` views over scraping terminal output.
 
 ## Best Practices
 
@@ -722,18 +722,18 @@ Runtime config can change orchestration behavior. `asyncByDefault` and `forceTop
 
 Launch every subagent asynchronously by default. Use `async: true` for scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, chains, and parallel groups unless you intentionally need a foreground/blocking run. The parent should keep moving: inspect code while scouts run, prepare validation while a worker implements, do a local diff pass while reviewers review, and synthesize or verify while a fix worker applies accepted feedback. Async is the default orchestration posture; foreground runs are the explicit opt-out.
 
-### Use wait() to block until async runs finish
+### Use subagent_wait() to block until async runs finish
 
-When you have launched async runs and have no independent work left but must keep going to finish the task, call `wait()`. It blocks the current turn until the next run completes or needs attention, keeps the turn alive for normal notification delivery, then returns.
+When you have launched async runs and have no independent work left but must keep going to finish the task, call `subagent_wait()`. It blocks the current turn until the next run completes or needs attention, keeps the turn alive for normal notification delivery, then returns.
 
-- `wait()` — return when the next active async run in this session finishes or needs attention.
-- `wait({ all: true })` — block until every active async run in this session finishes or one needs attention.
-- `wait({ id: "..." })` — block on one run (id or prefix).
-- `wait({ timeoutMs })` — cap the block; the runs keep going if it elapses.
+- `subagent_wait()` — return when the next active async run in this session finishes or needs attention.
+- `subagent_wait({ all: true })` — block until every active async run in this session finishes or one needs attention.
+- `subagent_wait({ id: "..." })` — block on one run (id or prefix).
+- `subagent_wait({ timeoutMs })` — cap the block; the runs keep going if it elapses.
 
-`wait()` is the correct way to keep N workers in flight: launch N, call `wait()`, react to the result, launch a replacement if needed, then call `wait()` again. Use `wait({ all: true })` only when you intentionally want to drain the fleet to zero. Reserve ending-the-turn-to-wait for interactive sessions where the user will prompt you again; in a skill that must complete or a non-interactive `pi -p` run there is no next turn, so `wait()` is required to avoid abandoning live children.
+`subagent_wait()` is the correct way to keep N workers in flight: launch N, call `subagent_wait()`, react to the result, launch a replacement if needed, then call `subagent_wait()` again. Use `subagent_wait({ all: true })` only when you intentionally want to drain the fleet to zero. Reserve ending-the-turn-to-wait for interactive sessions where the user will prompt you again; in a skill that must complete or a non-interactive `pi -p` run there is no next turn, so `subagent_wait()` is required to avoid abandoning live children.
 
-If `config.waitTool` or `PI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking behavior, the `wait` tool stays registered but returns immediately. In that case, inspect status, continue independent work, or rely on normal completion notifications instead of building sleep/status polling loops.
+If `config.waitTool` or `PI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking behavior, the `subagent_wait` tool stays registered but returns immediately. In that case, inspect status, continue independent work, or rely on normal completion notifications instead of building sleep/status polling loops.
 
 ### Keep writes single-threaded by default
 
@@ -781,7 +781,7 @@ subagent({
 
 ### Fable mode for complex work
 
-Fable mode is the default orchestration posture for complex work. It is not a separate runtime mode; it is how the parent session uses `subagent`, `interview`, `wait`, acceptance contracts, artifacts, and fresh-context review when the work has real complexity. Use it for complex features, broad refactors, migrations, ambiguous goals, multi-system changes, expensive validation, user-visible behavior changes, or any request to plan/orchestrate end to end. Do not force it onto tiny one-shot delegation.
+Fable mode is the default orchestration posture for complex work. It is not a separate runtime mode; it is how the parent session uses `subagent`, `interview`, `subagent_wait`, acceptance contracts, artifacts, and fresh-context review when the work has real complexity. Use it for complex features, broad refactors, migrations, ambiguous goals, multi-system changes, expensive validation, user-visible behavior changes, or any request to plan/orchestrate end to end. Do not force it onto tiny one-shot delegation.
 
 Run the work through seven gated phases:
 

@@ -9,7 +9,7 @@ const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents or chains.
 • Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for list/get/models/create/update/delete/status/interrupt/stop/resume/append-step/doctor.
-• Async/background runs: launch with async:true only when work can proceed independently. Do not sleep or poll status just to wait; if this turn must block, use the wait tool. Otherwise continue useful work or respond and let completion notifications arrive.
+• Async/background runs: launch with async:true only when work can proceed independently. Do not sleep or poll status just to wait; if this turn must block, use subagent_wait. Otherwise continue useful work or respond and let completion notifications arrive.
 • Child-safety boundary: ordinary child subagents are not orchestrators and must not run subagents. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Writing/review safety: keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers/validators for independent review, then have the parent synthesize and apply fixes as the sole writer unless an isolated worktree was intentionally requested.
 • Artifacts/status essentials: chain outputs live under {chain_dir}; async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Include output paths and residual risks when reporting results.`;
@@ -87,7 +87,7 @@ MANAGE / CONTROL:
 • Opt-in schedule actions: schedule, schedule-list, schedule-status, schedule-cancel. Schedule only explicit delayed runs the user asked for.
 
 ASYNC / WAIT:
-• async:true detaches background work. Do not sleep or poll just to wait; use the wait tool only when this turn must block. Otherwise continue useful work or respond and let completion notifications arrive.
+• async:true detaches background work. Do not sleep or poll just to wait; use subagent_wait only when this turn must block. Otherwise continue useful work or respond and let completion notifications arrive.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, session files, and { action:"status", id:"..." }.
 
 SAFETY:

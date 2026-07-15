@@ -296,7 +296,7 @@ const SubagentParamsSchema = Type.Object({
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
 
-const WaitParamsSchema = Type.Object({
+const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({
 		description: "Run id or prefix to wait for one specific run. Omit to wait across every active async run started in this session.",
 	})),
@@ -309,4 +309,4 @@ const WaitParamsSchema = Type.Object({
 	})),
 });
 
-export const WaitParams = keepTopLevelParameterDescriptions(WaitParamsSchema);
+export const SubagentWaitParams = keepTopLevelParameterDescriptions(SubagentWaitParamsSchema);

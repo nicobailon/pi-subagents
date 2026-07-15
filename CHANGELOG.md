@@ -13,6 +13,7 @@
 - Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
 
 ### Fixed
+- Renamed the parent blocking tool from `wait` to `subagent_wait` with no legacy alias, avoiding startup conflicts with unrelated extension wait tools. Thanks to DesZhang (@DesZhang) for #437 and Nate Rutman (@nrutman) for confirming the conflict and clarifying the incompatible semantics.
 - Reused the verified current or installed Pi CLI on POSIX instead of resolving a potentially missing or different `pi` from `PATH`. Thanks to Luke Parke (@LukasParke) for #443.
 - Preserved `{outputs.name}` as literal task text in async single runs while keeping named-output interpolation for real chains. Thanks to Tristan Storch (@tstorch) for #427.
 - Recovered acceptance reports from child-written configured outputs, honoring file-only source precedence and surfacing malformed primary reports. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #434.

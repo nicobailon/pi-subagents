@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type WaitDeps } from "../../src/runs/background/wait.ts";
+import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: string, extra: object = {}): void {
@@ -48,7 +48,7 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 	return result.content.map((c) => c.text ?? "").join("");
 }
 
-function baseDeps(root: string, state: SubagentState, overrides: Partial<WaitDeps> = {}): WaitDeps {
+function baseDeps(root: string, state: SubagentState, overrides: Partial<SubagentWaitDeps> = {}): SubagentWaitDeps {
 	return {
 		state,
 		asyncDirRoot: path.join(root, "runs"),
@@ -61,7 +61,7 @@ function baseDeps(root: string, state: SubagentState, overrides: Partial<WaitDep
 	};
 }
 
-describe("wait tool", () => {
+describe("subagent_wait tool", () => {
 	it("resolves waitTool config and environment overrides strictly", () => {
 		assert.deepEqual(resolveWaitToolConfig(undefined, {}), { enabled: true });
 		assert.deepEqual(resolveWaitToolConfig(false, {}), { enabled: false });
@@ -84,7 +84,7 @@ describe("wait tool", () => {
 				enabled: false,
 				sleep: async () => {
 					slept = true;
-					throw new Error("disabled wait should not sleep");
+					throw new Error("disabled subagent_wait should not sleep");
 				},
 			}));
 

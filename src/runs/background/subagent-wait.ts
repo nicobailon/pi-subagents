@@ -1,6 +1,6 @@
 /**
- * `wait` tool: block the current turn until outstanding async subagent runs
- * finish (or another completion notification arrives).
+ * `subagent_wait` tool: block the current turn until outstanding async
+ * subagent runs finish (or another completion notification arrives).
  *
  * Background subagent runs are detached. In an interactive session the parent
  * can end its turn and Pi will wake it with a completion notification. That
@@ -8,32 +8,34 @@
  * cannot work at all non-interactively (`pi -p ...`), where the run is a single
  * turn: once the turn ends there is nothing left to receive the notification.
  *
- * `wait` closes that gap. It keeps the turn alive until a tracked async run for
- * this session reaches a terminal state (complete / failed / paused), the
- * caller-supplied timeout elapses, or the turn is aborted. Because it awaits
+ * `subagent_wait` closes that gap. It keeps the turn alive until a tracked async
+ * run for this session reaches a terminal state (complete / failed / paused),
+ * the caller-supplied timeout elapses, or the turn is aborted. Because it awaits
  * inside the turn, the completion the model was told to wait for is actually
  * observed before the tool returns.
  *
- * By default `wait` returns as soon as ONE run finishes, so a fleet manager can
- * use it in a rolling-replacement loop: launch N workers, wait for the next one
- * to finish, spawn its replacement, wait again — keeping N in flight instead of
- * draining to zero between batches. Pass `all: true` to block until every
- * tracked run is terminal, or `id` to block on one specific run.
+ * By default `subagent_wait` returns as soon as ONE run finishes, so a fleet
+ * manager can use it in a rolling-replacement loop: launch N workers, wait for
+ * the next one to finish, spawn its replacement, then call `subagent_wait`
+ * again — keeping N in flight instead of draining to zero between batches.
+ * Pass `all: true` to block until every tracked run is terminal, or `id` to
+ * block on one specific run.
  *
- * `wait` also returns when a run needs attention — not just on completion. A
- * child that goes idle or blocks for a decision surfaces `needs_attention`
- * (the same signal Pi shows as a control notice and, interactively, wakes the
- * parent with). Since `wait` is used exactly where there is no next turn to
- * receive that notice, it must break on it too, or a stuck child would stall
- * the loop until the timeout. Attention runs are reported so the caller can
- * inspect / nudge / resume / interrupt them.
+ * `subagent_wait` also returns when a run needs attention — not just on
+ * completion. A child that goes idle or blocks for a decision surfaces
+ * `needs_attention` (the same signal Pi shows as a control notice and,
+ * interactively, wakes the parent with). Since `subagent_wait` is used exactly
+ * where there is no next turn to receive that notice, it must break on it too,
+ * or a stuck child would stall the loop until the timeout. Attention runs are
+ * reported so the caller can inspect / nudge / resume / interrupt them.
  *
- * Wake mechanism: when given Pi's event bus (`deps.events`), `wait` subscribes
- * to the subagent completion/control channels and wakes the instant any fires,
- * rather than waiting out a fixed poll interval. A poll still runs on the
- * interval as a reconciliation fallback (crashed runners, missed events), and
- * the poll is the source of truth for what actually changed — the event only
- * ends the sleep early. With no bus, `wait` degrades to pure polling.
+ * Wake mechanism: when given Pi's event bus (`deps.events`), `subagent_wait`
+ * subscribes to the subagent completion/control channels and wakes the instant
+ * any fires, rather than waiting out a fixed poll interval. A poll still runs
+ * on the interval as a reconciliation fallback (crashed runners, missed
+ * events), and the poll is the source of truth for what actually changed — the
+ * event only ends the sleep early. With no bus, `subagent_wait` degrades to pure
+ * polling.
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -93,7 +95,7 @@ export function resolveWaitToolConfig(config?: WaitToolConfig, env: Record<strin
 	};
 }
 
-export interface WaitParams {
+export interface SubagentWaitParams {
 	/** Optional run id/prefix to wait for. When omitted, waits across every active run in this session. */
 	id?: string;
 	/**
@@ -112,7 +114,7 @@ export interface WaitEventBus {
 	on(channel: string, handler: (data: unknown) => void): () => void;
 }
 
-export interface WaitDeps {
+export interface SubagentWaitDeps {
 	state: SubagentState;
 	asyncDirRoot?: string;
 	resultsDir?: string;
@@ -163,7 +165,7 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
  * turn aborts). Returns when the first of those happens. With no bus this is a
  * plain sleep, so the poll interval alone drives progress.
  */
-function waitForWake(ms: number, signal: AbortSignal | undefined, deps: WaitDeps): Promise<void> {
+function waitForWake(ms: number, signal: AbortSignal | undefined, deps: SubagentWaitDeps): Promise<void> {
 	const sleep = deps.sleep ?? defaultSleep;
 	const events = deps.events;
 	if (!events) return sleep(ms, signal);
@@ -205,7 +207,7 @@ function needsAttention(run: AsyncRunSummary): boolean {
 }
 
 /** Queued/running runs from this session, including runs that need attention. */
-function activeRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSummary[] {
+function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
 	const runs = listAsyncRuns(asyncDirRoot, {
@@ -219,12 +221,12 @@ function activeRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSumma
 }
 
 /** Runs (from the initial set) currently flagged needs_attention, for reporting. */
-function attentionRunsForSession(params: WaitParams, deps: WaitDeps, initialIds: Set<string>): AsyncRunSummary[] {
+function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps, initialIds: Set<string>): AsyncRunSummary[] {
 	return activeRunsForSession(params, deps).filter((run) => needsAttention(run) && initialIds.has(run.id));
 }
 
 /** All runs (any state) for this session, for the final summary. */
-function allRunsForSession(params: WaitParams, deps: WaitDeps): AsyncRunSummary[] {
+function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
 	const runs = listAsyncRuns(asyncDirRoot, {
@@ -262,12 +264,12 @@ function result(text: string, isError = false): AgentToolResult<Details> {
  * is aborted. Resolves with a short human-readable summary either way.
  */
 export async function waitForSubagents(
-	params: WaitParams,
+	params: SubagentWaitParams,
 	signal: AbortSignal | undefined,
-	deps: WaitDeps,
+	deps: SubagentWaitDeps,
 ): Promise<AgentToolResult<Details>> {
 	if (deps.enabled === false) {
-		return result("Wait tool is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background subagent runs. Active runs keep going, and you can inspect them with subagent({ action: \"status\" }) or wait for completion notifications.");
+		return result("subagent_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background subagent runs. Active runs keep going, and you can inspect them with subagent({ action: \"status\" }) or wait for completion notifications.");
 	}
 	const now = deps.now ?? Date.now;
 	const pollIntervalMs = Math.max(MIN_POLL_INTERVAL_MS, deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
@@ -330,7 +332,7 @@ export async function waitForSubagents(
 			const stillActive = pending.map((run) => `${run.id} (${run.state})`).join(", ");
 			return result(
 				`Wait timed out after ${formatDuration(timeoutMs)} with ${pending.length} run(s) still active: ${stillActive}. `
-					+ `The runs are detached and keep going; call wait again or inspect with subagent({ action: "status" }).`,
+					+ `The runs are detached and keep going; call subagent_wait again or inspect with subagent({ action: "status" }).`,
 				true,
 			);
 		}
@@ -378,7 +380,7 @@ export async function waitForSubagents(
 
 	// First-completion mode.
 	const remainder = stillRunning > 0
-		? ` ${stillRunning} run(s) still in flight — call wait again to catch the next one.`
+		? ` ${stillRunning} run(s) still in flight — call subagent_wait again to catch the next one.`
 		: attention.length > 0
 			? " No other runs are waitable until attention is handled."
 			: " No runs remain in flight.";

@@ -589,9 +589,9 @@ You can combine them in either order:
 /run reviewer "review this diff" --bg --fork
 ```
 
-Background runs are detached. If the parent agent has other independent work, it should keep working. When it has nothing useful to do until a background result arrives, it should call the `wait` tool instead of running sleep or status-polling loops. `wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery; use `wait({ all: true })` to drain every active run, `wait({ id })` for one run, and `wait({ timeoutMs })` to cap the block.
+Background runs are detached. If the parent agent has other independent work, it should keep working. When it has nothing useful to do until a background result arrives, it should call `subagent_wait` instead of running sleep or status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery; use `subagent_wait({ all: true })` to drain every active run, `subagent_wait({ id })` for one run, and `subagent_wait({ timeoutMs })` to cap the block.
 
-`wait` is what lets a background-launching skill keep moving in a single turn, including non-interactive `pi -p` invocations where there is no subsequent turn to receive a completion notification. Ending the turn to wait for a completion only works in an interactive session where the user will prompt the agent again; in a run-to-completion skill or a non-interactive run, use `wait` so the still-running children are not abandoned.
+`subagent_wait` is what lets a background-launching skill keep moving in a single turn, including non-interactive `pi -p` invocations where there is no subsequent turn to receive a completion notification. Ending the turn to wait for a completion only works in an interactive session where the user will prompt the agent again; in a run-to-completion skill or a non-interactive run, use `subagent_wait` so the still-running children are not abandoned.
 
 The `oracle` and `worker` builtins are designed for an explicit decision loop. A typical pattern is to ask `oracle` for diagnosis and a recommended execution prompt, then only run `worker` after the main agent approves that direction.
 
@@ -1207,7 +1207,7 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 { "toolDescriptionMode": "compact" }
 ```
 
-Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/wait guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
+Controls the parent-facing `subagent` tool description registered at startup. `full` is the default. `compact` keeps the execution modes, async/`subagent_wait` guidance, child-safety boundary, management/action split, one-writer review guidance, and artifact/status essentials with less prompt bloat.
 
 `custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
 
@@ -1225,7 +1225,7 @@ Makes top-level calls use background execution when the request does not explici
 { "waitTool": { "enabled": false } }
 ```
 
-Keeps the `wait` tool registered but makes it return immediately instead of blocking on active async runs. Use this in interactive sessions where background completions should arrive as notifications while the main conversation stays steerable. The default is enabled. You can also set `"waitTool": false`; set `PI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. Invalid `waitTool` config or env values fail instead of being coerced.
+Keeps the `subagent_wait` tool registered but makes it return immediately instead of blocking on active async runs. Use this in interactive sessions where background completions should arrive as notifications while the main conversation stays steerable. The default is enabled. You can also set `"waitTool": false`; set `PI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. Invalid `waitTool` config or env values fail instead of being coerced.
 
 ### `forceTopLevelAsync`
 
@@ -1257,7 +1257,7 @@ Caps the total number of child subagent launches allowed during one parent sessi
 { "scheduledRuns": { "enabled": true, "maxPending": 20, "maxLatenessMs": 300000 } }
 ```
 
-Enables optional one-shot scheduled subagent runs. When enabled, `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` defers a subagent launch until a future time. Absolute ISO timestamps must include a timezone (`Z` or an offset such as `+05:30`). The scheduled run launches as a normal tracked async run with fresh context once it fires, and joins the existing async widget, status, `wait`, and completion-notification paths. `schedule-list`, `schedule-status`, and `schedule-cancel` manage pending jobs. Schedules are persisted per session and restored after a Pi restart; a job missed by more than `maxLatenessMs` while Pi is unavailable is marked `missed` instead of firing late. `maxPending` caps the number of pending or running scheduled jobs per session (default `20`). The feature is opt-in: leave `enabled` unset to keep scheduling out of the tool surface and prompt. Only schedule explicit delayed runs the user asked for.
+Enables optional one-shot scheduled subagent runs. When enabled, `subagent({ action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? })` defers a subagent launch until a future time. Absolute ISO timestamps must include a timezone (`Z` or an offset such as `+05:30`). The scheduled run launches as a normal tracked async run with fresh context once it fires, and joins the existing async widget, status, `subagent_wait`, and completion-notification paths. `schedule-list`, `schedule-status`, and `schedule-cancel` manage pending jobs. Schedules are persisted per session and restored after a Pi restart; a job missed by more than `maxLatenessMs` while Pi is unavailable is marked `missed` instead of firing late. `maxPending` caps the number of pending or running scheduled jobs per session (default `20`). The feature is opt-in: leave `enabled` unset to keep scheduling out of the tool surface and prompt. Only schedule explicit delayed runs the user asked for.
 
 ### `parallel`
 

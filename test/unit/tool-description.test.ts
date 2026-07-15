@@ -46,6 +46,7 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /omit for async\/background runs/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /Do not sleep or poll status just to wait/i);
+		assert.match(description, /use subagent_wait/i);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /keep one writer/i);
 		assert.match(description, /view: "fleet"/);
@@ -79,7 +80,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /PARALLEL/);
 		assert.match(description, /CHAIN/);
 		assert.match(description, /action without execution fields/i);
-		assert.match(description, /wait tool/i);
+		assert.match(description, /subagent_wait/i);
 		assert.match(description, /Do not sleep or poll/i);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /one writer/i);

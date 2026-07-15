@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait.ts";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -115,7 +115,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("honors waitTool disabled config for the registered wait tool", () => {
+	it("registers only subagent_wait and honors waitTool disabled config", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
 		try {
 			const configDir = path.join(agentDir, "extensions", "subagent");
@@ -125,10 +125,14 @@ describe("subagent extension child mode", () => {
 			const script = String.raw`
 				import registerSubagentExtension from "./src/extension/index.ts";
 				const events = { on() { return () => {}; }, emit() {} };
-				let waitTool;
+				let subagentWaitTool;
+				let legacyWaitRegistered = false;
 				const fakePi = new Proxy({
 					events,
-					registerTool(tool) { if (tool.name === "wait") waitTool = tool; },
+					registerTool(tool) {
+						if (tool.name === "subagent_wait") subagentWaitTool = tool;
+						if (tool.name === "wait") legacyWaitRegistered = true;
+					},
 					registerCommand() {},
 					registerShortcut() {},
 					registerMessageRenderer() {},
@@ -141,8 +145,9 @@ describe("subagent extension child mode", () => {
 					},
 				});
 				registerSubagentExtension(fakePi);
-				if (!waitTool) throw new Error("wait tool not registered");
-				const result = await waitTool.execute("wait-disabled", {}, new AbortController().signal, undefined, {});
+				if (!subagentWaitTool) throw new Error("subagent_wait tool not registered");
+				if (legacyWaitRegistered) throw new Error("legacy wait tool must not be registered");
+				const result = await subagentWaitTool.execute("subagent-wait-disabled", {}, new AbortController().signal, undefined, {});
 				process.stdout.write(JSON.stringify(result.content[0].text));
 			`;
 

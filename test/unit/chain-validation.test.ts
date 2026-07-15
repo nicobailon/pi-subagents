@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait.ts";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
 
 type JsonSchemaNode = Record<string, unknown>;
 
