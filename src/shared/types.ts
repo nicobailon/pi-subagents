@@ -369,7 +369,8 @@ export interface AcceptanceConfig {
 	reason?: string;
 }
 
-export type AcceptanceInput = AcceptanceLevel | false | AcceptanceConfig;
+/** Bare "none" is not accepted: use { level: "none", reason: "..." }; false remains a deprecated shorthand. */
+export type AcceptanceInput = Exclude<AcceptanceLevel, "none"> | false | AcceptanceConfig;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;

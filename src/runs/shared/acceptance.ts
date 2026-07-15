@@ -141,6 +141,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (input === false) return errors;
 	if (typeof input === "string") {
 		if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
+		else if (input === "none") errors.push(`${pathLabel} level "none" requires a reason; use { level: "none", reason: "..." }.`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {

@@ -416,6 +416,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(acceptanceSchema.type, undefined);
 		assert.equal(hasAnyOfType(acceptanceSchema, "string"), true);
 		assert.equal(hasAnyOfType(acceptanceSchema, "boolean"), true);
+		const acceptanceStringBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "string");
+		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "attested", "checked", "verified", "reviewed"], "bare \"none\" requires the object form with a reason");
 		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
 		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
 		assert.equal(acceptanceObjectBranch.additionalProperties, true);
@@ -499,6 +501,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ tasks: [{ agent: "worker", task: "Fix" }], maxRuntimeMs: 1000 },
 			{ chain: [{ agent: "worker", task: "Fix" }], timeoutMs: 1000, maxRuntimeMs: 1000 },
 			{ agent: "worker", task: "Fix", acceptance: "checked" },
+			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
 			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },
 			{ chain: [{ agent: "worker", acceptance: { level: "checked" } }] },
@@ -517,6 +520,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		];
 		const invalidValues = [
 			{ skill: 123 },
+			{ agent: "worker", task: "Fix", acceptance: "none" },
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },

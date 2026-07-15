@@ -67,11 +67,11 @@ const JsonSchemaObject = Type.Unsafe({
 
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
-		{ type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
+		{ type: "string", enum: ["auto", "attested", "checked", "verified", "reviewed"] },
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands.",
+	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands; bare \"none\" requires { level: \"none\", reason: \"...\" }, while false is deprecated.",
 });
 
 const TurnBudgetOverride = Type.Object({
