@@ -18,6 +18,7 @@ import type {
 	SingleResult,
 	SubagentRunMode,
 } from "../../shared/types.ts";
+import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
 	none: 0,
@@ -78,14 +79,17 @@ function inferLevel(input: {
 	const agent = input.agentName.toLowerCase();
 	const task = input.task?.toLowerCase() ?? "";
 	const reasons: string[] = [];
+	const intent = classifyTaskMutationIntent(input.agentName, input.task ?? "");
 	const readOnlyAgent = /\b(?:reviewer|scout|context-builder|researcher|analyst)\b/.test(agent);
-	const readOnlyTask = /\b(?:read[- ]only|review[- ]only|do not edit|don't edit|no edits|without edits|inspect|summari[sz]e)\b/.test(task);
-	const writeTask = /\b(?:fix|implement|update|write|edit|modify|migrate|release|security|delete|remove|refactor|commit)\b/.test(task)
-		|| /\bworker\b/.test(agent);
+	const readOnlyTask = intent.kind === "read-only"
+		|| (intent.kind === "unknown" && /\b(?:read[- ]only|review[- ]only|no edits|without edits|inspect|summari[sz]e)\b/.test(task));
+	const writeTask = taskMayMutate(input.task ?? "")
+		|| intent.kind === "implementation"
+		|| (/\bworker\b/.test(agent) && !readOnlyTask);
 	const risky = Boolean(input.async && writeTask)
 		|| Boolean(input.dynamic)
 		|| Boolean(input.dynamicGroup)
-		|| /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task);
+		|| (intent.kind !== "read-only" && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
 
 	if (risky) {
 		reasons.push(input.async ? "async write-capable or risky run" : "risky write-capable run");

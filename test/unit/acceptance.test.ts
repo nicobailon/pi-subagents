@@ -618,6 +618,60 @@ describe("acceptance gates", () => {
 		assert.match(errors.join("\n"), /independent reviewer result/);
 	});
 
+	it("blanket read-only wording is not inferred as a risky write task", () => {
+		const readOnlyWorker = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Report on the extraction pipeline. Do not modify project/source files.",
+			async: true,
+		});
+		assert.equal(readOnlyWorker.level, "attested");
+		for (const task of [
+			"Inspect the extraction pipeline",
+			"Summarize the extraction pipeline",
+			"Review only: return findings",
+			"Analyze the extraction pipeline without edits",
+		]) {
+			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task, async: true }).level, "attested", task);
+		}
+
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Inspect the failure and implement the fix" }).level, "checked");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Inspect the failure and implement the fix", async: true }).level, "reviewed");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests; implement the fix", async: true }).level, "reviewed");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests but implement the fix", async: true }).level, "reviewed");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests and implement the fix", async: true }).level, "reviewed");
+		for (const task of [
+			"Do not modify tests - implement the fix",
+			"Do not modify tests – implement the fix",
+			"Do not modify tests — implement the fix",
+		]) {
+			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task }).level, "checked", task);
+			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task, async: true }).level, "reviewed", task);
+		}
+	});
+
+	it("bare write verbs keep their reviewed gate for async tasks on any agent", () => {
+		const tasks = [
+			"Write the code",
+			"Commit the changes",
+			"Delete temporary data",
+			"Remove obsolete assets",
+			"Update dependencies",
+		];
+		for (const task of tasks) {
+			assert.equal(resolveEffectiveAcceptance({ agentName: "delegate", task, async: true }).level, "reviewed", task);
+		}
+	});
+
+	it("explicit levels are honored over a read-only inference without silent escalation", () => {
+		const resolved = resolveEffectiveAcceptance({
+			agentName: "researcher",
+			task: "Research PDF backends. Do not modify project/source files.",
+			explicit: "checked",
+			async: true,
+		});
+		assert.equal(resolved.level, "checked");
+	});
+
 	it("validates invalid disable and verify shapes", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "none" }), ["acceptance.reason is required when level is none."]);
 		assert.deepEqual(validateAcceptanceInput("none"), ["acceptance level \"none\" requires a reason; use { level: \"none\", reason: \"...\" }."]);

@@ -126,8 +126,10 @@ test("review-only, research, and framework output instructions do not expect mut
 	);
 });
 
-test("worker implementation verbs win over investigative wording", () => {
+test("worker implementation verbs win over investigative wording and scoped prohibitions", () => {
 	assert.equal(expectsImplementationMutation("worker", "Investigate why the worker did not edit files and fix it"), true);
+	assert.equal(expectsImplementationMutation("worker", "Do not modify tests; implement the fix"), true);
+	assert.equal(expectsImplementationMutation("worker", "Do not modify tests — implement the fix"), true);
 	assert.equal(expectsImplementationMutation("worker", "Research the current code path and patch the bug"), true);
 	assert.equal(expectsImplementationMutation("worker", "Fix the bug where no edits were made"), true);
 	assert.equal(expectsImplementationMutation("worker", "Fix lint"), true);

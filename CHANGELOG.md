@@ -13,6 +13,7 @@
 - Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
 
 ### Fixed
+- Shared task-intent classification between acceptance inference and the completion guard so read-only tasks with explicit no-edit wording do not receive impossible write-evidence gates, while scoped prohibitions still preserve later implementation clauses. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #433.
 - Rejected explicit `acceptance: "reviewed"` and `{ level: "reviewed" }` before launch because the current run cannot supply the required independent reviewer result; inferred and `auto` review policies remain non-blocking. Thanks to Theodor Hillmann (@t0dorakis) for #440 and #441.
 - Rejected bare `acceptance: "none"` before spawning because disabling inferred gates requires the reason-bearing `{ level: "none", reason: "..." }` form; retained `false` only as a deprecated shorthand. Thanks to 虚妄IlluDelu (@XWIlluDelu) for #435.
 - Canonicalized native `fs.watch` registration paths for async results, control inboxes, and child steering inboxes so Windows 8.3 short paths do not conflict with long-form libuv event paths. Thanks to NahidaChan (@KawaiiNahida) for #455.
