@@ -55,6 +55,23 @@ afterEach(() => {
 	}
 });
 
+describe("agent skillPath frontmatter", () => {
+	it("parses and serializes comma-separated paths", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-skill-path-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Worker
+skillPath: ./skills, ../shared-skills
+---
+body`);
+
+		const worker = discoverAgents(project, "both").agents.find((agent) => agent.name === "worker")!;
+		assert.deepEqual(worker.skillPath, ["./skills", "../shared-skills"]);
+		assert.match(serializeAgent(worker), /^skillPath: \.\/skills, \.\.\/shared-skills$/m);
+	}));
+});
+
 describe("agent permission frontmatter", () => {
 	it("preserves nested permission YAML blocks through discovery and serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-permission-frontmatter-"));

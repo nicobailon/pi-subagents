@@ -1178,6 +1178,23 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("injects an agent-file-relative local skill into the foreground child prompt", async () => {
+		mockPi.onCall({ output: "Done" });
+		const agentFile = path.join(tempDir, "agents", "nested", "worker.md");
+		const skillFile = path.join(path.dirname(agentFile), "skills", "local", "SKILL.md");
+		fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+		fs.writeFileSync(skillFile, "---\ndescription: local skill description\n---\nLocal skill body\n", "utf-8");
+		const agents = [makeAgent("worker", { filePath: agentFile, skills: ["local"], skillPath: ["./skills"] })];
+
+		const result = await runSync(tempDir, agents, "worker", "Task", {});
+
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(result.skills, ["local"]);
+		const prompt = readCall().systemPrompts.map((record) => record.text ?? "").join("\n");
+		assert.match(prompt, /local skill description/);
+		assert.match(prompt, new RegExp(escapeRegExp(skillFile)));
+	});
+
 	it("falls back to the runtime cwd when the task cwd lacks a skill", async () => {
 		const taskCwd = path.join(tempDir, "nested");
 		fs.mkdirSync(taskCwd, { recursive: true });

@@ -68,6 +68,7 @@ export interface BuiltinAgentOverrideBase {
 	disabled?: boolean;
 	systemPrompt: string;
 	skills?: string[];
+	skillPath?: string[];
 	tools?: string[];
 	mcpDirectTools?: string[];
 	subagentOnlyExtensions?: string[];
@@ -127,6 +128,7 @@ export interface AgentConfig {
 	source: AgentSource;
 	filePath: string;
 	skills?: string[];
+	skillPath?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	output?: string;
@@ -504,6 +506,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		disabled: agent.disabled,
 		systemPrompt: agent.systemPrompt,
 		skills: agent.skills ? [...agent.skills] : undefined,
+		skillPath: agent.skillPath ? [...agent.skillPath] : undefined,
 		tools: agent.tools ? [...agent.tools] : undefined,
 		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions ? [...agent.subagentOnlyExtensions] : undefined,
@@ -1234,6 +1237,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			?.split(",")
 			.map((s) => s.trim())
 			.filter(Boolean);
+		const skillPath = frontmatter.skillPath
+			?.split(",")
+			.map((entry) => entry.trim())
+			.filter(Boolean);
 		const fallbackModels = frontmatter.fallbackModels
 			?.split(",")
 			.map((model) => model.trim())
@@ -1338,6 +1345,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			source,
 			filePath,
 			skills: skills && skills.length > 0 ? skills : undefined,
+			skillPath: skillPath && skillPath.length > 0 ? skillPath : undefined,
 			extensions,
 			subagentOnlyExtensions,
 			output: frontmatter.output,

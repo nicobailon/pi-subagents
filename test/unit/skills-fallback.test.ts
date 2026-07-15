@@ -229,6 +229,12 @@ describe("skills filesystem fallback", () => {
 		const { resolved, missing } = resolveSkills(["pi-subagents", "safe-bash"], tempDir);
 		assert.deepEqual(missing, ["pi-subagents"]);
 		assert.deepEqual(resolved.map((skill) => skill.name), ["safe-bash"]);
+
+		const agentDir = path.join(tempDir, "agent");
+		writeSkillFile(path.join(agentDir, "skills", "pi-subagents"), "Still parent-only.");
+		const local = resolveSkills(["pi-subagents"], tempDir, ["./skills"], agentDir);
+		assert.deepEqual(local.resolved, []);
+		assert.deepEqual(local.missing, ["pi-subagents"]);
 	});
 
 	it("classifies package-provided skills as project-package", () => {
@@ -407,6 +413,56 @@ describe("skills filesystem fallback", () => {
 			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 			else process.env.USERPROFILE = previousUserProfile;
 		}
+	});
+
+	it("resolves agent-local files and directories before global skills without publishing them", () => {
+		makeProjectSkill(tempDir, "shared", "global body");
+		const agentDir = path.join(tempDir, "agents", "nested");
+		writeSkillFile(path.join(agentDir, "skills", "shared"), "local shared body");
+		writeSkillFile(path.join(agentDir, "direct"), "local direct body");
+
+		const local = resolveSkills(["shared", "direct", "missing"], tempDir, ["./skills", "./direct/SKILL.md"], agentDir);
+		assert.deepEqual(local.resolved.map((skill) => [skill.name, skill.content]), [
+			["shared", "local shared body"],
+			["direct", "local direct body"],
+		]);
+		assert.deepEqual(local.missing, ["missing"]);
+		assert.equal(resolveSkills(["shared"], tempDir).resolved[0]?.content, "global body");
+		assert.equal(discoverAvailableSkills(tempDir).some((skill) => skill.name === "direct"), false);
+	});
+
+	it("does not read malformed global settings when every selected local skill resolves", () => {
+		const agentDir = path.join(tempDir, "agents", "nested");
+		writeSkillFile(path.join(agentDir, "skills", "local"), "local body");
+		fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".pi", "settings.json"), "{bad-json", "utf-8");
+
+		const result = resolveSkills(["local"], tempDir, ["./skills"], agentDir);
+		assert.deepEqual(result.missing, []);
+		assert.equal(result.resolved[0]?.content, "local body");
+	});
+
+	it("falls back globally when an agent-local skill candidate cannot be read", () => {
+		makeProjectSkill(tempDir, "shared", "global body");
+		const agentDir = path.join(tempDir, "agents", "nested");
+		const invalidLocalFile = path.join(agentDir, "skills", "shared", "SKILL.md");
+		fs.mkdirSync(invalidLocalFile, { recursive: true });
+
+		const result = resolveSkills(["shared"], tempDir, ["./skills"], agentDir);
+		assert.deepEqual(result.missing, []);
+		assert.equal(result.resolved[0]?.content, "global body");
+	});
+
+	it("keeps same-named agent-local skills isolated between invocations", () => {
+		makeProjectSkill(tempDir, "global-only", "global fallback");
+		const one = path.join(tempDir, "one");
+		const two = path.join(tempDir, "two");
+		writeSkillFile(path.join(one, "skills", "private"), "one private");
+		writeSkillFile(path.join(two, "skills", "private"), "two private");
+
+		assert.equal(resolveSkills(["private", "global-only"], tempDir, ["./skills"], one).resolved[0]?.content, "one private");
+		assert.equal(resolveSkills(["private", "global-only"], tempDir, ["./skills"], two).resolved[0]?.content, "two private");
+		assert.equal(resolveSkills(["global-only"], tempDir, ["./skills"], one).resolved[0]?.content, "global fallback");
 	});
 
 	it("surfaces malformed project settings files instead of silently ignoring them", () => {

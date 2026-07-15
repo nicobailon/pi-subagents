@@ -659,6 +659,8 @@ tools: read, grep, find, ls, bash
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
+skills: safe-bash, review-checklist
+skillPath: ./skills, ../shared-skills
 ---
 
 Your system prompt here.
@@ -670,13 +672,15 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 - `output`
 - `fallbackModels`
 - `subagentOnlyExtensions`
+- `skills`
+- `skillPath`
 - `memory`
 - `maxSubagentDepth`
 - `acceptance`
 
 `acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; chain and parallel acceptance remains configured on the task or step. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
 
-Use `subagentOnlyExtensions` when a custom tool should exist only inside child sessions for that agent. Use `memory: { scope: "project" | "user", path: "<name>" }` for opt-in role-specific durable memory under the dedicated `agent-memory/` namespace; it is separate from parent/session project memory.
+Use `subagentOnlyExtensions` when a custom tool should exist only inside child sessions for that agent. `skillPath` adds invocation-private skill files or discovery directories relative to the agent file; it does not select them, so list the desired names under `skills`. Local matches win, unresolved or unreadable matches use normal discovery, and local candidates never enter the parent/global catalog. Use `memory: { scope: "project" | "user", path: "<name>" }` for opt-in role-specific durable memory under the dedicated `agent-memory/` namespace; it is separate from parent/session project memory.
 
 For many customizations, builtin overrides in settings are lower-friction than
 copying a full builtin file.

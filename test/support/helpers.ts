@@ -51,6 +51,8 @@ interface AgentConfig {
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
 	skills?: string[];
+	skillPath?: string[];
+	filePath?: string;
 	thinking?: string;
 	systemPromptMode?: string;
 	inheritProjectContext?: boolean;

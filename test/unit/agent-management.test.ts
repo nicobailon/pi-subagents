@@ -105,6 +105,39 @@ describe("agent management config parsing", () => {
 		assert.equal(fs.existsSync(updatedPath), false);
 	});
 
+	it("creates, reports, and clears agent-local skill paths", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const skillFile = path.join(tempDir, ".pi", "agents", "skills", "private", "SKILL.md");
+		fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+		fs.writeFileSync(skillFile, "---\ndescription: Private skill\n---\nbody\n", "utf-8");
+
+		const created = handleCreate({ config: {
+			name: "Local",
+			description: "Local skills",
+			scope: "project",
+			skills: "private",
+			skillPath: ["./skills", "./skills"],
+		} }, ctx);
+		assert.equal(created.isError, false);
+		assert.doesNotMatch(readText(created), /skills not found/);
+		const filePath = path.join(tempDir, ".pi", "agents", "local.md");
+		let content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^skillPath: \.\/skills$/m);
+
+		const got = handleManagementAction("get", { agent: "local" }, ctx);
+		assert.match(readText(got), /^Skill paths: \.\/skills$/m);
+
+		const updated = handleUpdate({ agent: "local", config: { skills: false, skillPath: false } }, ctx);
+		assert.equal(updated.isError, false);
+		content = fs.readFileSync(filePath, "utf-8");
+		assert.doesNotMatch(content, /^skills?:/m);
+		assert.doesNotMatch(content, /^skillPath:/m);
+
+		const invalid = handleUpdate({ agent: "local", config: { skillPath: ["./skills", 1] } }, ctx);
+		assert.equal(invalid.isError, true);
+		assert.match(readText(invalid), /config\.skillPath must be/);
+	});
+
 	it("rejects package values that cannot be normalized", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const created = handleCreate(

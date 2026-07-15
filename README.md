@@ -704,7 +704,8 @@ thinking: high
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
-skills: safe-bash, chrome-devtools
+skills: safe-bash, review-checklist
+skillPath: ./skills, ../shared-skills
 output: context.md
 defaultReads: context.md
 defaultProgress: true
@@ -735,7 +736,8 @@ Important fields:
 | `inheritProjectContext` | Keeps or strips inherited project instruction blocks. |
 | `inheritSkills` | Keeps or strips Pi’s discovered skills catalog. |
 | `defaultContext` | Optional `fresh` or `fork` launch context default for this agent. |
-| `skills` | Adds specific skills to the child’s available skill list, regardless of `inheritSkills`. |
+| `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |
+| `skillPath` | Comma-separated invocation-private skill files or discovery directories. Relative paths resolve from the agent definition file. Local matches take precedence, while unresolved or unreadable matches fall back to normal skill discovery. This field discovers candidates only; `skills` still selects what the child receives. |
 | `output` | Default single-agent output file. |
 | `defaultReads` | Files to read before running in chain/parallel behavior. |
 | `defaultProgress` | Maintain `progress.md`. |
@@ -747,6 +749,8 @@ Important fields:
 | `interactive` | Parsed for compatibility but not enforced in v1. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
 | `memory` | Opt-in role-specific persistent memory. `memory: { scope: "project" \| "user", path: "<name>" }` injects the first lines of a `MEMORY.md` from a dedicated `agent-memory/` directory into the child system prompt. Agents with write tools (`edit`/`write`/`bash`) get a read-write block; read-only agents get a read-only fallback. Project scope resolves under `<project>/.pi/agent-memory/`, user scope under `~/.pi/agent/agent-memory/`. Paths are validated against traversal and symlink escape. |
+
+Agent-local `skillPath` candidates never enter Pi's parent/global skills catalog. Pair `inheritSkills: false` with explicit `skills` and `skillPath` when a child should receive only its selected private skills.
 
 ### Per-agent persistent memory
 

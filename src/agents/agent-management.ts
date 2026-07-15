@@ -23,7 +23,7 @@ import {
 import { serializeAgent } from "./agent-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
 import { serializeChain, serializeJsonChain } from "./chain-serializer.ts";
-import { discoverAvailableSkills } from "./skills.ts";
+import { discoverAvailableSkills, resolveSkills } from "./skills.ts";
 import {
 	buildProactiveSkillSubagentRecommendationLines,
 } from "./proactive-skills.ts";
@@ -190,10 +190,14 @@ function fallbackModelsWarning(ctx: ManagementContext, fallbackModels: string[] 
 	return missing.length ? `Warning: fallback models not in the current model registry: ${missing.join(", ")}.` : undefined;
 }
 
-function skillsWarning(cwd: string, skills: string[] | undefined): string | undefined {
-	if (!skills || skills.length === 0) return undefined;
-	const available = new Set(discoverAvailableSkills(cwd).map((s) => s.name));
-	const missing = skills.filter((s) => !available.has(s));
+function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPath" | "filePath">): string | undefined {
+	if (!agent.skills?.length) return undefined;
+	const { missing } = resolveSkills(
+		agent.skills,
+		cwd,
+		agent.skillPath,
+		agent.filePath ? path.dirname(agent.filePath) : cwd,
+	);
 	return missing.length ? `Warning: skills not found: ${missing.join(", ")}.` : undefined;
 }
 
@@ -213,6 +217,7 @@ function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		disabled: base.disabled,
 		systemPrompt: base.systemPrompt,
 		skills: base.skills ? [...base.skills] : undefined,
+		skillPath: base.skillPath ? [...base.skillPath] : undefined,
 		tools: base.tools ? [...base.tools] : undefined,
 		mcpDirectTools: base.mcpDirectTools ? [...base.mcpDirectTools] : undefined,
 		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
@@ -244,6 +249,7 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 	if (hasKey(cfg, "fallbackModels")) changed("fallbackModels");
 	if (hasKey(cfg, "tools")) changed("tools");
 	if (hasKey(cfg, "skills")) changed("skill", "skills");
+	if (hasKey(cfg, "skillPath")) changed("skillPath");
 	if (hasKey(cfg, "extensions")) changed("extensions");
 	if (hasKey(cfg, "subagentOnlyExtensions")) changed("subagentOnlyExtensions");
 	if (hasKey(cfg, "thinking")) {
@@ -388,6 +394,14 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (cfg.skills === false || cfg.skills === "") target.skills = undefined;
 		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); target.skills = skills.length ? skills : undefined; }
 		else return "config.skills must be a comma-separated string or false when provided.";
+	}
+	if (hasKey(cfg, "skillPath")) {
+		if (cfg.skillPath === false || cfg.skillPath === "") target.skillPath = undefined;
+		else if (typeof cfg.skillPath === "string") { const skillPath = parseCsv(cfg.skillPath); target.skillPath = skillPath.length ? skillPath : undefined; }
+		else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
+			const skillPath = [...new Set(cfg.skillPath.map((entry) => entry.trim()).filter(Boolean))];
+			target.skillPath = skillPath.length ? skillPath : undefined;
+		} else return "config.skillPath must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "extensions")) {
 		if (cfg.extensions === false) target.extensions = undefined;
@@ -541,6 +555,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.fallbackModels?.length) lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
 	if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
+	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
@@ -808,7 +823,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (mw) warnings.push(mw);
 	const fmw = fallbackModelsWarning(ctx, agent.fallbackModels);
 	if (fmw) warnings.push(fmw);
-	const sw = skillsWarning(ctx.cwd, agent.skills);
+	const sw = skillsWarning(ctx.cwd, agent);
 	if (sw) warnings.push(sw);
 	fs.writeFileSync(targetPath, serializeAgent(agent), "utf-8");
 	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
@@ -857,8 +872,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 			const fmw = fallbackModelsWarning(ctx, updated.fallbackModels);
 			if (fmw) warnings.push(fmw);
 		}
-		if (hasKey(cfg, "skills")) {
-			const sw = skillsWarning(ctx.cwd, updated.skills);
+		if (hasKey(cfg, "skills") || hasKey(cfg, "skillPath")) {
+			const sw = skillsWarning(ctx.cwd, updated);
 			if (sw) warnings.push(sw);
 		}
 		if (updated.name !== oldName) {

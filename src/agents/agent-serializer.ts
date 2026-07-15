@@ -19,6 +19,7 @@ export const KNOWN_FIELDS = new Set([
 	"acceptance",
 	"skill",
 	"skills",
+	"skillPath",
 	"extensions",
 	"subagentOnlyExtensions",
 	"output",
@@ -79,6 +80,8 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 
 	const skillsValue = joinComma(config.skills);
 	if (skillsValue || preserve("skill", "skills")) lines.push(`skills: ${skillsValue ?? ""}`);
+	const skillPathValue = joinComma(config.skillPath);
+	if (skillPathValue || preserve("skillPath")) lines.push(`skillPath: ${skillPathValue ?? ""}`);
 
 	if (config.extensions !== undefined) {
 		const extensionsValue = joinComma(config.extensions);

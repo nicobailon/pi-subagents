@@ -561,7 +561,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		}
 		const namespaceOutputPath = Boolean(inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex === undefined);
 		const skillNames = behavior.skills === false ? [] : behavior.skills;
-		const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, stepCwd, ctx.cwd);
+		const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
+			skillNames,
+			stepCwd,
+			ctx.cwd,
+			a.skillPath,
+			a.filePath ? path.dirname(a.filePath) : stepCwd,
+		);
 		if (missingSkills.includes("pi-subagents")) throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
 
 		let systemPrompt = a.systemPrompt?.trim() ?? "";
@@ -1024,7 +1030,13 @@ export function executeAsyncSingle(
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
 	const skillNames = params.skills ?? agentConfig.skills ?? [];
 	const availableModels = params.availableModels;
-	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, runnerCwd, ctx.cwd);
+	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
+		skillNames,
+		runnerCwd,
+		ctx.cwd,
+		agentConfig.skillPath,
+		agentConfig.filePath ? path.dirname(agentConfig.filePath) : runnerCwd,
+	);
 	if (missingSkills.includes("pi-subagents")) return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
 	let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
 	if (resolvedSkills.length > 0) {

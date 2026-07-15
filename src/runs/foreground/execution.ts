@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
+import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../../agents/agents.ts";
 import {
@@ -1177,7 +1178,13 @@ export async function runSync(
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
-	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, skillCwd, runtimeCwd);
+	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
+		skillNames,
+		skillCwd,
+		runtimeCwd,
+		agent.skillPath,
+		agent.filePath ? path.dirname(agent.filePath) : skillCwd,
+	);
 	if (skillNames.some((skill) => skill.trim() === "pi-subagents") && missingSkills.includes("pi-subagents")) {
 		return {
 			agent: agentName,

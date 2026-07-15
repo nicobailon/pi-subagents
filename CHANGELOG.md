@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added agent-local `skillPath` discovery so custom agents can select private skills without publishing them to Pi's parent/global catalog. Relative paths resolve from the defining agent file, local matches take precedence, and missing or unreadable candidates fall back to normal discovery. Thanks to Kylegl (@kylegl) for #428.
 - Added strict `acceptance` defaults in agent frontmatter and agent management. The default applies only to single-agent launches, explicit call values win, and chain/parallel acceptance remains task or step configuration. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #453.
 - Added canonical-session leases for direct child revival so independent parent processes cannot write the same persisted session concurrently. Lease ownership includes the revived/source run, parent session, runner and writer process identities, and host; a two-phase startup handshake rejects contention before Pi starts, and stale recovery remains conservative. Thanks to Luke Parke (@LukasParke) for #446.
 - Added single-agent launch defaults for `async`, `timeoutMs`, and `turnBudget` in agent frontmatter, with explicit tool-call values taking precedence. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #410.

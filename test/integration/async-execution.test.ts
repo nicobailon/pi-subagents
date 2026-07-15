@@ -2546,6 +2546,60 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("injects agent-file-relative local skills into background single child prompts", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Done asynchronously" });
+		const id = `async-local-skill-${Date.now().toString(36)}`;
+		const agentFile = path.join(tempDir, "agents", "worker", "worker.md");
+		const skillFile = path.join(path.dirname(agentFile), "skills", "local", "SKILL.md");
+		fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+		fs.writeFileSync(skillFile, "---\ndescription: async local skill\n---\nLocal skill body\n", "utf-8");
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { filePath: agentFile, skills: ["local"], skillPath: ["./skills"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		await waitForAsyncResultFile(id);
+		const call = await waitForMockPiCall(mockPi, 0);
+		assert.match(call.systemPrompts.map((record) => record.text ?? "").join("\n"), /async local skill/);
+	});
+
+	it("isolates agent-local skills between background parallel chain children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "one" });
+		mockPi.onCall({ output: "two" });
+		const id = `async-parallel-local-skills-${Date.now().toString(36)}`;
+		const agents = ["one", "two"].map((name) => {
+			const agentFile = path.join(tempDir, "agents", name, `${name}.md`);
+			const skillFile = path.join(path.dirname(agentFile), "skills", "local", "SKILL.md");
+			fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+			fs.writeFileSync(skillFile, `---\ndescription: ${name} async local skill\n---\nbody\n`, "utf-8");
+			return makeAgent(name, { filePath: agentFile, skills: ["local"], skillPath: ["./skills"] });
+		});
+
+		executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "one", task: "One" }, { agent: "two", task: "Two" }], concurrency: 2 }],
+			resultMode: "parallel",
+			agents,
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		await waitForAsyncResultFile(id);
+		const prompts = await Promise.all([0, 1].map(async (index) => {
+			const call = await waitForMockPiCall(mockPi, index);
+			return call.systemPrompts.map((record) => record.text ?? "").join("\n");
+		}));
+		assert.equal(prompts.filter((prompt) => /one async local skill/.test(prompt) && !/two async local skill/.test(prompt)).length, 1);
+		assert.equal(prompts.filter((prompt) => /two async local skill/.test(prompt) && !/one async local skill/.test(prompt)).length, 1);
+	});
+
 	it("background single runs report unavailable pi-subagents skill requests", () => {
 		const id = `async-pi-subagents-skill-${Date.now().toString(36)}`;
 		const result = executeAsyncSingle(id, {
