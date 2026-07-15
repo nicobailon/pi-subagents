@@ -155,18 +155,62 @@ describe("agent frontmatter launch defaults", () => {
 			defaultAsync: false,
 			defaultTimeoutMs: 90_000,
 			defaultTurnBudget: { maxTurns: 12, graceTurns: 2 },
+			defaultAcceptance: { level: "none", reason: "lightweight lookup" },
 		};
 
 		const serialized = serializeAgent(agent);
 		assert.match(serialized, /^async: false$/m);
 		assert.match(serialized, /^timeoutMs: 90000$/m);
 		assert.match(serialized, /^turnBudget: \{"maxTurns":12,"graceTurns":2\}$/m);
+		assert.match(serialized, /^acceptance: \{"level":"none","reason":"lightweight lookup"\}$/m);
 		writeAgent(filePath, serialized);
 
 		const worker = discoverAgents(dir, "project").agents.find((candidate) => candidate.name === "worker");
 		assert.equal(worker?.defaultAsync, false);
 		assert.equal(worker?.defaultTimeoutMs, 90_000);
 		assert.deepEqual(worker?.defaultTurnBudget, { maxTurns: 12, graceTurns: 2 });
+		assert.deepEqual(worker?.defaultAcceptance, { level: "none", reason: "lightweight lookup" });
+	});
+
+	it("parses scalar acceptance defaults and rejects invalid policies", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-acceptance-defaults-"));
+		tempDirs.push(dir);
+		const filePath = path.join(dir, ".pi", "agents", "worker.md");
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+acceptance: checked
+---
+
+Do work
+`);
+		assert.equal(discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker")?.defaultAcceptance, "checked");
+
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+acceptance: { level: "none", reason: "NA" }
+---
+
+Do work
+`);
+		assert.deepEqual(
+			discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker")?.defaultAcceptance,
+			{ level: "none", reason: "NA" },
+		);
+
+		writeAgent(filePath, `---
+name: worker
+description: Worker
+acceptance: none
+---
+
+Do work
+`);
+		assert.throws(
+			() => discoverAgents(dir, "project"),
+			/Agent 'worker' acceptance frontmatter level "none" requires a reason/,
+		);
 	});
 
 	it("rejects invalid launch defaults instead of silently ignoring them", () => {

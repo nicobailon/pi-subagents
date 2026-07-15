@@ -71,7 +71,8 @@
   "dependencies": {
     "@earendil-works/pi-tui": "0.74.0",
     "jiti": "2.7.0",
-    "typebox": "1.1.24"
+    "typebox": "1.1.24",
+    "yaml": "2.8.3"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.74.0",

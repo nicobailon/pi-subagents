@@ -164,6 +164,7 @@ Inspect
 					async: false,
 					timeoutMs: 120_000,
 					turnBudget: { maxTurns: 8, graceTurns: 2 },
+					acceptance: { level: "none", reason: "lightweight reviewer" },
 				},
 			},
 			ctx,
@@ -175,15 +176,17 @@ Inspect
 		assert.match(content, /^async: false$/m);
 		assert.match(content, /^timeoutMs: 120000$/m);
 		assert.match(content, /^turnBudget: \{"maxTurns":8,"graceTurns":2\}$/m);
+		assert.match(content, /^acceptance: \{"level":"none","reason":"lightweight reviewer"\}$/m);
 
 		const got = handleManagementAction("get", { agent: "background-reviewer" }, ctx);
 		assert.equal(got.isError, false);
 		assert.match(readText(got), /Async: false/);
 		assert.match(readText(got), /Timeout: 120000ms/);
 		assert.match(readText(got), /Turn budget: \{"maxTurns":8,"graceTurns":2\}/);
+		assert.match(readText(got), /Acceptance: \{"level":"none","reason":"lightweight reviewer"\}/);
 
 		const updated = handleUpdate(
-			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false } },
+			{ agent: "background-reviewer", config: { async: true, timeoutMs: false, turnBudget: false, acceptance: "" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
@@ -191,6 +194,15 @@ Inspect
 		assert.match(content, /^async: true$/m);
 		assert.doesNotMatch(content, /^timeoutMs:/m);
 		assert.doesNotMatch(content, /^turnBudget:/m);
+		assert.doesNotMatch(content, /^acceptance:/m);
+
+		const deprecatedFalse = handleUpdate(
+			{ agent: "background-reviewer", config: { acceptance: false } },
+			ctx,
+		);
+		assert.equal(deprecatedFalse.isError, false);
+		content = fs.readFileSync(filePath, "utf-8");
+		assert.match(content, /^acceptance: false$/m);
 	});
 
 	it("rejects invalid single-agent launch defaults", () => {
@@ -208,6 +220,20 @@ Inspect
 
 		assert.equal(result.isError, true);
 		assert.match(readText(result), /config\.timeoutMs must be a positive integer/);
+
+		const invalidAcceptance = handleCreate(
+			{
+				config: {
+					name: "bad-acceptance-default",
+					description: "Bad acceptance",
+					scope: "project",
+					acceptance: "none",
+				},
+			},
+			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
+		);
+		assert.equal(invalidAcceptance.isError, true);
+		assert.match(readText(invalidAcceptance), /config\.acceptance level "none" requires a reason/);
 	});
 
 	it("creates and updates agents with tool budgets", () => {

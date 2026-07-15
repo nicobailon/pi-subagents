@@ -1503,6 +1503,35 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.details?.turnBudget, { maxTurns: 4, graceTurns: 2 });
 	});
 
+	it("applies agent acceptance defaults and lets explicit calls override them", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "default acceptance disabled" });
+		mockPi.onCall({ stdoutRaw: `${JSON.stringify(events.assistantMessage("explicit checked response without a report"))}\n` });
+		const executor = makeExecutor([
+			makeAgent("echo", { defaultAcceptance: { level: "none", reason: "lightweight response" } }),
+		]);
+
+		const defaulted = await executor.execute(
+			"agent-acceptance-default",
+			{ agent: "echo", task: "Return a concise answer" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(defaulted.isError, undefined);
+		assert.equal(defaulted.details?.results?.[0]?.acceptance?.status, "not-required");
+		assert.equal(defaulted.details?.results?.[0]?.acceptance?.effectiveAcceptance.reason, "lightweight response");
+
+		const explicit = await executor.execute(
+			"agent-acceptance-explicit",
+			{ agent: "echo", task: "Return a concise answer", acceptance: "checked" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(explicit.isError, true);
+		assert.equal(explicit.details?.results?.[0]?.acceptance?.status, "rejected");
+	});
+
 	it("lets agent frontmatter override the global async default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "agent foreground default finished" });
 		const executor = makeExecutor(

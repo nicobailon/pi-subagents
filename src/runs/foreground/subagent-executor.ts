@@ -1593,6 +1593,9 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
 			? { turnBudget: agent.defaultTurnBudget }
 			: {}),
+		...(params.acceptance === undefined && agent.defaultAcceptance !== undefined
+			? { acceptance: agent.defaultAcceptance }
+			: {}),
 	};
 }
 

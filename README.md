@@ -711,6 +711,7 @@ defaultProgress: true
 async: true
 timeoutMs: 900000
 turnBudget: {"maxTurns":20,"graceTurns":2}
+acceptance: {"level":"none","reason":"lightweight lookup"}
 completionGuard: false
 interactive: true
 maxSubagentDepth: 1
@@ -741,6 +742,7 @@ Important fields:
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
 | `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. An explicit `timeoutMs` or `maxRuntimeMs` wins. |
 | `turnBudget` | JSON object default such as `{"maxTurns":20,"graceTurns":2}` for single-agent launches. An explicit call value wins, followed by this agent default, then global `turnBudget` config. |
+| `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
 | `interactive` | Parsed for compatibility but not enforced in v1. |
 | `maxSubagentDepth` | Tightens nested delegation for this agent's children. |
@@ -1067,6 +1069,7 @@ Agent definitions are not loaded into context by default. Management actions let
   extensions: "",
   skills: "parallel-scout",
   thinking: "high",
+  acceptance: { level: "none", reason: "lightweight lookup" },
   output: "context.md",
   reads: "shared-context.md",
   progress: true
@@ -1083,6 +1086,7 @@ Agent definitions are not loaded into context by default. Management actions let
 }}
 
 { action: "update", agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } }
+{ action: "update", agent: "code-analysis.scout", config: { acceptance: "" } } // clear the frontmatter default
 { action: "update", chainName: "review-pipeline", config: { steps: [...] } }
 { action: "delete", agent: "scout" }
 { action: "delete", chainName: "review-pipeline" }

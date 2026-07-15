@@ -191,6 +191,25 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
+	it("does not apply agent acceptance defaults to top-level parallel tasks", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "parallel response without explicit acceptance" });
+		const executor = makeExecutor([
+			makeAgent("echo", { defaultAcceptance: { level: "none", reason: "single launches only" } }),
+		]);
+
+		const result = await executor.execute(
+			"parallel-agent-acceptance-default",
+			{ tasks: [{ agent: "echo", task: "Return a concise answer" }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.results?.[0]?.acceptance?.explicit, false);
+		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
+	});
+
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Saved report" });
 		const executor = makeExecutor();

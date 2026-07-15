@@ -4,6 +4,7 @@
 
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
+import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,7 @@ import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/mod
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
+import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -120,6 +122,7 @@ export interface AgentConfig {
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
 	defaultTurnBudget?: TurnBudgetConfig;
+	defaultAcceptance?: AcceptanceInput;
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
@@ -1164,6 +1167,19 @@ function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
 	return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
 
+function parseAgentAcceptanceFrontmatter(raw: string | undefined, agentName: string): AcceptanceInput | undefined {
+	if (raw === undefined || !raw.trim()) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = parseYaml(raw);
+	} catch (error) {
+		throw new Error(`Agent '${agentName}' has invalid acceptance frontmatter: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
+	const errors = validateAcceptanceInput(parsed, `Agent '${agentName}' acceptance frontmatter`);
+	if (errors.length > 0) throw new Error(errors.join(" "));
+	return parsed as AcceptanceInput;
+}
+
 function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
@@ -1263,6 +1279,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			if (resolved.error) throw new Error(resolved.error);
 			defaultTurnBudget = resolved.turnBudget;
 		}
+		const defaultAcceptance = parseAgentAcceptanceFrontmatter(frontmatter.acceptance, localName);
 
 		let extensions: string[] | undefined;
 		if (frontmatter.extensions !== undefined) {
@@ -1316,6 +1333,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			defaultAsync,
 			defaultTimeoutMs,
 			defaultTurnBudget,
+			defaultAcceptance,
 			systemPrompt: body,
 			source,
 			filePath,
