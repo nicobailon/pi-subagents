@@ -1,3 +1,15 @@
+import {
+	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_STARTED_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+	parseSubagentDelegationRequest,
+	type SubagentDelegationRequest,
+	type SubagentDelegationResponse,
+	type SubagentDelegationStatus,
+} from "../api/delegation.mjs";
+
 export const PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT = "prompt-template:subagent:request";
 export const PROMPT_TEMPLATE_SUBAGENT_STARTED_EVENT = "prompt-template:subagent:started";
 export const PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT = "prompt-template:subagent:response";
@@ -18,7 +30,7 @@ interface PromptTemplateDelegationParallelResult {
 	errorText?: string;
 }
 
-interface PromptTemplateDelegationRequest {
+export interface PromptTemplateDelegationRequest {
 	requestId: string;
 	agent: string;
 	task: string;
@@ -75,6 +87,9 @@ interface PromptTemplateBridgeResult {
 	isError?: boolean;
 	content?: unknown;
 	details?: {
+		runId?: string;
+		timedOut?: boolean;
+		stopped?: boolean;
 		results?: Array<{
 			agent?: string;
 			messages?: unknown[];
@@ -83,6 +98,19 @@ interface PromptTemplateBridgeResult {
 			exitCode?: number;
 			error?: string;
 			model?: string;
+			timedOut?: boolean;
+			interrupted?: boolean;
+			stopped?: boolean;
+			turnBudgetExceeded?: boolean;
+			toolBudgetBlocked?: boolean;
+			savedOutputPath?: string;
+			sessionFile?: string;
+			acceptance?: { status?: string } & Record<string, unknown>;
+			usage?: { turns?: number };
+			progress?: { toolCount?: number; durationMs?: number; tokens?: number };
+			skillsWarning?: string;
+			outputSaveError?: string;
+			transcriptError?: string;
 		}>;
 		progress?: Array<{
 			index?: number;
@@ -99,12 +127,14 @@ interface PromptTemplateBridgeResult {
 	};
 }
 
+export type DelegationBridgeRequest = PromptTemplateDelegationRequest | SubagentDelegationRequest;
+
 interface PromptTemplateBridgeOptions<Ctx extends { cwd?: string }> {
 	events: PromptTemplateBridgeEvents;
 	getContext: () => Ctx | null;
 	execute: (
 		requestId: string,
-		request: PromptTemplateDelegationRequest,
+		request: DelegationBridgeRequest,
 		signal: AbortSignal,
 		ctx: Ctx,
 		onUpdate: (result: PromptTemplateBridgeResult) => void,
@@ -285,14 +315,87 @@ function toDelegationUpdate(requestId: string, update: PromptTemplateBridgeResul
 	};
 }
 
+export function toSubagentDelegationExecutionParams(request: SubagentDelegationRequest) {
+	return {
+		agent: request.agent,
+		task: request.task,
+		context: request.context,
+		cwd: request.cwd,
+		model: request.model,
+		timeoutMs: request.timeoutMs,
+		maxRuntimeMs: request.maxRuntimeMs,
+		turnBudget: request.turnBudget,
+		toolBudget: request.toolBudget,
+		skill: request.skill,
+		output: request.output,
+		outputMode: request.outputMode,
+		acceptance: request.acceptance,
+		artifacts: request.artifacts,
+		async: false as const,
+		clarify: false as const,
+	};
+}
+
+function generalStatus(result: PromptTemplateBridgeResult, aborted = false): SubagentDelegationStatus {
+	if (aborted) return "cancelled";
+	const child = result.details?.results?.[0];
+	if (result.details?.timedOut || child?.timedOut) return "timed_out";
+	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
+	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
+	if (child?.acceptance?.status === "rejected") return "acceptance_failed";
+	if (child?.interrupted || child?.stopped || result.details?.stopped) return "interrupted";
+	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
+	return "completed";
+}
+
+function generalResponse(
+	requestId: string,
+	result: PromptTemplateBridgeResult,
+	aborted = false,
+): SubagentDelegationResponse {
+	const child = result.details?.results?.[0];
+	const progress = child?.progress ?? result.details?.progress?.[0];
+	const warnings = [child?.skillsWarning, child?.outputSaveError, child?.transcriptError]
+		.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
+	return {
+		version: 1,
+		requestId,
+		status: generalStatus(result, aborted),
+		...(child?.error ? { error: child.error } : {}),
+		...(result.details?.runId ? { runId: result.details.runId } : {}),
+		...(child ? { childIndex: 0 } : {}),
+		...(child?.agent ? { agent: child.agent } : {}),
+		...(child?.model ? { model: child.model } : {}),
+		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
+		...(child?.finalOutput ? { output: child.finalOutput } : {}),
+		...(child?.savedOutputPath ? { outputPath: child.savedOutputPath } : {}),
+		...(child?.sessionFile ? { sessionFile: child.sessionFile } : {}),
+		...(child?.acceptance ? { acceptance: child.acceptance } : {}),
+		...(typeof child?.usage?.turns === "number" ? { turns: child.usage.turns } : {}),
+		...(typeof progress?.toolCount === "number" ? { toolCount: progress.toolCount } : {}),
+		...(typeof progress?.durationMs === "number" ? { durationMs: progress.durationMs } : {}),
+		...(typeof progress?.tokens === "number" ? { tokens: progress.tokens } : {}),
+		...(warnings.length > 0 ? { warnings } : {}),
+	};
+}
+
+function generalUpdate(requestId: string, result: PromptTemplateBridgeResult): unknown {
+	const update = toDelegationUpdate(requestId, result);
+	if (!update) return undefined;
+	const { taskProgress: _taskProgress, requestId: _legacyRequestId, ...progress } = update;
+	return { version: 1, requestId, ...progress };
+}
+
 export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: string }>(
 	options: PromptTemplateBridgeOptions<Ctx>,
 ): {
 	cancelAll: () => void;
 	dispose: () => void;
 } {
-	const controllers = new Map<string, AbortController>();
-	const pendingCancels = new Set<string>();
+	const legacyControllers = new Map<string, AbortController>();
+	const legacyPendingCancels = new Set<string>();
+	const delegationControllers = new Map<string, AbortController>();
+	const delegationPendingCancels = new Set<string>();
 	const subscriptions: Array<() => void> = [];
 
 	const subscribe = (event: string, handler: (data: unknown) => void): void => {
@@ -300,7 +403,11 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		if (typeof unsubscribe === "function") subscriptions.push(unsubscribe);
 	};
 
-	subscribe(PROMPT_TEMPLATE_SUBAGENT_CANCEL_EVENT, (data) => {
+	const handleCancel = (
+		data: unknown,
+		controllers: Map<string, AbortController>,
+		pendingCancels: Set<string>,
+	): void => {
 		if (!data || typeof data !== "object") return;
 		const requestId = (data as { requestId?: unknown }).requestId;
 		if (typeof requestId !== "string") return;
@@ -310,6 +417,84 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 			return;
 		}
 		pendingCancels.add(requestId);
+	};
+
+	subscribe(PROMPT_TEMPLATE_SUBAGENT_CANCEL_EVENT, (data) => {
+		handleCancel(data, legacyControllers, legacyPendingCancels);
+	});
+	subscribe(SUBAGENT_DELEGATION_CANCEL_EVENT, (data) => {
+		handleCancel(data, delegationControllers, delegationPendingCancels);
+	});
+
+	subscribe(SUBAGENT_DELEGATION_REQUEST_EVENT, async (data) => {
+		const parsed = parseSubagentDelegationRequest(data);
+		if (!parsed.ok) {
+			if (!parsed.requestId) return;
+			options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+				version: 1,
+				requestId: parsed.requestId,
+				status: "invalid_request",
+				error: parsed.error,
+			} satisfies SubagentDelegationResponse);
+			return;
+		}
+		const request = parsed.request;
+		if (delegationControllers.has(request.requestId)) {
+			options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+				version: 1,
+				requestId: request.requestId,
+				status: "invalid_request",
+				error: "A delegation request with this requestId is already running.",
+			} satisfies SubagentDelegationResponse);
+			return;
+		}
+		const ctx = options.getContext();
+		if (!ctx) {
+			options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+				version: 1,
+				requestId: request.requestId,
+				status: "unavailable_context",
+				error: "No active extension context for delegated subagent execution.",
+			} satisfies SubagentDelegationResponse);
+			return;
+		}
+		const controller = new AbortController();
+		delegationControllers.set(request.requestId, controller);
+		if (delegationPendingCancels.delete(request.requestId)) controller.abort();
+		if (controller.signal.aborted) {
+			options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+				version: 1,
+				requestId: request.requestId,
+				status: "cancelled",
+			} satisfies SubagentDelegationResponse);
+			delegationControllers.delete(request.requestId);
+			return;
+		}
+		options.events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, { version: 1, requestId: request.requestId });
+		try {
+			const result = await options.execute(
+				request.requestId,
+				request,
+				controller.signal,
+				ctx,
+				(update) => {
+					const payload = generalUpdate(request.requestId, update);
+					if (payload) options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
+				},
+			);
+			options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, generalResponse(request.requestId, result, controller.signal.aborted));
+		} catch (error) {
+			options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+				version: 1,
+				requestId: request.requestId,
+				status: controller.signal.aborted ? "cancelled" : "failed",
+				error: error instanceof Error ? error.message : String(error),
+			} satisfies SubagentDelegationResponse);
+		} finally {
+			if (delegationControllers.get(request.requestId) === controller) {
+				delegationControllers.delete(request.requestId);
+			}
+		}
 	});
 
 	subscribe(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, async (data) => {
@@ -329,9 +514,9 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		}
 
 		const controller = new AbortController();
-		controllers.set(request.requestId, controller);
+		legacyControllers.set(request.requestId, controller);
 
-		if (pendingCancels.delete(request.requestId)) {
+		if (legacyPendingCancels.delete(request.requestId)) {
 			controller.abort();
 			const response: PromptTemplateDelegationResponse = {
 				...request,
@@ -340,7 +525,7 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 				errorText: "Delegated prompt cancelled.",
 			};
 			options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, response);
-			controllers.delete(request.requestId);
+			legacyControllers.delete(request.requestId);
 			return;
 		}
 
@@ -399,22 +584,27 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 			};
 			options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, response);
 		} finally {
-			controllers.delete(request.requestId);
+			if (legacyControllers.get(request.requestId) === controller) {
+				legacyControllers.delete(request.requestId);
+			}
 		}
 	});
 
 	return {
 		cancelAll: () => {
-			for (const controller of controllers.values()) {
+			for (const controller of [...legacyControllers.values(), ...delegationControllers.values()]) {
 				controller.abort();
 			}
-			controllers.clear();
-			pendingCancels.clear();
+			legacyControllers.clear();
+			delegationControllers.clear();
+			legacyPendingCancels.clear();
+			delegationPendingCancels.clear();
 		},
 		dispose: () => {
 			for (const unsubscribe of subscriptions) unsubscribe();
 			subscriptions.length = 0;
-			pendingCancels.clear();
+			legacyPendingCancels.clear();
+			delegationPendingCancels.clear();
 		},
 	};
 }

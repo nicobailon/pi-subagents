@@ -31,7 +31,10 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
-import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
+import {
+	registerPromptTemplateDelegationBridge,
+	toSubagentDelegationExecutionParams,
+} from "../slash/prompt-template-bridge.ts";
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
@@ -377,6 +380,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: async (requestId, request, signal, ctx, onUpdate) => {
+			if ("version" in request) {
+				return executeSubagentCollapsed(
+					requestId,
+					toSubagentDelegationExecutionParams(request),
+					signal,
+					onUpdate,
+					ctx,
+				);
+			}
 			if (request.tasks && request.tasks.length > 0) {
 				return executeSubagentCollapsed(
 					requestId,

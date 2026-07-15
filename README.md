@@ -955,6 +955,40 @@ What the bundled skill covers:
 
 If you are writing an agent that orchestrates subagents, the bundled skill helps it behave correctly without guessing the patterns. If you are a human user, you do not need to read it directly; the README and prompt shortcuts encode the same workflows in user-facing form.
 
+## Extension delegation API
+
+Extensions can request one configured foreground agent through the versioned event contract in `pi-subagents/src/api/delegation.mjs`:
+
+```ts
+import {
+  SUBAGENT_DELEGATION_REQUEST_EVENT,
+  SUBAGENT_DELEGATION_RESPONSE_EVENT,
+  type SubagentDelegationRequest,
+} from "pi-subagents/src/api/delegation.mjs";
+
+const request: SubagentDelegationRequest = {
+  version: 1,
+  requestId: crypto.randomUUID(),
+  agent: "reviewer",
+  task: "Review the supplied evidence.",
+  context: "fresh",
+  cwd: ctx.cwd,
+  timeoutMs: 120_000,
+  toolBudget: { soft: 10, hard: 16, block: "*" },
+};
+
+pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (response) => {
+  // Correlate by requestId and inspect the structured status.
+});
+pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+```
+
+The bridge uses the same foreground executor as the `subagent` tool. It supports timeout, runtime, turn/tool budgets, skill selection, output settings, acceptance, progress, and cancellation. Agent discovery and effective tool restrictions remain package-owned; requests cannot grant arbitrary tools. Tool restrictions are not an operating-system sandbox.
+
+The request requires an active extension context. Emit it from a supported event callback or queued application step, not by recursively invoking the `subagent` tool inside another `tool_call` hook. Responses distinguish completion, failure, timeout, cancellation, interruption, budget exhaustion, acceptance rejection, invalid requests, and unavailable context. Optional session and artifact fields are omitted when the executor does not produce them.
+
+The existing `prompt-template:subagent:*` event family remains supported for prompt workflows and parallel templates. The v1 extension contract is single-agent only. The event-bus RPC remains async-only.
+
 ## Programmatic tool usage
 
 These are the parameters the LLM passes when it calls the `subagent` tool. Most users ask naturally or use slash commands instead.

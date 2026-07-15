@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+import {
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+} from "../../src/api/delegation.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -24,6 +30,27 @@ function collectTsFiles(dir: string): string[] {
 	}
 	return files;
 }
+
+test("the packed source surface includes the public delegation contract", () => {
+	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
+	assert.equal(packageJson.files.includes("src/**/*.ts"), true);
+	assert.equal(packageJson.files.includes("src/**/*.mjs"), true);
+	assert.equal(packageJson.files.includes("src/**/*.d.mts"), true);
+	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.mjs")), true);
+	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.d.mts")), true);
+	assert.equal(SUBAGENT_DELEGATION_REQUEST_EVENT, "subagent:delegation:request");
+	assert.equal(SUBAGENT_DELEGATION_RESPONSE_EVENT, "subagent:delegation:response");
+
+	const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+		cwd: projectRoot,
+		encoding: "utf-8",
+	});
+	assert.equal(packed.status, 0, packed.stderr);
+	const packReport = JSON.parse(packed.stdout) as Array<{ files: Array<{ path: string }> }>;
+	const packedPaths = new Set(packReport[0]?.files.map((file) => file.path));
+	assert.equal(packedPaths.has("src/api/delegation.mjs"), true);
+	assert.equal(packedPaths.has("src/api/delegation.d.mts"), true);
+});
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
