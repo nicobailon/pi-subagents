@@ -17,6 +17,7 @@ import {
 	resolveSubagentResultStatus,
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
+import { resolveWatchPath } from "../../shared/utils.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -93,13 +94,6 @@ function shouldFallBackToPolling(error: unknown): boolean {
 	return code === "EMFILE" || code === "ENOSPC";
 }
 
-function resolveNativeWatchDir(fsApi: ResultWatcherFs, resultsDir: string): string {
-	try {
-		return fsApi.realpathSync.native(resultsDir);
-	} catch {
-		return resultsDir;
-	}
-}
 
 export function createResultWatcher(
 	pi: { events: IntercomEventBus },
@@ -280,7 +274,7 @@ export function createResultWatcher(
 			state.watcherRestartTimer = null;
 		}
 		try {
-			const watchDir = resolveNativeWatchDir(fsApi, resultsDir);
+			const watchDir = resolveWatchPath(resultsDir, fsApi.realpathSync.native);
 			state.watcher = fsApi.watch(watchDir, (ev, file) => {
 				if (ev !== "rename" || !file) return;
 				const fileName = file.toString();

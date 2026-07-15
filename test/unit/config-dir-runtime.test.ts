@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { getConfigDirName, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName } from "../../src/shared/utils.ts";
+import { getConfigDirName, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, resolveWatchPath } from "../../src/shared/utils.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let previousPackageRootEnv: string | undefined;
@@ -63,6 +63,11 @@ describe("config directory resolution", () => {
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
+	});
+
+	it("canonicalizes watcher paths and preserves the original path when native realpath fails", () => {
+		assert.equal(resolveWatchPath("C:\\SHORT~1\\watch", () => "C:\\Long Path\\watch"), "C:\\Long Path\\watch");
+		assert.equal(resolveWatchPath("C:\\SHORT~1\\watch", () => { throw new Error("missing"); }), "C:\\SHORT~1\\watch");
 	});
 
 	it("does not runtime-import the coding agent peer from shared utils", () => {
