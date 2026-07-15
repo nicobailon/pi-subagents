@@ -80,6 +80,7 @@ export function createMockPi(): MockPi {
 	let installed = false;
 	let nextSequence = 0;
 	let originalPath: string | undefined;
+	let originalPiBinary: string | undefined;
 	let originalArgv1: string | undefined;
 	let originalQueueEnv: string | undefined;
 
@@ -91,25 +92,31 @@ export function createMockPi(): MockPi {
 			if (installed) return;
 			installed = true;
 			originalPath = process.env.PATH;
+			originalPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
 			originalQueueEnv = process.env.MOCK_PI_QUEUE_DIR;
 			process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
-			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 			if (process.platform === "win32") {
+				delete process.env.PI_SUBAGENT_PI_BINARY;
 				originalArgv1 = process.argv[1];
 				process.argv[1] = cliScriptPath;
+			} else {
+				process.env.PI_SUBAGENT_PI_BINARY = shellScriptPath;
 			}
+			process.env.MOCK_PI_QUEUE_DIR = queueDir;
 		},
 		uninstall() {
 			if (!installed) return;
 			installed = false;
 			if (originalPath === undefined) delete process.env.PATH;
 			else process.env.PATH = originalPath;
-			if (originalQueueEnv === undefined) delete process.env.MOCK_PI_QUEUE_DIR;
-			else process.env.MOCK_PI_QUEUE_DIR = originalQueueEnv;
+			if (originalPiBinary === undefined) delete process.env.PI_SUBAGENT_PI_BINARY;
+			else process.env.PI_SUBAGENT_PI_BINARY = originalPiBinary;
 			if (process.platform === "win32") {
 				if (originalArgv1 === undefined) delete process.argv[1];
 				else process.argv[1] = originalArgv1;
 			}
+			if (originalQueueEnv === undefined) delete process.env.MOCK_PI_QUEUE_DIR;
+			else process.env.MOCK_PI_QUEUE_DIR = originalQueueEnv;
 			try {
 				fs.rmSync(rootDir, { recursive: true, force: true });
 			} catch {}

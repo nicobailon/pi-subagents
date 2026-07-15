@@ -45,6 +45,7 @@ export interface PiSpawnDeps {
 	execPath?: string;
 	argv1?: string;
 	existsSync?: (filePath: string) => boolean;
+	realpathSync?: (filePath: string) => string;
 	readFileSync?: (filePath: string, encoding: "utf-8") => string;
 	resolvePackageJson?: () => string;
 	resolvePackageEntry?: () => string;
@@ -69,10 +70,11 @@ function normalizePath(filePath: string): string {
 	return path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
 }
 
-export function resolveWindowsPiCliScript(
+export function resolvePiCliScript(
 	deps: PiSpawnDeps = {},
 ): string | undefined {
 	const existsSync = deps.existsSync ?? fs.existsSync;
+	const realpathSync = deps.realpathSync ?? fs.realpathSync;
 	const readFileSync =
 		deps.readFileSync ??
 		((filePath, encoding) => fs.readFileSync(filePath, encoding));
@@ -82,7 +84,10 @@ export function resolveWindowsPiCliScript(
 		const argvPath = normalizePath(argv1);
 		if (isRunnableNodeScript(argvPath, existsSync)) {
 			try {
-				if (findPiPackageRootFromEntry(argvPath)) return argvPath;
+				const canonicalArgvPath = realpathSync(argvPath);
+				if (isRunnableNodeScript(canonicalArgvPath, existsSync) && findPiPackageRootFromEntry(canonicalArgvPath)) {
+					return canonicalArgvPath;
+				}
 			} catch {
 				// Host package metadata is untrusted here; keep resolving the installed Pi CLI.
 			}
@@ -119,7 +124,7 @@ export function resolveWindowsPiCliScript(
 			return candidate;
 		}
 	} catch {
-		// Windows CLI resolution is optional; falling back to `pi` lets PATH handle execution.
+		// Verified CLI resolution is optional; falling back to `pi` lets PATH handle execution.
 		return undefined;
 	}
 
@@ -136,15 +141,12 @@ export function getPiSpawnCommand(
 		return { command: piBinary, args };
 	}
 
-	const platform = deps.platform ?? process.platform;
-	if (platform === "win32") {
-		const piCliPath = resolveWindowsPiCliScript(deps);
-		if (piCliPath) {
-			return {
-				command: deps.execPath ?? process.execPath,
-				args: [piCliPath, ...args],
-			};
-		}
+	const piCliPath = resolvePiCliScript(deps);
+	if (piCliPath) {
+		return {
+			command: deps.execPath ?? process.execPath,
+			args: [piCliPath, ...args],
+		};
 	}
 
 	return { command: "pi", args };

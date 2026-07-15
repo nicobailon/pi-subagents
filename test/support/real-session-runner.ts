@@ -117,6 +117,7 @@ function installChildPiShim(childText: string): () => void {
 	const piPackageDir = path.join(rootDir, "pi-package");
 	const childCliPath = path.join(piPackageDir, "dist", "cli.mjs");
 	const previousPath = process.env.PATH;
+	const previousPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
 	const previousChildText = process.env.PI_SUBAGENTS_E2E_CHILD_TEXT;
 	const previousArgv1 = process.argv[1];
 
@@ -139,18 +140,25 @@ function installChildPiShim(childText: string): () => void {
 	);
 
 	process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+	if (process.platform === "win32") {
+		delete process.env.PI_SUBAGENT_PI_BINARY;
+		process.argv[1] = childCliPath;
+	} else {
+		process.env.PI_SUBAGENT_PI_BINARY = path.join(binDir, "pi");
+	}
 	process.env.PI_SUBAGENTS_E2E_CHILD_TEXT = childText;
-	if (process.platform === "win32") process.argv[1] = childCliPath;
 
 	return () => {
 		if (previousPath === undefined) delete process.env.PATH;
 		else process.env.PATH = previousPath;
-		if (previousChildText === undefined) delete process.env.PI_SUBAGENTS_E2E_CHILD_TEXT;
-		else process.env.PI_SUBAGENTS_E2E_CHILD_TEXT = previousChildText;
+		if (previousPiBinary === undefined) delete process.env.PI_SUBAGENT_PI_BINARY;
+		else process.env.PI_SUBAGENT_PI_BINARY = previousPiBinary;
 		if (process.platform === "win32") {
 			if (previousArgv1 === undefined) delete process.argv[1];
 			else process.argv[1] = previousArgv1;
 		}
+		if (previousChildText === undefined) delete process.env.PI_SUBAGENTS_E2E_CHILD_TEXT;
+		else process.env.PI_SUBAGENTS_E2E_CHILD_TEXT = previousChildText;
 		rmSync(rootDir, { recursive: true, force: true });
 	};
 }
@@ -216,7 +224,6 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		delete process.env.PI_SUBAGENT_DEPTH;
 		delete process.env.PI_SUBAGENT_MAX_DEPTH;
 		delete process.env.PI_SUBAGENT_PARENT_SESSION;
-		delete process.env.PI_SUBAGENT_PI_BINARY;
 		delete process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
 
 		faux = registerFauxProvider({
