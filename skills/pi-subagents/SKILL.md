@@ -393,6 +393,7 @@ Resume behavior:
 - Completed foreground single, parallel, and chain runs can also be revived by `index` while their run metadata remains in extension state.
 - Nested runs can be resumed by nested id when a live route or persisted nested session metadata is available.
 - Revive starts a new child process from the old session context; it does not restart the same OS process.
+- Direct revival holds an exclusive cross-process lease on the canonical child session file until the new child finishes. Concurrent attempts fail before Pi starts and identify the owning revived run; stale ownership is reclaimed only when the recorded process is demonstrably gone or reused.
 - If the chosen child has no persisted `.jsonl` session file, resume fails and reports that directly.
 
 Use diagnostics when setup or child startup looks wrong:

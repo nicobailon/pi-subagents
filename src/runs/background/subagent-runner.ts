@@ -95,6 +95,7 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
@@ -137,6 +138,7 @@ interface SubagentRunConfig {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	revivalLease?: SessionLeaseRequest;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
 }
@@ -390,8 +392,10 @@ function runPiStreaming(
 	registerStop?: (stop: (() => void) | undefined) => void,
 	stopMessage?: string,
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
+	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
+		onWriterProcess?.({ state: "spawning" });
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
 		const spawnSpec = getPiSpawnCommand(args, {
@@ -409,7 +413,16 @@ function runPiStreaming(
 		const messages: Message[] = [];
 		const usage = emptyUsage();
 		let model: string | undefined;
-		let error: string | undefined;
+		let writerRegistrationError: string | undefined;
+		if (typeof child.pid === "number") {
+			try {
+				onWriterProcess?.({ state: "running", pid: child.pid });
+			} catch (writerError) {
+				writerRegistrationError = `Failed to record revived Pi writer ownership: ${writerError instanceof Error ? writerError.message : String(writerError)}`;
+				trySignalChild(child, "SIGKILL");
+			}
+		}
+		let error: string | undefined = writerRegistrationError;
 		let assistantError: string | undefined;
 		let interrupted = false;
 		let timedOut = false;
@@ -719,6 +732,11 @@ function runPiStreaming(
 		});
 		child.on("close", (exitCode, signal) => {
 			settled = true;
+			try {
+				onWriterProcess?.({ state: "none" });
+			} catch {
+				// The runner still owns and releases the lease during finalization.
+			}
 			registerInterrupt?.(undefined);
 			registerTimeout?.(undefined);
 			registerStop?.(undefined);
@@ -754,6 +772,11 @@ function runPiStreaming(
 
 		child.on("error", (spawnError) => {
 			settled = true;
+			try {
+				onWriterProcess?.({ state: "none" });
+			} catch {
+				// The runner still owns and releases the lease during finalization.
+			}
 			registerInterrupt?.(undefined);
 			registerTimeout?.(undefined);
 			registerStop?.(undefined);
@@ -909,6 +932,7 @@ interface SingleStepContext {
 	nestedRoute?: NestedRouteInfo;
 	onAttemptStart?: (attempt: { model?: string; thinking?: string }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
+	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void;
 	skipAcceptance?: () => boolean;
 }
 
@@ -1134,6 +1158,7 @@ async function runSingleStep(
 			ctx.registerStop,
 			ctx.stopMessage,
 			ctx.registerTurnBudgetAbort,
+			ctx.onWriterProcess,
 		);
 		if (run.turnBudget) turnBudget = run.turnBudget;
 		else if (ctx.turnBudget) {
@@ -1515,7 +1540,10 @@ function combinedAbortSignal(signals: Array<AbortSignal | undefined>): AbortSign
 	return controller.signal;
 }
 
-async function runSubagent(config: SubagentRunConfig): Promise<void> {
+async function runSubagent(
+	config: SubagentRunConfig,
+	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
+): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
 	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
@@ -2646,6 +2674,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					turnBudget: config.turnBudget,
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
+					onWriterProcess,
 					skipAcceptance: () => timedOut || stopped,
 				});
 				const taskEndTime = Date.now();
@@ -2946,6 +2975,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 							turnBudget: config.turnBudget,
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
+							onWriterProcess,
 							skipAcceptance: () => timedOut || stopped,
 						});
 						if (task.sessionFile) {
@@ -3152,6 +3182,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				turnBudget: config.turnBudget,
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
+				onWriterProcess,
 				skipAcceptance: () => timedOut || stopped,
 			});
 			if (seqStep.sessionFile) {
@@ -3489,6 +3520,89 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	}
 }
 
+async function waitForStartupControl(
+	controlPath: string,
+	token: string,
+	action: "ack" | "proceed",
+	timeoutMs = 30_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() <= deadline) {
+		if (fs.existsSync(controlPath)) {
+			let payload: { action?: unknown; token?: unknown };
+			try {
+				payload = JSON.parse(fs.readFileSync(controlPath, "utf-8")) as { action?: unknown; token?: unknown };
+			} catch (error) {
+				throw new Error(`Failed to read runner startup control '${controlPath}': ${error instanceof Error ? error.message : String(error)}`);
+			}
+			if (payload.token !== token) throw new Error("Runner startup control token does not match the acquired session lease.");
+			if (payload.action === action) return;
+			if (payload.action !== "ack" && payload.action !== "proceed") throw new Error("Runner startup control action is invalid.");
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	throw new Error(`Timed out after ${timeoutMs}ms waiting for runner startup control '${action}'.`);
+}
+
+async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
+	let lease: ReturnType<typeof acquireSessionLease> | undefined;
+	let startupCommitted = config.revivalLease === undefined;
+	const startupPath = path.join(config.asyncDir, "runner-startup.json");
+	const startupAckPath = path.join(config.asyncDir, "runner-startup-ack.json");
+	const startupProceedPath = path.join(config.asyncDir, "runner-startup-proceed.json");
+	const releaseOnExit = (): void => {
+		try {
+			lease?.release();
+		} catch {
+			// Exit cleanup is best effort; a dead-owner lease is reclaimed on the next revival.
+		}
+	};
+	process.once("exit", releaseOnExit);
+	try {
+		if (config.revivalLease) {
+			lease = acquireSessionLease(config.revivalLease);
+			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
+			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
+			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
+			await waitForStartupControl(startupProceedPath, lease.owner.token, "proceed");
+			startupCommitted = true;
+			for (const controlPath of [startupAckPath, startupProceedPath]) {
+				try {
+					fs.rmSync(controlPath, { force: true });
+				} catch {
+					// Startup control cleanup is best effort after the parent commits the run.
+				}
+			}
+		}
+		await runSubagent(config, lease ? (writer) => lease!.updateWriter(writer) : undefined);
+	} catch (error) {
+		if (config.revivalLease && !startupCommitted) {
+			try {
+				writeAtomicJson(startupPath, { state: "error", pid: process.pid, error: error instanceof Error ? error.message : String(error) });
+			} catch {
+				// The parent will time out and terminate this runner if the handshake cannot be written.
+			}
+		}
+		throw error;
+	} finally {
+		process.off("exit", releaseOnExit);
+		if (lease) {
+			try {
+				lease.release();
+			} catch (error) {
+				console.error("Failed to release session revival lease:", error);
+			}
+		}
+	}
+}
+
+function startConfiguredSubagent(config: SubagentRunConfig): void {
+	runConfiguredSubagent(config).catch((runErr) => {
+		console.error("Subagent runner error:", runErr);
+		process.exit(1);
+	});
+}
+
 const configArg = process.argv[2];
 if (configArg) {
 	try {
@@ -3499,10 +3613,7 @@ if (configArg) {
 		} catch {
 			// Temp config cleanup is best effort.
 		}
-		runSubagent(config).catch((runErr) => {
-			console.error("Subagent runner error:", runErr);
-			process.exit(1);
-		});
+		startConfiguredSubagent(config);
 	} catch (err) {
 		console.error("Subagent runner error:", err);
 		process.exit(1);
@@ -3516,10 +3627,7 @@ if (configArg) {
 	process.stdin.on("end", () => {
 		try {
 			const config = JSON.parse(input) as SubagentRunConfig;
-			runSubagent(config).catch((runErr) => {
-				console.error("Subagent runner error:", runErr);
-				process.exit(1);
-			});
+			startConfiguredSubagent(config);
 		} catch (err) {
 			console.error("Subagent runner error:", err);
 			process.exit(1);

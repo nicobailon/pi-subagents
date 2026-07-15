@@ -48,6 +48,7 @@ import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedPar
 import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
+import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -158,6 +159,7 @@ interface AsyncSingleParams {
 	shareEnabled: boolean;
 	sessionRoot?: string;
 	sessionFile?: string;
+	revivalLease?: SessionLeaseRequest;
 	skills?: string[];
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
@@ -280,6 +282,92 @@ function closeFd(fd: number | undefined): void {
 /**
  * Spawn the async runner process
  */
+const RUNNER_STARTUP_TIMEOUT_MS = 10_000;
+const RUNNER_STARTUP_WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
+const RUNNER_STARTUP_WAIT_VIEW = RUNNER_STARTUP_WAIT_BUFFER ? new Int32Array(RUNNER_STARTUP_WAIT_BUFFER) : undefined;
+
+type RunnerStartupState = "ready" | "acknowledged";
+
+type RunnerStartupWaitResult =
+	| { ok: true; token: string }
+	| { ok: false; error: string };
+
+function waitForStartupInterval(delayMs = 20): void {
+	if (RUNNER_STARTUP_WAIT_VIEW) {
+		Atomics.wait(RUNNER_STARTUP_WAIT_VIEW, 0, 0, delayMs);
+		return;
+	}
+	const waitUntil = Date.now() + delayMs;
+	while (Date.now() < waitUntil) {
+		// Startup handshakes are synchronous so resume rejects before reporting a run as started.
+	}
+}
+
+function readRunnerStartup(startupPath: string, expectedState: RunnerStartupState, expectedToken?: string): RunnerStartupWaitResult | undefined {
+	if (!fs.existsSync(startupPath)) return undefined;
+	try {
+		const payload = JSON.parse(fs.readFileSync(startupPath, "utf-8")) as { state?: unknown; token?: unknown; error?: unknown };
+		if (payload.state === "error" && typeof payload.error === "string") return { ok: false, error: payload.error };
+		if (payload.state !== expectedState) return undefined;
+		if (typeof payload.token !== "string" || (expectedToken !== undefined && payload.token !== expectedToken)) {
+			return { ok: false, error: `Async runner wrote an invalid ${expectedState} startup handshake: ${startupPath}` };
+		}
+		return { ok: true, token: payload.token };
+	} catch (error) {
+		return { ok: false, error: `Failed to read async runner startup handshake '${startupPath}': ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
+function waitForRunnerStartup(startupPath: string, expectedState: RunnerStartupState, timeoutMs: number, expectedToken?: string): RunnerStartupWaitResult {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const result = readRunnerStartup(startupPath, expectedState, expectedToken);
+		if (result) return result;
+		if (Date.now() >= deadline) break;
+		waitForStartupInterval(Math.min(20, Math.max(1, deadline - Date.now())));
+	}
+	const finalResult = readRunnerStartup(startupPath, expectedState, expectedToken);
+	if (finalResult) return finalResult;
+	return { ok: false, error: `Timed out after ${timeoutMs}ms waiting for the async runner startup state '${expectedState}'.` };
+}
+
+function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | "proceed"; token: string }): void {
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+	try {
+		fs.writeFileSync(tempPath, JSON.stringify(payload), { encoding: "utf-8", mode: 0o600 });
+		fs.renameSync(tempPath, filePath);
+	} catch (error) {
+		try {
+			fs.rmSync(tempPath, { force: true });
+		} catch {
+			// Preserve the startup-control write error.
+		}
+		throw error;
+	}
+}
+
+function runnerIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+function terminateRunnerBeforeProceed(pid: number): void {
+	for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+		if (!runnerIsAlive(pid)) return;
+		try {
+			process.kill(pid, signal);
+		} catch {
+			if (!runnerIsAlive(pid)) return;
+		}
+		const deadline = Date.now() + 1000;
+		while (runnerIsAlive(pid) && Date.now() < deadline) waitForStartupInterval();
+	}
+}
+
 function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; error?: string } {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
@@ -299,6 +387,15 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const startupPath = typeof (cfg as { revivalLease?: unknown; asyncDir?: unknown }).revivalLease === "object"
+		&& typeof (cfg as { asyncDir?: unknown }).asyncDir === "string"
+		? path.join((cfg as { asyncDir: string }).asyncDir, "runner-startup.json")
+		: undefined;
+	const startupAckPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-ack.json") : undefined;
+	const startupProceedPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-proceed.json") : undefined;
+	if (startupPath) fs.rmSync(startupPath, { force: true });
+	if (startupAckPath) fs.rmSync(startupAckPath, { force: true });
+	if (startupProceedPath) fs.rmSync(startupProceedPath, { force: true });
 
 	const logPaths = resolveAsyncRunnerLogPaths(cfg);
 	let stdoutFd: number | undefined;
@@ -328,6 +425,35 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 			return { error: `async runner did not produce a pid for cwd: ${cwd}` };
 		}
 		proc.unref();
+		if (startupPath && startupAckPath && startupProceedPath) {
+			const ready = waitForRunnerStartup(startupPath, "ready", RUNNER_STARTUP_TIMEOUT_MS);
+			if (!ready.ok) {
+				terminateRunnerBeforeProceed(proc.pid);
+				return { error: ready.error };
+			}
+			try {
+				writeRunnerStartupControl(startupAckPath, { action: "ack", token: ready.token });
+			} catch (error) {
+				terminateRunnerBeforeProceed(proc.pid);
+				return { error: `Failed to acknowledge async runner startup: ${error instanceof Error ? error.message : String(error)}` };
+			}
+			const acknowledged = waitForRunnerStartup(startupPath, "acknowledged", RUNNER_STARTUP_TIMEOUT_MS, ready.token);
+			if (!acknowledged.ok) {
+				terminateRunnerBeforeProceed(proc.pid);
+				return { error: acknowledged.error };
+			}
+			try {
+				writeRunnerStartupControl(startupProceedPath, { action: "proceed", token: ready.token });
+			} catch (error) {
+				terminateRunnerBeforeProceed(proc.pid);
+				return { error: `Failed to authorize async runner startup: ${error instanceof Error ? error.message : String(error)}` };
+			}
+			try {
+				fs.rmSync(startupPath, { force: true });
+			} catch {
+				// Proceed is the commit point; handshake cleanup cannot turn a running revival into a start error.
+			}
+		}
 		return { pid: proc.pid };
 	} catch (error) {
 		closeFd(stdoutFd);
@@ -1009,6 +1135,7 @@ export function executeAsyncSingle(
 				controlIntercomTarget,
 				childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
 				resultMode: "single",
+				...(params.revivalLease ? { revivalLease: params.revivalLease } : {}),
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
 					parentRunId: nestedAddress.parentRunId,

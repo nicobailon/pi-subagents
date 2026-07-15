@@ -311,6 +311,13 @@ async function main() {
 	if (typeof response.delay === "number" && response.delay > 0) {
 		await new Promise((resolve) => setTimeout(resolve, response.delay));
 	}
+	if (typeof response.waitForPath === "string") {
+		const deadline = Date.now() + 30_000;
+		while (!fs.existsSync(response.waitForPath)) {
+			if (Date.now() >= deadline) fail(`Timed out waiting for mock release path: ${response.waitForPath}`);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+	}
 
 	writeDeclaredFiles(response);
 

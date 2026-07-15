@@ -8,6 +8,7 @@ interface MockPiResponse {
 	stderr?: string;
 	exitCode?: number;
 	delay?: number;
+	waitForPath?: string;
 	keepAliveAfterFinalMessageMs?: number;
 	ignoreSigterm?: boolean;
 	jsonl?: unknown[];

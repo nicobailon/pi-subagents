@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
+import { sessionLeaseDir } from "../../src/runs/shared/session-lease.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -22,7 +23,7 @@ interface ExecutorResult {
 	details?: {
 		mode?: string;
 		runId?: string;
-		results?: Array<{ agent?: string; finalOutput?: string; acceptance?: { status?: string }; artifactPaths?: { metadataPath?: string } }>;
+		results?: Array<{ agent?: string; finalOutput?: string; sessionFile?: string; acceptance?: { status?: string }; artifactPaths?: { metadataPath?: string } }>;
 		asyncId?: string;
 	};
 }
@@ -129,6 +130,14 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const deadline = Date.now() + timeoutMs;
 		while (!fs.existsSync(filePath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for file: ${filePath}`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+	}
+
+	async function waitForMissingPath(filePath: string, timeoutMs = 10_000): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		while (fs.existsSync(filePath)) {
+			if (Date.now() > deadline) assert.fail(`Timed out waiting for path cleanup: ${filePath}`);
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 	}
@@ -603,6 +612,68 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("rejects concurrent direct revival of the same completed async session and releases ownership", async () => {
+		const releasePath = path.join(tempDir, "release-async-revival");
+		mockPi.onCall({ waitForPath: releasePath, output: "first revived answer" });
+		mockPi.onCall({ output: "answer after release" });
+		const sourceRunId = `resume-lease-async-${Date.now()}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		const sessionFile = path.join(tempDir, "leased-async-child.jsonl");
+		fs.mkdirSync(sourceAsyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+			runId: sourceRunId,
+			mode: "single",
+			state: "complete",
+			startedAt: 100,
+			lastUpdate: 200,
+			cwd: tempDir,
+			sessionFile,
+			steps: [{ agent: "worker", status: "complete" }],
+		}, null, 2), "utf-8");
+		try {
+			const { executor } = makeExecutor();
+			const first = await executor.execute(
+				"resume-lease-async-first",
+				{ action: "resume", id: sourceRunId, message: "First follow-up" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(first.isError, undefined);
+			const firstRevivedId = first.details?.asyncId;
+			assert.ok(firstRevivedId);
+
+			const blocked = await executor.execute(
+				"resume-lease-async-blocked",
+				{ action: "resume", id: sourceRunId, message: "Conflicting follow-up" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(blocked.isError, true);
+			assert.match(blocked.content[0]?.text ?? "", new RegExp(`already owned by run '${firstRevivedId}'`));
+			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, 1, "contending revival must not spawn Pi");
+
+			fs.writeFileSync(releasePath, "release", "utf-8");
+			await waitForFile(path.join(RESULTS_DIR, `${firstRevivedId}.json`));
+			await waitForMissingPath(sessionLeaseDir(sessionFile));
+			const afterRelease = await executor.execute(
+				"resume-lease-async-after-release",
+				{ action: "resume", id: sourceRunId, message: "Follow-up after release" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(afterRelease.isError, undefined);
+			assert.ok(afterRelease.details?.asyncId);
+			await waitForFile(path.join(RESULTS_DIR, `${afterRelease.details.asyncId}.json`));
+		} finally {
+			fs.writeFileSync(releasePath, "release", "utf-8");
+			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+		}
+	});
+
 	it("resume action revives a completed foreground child by index", async () => {
 		mockPi.onCall({ output: "first child done" });
 		mockPi.onCall({ output: "second child done" });
@@ -641,6 +712,65 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+	});
+
+	it("applies the same exclusive lease to remembered foreground revival", async () => {
+		const releasePath = path.join(tempDir, "release-foreground-revival");
+		mockPi.onCall({ output: "original foreground answer" });
+		mockPi.onCall({ waitForPath: releasePath, output: "first foreground revival" });
+		mockPi.onCall({ output: "foreground revival after release" });
+		const { executor } = makeExecutor({ bridgeMode: "off" });
+		try {
+			const original = await executor.execute(
+				"foreground-lease-original",
+				{ agent: "worker", task: "Original task" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			const sourceRunId = original.details?.runId;
+			const sessionFile = original.details?.results?.[0]?.sessionFile;
+			assert.ok(sourceRunId);
+			assert.ok(sessionFile);
+
+			const first = await executor.execute(
+				"foreground-lease-first",
+				{ action: "resume", id: sourceRunId, message: "First follow-up" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(first.isError, undefined);
+			const firstRevivedId = first.details?.asyncId;
+			assert.ok(firstRevivedId);
+
+			const blocked = await executor.execute(
+				"foreground-lease-blocked",
+				{ action: "resume", id: sourceRunId, message: "Conflicting follow-up" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(blocked.isError, true);
+			assert.match(blocked.content[0]?.text ?? "", new RegExp(`already owned by run '${firstRevivedId}'`));
+			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, 2, "contending foreground revival must not spawn Pi");
+
+			fs.writeFileSync(releasePath, "release", "utf-8");
+			await waitForFile(path.join(RESULTS_DIR, `${firstRevivedId}.json`));
+			await waitForMissingPath(sessionLeaseDir(sessionFile));
+			const afterRelease = await executor.execute(
+				"foreground-lease-after-release",
+				{ action: "resume", id: sourceRunId, message: "Follow-up after release" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(afterRelease.isError, undefined);
+			assert.ok(afterRelease.details?.asyncId);
+			await waitForFile(path.join(RESULTS_DIR, `${afterRelease.details.asyncId}.json`));
+		} finally {
+			fs.writeFileSync(releasePath, "release", "utf-8");
 		}
 	});
 

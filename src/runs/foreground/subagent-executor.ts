@@ -1270,6 +1270,12 @@ async function resumeAsyncRun(input: {
 		shareEnabled: input.params.share === true,
 		sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
 		sessionFile: target.sessionFile,
+		revivalLease: {
+			sessionFile: target.sessionFile,
+			runId,
+			sourceRunId: target.runId,
+			...(input.deps.state.currentSessionId ? { parentSessionId: input.deps.state.currentSessionId } : {}),
+		},
 		modelOverride: input.params.model ?? target.model,
 		thinkingOverride: input.params.model ? undefined : target.thinking,
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
