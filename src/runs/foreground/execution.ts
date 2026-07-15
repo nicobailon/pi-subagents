@@ -68,7 +68,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceFailureMessage, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
@@ -119,20 +119,6 @@ function buildPendingAcceptanceLedger(acceptance: ResolvedAcceptanceConfig): Acc
 		inferredReason: acceptance.inferredReason,
 		criteria: acceptance.criteria,
 		runtimeChecks: [],
-		verifyRuns: [],
-	};
-}
-
-function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfig, input: { id: string; message: string }): AcceptanceLedger {
-	return {
-		status: acceptance.level === "none" ? "not-required" : "rejected",
-		explicit: acceptance.explicit,
-		effectiveAcceptance: acceptance,
-		inferredReason: acceptance.inferredReason,
-		criteria: acceptance.criteria,
-		runtimeChecks: acceptance.level === "none"
-			? []
-			: [{ id: input.id, status: "failed", message: input.message }],
 		verifyRuns: [],
 	};
 }
@@ -1252,6 +1238,29 @@ export async function runSync(
 		}
 	}
 
+	const persistResultMetadata = (target: SingleResult): void => {
+		if (!artifactPathsResult || options.artifactConfig?.enabled === false || options.artifactConfig?.includeMetadata === false) return;
+		writeMetadata(artifactPathsResult.metadataPath, {
+			runId: options.runId,
+			agent: agentName,
+			task,
+			exitCode: target.exitCode,
+			usage: target.usage,
+			model: target.model,
+			attemptedModels: target.attemptedModels,
+			modelAttempts: target.modelAttempts,
+			durationMs: target.progressSummary?.durationMs,
+			toolCount: target.progressSummary?.toolCount,
+			error: target.error,
+			acceptance: target.acceptance,
+			...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
+			transcriptError: target.transcriptError,
+			skills: target.skills,
+			skillsWarning: target.skillsWarning,
+			timestamp: Date.now(),
+		});
+	};
+
 	const detachedAwareOptions: RunSyncOptions = options.onDetachedExit
 		? {
 			...options,
@@ -1278,6 +1287,7 @@ export async function runSync(
 							recoveredResult.progress.error = recoveredResult.error;
 						}
 					}
+					persistResultMetadata(recoveredResult);
 					options.onDetachedExit?.(recoveredResult);
 				})().catch((error) => {
 					const message = error instanceof Error ? error.message : String(error);
@@ -1365,27 +1375,6 @@ export async function runSync(
 		if (options.artifactConfig?.includeOutput !== false) {
 			writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
 		}
-		if (options.artifactConfig?.includeMetadata !== false) {
-			writeMetadata(artifactPathsResult.metadataPath, {
-				runId: options.runId,
-				agent: agentName,
-				task,
-				exitCode: result.exitCode,
-				usage: result.usage,
-				model: result.model,
-				attemptedModels: result.attemptedModels,
-				modelAttempts: result.modelAttempts,
-				durationMs: result.progressSummary?.durationMs,
-				toolCount: result.progressSummary?.toolCount,
-				error: result.error,
-				...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
-				transcriptError: result.transcriptError,
-				skills: result.skills,
-				skillsWarning: result.skillsWarning,
-				timestamp: Date.now(),
-			});
-		}
-
 		if (options.maxOutput) {
 			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
 			const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
@@ -1407,13 +1396,16 @@ export async function runSync(
 	const childWrittenOutput = options.outputPath
 		? extractChildWrittenOutput(result.messages, options.outputPath, options.cwd ?? runtimeCwd)
 		: undefined;
-	result.acceptance = result.detached
-		? buildPendingAcceptanceLedger(effectiveAcceptance)
-		: result.timedOut
-			? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." })
-			: result.turnBudgetExceeded
-			? buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "turn-budget", message: "Acceptance was not evaluated because the subagent exceeded its turn budget." })
-			: await evaluateAcceptance({
+	if (result.detached) {
+		result.acceptance = buildPendingAcceptanceLedger(effectiveAcceptance);
+	} else if (result.stopped) {
+		result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "stopped", message: "Acceptance was not evaluated because the subagent was stopped." });
+	} else if (result.timedOut) {
+		result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." });
+	} else if (result.turnBudgetExceeded) {
+		result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "turn-budget", message: "Acceptance was not evaluated because the subagent exceeded its turn budget." });
+	} else {
+		result.acceptance = await evaluateAcceptance({
 			acceptance: effectiveAcceptance,
 			output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
 			fileOutput: childWrittenOutput !== undefined && options.outputPath
@@ -1421,6 +1413,7 @@ export async function runSync(
 				: undefined,
 			cwd: options.cwd ?? runtimeCwd,
 		});
+	}
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);
 	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut) {
@@ -1431,6 +1424,7 @@ export async function runSync(
 			result.progress.error = result.error;
 		}
 	}
+	persistResultMetadata(result);
 
 	return result;
 }

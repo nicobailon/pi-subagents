@@ -78,7 +78,34 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /Patch the bug/);
 		assert.match(prompt, /```acceptance-report/);
 		assert.match(prompt, /array fields contain strings/);
+		assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied, not-satisfied, not-applicable/);
+		assert.match(prompt, /commandsRun\[\]\.result.*passed, failed, not-run/);
 		assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
+	});
+
+	it("includes every required resolved criterion in report examples", () => {
+		const inferred = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single", async: true });
+		const inferredExample = formatAcceptancePrompt(inferred).match(/```acceptance-report\n([\s\S]*?)\n```/);
+		assert.ok(inferredExample?.[1]);
+		assert.deepEqual(
+			(JSON.parse(inferredExample[1]!) as { criteriaSatisfied: Array<{ id: string }> }).criteriaSatisfied.map((criterion) => criterion.id),
+			["criterion-1", "criterion-2"],
+		);
+
+		const custom = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement the fix",
+			explicit: { level: "checked", criteria: [
+				{ id: "required-check", must: "Required", severity: "required" },
+				{ id: "recommended-check", must: "Recommended", severity: "recommended" },
+			] },
+		});
+		const customExample = formatAcceptancePrompt(custom).match(/```acceptance-report\n([\s\S]*?)\n```/);
+		assert.ok(customExample?.[1]);
+		assert.deepEqual(
+			(JSON.parse(customExample[1]!) as { criteriaSatisfied: Array<{ id: string }> }).criteriaSatisfied.map((criterion) => criterion.id),
+			["required-check"],
+		);
 	});
 
 	it("parses acceptance-report fences and ignores unrelated json fences", () => {
@@ -100,12 +127,18 @@ describe("acceptance gates", () => {
 		assert.equal(criteriaOnlyJson.report, undefined);
 		assert.match(criteriaOnlyJson.error ?? "", /Structured acceptance report not found/);
 
+		const criteriaWithUnknownJson = parseAcceptanceReport(`done\n\
+\
+\`\`\`json\n{\"criteriaSatisfied\":[],\"unexpected\":true}\n\`\`\``);
+		assert.equal(criteriaWithUnknownJson.report, undefined);
+		assert.match(criteriaWithUnknownJson.error ?? "", /unexpected: unsupported acceptance report field/);
+
 		const invalidSignalJson = `done\n\
 \
 \`\`\`json\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"satisfied\",\"evidence\":\"example\"}],\"changedFiles\":false}\n\`\`\``;
 		const genericJsonWithInvalidSignal = parseAcceptanceReport(invalidSignalJson);
 		assert.equal(genericJsonWithInvalidSignal.report, undefined);
-		assert.match(genericJsonWithInvalidSignal.error ?? "", /Structured acceptance report not found/);
+		assert.match(genericJsonWithInvalidSignal.error ?? "", /changedFiles: expected string\[\]; got boolean false/);
 		assert.equal(stripAcceptanceReport(invalidSignalJson), invalidSignalJson);
 
 		const partialWrapperJson = `done\n\
@@ -172,18 +205,106 @@ describe("acceptance gates", () => {
 		].join("\n"));
 	});
 
-	it("unwraps acceptance-report wrapper objects", () => {
+	it("unwraps every accepted report wrapper", () => {
+		for (const wrapper of ["acceptance", "acceptance-report", "acceptance_report", "acceptanceReport"]) {
+			const output = [
+				"done",
+				"```json",
+				JSON.stringify({ [wrapper]: reportData() }),
+				"```",
+			].join("\n");
+			const parsed = parseAcceptanceReport(output);
+
+			assert.ok(parsed.report, wrapper);
+			assert.deepEqual(parsed.report.testsAddedOrUpdated, ["test/file.test.ts"]);
+			assert.equal(stripAcceptanceReport(output), "done");
+		}
+	});
+
+	it("normalizes known report wire variants to the canonical shape", () => {
 		const output = [
 			"done",
-			"```json",
-			JSON.stringify({ "acceptance-report": reportData() }),
+			"```acceptance_report",
+			JSON.stringify({ acceptance_report: {
+				criteria_satisfied: { id: "Criterion_1", status: "DONE", evidence: "verified" },
+				changed_files: "src/file.ts",
+				tests_added_or_updated: "test/file.test.ts",
+				commands_run: { command: "npm test", result: "success", summary: "passed" },
+				validation_output: "tests passed",
+				residual_risks: "none",
+				no_staged_files: " TRUE ",
+				diff_summary: "patched",
+				review_findings: "no blockers",
+				manual_notes: "complete",
+			} }),
 			"```",
 		].join("\n");
 		const parsed = parseAcceptanceReport(output);
 
-		assert.ok(parsed.report);
-		assert.deepEqual(parsed.report.testsAddedOrUpdated, ["test/file.test.ts"]);
+		assert.equal(parsed.error, undefined);
+		assert.deepEqual(parsed.report, {
+			criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "verified" }],
+			changedFiles: ["src/file.ts"],
+			testsAddedOrUpdated: ["test/file.test.ts"],
+			commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+			validationOutput: ["tests passed"],
+			residualRisks: ["none"],
+			noStagedFiles: true,
+			diffSummary: "patched",
+			reviewFindings: ["no blockers"],
+			manualNotes: "complete",
+		});
 		assert.equal(stripAcceptanceReport(output), "done");
+	});
+
+	it("normalizes only known enum synonyms and criterion id separators", () => {
+		for (const [value, expected] of [
+			["met", "satisfied"],
+			["not met", "not-satisfied"],
+			["not_applicable", "not-applicable"],
+		] as const) {
+			const parsed = parseAcceptanceReport(report({ criteriaSatisfied: [{ id: "Criterion 1", status: value, evidence: "proof" }] }));
+			assert.equal(parsed.report?.criteriaSatisfied?.[0]?.id, "criterion-1");
+			assert.equal(parsed.report?.criteriaSatisfied?.[0]?.status, expected);
+		}
+		for (const [value, expected] of [
+			["ok", "passed"],
+			["failure", "failed"],
+			["not run", "not-run"],
+		] as const) {
+			const parsed = parseAcceptanceReport(report({ commandsRun: [{ command: "check", result: value, summary: "complete" }] }));
+			assert.equal(parsed.report?.commandsRun?.[0]?.result, expected);
+		}
+	});
+
+	it("rejects unknown and ambiguous report fields with exact diagnostics", () => {
+		for (const [value, expected] of [
+			[{ ...reportData(), unexpected: true }, /unexpected: unsupported acceptance report field/],
+			[{ ...reportData(), changed_files: ["src/other.ts"] }, /changed_files: duplicates normalized field 'changedFiles'/],
+			[{ acceptance: reportData(), changedFiles: ["src/file.ts"] }, /changedFiles: unsupported alongside acceptance report wrapper 'acceptance'/],
+			[{ acceptance: reportData(), acceptance_report: reportData() }, /multiple acceptance report wrappers are ambiguous/],
+		] as const) {
+			const parsed = parseAcceptanceReport(`\`\`\`acceptance-report\n${JSON.stringify(value)}\n\`\`\``);
+			assert.equal(parsed.report, undefined);
+			assert.match(parsed.error ?? "", expected);
+		}
+	});
+
+	it("rejects unknown enums, duplicate criterion ids, and blank evidence", () => {
+		for (const [overrides, expected] of [
+			[{ commandsRun: [{ command: "npm test", result: "maybe", summary: "passed" }] }, /commandsRun\[0\]\.result.*got "maybe"/],
+			[{ commandsRun: [{ command: "npm test", result: "passed", summary: "", exitCode: 0 }] }, /commandsRun\[0\]\.exitCode: unsupported acceptance command field/],
+			[{ commandsRun: [{ command: "npm test", result: "passed", summary: "" }] }, /commandsRun\[0\]\.summary: expected non-empty string; got ""/],
+			[{ criteriaSatisfied: [{ id: "criterion-1", status: "maybe", evidence: "proof" }] }, /criteriaSatisfied\[0\]\.status.*got "maybe"/],
+			[{ criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "proof", confidence: 1 }] }, /criteriaSatisfied\[0\]\.confidence: unsupported acceptance criterion field/],
+			[{ criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "proof" }, { id: "Criterion_1", status: "satisfied", evidence: "proof" }] }, /duplicate normalized criterion id 'criterion-1'/],
+			[{ reviewFindings: [""] }, /reviewFindings\[0\]: expected non-empty string; got ""/],
+			[{ noStagedFiles: "yes" }, /noStagedFiles: expected boolean; got "yes"/],
+		] as const) {
+			const parsed = parseAcceptanceReport(report(overrides));
+			assert.equal(parsed.report, undefined);
+			assert.match(parsed.error ?? "", expected);
+		}
 	});
 
 	it("reports field-level validation errors for malformed acceptance-report fields", () => {
@@ -191,21 +312,21 @@ describe("acceptance gates", () => {
 			reviewFindings: [{ id: "B-1", severity: "blocker", finding: "Missing evidence" }],
 		}));
 		assert.equal(invalidReviewerReport.report, undefined);
-		assert.match(invalidReviewerReport.error ?? "", /reviewFindings\[0\]: expected string; got object/);
+		assert.match(invalidReviewerReport.error ?? "", /reviewFindings\[0\]: expected non-empty string; got object/);
 
 		const invalidCommandReport = parseAcceptanceReport(report({
 			commandsRun: [{ command: "npm test", exitCode: 0 }],
 		}));
 		assert.equal(invalidCommandReport.report, undefined);
 		assert.match(invalidCommandReport.error ?? "", /commandsRun\[0\]\.result: expected one of "passed", "failed", "not-run"; got missing/);
-		assert.match(invalidCommandReport.error ?? "", /commandsRun\[0\]\.summary: expected string; got missing/);
+		assert.match(invalidCommandReport.error ?? "", /commandsRun\[0\]\.summary: expected non-empty string; got missing/);
 
 		const invalidCriteriaReport = parseAcceptanceReport(report({
-			criteriaSatisfied: [{ id: 7, status: "done", evidence: "" }],
+			criteriaSatisfied: [{ id: 7, status: "maybe", evidence: "" }],
 		}));
 		assert.equal(invalidCriteriaReport.report, undefined);
 		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.id: expected string; got number 7/);
-		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.status: expected one of "satisfied", "not-satisfied", "not-applicable"; got "done"/);
+		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.status: expected one of "satisfied", "not-satisfied", "not-applicable"; got "maybe"/);
 		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.evidence: expected non-empty string; got ""/);
 	});
 
@@ -220,7 +341,7 @@ describe("acceptance gates", () => {
 		assert.deepEqual(acceptance.evidence, []);
 	});
 
-	it("checked mode rejects missing required evidence", async () => {
+	it("checked mode accepts explicit empty changed and test arrays as not applicable", async () => {
 		const cwd = tempRepo();
 		try {
 			const acceptance = resolveEffectiveAcceptance({
@@ -230,12 +351,43 @@ describe("acceptance gates", () => {
 			});
 			const ledger = await evaluateAcceptance({
 				acceptance,
-				output: report({ testsAddedOrUpdated: [] }),
+				output: report({ changedFiles: [], testsAddedOrUpdated: [] }),
 				cwd,
 			});
 
-			assert.equal(ledger.status, "rejected");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /tests-added evidence missing/);
+			assert.equal(ledger.status, "checked");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:changed-files")?.status, "not-applicable");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status, "not-applicable");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("still rejects missing changed and test evidence and empty required commands", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement a fix", explicit: { level: "checked" } });
+			const missing = await evaluateAcceptance({ acceptance, output: report({
+				changedFiles: undefined,
+				testsAddedOrUpdated: undefined,
+			}), cwd });
+			assert.equal(missing.status, "rejected");
+			assert.match(acceptanceFailureMessage(missing) ?? "", /changed-files evidence missing/);
+
+			const missingTests = await evaluateAcceptance({ acceptance, output: report({
+				changedFiles: [],
+				testsAddedOrUpdated: undefined,
+			}), cwd });
+			assert.equal(missingTests.status, "rejected");
+			assert.match(acceptanceFailureMessage(missingTests) ?? "", /tests-added evidence missing/);
+
+			const emptyCommands = await evaluateAcceptance({
+				acceptance,
+				output: report({ changedFiles: [], testsAddedOrUpdated: [], commandsRun: [] }),
+				cwd,
+			});
+			assert.equal(emptyCommands.status, "rejected");
+			assert.match(acceptanceFailureMessage(emptyCommands) ?? "", /commands-run evidence missing/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -257,7 +409,40 @@ describe("acceptance gates", () => {
 
 			assert.equal(ledger.status, "rejected");
 			assert.match(acceptanceFailureMessage(ledger) ?? "", /Failed to parse acceptance-report/);
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /reviewFindings\[0\]: expected string; got object/);
+			assert.match(acceptanceFailureMessage(ledger) ?? "", /reviewFindings\[0\]: expected non-empty string; got object/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("normalizes configured criterion ids and validates direct report objects", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Implement a fix",
+				explicit: { level: "checked", criteria: [{ id: "Release_Check", must: "Release check passes" }] },
+			});
+			const normalized = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					criteriaSatisfied: [{ id: "release check", status: "met", evidence: "verified" }],
+					changedFiles: [],
+					testsAddedOrUpdated: [],
+				}),
+				cwd,
+			});
+			assert.equal(normalized.status, "checked");
+			assert.equal(normalized.childReport?.criteriaSatisfied?.[0]?.id, "release-check");
+
+			const malformedDirect = await evaluateAcceptance({
+				acceptance,
+				output: "",
+				report: { ...reportData(), unexpected: true } as never,
+				cwd,
+			});
+			assert.equal(malformedDirect.status, "rejected");
+			assert.match(malformedDirect.childReportParseError ?? "", /unexpected: unsupported acceptance report field/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -585,13 +770,13 @@ describe("acceptance gates", () => {
 				acceptance,
 				output: "wrote the report to the file",
 				fileOutput: {
-					content: report({ criteriaSatisfied: [{ id: "criterion-1", status: "not_satisfied", evidence: "x" }] }),
+					content: report({ criteriaSatisfied: [{ id: "criterion-1", status: "partially_done", evidence: "x" }] }),
 					path: "/tmp/report.md",
 				},
 				cwd,
 			});
 			assert.equal(ledger.status, "rejected");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /not_satisfied/);
+			assert.match(acceptanceFailureMessage(ledger) ?? "", /partially_done/);
 			assert.match(acceptanceFailureMessage(ledger) ?? "", /configured output/);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
@@ -683,6 +868,10 @@ describe("acceptance gates", () => {
 		assert.match(validateAcceptanceInput({ level: "reviewed" }).join("\n"), /cannot be requested explicitly.*independent reviewer result/i);
 		assert.deepEqual(validateAcceptanceInput({ criteria: ["ship the fix"], review: false, stopRules: ["stay scoped"] }), []);
 		assert.match(validateAcceptanceInput({ criteria: [{ id: "missing-must" }] }).join("\n"), /acceptance\.criteria\[0\]\.must is required/);
+		assert.match(validateAcceptanceInput({ criteria: [
+			{ id: "Release_Check", must: "first" },
+			{ id: "release check", must: "second" },
+		] }).join("\n"), /acceptance\.criteria\[1\]\.id duplicates normalized criterion id 'release-check'/);
 		assert.match(validateAcceptanceInput({ criteria: [123] }).join("\n"), /acceptance\.criteria\[0\] must be a string or an object/);
 		assert.match(validateAcceptanceInput({ evidence: ["bogus"] }).join("\n"), /acceptance\.evidence\[0\] is not a supported evidence kind/);
 		assert.match(validateAcceptanceInput({ review: true }).join("\n"), /acceptance\.review must be false or an object/);

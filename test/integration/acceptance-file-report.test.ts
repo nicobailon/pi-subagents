@@ -18,6 +18,12 @@ interface AcceptanceSummary {
 	runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
 }
 
+interface AcceptanceArtifactPaths {
+	outputPath: string;
+	metadataPath: string;
+	transcriptPath: string;
+}
+
 interface ExecutionModule {
 	runSync(
 		runtimeCwd: string,
@@ -31,6 +37,7 @@ interface ExecutionModule {
 		finalOutput?: string;
 		savedOutputPath?: string;
 		acceptance?: AcceptanceSummary;
+		artifactPaths?: AcceptanceArtifactPaths;
 	}>;
 }
 
@@ -52,7 +59,7 @@ interface ExecutorModule {
 
 interface AsyncResultPayload {
 	success: boolean;
-	results: Array<{ output?: string; error?: string; acceptance?: AcceptanceSummary }>;
+	results: Array<{ output?: string; error?: string; acceptance?: AcceptanceSummary; artifactPaths?: AcceptanceArtifactPaths }>;
 }
 
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
@@ -73,6 +80,16 @@ const DISABLED_ARTIFACTS = {
 	includeOutput: false,
 	includeJsonl: false,
 	includeMetadata: false,
+	cleanupDays: 7,
+};
+
+const ACCEPTANCE_ARTIFACTS = {
+	enabled: true,
+	includeInput: false,
+	includeOutput: true,
+	includeJsonl: false,
+	includeTranscript: true,
+	includeMetadata: true,
 	cleanupDays: 7,
 };
 
@@ -153,8 +170,9 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			assert.equal(result.savedOutputPath, outputPath);
 		});
 
-		it("file-only mode accepts a saved report when final assistant text is only a receipt", async () => {
+		it("file-only mode persists acceptance metadata when final assistant text is only a receipt", async () => {
 			const outputPath = path.join(tempDir, "saved-review.md");
+			const artifactsDir = path.join(tempDir, "artifacts");
 			const fileReport = `# Review\n${acceptanceReport("satisfied", "foreground saved verdict")}`;
 			mockPi.onCall({
 				jsonl: [...events.completedWrite(outputPath, fileReport), events.assistantMessage("Output saved to the configured file.")],
@@ -166,26 +184,64 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				outputPath,
 				outputMode: "file-only",
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
+				artifactsDir,
+				artifactConfig: ACCEPTANCE_ARTIFACTS,
 			});
 
 			assert.equal(result.acceptance?.status, "checked");
 			assert.equal(result.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "foreground saved verdict");
 			assert.equal(result.exitCode, 0);
+			assert.ok(result.artifactPaths);
+			const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { exitCode?: number; acceptance?: AcceptanceSummary };
+			assert.equal(metadata.exitCode, 0);
+			assert.equal(metadata.acceptance?.status, "checked");
+			assert.equal(metadata.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "foreground saved verdict");
+			assert.doesNotMatch(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), /```acceptance-report/);
 		});
 
-		it("inline mode rejects on the text report even when the child-written file passes", async () => {
+		it("persists a report-only child response in metadata while normal output stays clean", async () => {
+			const artifactsDir = path.join(tempDir, "report-only-artifacts");
+			mockPi.onCall({ output: acceptanceReport("satisfied", "report-only evidence") });
+
+			const result = await runSync!(tempDir, [makeAgent("worker", { completionGuard: false })], "worker", "Implement and report the fix.", {
+				runId: "acceptance-report-only",
+				acceptance: { level: "checked", criteria: ["Report the findings"] },
+				artifactsDir,
+				artifactConfig: ACCEPTANCE_ARTIFACTS,
+			});
+
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.finalOutput, "");
+			assert.ok(result.artifactPaths);
+			assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), "");
+			const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { acceptance?: AcceptanceSummary };
+			assert.equal(metadata.acceptance?.status, "checked");
+			assert.equal(metadata.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "report-only evidence");
+			assert.match(fs.readFileSync(result.artifactPaths.transcriptPath, "utf-8"), /```acceptance-report/);
+		});
+
+		it("inline mode persists final rejection metadata when the text report fails", async () => {
 			const outputPath = path.join(tempDir, "report.md");
+			const artifactsDir = path.join(tempDir, "rejected-artifacts");
 			conflictingReportsCall(outputPath, "satisfied", "not-satisfied");
 
 			const result = await runSync!(tempDir, makeAgentConfigs(["worker"]), "worker", "Write the findings report.", {
 				runId: "acceptance-inline-text-first",
 				outputPath,
 				acceptance: { level: "checked", criteria: ["Report the findings"] },
+				artifactsDir,
+				artifactConfig: ACCEPTANCE_ARTIFACTS,
 			});
 
 			assert.equal(result.acceptance?.status, "rejected");
 			assert.equal(result.exitCode, 1);
 			assert.match(result.error ?? "", /Acceptance rejected: Required criterion 'criterion-1' was reported as not-satisfied\./);
+			assert.ok(result.artifactPaths);
+			const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { exitCode?: number; error?: string; acceptance?: AcceptanceSummary };
+			assert.equal(metadata.exitCode, 1);
+			assert.match(metadata.error ?? "", /Acceptance rejected/);
+			assert.equal(metadata.acceptance?.status, "rejected");
+			assert.equal(metadata.acceptance?.runtimeChecks?.find((check) => check.id === "criterion:criterion-1")?.status, "failed");
 		});
 
 		it("inline mode accepts on the text report regardless of a failing file report", async () => {
@@ -262,13 +318,14 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 	});
 
 	describe("background runner", { skip: isAsyncAvailable && !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
-		function runAsyncSingle(id: string, outputPath: string, outputMode: "inline" | "file-only") {
+		function runAsyncSingle(id: string, outputPath: string, outputMode: "inline" | "file-only", artifactConfig = DISABLED_ARTIFACTS) {
 			executeAsyncSingle!(id, {
 				agent: "worker",
 				task: "Write the findings report.",
 				agentConfig: makeAgent("worker", { completionGuard: false }),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-file-report" },
-				artifactConfig: DISABLED_ARTIFACTS,
+				artifactConfig,
+				artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
 				shareEnabled: false,
 				maxSubagentDepth: 2,
 				output: outputPath,
@@ -291,7 +348,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
 		});
 
-		it("file-only mode accepts a saved report when final assistant text is only a receipt", async () => {
+		it("file-only mode persists async acceptance metadata when final assistant text is only a receipt", async () => {
 			const outputPath = path.join(tempDir, "saved-review.md");
 			const fileReport = `# Review\n${acceptanceReport("satisfied", "saved reviewer verdict")}`;
 			mockPi.onCall({
@@ -299,12 +356,17 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				writeFiles: [{ path: outputPath, content: fileReport }],
 			});
 			const id = `acceptance-saved-receipt-${Date.now().toString(36)}`;
-			runAsyncSingle(id, outputPath, "file-only");
+			runAsyncSingle(id, outputPath, "file-only", ACCEPTANCE_ARTIFACTS);
 
 			const payload = await waitForAsyncResult(id);
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.acceptance?.status, "checked");
 			assert.equal(payload.results[0]?.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "saved reviewer verdict");
+			const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
+			assert.ok(metadataPath);
+			const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { acceptance?: AcceptanceSummary };
+			assert.equal(metadata.acceptance?.status, "checked");
+			assert.equal(metadata.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "saved reviewer verdict");
 		});
 
 		it("inline mode accepts from the text report and strips fences from the resolved file output", async () => {

@@ -81,6 +81,29 @@ describe("getFinalOutput", () => {
 		assert.equal(getFinalOutput(messages), report);
 	});
 
+	it("preserves prose from a sibling text part when selecting an acceptance report", () => {
+		const report = "```acceptance-report\n{}\n```";
+		const messages = [assistantContent([
+			{ type: "text", text: "Human-readable answer." },
+			{ type: "text", text: report },
+		])];
+
+		assert.equal(getFinalOutput(messages), `Human-readable answer.\n${report}`);
+	});
+
+	it("recognizes underscore fences and snake_case generic report keys", () => {
+		for (const report of [
+			"```acceptance_report\n{}\n```",
+			`\`\`\`json\n${JSON.stringify({ criteria_satisfied: [], validation_output: ["passed"] })}\n\`\`\``,
+		]) {
+			const messages = [
+				assistantContent([{ type: "text", text: report }]),
+				assistantContent([{ type: "text", text: "Later summary." }]),
+			];
+			assert.equal(getFinalOutput(messages), report);
+		}
+	});
+
 	it("does not prefer provider-error acceptance reports", () => {
 		const messages = [
 			{

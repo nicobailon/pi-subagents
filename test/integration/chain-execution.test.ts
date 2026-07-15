@@ -382,7 +382,6 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 				JSON.stringify({
 					criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "patched" }],
 					changedFiles: ["src/file.ts"],
-					testsAddedOrUpdated: [],
 					commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
 					residualRisks: [],
 					noStagedFiles: true,

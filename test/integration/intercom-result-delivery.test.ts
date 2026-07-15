@@ -22,7 +22,7 @@ interface ExecutorResult {
 	details?: {
 		mode?: string;
 		runId?: string;
-		results?: Array<{ agent?: string; finalOutput?: string; acceptance?: { status?: string } }>;
+		results?: Array<{ agent?: string; finalOutput?: string; acceptance?: { status?: string }; artifactPaths?: { metadataPath?: string } }>;
 		asyncId?: string;
 	};
 }
@@ -740,6 +740,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.ok(runId, "expected foreground run id");
 		assert.equal(original.details?.results?.[0]?.acceptance?.status, "pending");
 		assert.match(original.content[0]?.text ?? "", /subagent_wait\(\{ id:/);
+		const metadataPath = original.details?.results?.[0]?.artifactPaths?.metadataPath;
+		assert.ok(metadataPath);
+		const pendingMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { acceptance?: { status?: string } };
+		assert.equal(pendingMetadata.acceptance?.status, "pending");
 
 		const waited = await waitForSubagents({ id: runId, timeoutMs: 5000 }, undefined, {
 			state: state as never,
@@ -764,6 +768,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(payload.source, "foreground");
 		assert.equal(payload.success, true);
 		assert.match(payload.summary ?? "", /final recovered answer/);
+		const recoveredMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { exitCode?: number; acceptance?: { status?: string; childReport?: unknown } };
+		assert.equal(recoveredMetadata.exitCode, 0);
+		assert.equal(recoveredMetadata.acceptance?.status, "checked");
+		assert.ok(recoveredMetadata.acceptance?.childReport);
 
 		const status = await executor.execute(
 			"foreground-detached-completion-status",
