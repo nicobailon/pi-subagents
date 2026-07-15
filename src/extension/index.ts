@@ -238,6 +238,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		subagentInProgress: false,
 		subagentSpawns: { sessionId: null, count: 0 },
 		asyncJobs: new Map(),
+		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,

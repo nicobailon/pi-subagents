@@ -24,6 +24,7 @@ import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
+import { openSubagentFleet } from "../tui/fleet.ts";
 import {
 	applySlashUpdate,
 	buildSlashInitialResult,
@@ -1135,6 +1136,25 @@ export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
 ): void {
+	let fleetOpen = false;
+	const showFleet = async (ctx: ExtensionContext) => {
+		state.lastUiContext = ctx;
+		if (!ctx.hasUI) {
+			await runSlashSubagent(pi, ctx, { action: "status", view: "fleet" });
+			return;
+		}
+		if (fleetOpen) {
+			ctx.ui.notify("Subagent fleet inspector is already open.", "info");
+			return;
+		}
+		fleetOpen = true;
+		try {
+			await openSubagentFleet(ctx, state);
+		} finally {
+			fleetOpen = false;
+		}
+	};
+
 	pi.registerCommand("run", {
 		description: "Run a subagent directly: /run agent[output=file] [task] [--bg] [--fork]",
 		getArgumentCompletions: makeAgentCompletions(state, false),
@@ -1248,10 +1268,13 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("subagents-fleet", {
-		description: "Show active subagent fleet status and transcript commands",
-		handler: async (_args, ctx) => {
-			await runSlashSubagent(pi, ctx, { action: "status", view: "fleet" });
-		},
+		description: "Open the live, inspection-only subagent fleet",
+		handler: async (_args, ctx) => showFleet(ctx),
+	});
+
+	pi.registerShortcut(Key.ctrlAlt("f"), {
+		description: "Open subagent fleet inspector",
+		handler: async (ctx) => showFleet(ctx),
 	});
 
 	pi.registerCommand("subagents-stop", {

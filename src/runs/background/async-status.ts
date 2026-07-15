@@ -241,6 +241,10 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	};
 }
 
+export function summarizeAsyncStatus(asyncDir: string, status: AsyncStatus & { cwd?: string }): AsyncRunSummary {
+	return statusToSummary(asyncDir, status);
+}
+
 function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 	const rank = (state: AsyncRunSummary["state"]): number => {
 		switch (state) {
@@ -299,11 +303,13 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		if (options.sessionId && status.sessionId !== options.sessionId) continue;
 		const nestedWarnings: string[] = [];
 		let nestedRoute: NestedRoute | undefined;
-		try {
-			nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-			if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
-		} catch (error) {
-			nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
+		if (options.reconcile !== false) {
+			try {
+				nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
+				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+			} catch (error) {
+				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
+			}
 		}
 		const summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
 		runs.push(summary);

@@ -36,7 +36,7 @@ Humans often use the slash-command layer instead:
 - `/parallel` — launch top-level parallel tasks
 - `/run-chain` — launch a saved `.chain.md` or `.chain.json` workflow
 - `/subagent-cost` — show parent plus child token usage and cost for the session
-- `/subagents-fleet` — show the read-only active foreground/background fleet view
+- `/subagents-fleet` — open the live, inspection-only foreground/async fleet; `Ctrl+Alt+F` opens it during an active foreground turn, `↑↓`/`jk` selects children, and `PgUp`/`PgDn` scrolls transcript detail
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
 - `/subagents-models [agent]` — show the live runtime-loaded builtin model mapping
 - `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile` — manage model profiles and provider catalogs

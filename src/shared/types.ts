@@ -884,6 +884,8 @@ export interface SubagentState {
 	subagentInProgress?: boolean;
 	subagentSpawns?: { sessionId: string | null; count: number };
 	asyncJobs: Map<string, AsyncJobState>;
+	/** Current-session active and recent async runs for the native fleet inspector. */
+	fleetJobs?: Map<string, AsyncJobState>;
 	foregroundRuns?: Map<string, ForegroundResumeRun>;
 	foregroundControls: Map<string, {
 		runId: string;

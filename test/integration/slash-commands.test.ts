@@ -97,6 +97,9 @@ function createState(cwd: string) {
 		baseCwd: cwd,
 		currentSessionId: null,
 		asyncJobs: new Map(),
+		foregroundRuns: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -1508,9 +1511,48 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 		assert.deepEqual(params, { action: "doctor" });
 	});
 
-	it("routes fleet to the read-only status view", async () => {
+	it("keeps the textual fleet status fallback when no UI is available", async () => {
 		const { params } = await captureSlashCommandParams("subagents-fleet", "", process.cwd());
 		assert.deepEqual(params, { action: "status", view: "fleet" });
+	});
+
+	it("opens the native fleet from both the slash command and direct shortcut", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const shortcuts = new Map<string, { description: string; handler(ctx: unknown): Promise<void> }>();
+		let opened = 0;
+		let rendered = "";
+		const custom = async (factory: unknown, options: unknown) => {
+			opened++;
+			const component = (factory as (tui: unknown, theme: unknown, keybindings: unknown, done: (value: undefined) => void) => { render(width: number): string[]; dispose(): void })(
+				{ terminal: { rows: 30, columns: 100 }, requestRender() {} },
+				{ fg: (_name: string, text: string) => text, bold: (text: string) => text },
+				undefined,
+				() => {},
+			);
+			rendered = component.render(100).join("\n");
+			component.dispose();
+			assert.deepEqual(options, { overlay: true, overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 } });
+			return undefined;
+		};
+		const pi = {
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut(key: string, spec: { description: string; handler(ctx: unknown): Promise<void> }) { shortcuts.set(key, spec); },
+			sendMessage(_message: unknown) {},
+		};
+		const state = createState(process.cwd());
+		const ctx = createCommandContext({ hasUI: true, custom });
+		registerSlashCommands!(pi, state);
+
+		await commands.get("subagents-fleet")!.handler("", ctx);
+		assert.equal(shortcuts.size, 1);
+		const shortcut = [...shortcuts.values()][0]!;
+		assert.equal(shortcut.description, "Open subagent fleet inspector");
+		await shortcut.handler(ctx);
+
+		assert.equal(opened, 2);
+		assert.match(rendered, /Subagent fleet/);
+		assert.match(rendered, /inspection only/);
 	});
 
 	it("routes subagents-stop with an id directly to the stop action", async () => {

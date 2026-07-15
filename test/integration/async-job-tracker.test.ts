@@ -34,6 +34,7 @@ function createState() {
 		baseCwd: "/repo",
 		currentSessionId: null,
 		asyncJobs: new Map(),
+		fleetJobs: new Map(),
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -122,9 +123,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleComplete({ id: "run-1", success: true });
 
 			assert.equal(state.asyncJobs.size, 1);
+			assert.equal(state.fleetJobs.size, 1);
 			await new Promise((resolve) => setTimeout(resolve, 40));
 
 			assert.equal(state.asyncJobs.size, 0);
+			assert.equal(state.fleetJobs.get("run-1")?.status, "complete", "fleet history should outlive widget cleanup");
 			assert.ok(ui.renderRequests > 0, "expected widget cleanup to request a rerender");
 			assert.equal(ui.widgets.at(-1), undefined);
 		} finally {
@@ -148,6 +151,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(ui.widgets.length > 0, "expected widget clear calls");
 			assert.ok(ui.widgets.every((widget) => widget === undefined), "disabled widget must stay cleared");
 			tracker.resetJobs(ui.ctx as never);
+			assert.equal(state.fleetJobs.size, 0, "session reset should clear fleet history");
 		} finally {
 			removeTempDir(asyncRoot);
 		}
