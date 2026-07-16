@@ -1,3 +1,4 @@
+import { Container, Text, type Component } from "@earendil-works/pi-tui";
 import { SUBAGENT_ACTIONS, type ExtensionConfig, type ToolResultDisplay } from "../shared/types.ts";
 
 export interface ToolResultDisplayArgs {
@@ -30,6 +31,35 @@ export interface CompactToolResultDisplayInput {
 
 export interface ToolResultDisplayOptions {
 	warn?: (message: string) => void;
+}
+
+interface CompactToolCallState {
+	compactToolCallBase?: string;
+	compactToolCallComponent?: Text;
+}
+
+interface ToolCallRenderContext {
+	state?: Record<string, unknown>;
+	lastComponent?: Component;
+}
+
+export function renderCompactAwareToolCall(baseText: string, context?: ToolCallRenderContext): Text {
+	const previous = context?.lastComponent;
+	const component = previous instanceof Text ? previous : new Text("", 0, 0);
+	component.setText(baseText);
+	if (context?.state) {
+		const state = context.state as CompactToolCallState;
+		state.compactToolCallBase = baseText;
+		state.compactToolCallComponent = component;
+	}
+	return component;
+}
+
+export function renderCompactResultOnToolCall(styledSummary: string, stateValue: Record<string, unknown>): Component {
+	const state = stateValue as CompactToolCallState;
+	if (!state.compactToolCallComponent || !state.compactToolCallBase) return new Text(styledSummary, 0, 0);
+	state.compactToolCallComponent.setText(`${state.compactToolCallBase} ${styledSummary}`);
+	return new Container();
 }
 
 function warn(options: ToolResultDisplayOptions | undefined, message: string): void {
@@ -105,6 +135,36 @@ export function buildCompactToolResultDisplay(input: CompactToolResultDisplayInp
 	if (typeof input.args.index === "number" && Number.isInteger(input.args.index) && input.args.index >= 0) {
 		parts.push(`child ${input.args.index + 1}`);
 	}
+	parts.push(`${input.expandKey} expand`);
+	return parts.join(" · ");
+}
+
+export interface CompactWaitResultDisplayInput {
+	toolResultDisplay: ToolResultDisplay;
+	args: { id?: unknown; all?: unknown };
+	content: string;
+	expanded: boolean;
+	isError: boolean;
+	expandKey: string;
+}
+
+export function buildCompactWaitResultDisplay(input: CompactWaitResultDisplayInput): string | undefined {
+	if (input.toolResultDisplay !== "compact" || input.expanded || input.isError) return undefined;
+	const status = /timed out/i.test(input.content)
+		? "timed out"
+		: /attention required|need attention/i.test(input.content)
+			? "attention"
+			: /aborted/i.test(input.content)
+				? "aborted"
+				: /no active|nothing to wait|no current-session/i.test(input.content)
+					? "idle"
+					: "done";
+	const parts = [status];
+	const elapsed = input.content.match(/^Waited\s+(\S+)/i)?.[1]?.replace(/[;,]$/, "");
+	if (elapsed) parts.push(elapsed);
+	const runId = nonEmptyString(input.args.id);
+	if (runId) parts.push(`run ${runId.slice(0, 8)}`);
+	else if (input.args.all === true) parts.push("all work");
 	parts.push(`${input.expandKey} expand`);
 	return parts.join(" · ");
 }

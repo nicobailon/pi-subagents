@@ -1,9 +1,16 @@
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { keyText, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { SubagentWaitParams } from "../../extension/schemas.ts";
-import type { Details, SubagentState } from "../../shared/types.ts";
+import type { Details, SubagentState, ToolResultDisplay } from "../../shared/types.ts";
+import { renderSubagentResult } from "../../tui/render.ts";
+import { buildCompactWaitResultDisplay, renderCompactAwareToolCall, renderCompactResultOnToolCall } from "../../tui/tool-result-display.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "./subagent-wait.ts";
 
-export function registerWaitTool(pi: ExtensionAPI, state: SubagentState, enabled = resolveWaitToolConfig().enabled): void {
+export function registerWaitTool(
+	pi: ExtensionAPI,
+	state: SubagentState,
+	enabled = resolveWaitToolConfig().enabled,
+	toolResultDisplay: ToolResultDisplay = "full",
+): void {
 	const tool: ToolDefinition<typeof SubagentWaitParams, Details> = {
 		name: "subagent_wait",
 		label: "Subagent Wait",
@@ -20,6 +27,25 @@ Provider jobs are session-scoped and identified exactly, so replacing one job wi
 		parameters: SubagentWaitParams,
 		execute(_id, params, signal) {
 			return waitForSubagents(params, signal, { state, events: pi.events, enabled });
+		},
+		renderCall(_args, theme, context) {
+			return renderCompactAwareToolCall(theme.fg("toolTitle", theme.bold("subagent_wait")), context);
+		},
+		renderResult(result, options, theme, context) {
+			const content = result.content
+				.filter((entry): entry is { type: "text"; text: string } => entry.type === "text")
+				.map((entry) => entry.text)
+				.join("\n");
+			const compactResult = buildCompactWaitResultDisplay({
+				toolResultDisplay,
+				args: context.args,
+				content,
+				expanded: options.expanded,
+				isError: result.isError === true || context.isError,
+				expandKey: keyText("app.tools.expand"),
+			});
+			if (compactResult) return renderCompactResultOnToolCall(theme.fg("dim", `· ${compactResult}`), context.state);
+			return renderSubagentResult(result, options, theme);
 		},
 	};
 	pi.registerTool(tool);

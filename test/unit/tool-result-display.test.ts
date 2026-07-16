@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildCompactToolResultDisplay, resolveToolResultDisplay } from "../../src/tui/tool-result-display.ts";
+import { buildCompactToolResultDisplay, buildCompactWaitResultDisplay, renderCompactAwareToolCall, renderCompactResultOnToolCall, resolveToolResultDisplay } from "../../src/tui/tool-result-display.ts";
 
 describe("tool result display config", () => {
 	it("defaults to the compatible full display", () => {
@@ -88,6 +88,30 @@ describe("compact tool result presentation", () => {
 			buildCompactToolResultDisplay({ ...base, args: {}, details: { mode: "chain", asyncId: "chain-id" } }),
 			"Async subagent chain · run chain-id · Ctrl+E expand",
 		);
+	});
+
+	it("renders compact summaries on the tool-call line", () => {
+		const state: Record<string, unknown> = {};
+		const call = renderCompactAwareToolCall("subagent list", { state });
+		const result = renderCompactResultOnToolCall("· Subagent list · Ctrl+E expand", state);
+		assert.deepEqual(call.render(120).map((line) => line.trimEnd()), ["subagent list · Subagent list · Ctrl+E expand"]);
+		assert.deepEqual(result.render(120), []);
+	});
+
+	it("summarizes successful waits without exposing orchestration guidance", () => {
+		assert.equal(
+			buildCompactWaitResultDisplay({
+				...base,
+				args: { id: "9599e8ca-f11e" },
+				content: "Waited 28.0s for run; done. Outcome: 1 complete. Completion/control events have been observed.",
+			}),
+			"done · 28.0s · run 9599e8ca · Ctrl+E expand",
+		);
+		assert.equal(
+			buildCompactWaitResultDisplay({ ...base, args: { all: true }, content: "Waited 2m; attention required." }),
+			"attention · 2m · all work · Ctrl+E expand",
+		);
+		assert.equal(buildCompactWaitResultDisplay({ ...base, args: {}, content: "Wait timed out", isError: true }), undefined);
 	});
 
 	it("uses the full renderer for expanded rows, errors, full mode, unknown actions, and foreground execution", () => {

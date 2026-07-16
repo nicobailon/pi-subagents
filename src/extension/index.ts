@@ -24,7 +24,7 @@ import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "..
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
-import { buildCompactToolResultDisplay, resolveToolResultDisplay } from "../tui/tool-result-display.ts";
+import { buildCompactToolResultDisplay, renderCompactAwareToolCall, renderCompactResultOnToolCall, resolveToolResultDisplay } from "../tui/tool-result-display.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -430,34 +430,22 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			return executeSubagentCollapsed(id, params, signal, onUpdate, ctx);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
+			let text: string;
 			if (args.action) {
 				const target = args.agent || args.chainName || "";
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`,
-					0, 0,
-				);
+				text = `${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`;
+			} else {
+				const isParallel = (args.tasks?.length ?? 0) > 0;
+				const parallelCount = effectiveParallelTaskCount(args.tasks as Array<{ count?: unknown }> | undefined);
+				const asyncLabel = args.async === true && args.clarify !== true ? theme.fg("warning", " [async]") : "";
+				text = args.chain?.length
+					? `${theme.fg("toolTitle", theme.bold("subagent "))}chain (${args.chain.length})${asyncLabel}`
+					: isParallel
+						? `${theme.fg("toolTitle", theme.bold("subagent "))}parallel (${parallelCount})${asyncLabel}`
+						: `${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`;
 			}
-			const isParallel = (args.tasks?.length ?? 0) > 0;
-			const parallelCount = effectiveParallelTaskCount(args.tasks as Array<{ count?: unknown }> | undefined);
-			const asyncLabel = args.async === true && args.clarify !== true ? theme.fg("warning", " [async]") : "";
-			if (args.chain?.length)
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}chain (${args.chain.length})${asyncLabel}`,
-					0,
-					0,
-				);
-			if (isParallel)
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}parallel (${parallelCount})${asyncLabel}`,
-					0,
-					0,
-				);
-			return new Text(
-				`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
-				0,
-				0,
-			);
+			return renderCompactAwareToolCall(text, context);
 		},
 
 		renderResult(result, options, theme, context) {
@@ -475,7 +463,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					isError: result.isError === true || context.isError,
 					expandKey: keyText("app.tools.expand"),
 				});
-				if (compactResult) return new Text(theme.fg("dim", compactResult), 0, 0);
+				if (compactResult) return renderCompactResultOnToolCall(theme.fg("dim", `· ${compactResult}`), context.state);
 			}
 			const frame = (context.state as { frame?: number } | undefined)?.frame ?? 0;
 			return renderSubagentResult(result, options, theme, frame);
@@ -485,7 +473,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.registerTool(tool);
 
-	registerWaitTool(pi, state, waitToolConfig.enabled);
+	registerWaitTool(pi, state, waitToolConfig.enabled, toolResultDisplay);
 
 	pi.on("agent_end", async (_event, ctx) => {
 		if (ctx.hasUI) return;
