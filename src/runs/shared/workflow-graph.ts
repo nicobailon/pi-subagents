@@ -1,5 +1,6 @@
 import { isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
 import type { SingleResult, SubagentRunMode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../shared/types.ts";
+import { resolveDisplayLabel } from "./display-label.ts";
 
 export interface WorkflowGraphBuildInput {
 	runId: string;
@@ -57,7 +58,7 @@ function pushPhase(phases: WorkflowGraphSnapshot["phases"], phase: string | unde
 }
 
 function seqLabel(step: SequentialStep, stepIndex: number): string {
-	return step.label?.trim() || step.agent || `Step ${stepIndex + 1}`;
+	return resolveDisplayLabel({ label: step.label, task: step.task, agent: step.agent, ordinal: stepIndex + 1 });
 }
 
 function summarizeParallelStatuses(statuses: WorkflowNodeStatus[]): WorkflowNodeStatus {
@@ -92,7 +93,7 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 					kind: "agent",
 					agent: task.agent,
 					phase: task.phase,
-					label: task.label?.trim() || task.agent || `Agent ${taskIndex + 1}`,
+					label: resolveDisplayLabel({ label: task.label, task: task.task, agent: task.agent, ordinal: taskIndex + 1 }),
 					status,
 					flatIndex,
 					stepIndex,
@@ -111,7 +112,7 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 			nodes.push({
 				id: groupId,
 				kind: "parallel-group",
-				label: step.parallel.length === 1 ? "Parallel task" : `Parallel group (${step.parallel.length})`,
+				label: resolveDisplayLabel({ label: step.label, task: `Parallel group ${stepIndex + 1}`, agent: "Parallel group", ordinal: stepIndex + 1 }),
 				status: groupStatus,
 				stepIndex,
 				children,
@@ -135,7 +136,7 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 					kind: "agent",
 					agent: task.agent,
 					phase: step.parallel.phase ?? step.phase,
-					label: task.label?.trim() || step.parallel.label?.trim() || `${task.agent} ${task.itemKey}`,
+					label: resolveDisplayLabel({ label: task.label ?? step.parallel.label, task: `${task.itemKey} ${step.parallel.task ?? ""}`, agent: task.agent, ordinal: taskIndex + 1 }),
 					status,
 					flatIndex: task.flatIndex,
 					stepIndex,
@@ -154,7 +155,7 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 			nodes.push({
 				id: groupId,
 				kind: "dynamic-parallel-group",
-				label: step.label?.trim() || step.parallel.label?.trim() || `Dynamic fanout (${step.collect.as})`,
+				label: resolveDisplayLabel({ label: step.label ?? step.parallel.label, task: `Dynamic fanout ${step.collect.as}`, agent: "Dynamic fanout", ordinal: stepIndex + 1 }),
 				status: groupStatus,
 				stepIndex,
 				outputName: step.collect.as,
