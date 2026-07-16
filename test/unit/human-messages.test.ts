@@ -90,6 +90,46 @@ describe("compact human message formatting", () => {
 		assert.match(rendered, /Recommendation: inspect current status/);
 	});
 
+	it("uses safe legacy control content as an expanded structured fallback only", () => {
+		const legacyContent = [
+			"Subagent needs attention: worker",
+			"Run: 12345678-abcd-4abc-8abc-1234567890ab step 3",
+			"Signal: The compiler found a compatibility regression in the public API.",
+			"Recent failures: npm test failed in compatibility.test.ts",
+			"Facts: 9 turns | 17 tools",
+			"Hint: Inspect the failing assertion before changing the implementation.",
+			'Status: subagent({ action: "status", id: "12345678-abcd-4abc-8abc-1234567890ab" })',
+			'Interrupt: subagent({ action: "interrupt", id: "12345678-abcd-4abc-8abc-1234567890ab" })',
+			"Direct intercom target: internal-worker-channel",
+		].join("\n");
+		const details = {
+			label: "Implement API",
+			role: "worker",
+			logicalStep: 2,
+			totalSteps: 4,
+			event: controlEvent({
+				message: "",
+				currentTool: undefined,
+				currentPath: undefined,
+				recentFailureSummary: undefined,
+				turns: undefined,
+				tokens: undefined,
+				toolCount: undefined,
+			}),
+		};
+
+		const collapsed = formatHumanControlNotice(details, false, "Alt+E", legacyContent);
+		const expanded = formatHumanControlNotice(details, true, "Alt+E", legacyContent);
+
+		assert.match(collapsed, /Alt\+E for details/);
+		assert.doesNotMatch(collapsed, /compatibility regression|subagent\s*\(|intercom target/i);
+		assert.match(expanded, /Observed: The compiler found a compatibility regression in the public API\./);
+		assert.match(expanded, /Recent failures: npm test failed in compatibility\.test\.ts/);
+		assert.match(expanded, /Diagnostics: 9 turns \| 17 tools/);
+		assert.match(expanded, /Recommendation: Inspect the failing assertion/);
+		assert.doesNotMatch(expanded, /subagent\s*\(|intercom target|internal-worker-channel|action: "(?:status|interrupt)"/i);
+	});
+
 	it("renders supervisor requests compactly and expands the complete question and interview", () => {
 		const details = supervisorDetails({
 			reason: "interview_request",
@@ -110,6 +150,41 @@ describe("compact human message formatting", () => {
 		assert.match(expanded, /Should the API return 404 or 410\?\nThe compatibility contract is ambiguous\./);
 		assert.match(expanded, /Structured interview:\nTitle: Compatibility choice/);
 		assert.match(expanded, /Questions:\n  - Id: status\n    Choices:\n      - 404\n      - 410/);
+	});
+
+	it("extracts complete legacy questions and interviews without rendering commands or raw JSON", () => {
+		const legacyContent = [
+			"Subagent requests a structured supervisor interview.",
+			"Run: abcdef12-abcd-4abc-8abc-1234567890ab",
+			"Agent: worker",
+			"Child index: 1",
+			"Child intercom target: internal-worker-channel",
+			"",
+			"Which status preserves compatibility?",
+			"Include the migration impact in the decision.",
+			"",
+			"Structured response requested. Reply with JSON, optionally fenced in ```json, matching the requested interview shape.",
+			JSON.stringify({
+				title: "Compatibility choice",
+				questions: [{ id: "status", prompt: "Select the status", choices: [404, 410] }],
+			}, null, "\t"),
+			"",
+			'Reply with: subagent_supervisor({ action: "reply", replyTo: "request-123", message: "..." })',
+		].join("\n");
+		const details = supervisorDetails({ reason: "interview_request", question: undefined, interview: undefined });
+
+		const collapsed = formatHumanSupervisorRequest(details, false, "Alt+E", legacyContent);
+		const expanded = formatHumanSupervisorRequest(details, true, "Alt+E", legacyContent);
+
+		assert.equal(collapsed, [
+			"⚠ Supervisor interview needed · Implement API [worker]",
+			"Which status preserves compatibility? · Step 2/4 · run abcdef12 · Alt+E for details",
+		].join("\n"));
+		assert.match(expanded, /Which status preserves compatibility\?\nInclude the migration impact in the decision\./);
+		assert.match(expanded, /Structured interview:\nTitle: Compatibility choice/);
+		assert.match(expanded, /Prompt: Select the status/);
+		assert.match(expanded, /Choices:\n      - 404\n      - 410/);
+		assert.doesNotMatch(expanded, /subagent_supervisor\s*\(|replyTo|internal-worker-channel|[{}]|"questions"/i);
 	});
 
 	it("keeps progress updates visually informational and marks them as no-reply", () => {
