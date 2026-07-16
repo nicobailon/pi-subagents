@@ -33,6 +33,7 @@ export interface RunnerSubagentStep {
 	outputMode?: "inline" | "file-only";
 	sessionFile?: string;
 	maxSubagentDepth?: number;
+	waitToolEnabled?: boolean;
 	structuredOutput?: {
 		schema: import("../../shared/types.ts").JsonSchemaObject;
 		schemaPath: string;

@@ -138,6 +138,23 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("surfaces failed terminal runs as errors only for internal auto-drain", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-drain-failure-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-failed", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				failOnFailedRuns: true,
+				sleep: async () => writeStatus(asyncRoot, "run-failed", "failed", { sessionId: "sess-1" }),
+			}));
+			assert.equal(result.isError, true);
+			assert.match(textOf(result), /1 failed/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("wakes when a run needs attention, not only on completion", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-attn-"));
 		try {

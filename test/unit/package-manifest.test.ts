@@ -25,7 +25,7 @@ function collectTsFiles(dir: string): string[] {
 	return files;
 }
 
-test("published Pi extension and delegation API use supported package entrypoints", async () => {
+test("published extension APIs use supported package entrypoints", async () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
 
 	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
@@ -37,8 +37,12 @@ test("published Pi extension and delegation API use supported package entrypoint
 	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.ts")), true);
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
+		"./background-work": "./src/api/background-work.ts",
 		"./delegation": "./src/api/delegation.ts",
 	});
+	const backgroundWork = await import("pi-subagents/background-work");
+	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
+	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
 	const delegation = await import("pi-subagents/delegation");
 	assert.equal(delegation.SUBAGENT_DELEGATION_PROTOCOL_VERSION, 1);
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");

@@ -1088,6 +1088,8 @@ export interface RunSyncOptions {
 	outputPath?: string;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
+	/** Effective parent wait-tool setting propagated to the child runtime. */
+	waitToolEnabled?: boolean;
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;

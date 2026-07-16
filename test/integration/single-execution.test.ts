@@ -27,6 +27,7 @@ import {
 } from "../support/helpers.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
@@ -415,6 +416,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(second.isError, true);
 		assert.match(second.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("allows concurrent async launches in one turn", async () => {
+		mockPi.onCall({ output: "async one" });
+		mockPi.onCall({ output: "async two" });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+		const ctx = makeMinimalCtx(tempDir);
+		const [first, second] = await Promise.all([
+			executor.execute("first", { agent: "echo", task: "First", async: true }, new AbortController().signal, undefined, ctx),
+			executor.execute("second", { agent: "second", task: "Second", async: true }, new AbortController().signal, undefined, ctx),
+		]);
+		assert.doesNotMatch(first.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
+		assert.doesNotMatch(second.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
+		const deadlineAt = Date.now() + 30_000;
+		while (mockPi.callCount() < 2 && Date.now() < deadlineAt) {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.equal(mockPi.callCount(), 2, "both detached mock children should start before test cleanup");
 	});
 
 	it("does not impose a cumulative spawn cap by default", async () => {
@@ -1699,6 +1718,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (prevMaxDepth === undefined) delete process.env.PI_SUBAGENT_MAX_DEPTH;
 			else process.env.PI_SUBAGENT_MAX_DEPTH = prevMaxDepth;
 		}
+	});
+
+	it("passes the effective wait-tool setting through to child execution", async () => {
+		mockPi.onCall({ echoEnv: [WAIT_TOOL_ENABLED_ENV] });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "wait-tool-env",
+			waitToolEnabled: false,
+		});
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
+			[WAIT_TOOL_ENABLED_ENV]: "false",
+		});
 	});
 
 	it("passes prompt inheritance env flags through to child execution", async () => {

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
@@ -185,6 +186,19 @@ describe("buildPiArgs session wiring", () => {
 		});
 
 		assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "inherited-parent");
+	});
+
+	it("passes the effective wait-tool setting explicitly to children", () => {
+		assert.equal(buildPiArgs({
+			baseArgs: [], task: "test", sessionEnabled: false,
+			inheritProjectContext: true, inheritSkills: true,
+			waitToolEnabled: false,
+		}).env[WAIT_TOOL_ENABLED_ENV], "false");
+		assert.equal(buildPiArgs({
+			baseArgs: [], task: "test", sessionEnabled: false,
+			inheritProjectContext: true, inheritSkills: true,
+			waitToolEnabled: true,
+		}).env[WAIT_TOOL_ENABLED_ENV], "true");
 	});
 
 	it("passes child watchdog config only when explicitly provided", () => {

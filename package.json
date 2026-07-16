@@ -7,6 +7,7 @@
   "type": "module",
   "exports": {
     ".": "./index.ts",
+    "./background-work": "./src/api/background-work.ts",
     "./delegation": "./src/api/delegation.ts"
   },
   "repository": {

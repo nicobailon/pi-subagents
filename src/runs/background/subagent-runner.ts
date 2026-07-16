@@ -1149,6 +1149,7 @@ async function runSingleStep(
 			structuredOutput: effectiveStructuredOutput,
 			toolBudget: step.toolBudget,
 			childWatchdog,
+			waitToolEnabled: step.waitToolEnabled,
 		});
 		const run = await runPiStreaming(
 			args,

@@ -237,6 +237,7 @@ async function runSingleAttempt(
 		structuredOutput: options.structuredOutput,
 		toolBudget: options.toolBudget,
 		childWatchdog,
+		waitToolEnabled: options.waitToolEnabled,
 	});
 
 	const result: SingleResult = {

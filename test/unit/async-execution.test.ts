@@ -47,12 +47,14 @@ describe("async runner execution", () => {
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
+			waitToolEnabled: false,
 			toolBudget: { hard: 3, block: ["find"] },
 			configToolBudget: { hard: 5, block: ["ls"] },
 		});
 
 		assert.ok("steps" in result, "expected successful step build");
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 3, block: ["find"] });
+		assert.equal(result.steps[0]?.waitToolEnabled, false);
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
 	});
 

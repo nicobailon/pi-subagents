@@ -13,10 +13,14 @@ import {
 	type ChildToolDiagnostic,
 } from "./tool-availability.ts";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
-import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
+import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
+import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
+import { resolveWaitToolConfig } from "../background/wait-config.ts";
+import { registerWaitTool } from "../background/wait-tool.ts";
+import { drainOutstandingWork } from "../background/auto-drain.ts";
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -327,6 +331,22 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerSteeringInbox(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV]));
 	registerChildWatchdog(pi);
+	const waitToolEnabled = resolveWaitToolConfig().enabled;
+	const waitState = {
+		baseCwd: "",
+		currentSessionId: null,
+		asyncJobs: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
+		cleanupTimers: new Map(),
+		lastUiContext: null,
+		poller: null,
+		completionSeen: new Map(),
+		watcher: null,
+		watcherRestartTimer: null,
+		resultFileCoalescer: { schedule: () => false, clear: () => {} },
+	} as unknown as SubagentState;
+	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolEnabled);
 	let nativeSupervisorClientRegistered = false;
 	let nativeSupervisorFallbackRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
@@ -341,9 +361,15 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		registerNativeSupervisorClient(pi);
 	};
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
-	onRuntimeEvent("session_start", () => {
+	onRuntimeEvent("session_start", (_event: unknown, ctx: unknown) => {
+		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
+		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
 		registerNativeSupervisorClientOnce();
 		refreshChildToolDiagnostic(pi);
+	});
+	onRuntimeEvent("agent_end", async (_event: unknown, ctx: unknown) => {
+		if ((ctx as { hasUI?: boolean } | undefined)?.hasUI === true) return;
+		await drainOutstandingWork({ state: waitState, events: pi.events });
 	});
 	const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
 	const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];

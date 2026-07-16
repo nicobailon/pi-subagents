@@ -591,11 +591,11 @@ You can combine them in either order:
 /run reviewer "review this diff" --bg --fork
 ```
 
-Background runs are detached. If the parent agent has other independent work, it should keep working. When it has nothing useful to do until a background result arrives, it should call `subagent_wait` instead of running sleep or status-polling loops. `subagent_wait()` returns when the next active run finishes or needs attention and keeps the turn alive for normal notification delivery; use `subagent_wait({ all: true })` to drain every active async run, `subagent_wait({ id })` for one async run or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block.
+Background runs are detached. If the parent agent has other independent work, it should keep working. In an interactive chat, it should normally return control when ready to yield and let Pi deliver the completion notification instead of blocking merely to wait. Use `subagent_wait` when the current request must run to completion in this turn, when a skill cannot return before its work finishes, or in a non-interactive run with no next turn. It returns when the next initially active run or registered provider item finishes or a subagent needs attention; use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block.
 
 A foreground child can detach while it waits for a supervisor reply. Reply first, then call `subagent_wait({ id: runId })`. The remembered run stays pending until the child exits, then emits a session-scoped completion notification with recovered output and remains inspectable through `subagent({ action: "status", id: runId })`. Do not call `resume` or launch a replacement while the child remains detached.
 
-`subagent_wait` is what lets a background-launching skill keep moving in a single turn, including non-interactive `pi -p` invocations where there is no subsequent turn to receive a completion notification. Ending the turn to wait for a completion only works in an interactive session where the user will prompt the agent again; in a run-to-completion skill or a non-interactive run, use `subagent_wait` so the still-running children are not abandoned.
+Headless sessions also auto-drain current-session subagent and registered provider work at `agent_end`, using one absolute timeout and continuing through attention states. This is a final lifecycle safeguard rather than a replacement for explicit orchestration: `subagent_wait` still lets a model react to each result during the turn. Provider, reconciliation, timeout, and malformed-state failures remain visible errors instead of being treated as successful drains.
 
 The `oracle` and `worker` builtins are designed for an explicit decision loop. A typical pattern is to ask `oracle` for diagnosis and a recommended execution prompt, then only run `worker` after the main agent approves that direction.
 
@@ -1006,6 +1006,29 @@ Delegation requires an active extension context. Emit requests from a supported 
 
 Existing prompt-template payloads continue over the same event family, including their parallel-only adapter. `pi-subagents/delegation` is the canonical contract for new extension integrations.
 
+## Background-work provider API
+
+Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the versioned process-local provider contract:
+
+```ts
+import { registerBackgroundWorkProvider } from "pi-subagents/background-work";
+
+const dispose = registerBackgroundWorkProvider({
+  name: "my-background-extension",
+  wakeChannels: ["my-extension:job-finished"],
+  listActiveWork: () => jobs
+    .filter((job) => job.status === "running")
+    .map((job) => ({ id: job.id, sessionId: job.ownerSessionId })),
+  reconcile: ({ sessionId, nowMs }) => reconcileJobs(sessionId, nowMs),
+});
+```
+
+Each item needs a stable provider-local ID and the exact Pi session ID that owns it. `subagent_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement. It filters snapshots to the active session, fails closed if a provider disappears while its work is tracked, and surfaces malformed snapshots or provider errors with provider context. Wake channels only shorten polling; validated snapshots remain authoritative.
+
+Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process. Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
+
+Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
+
 ## Programmatic tool usage
 
 These are the parameters the LLM passes when it calls the `subagent` tool. Most users ask naturally or use slash commands instead.
@@ -1292,7 +1315,7 @@ Controls the above-editor widget for background runs. The default is `true`. Set
 { "waitTool": { "enabled": false } }
 ```
 
-Keeps the `subagent_wait` tool registered but makes it return immediately instead of blocking on active async runs. Use this in interactive sessions where background completions should arrive as notifications while the main conversation stays steerable. The default is enabled. You can also set `"waitTool": false`; set `PI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. Invalid `waitTool` config or env values fail instead of being coerced.
+Keeps the `subagent_wait` tool registered but makes direct calls return immediately instead of blocking on active subagent or provider work. The default is enabled. You can also set `"waitTool": false`; set `PI_SUBAGENT_WAIT_TOOL_ENABLED=false` (or `0`, `off`, `disabled`) to override config for one process. The effective value is passed explicitly to child runtimes. Headless `agent_end` auto-drain remains a lifecycle safeguard even when direct wait calls are disabled. Invalid config or environment values fail instead of being coerced.
 
 ### `forceTopLevelAsync`
 

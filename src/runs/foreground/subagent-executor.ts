@@ -181,6 +181,7 @@ interface ExecutorDeps {
 	state: SubagentState;
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
+	waitToolEnabled?: boolean;
 	handleScheduledRunAction?: (params: SubagentParamsLike, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	watchdog?: MainWatchdogRuntime;
 	tempArtifactsDir: string;
@@ -805,6 +806,7 @@ function appendStepToAsyncChain(input: {
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
+		waitToolEnabled: input.deps.waitToolEnabled,
 		asyncDir: resolved.location.asyncDir,
 		validateOutputBindings: false,
 	});
@@ -1214,6 +1216,7 @@ async function resumeAsyncRun(input: {
 			chainSkills: normalized === false ? [] : (normalized ?? []),
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
+			waitToolEnabled: input.deps.waitToolEnabled,
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: input.deps.config.worktreeBaseDir,
@@ -1271,6 +1274,7 @@ async function resumeAsyncRun(input: {
 		thinkingOverride: input.params.model ? undefined : recoveryDescriptor?.thinking ?? target.thinking,
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
+		waitToolEnabled: input.deps.waitToolEnabled,
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
@@ -1988,6 +1992,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index, task.model)),
 			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, task.model)),
 			maxSubagentDepth: currentMaxSubagentDepth,
+			waitToolEnabled: deps.waitToolEnabled,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -2026,6 +2031,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(chain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
 			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: currentMaxSubagentDepth,
+			waitToolEnabled: deps.waitToolEnabled,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -2078,6 +2084,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			modelOverride,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
 			maxSubagentDepth,
+			waitToolEnabled: deps.waitToolEnabled,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -2204,6 +2211,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(asyncChain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
 			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: currentMaxSubagentDepth,
+			waitToolEnabled: deps.waitToolEnabled,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -2270,6 +2278,7 @@ interface ForegroundParallelRunInput {
 	paramsCwd: string;
 	progressDir: string;
 	maxSubagentDepths: number[];
+	waitToolEnabled?: boolean;
 	availableModels: ModelInfo[];
 	modelScope?: ModelScopeConfig;
 	modelOverrides: (string | undefined)[];
@@ -2455,6 +2464,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			outputPath,
 			outputMode: behavior?.outputMode,
 			maxSubagentDepth: input.maxSubagentDepths[index],
+			waitToolEnabled: input.waitToolEnabled,
 			controlConfig: input.controlConfig,
 			onControlEvent: input.onControlEvent,
 			onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, sessionId: input.parentSessionId, index, result, events: input.intercomEvents }),
@@ -2695,6 +2705,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index, modelOverrides[index])),
 				thinkingOverridesByFlatIndex: tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, modelOverrides[index])),
 				maxSubagentDepth: currentMaxSubagentDepth,
+				waitToolEnabled: deps.waitToolEnabled,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 				worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -2785,6 +2796,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			concurrencyLimit: parallelConcurrency,
 			globalSemaphore: new Semaphore(deps.config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT),
 			maxSubagentDepths,
+			waitToolEnabled: deps.waitToolEnabled,
 			liveResults,
 			liveProgress,
 			onUpdate,
@@ -3001,6 +3013,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				modelOverride,
 				thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
 				maxSubagentDepth,
+				waitToolEnabled: deps.waitToolEnabled,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 				worktreeBaseDir: deps.config.worktreeBaseDir,
@@ -3085,6 +3098,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		outputPath,
 		outputMode: effectiveOutputMode,
 		maxSubagentDepth,
+		waitToolEnabled: deps.waitToolEnabled,
 		onUpdate: forwardSingleUpdate,
 		controlConfig,
 		onControlEvent,
@@ -3824,6 +3838,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const requestParams = omitExecutionModeActionAlias(params);
 		if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
+		const { depth } = checkSubagentDepth(deps.config.maxSubagentDepth);
+		const dispatchParams = applyForceTopLevelAsyncOverride(requestParams, depth, deps.config.forceTopLevelAsync === true);
+		const runsForeground = dispatchParams.clarify === true || (dispatchParams.async ?? deps.asyncByDefault) !== true;
+		if (!runsForeground) return execute(id, requestParams, signal, onUpdate, ctx);
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;
 		try {

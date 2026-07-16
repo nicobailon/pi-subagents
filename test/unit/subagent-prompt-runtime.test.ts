@@ -302,7 +302,7 @@ describe("subagent prompt runtime", () => {
 				handlersWithout.set(event, [...(handlersWithout.get(event) ?? []), handler]);
 			},
 		} as { on(event: string, handler: unknown): void });
-		assert.equal(handlersWithout.get("agent_end")?.length ?? 0, 0);
+		assert.equal(handlersWithout.get("agent_end")?.length ?? 0, 1, "headless auto-drain is always registered");
 
 		process.env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify({
 			enabled: true,
@@ -330,7 +330,7 @@ describe("subagent prompt runtime", () => {
 
 		assert.ok((handlersWith.get("before_agent_start")?.length ?? 0) >= 2);
 		assert.ok((handlersWith.get("turn_end")?.length ?? 0) >= 1);
-		assert.ok((handlersWith.get("agent_end")?.length ?? 0) >= 1);
+		assert.ok((handlersWith.get("agent_end")?.length ?? 0) >= 2, "watchdog and auto-drain both observe agent_end");
 	});
 
 	it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {
@@ -546,10 +546,10 @@ describe("subagent prompt runtime", () => {
 			},
 		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
-		assert.deepEqual(registered, []);
+		assert.deepEqual(registered, ["subagent_wait"]);
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, []);
+		assert.deepEqual(registered, ["subagent_wait"]);
 	});
 
 	it("keeps installed pi-intercom while filling only a missing child contact_supervisor tool", async () => {
@@ -570,7 +570,7 @@ describe("subagent prompt runtime", () => {
 		handlers.get("session_start")?.({});
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
 
-		assert.deepEqual(registered, ["contact_supervisor"]);
+		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 	});
 
 	it("registers native supervisor tools at runtime when pi-intercom is absent", async () => {
@@ -589,10 +589,10 @@ describe("subagent prompt runtime", () => {
 		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 		handlers.get("session_start")?.({});
-		assert.deepEqual(registered, ["contact_supervisor"]);
+		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, ["contact_supervisor", "intercom"]);
+		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor", "intercom"]);
 	});
 
 	it("records and explains requested tools missing from the child registry", async () => {
