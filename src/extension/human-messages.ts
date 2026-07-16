@@ -96,6 +96,7 @@ export function formatHumanControlNotice(
 	details: HumanControlMessageDetails,
 	expanded: boolean,
 	expandKey: string,
+	legacyContent?: string,
 ): string {
 	const { event } = details;
 	const position = logicalPosition(details);
@@ -110,28 +111,82 @@ export function formatHumanControlNotice(
 	const location = [position, run].filter(Boolean).join(" · ");
 	if (!expanded) return `${heading}\n${location} · ${expandHint(expandKey)}`;
 
+	const legacy = extractLegacyControlContent(legacyContent);
 	const lines = [heading, `${details.label} [${details.role}] · ${location}`];
-	if (event.message.trim()) lines.push(`Observed: ${event.message.trim()}`);
+	const observed = legacy.observed ?? substantiveText(event.message);
+	if (observed) lines.push(`Observed: ${observed}`);
 	if (event.currentTool) {
 		const toolDuration = event.currentToolDurationMs !== undefined ? ` for ${durationLabel(event.currentToolDurationMs)}` : "";
 		lines.push(`Current activity: ${event.currentTool}${toolDuration}`);
 	}
 	if (event.currentPath) lines.push(`Working in: ${event.currentPath}`);
-	if (event.recentFailureSummary) lines.push(`Recent failures: ${event.recentFailureSummary}`);
+	const recentFailures = legacy.recentFailures ?? substantiveText(event.recentFailureSummary);
+	if (recentFailures) lines.push(`Recent failures: ${recentFailures}`);
 	const facts = [
 		event.turns !== undefined ? `${event.turns} turns` : undefined,
 		event.tokens !== undefined ? `${event.tokens} tokens` : undefined,
 		event.toolCount !== undefined ? `${event.toolCount} tools` : undefined,
 	].filter((value): value is string => Boolean(value));
 	if (facts.length > 0) lines.push(`Diagnostics: ${facts.join(" · ")}`);
-	if (event.reason !== "completion_guard") lines.push("Recommendation: inspect current status before nudging or interrupting the child.");
+	else if (legacy.diagnostics) lines.push(`Diagnostics: ${legacy.diagnostics}`);
+	const recommendation = legacy.recommendation
+		?? (event.reason !== "completion_guard" ? "inspect current status before nudging or interrupting the child." : undefined);
+	if (recommendation) lines.push(`Recommendation: ${recommendation}`);
 	return lines.join("\n");
 }
 
+function hasInternalCommand(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	if (Array.isArray(value)) return value.some(hasInternalCommand);
+	const record = value as Record<string, unknown>;
+	if ("replyTo" in record || ("action" in record && typeof record.action === "string")) return true;
+	return Object.values(record).some(hasInternalCommand);
+}
+
+function isInternalLine(line: string): boolean {
+	return /\b(?:subagent(?:_supervisor)?|intercom)\s*\(\s*\{/i.test(line)
+		|| /"(?:action|replyTo)"\s*:/i.test(line)
+		|| /^\s*(?:Reply with|Nudge|Status|Interrupt):/i.test(line)
+		|| /^\s*(?:Child|Direct|Run) intercom target\s*:/i.test(line);
+}
+
+function withoutInternalJsonBlocks(lines: string[]): string[] {
+	const safe: string[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		if (!/^[{[]/.test(lines[index]!.trim())) {
+			safe.push(lines[index]!);
+			continue;
+		}
+		for (let end = index; end < lines.length; end += 1) {
+			try {
+				const parsed = JSON.parse(lines.slice(index, end + 1).join("\n"));
+				if (hasInternalCommand(parsed)) {
+					index = end;
+					break;
+				}
+				safe.push(...lines.slice(index, end + 1));
+				index = end;
+				break;
+			} catch {
+				if (end === lines.length - 1) safe.push(lines[index]!);
+			}
+		}
+	}
+	return safe;
+}
+
+function substantiveText(value: string | undefined): string | undefined {
+	const lines = withoutInternalJsonBlocks(value?.split(/\r?\n/) ?? [])
+		.filter((line) => !isInternalLine(line))
+		.filter((line) => !/^\s*[{}[\],]+\s*$/.test(line))
+		.map((line) => line.trimEnd());
+	const text = lines?.join("\n").trim();
+	return text || undefined;
+}
+
 function compactSummary(value: string | undefined): string | undefined {
-	const firstLine = value?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+	const firstLine = substantiveText(value)?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
 	if (!firstLine) return undefined;
-	if (/\b(?:subagent|intercom)\s*\(|\{\s*"?(?:action|replyTo)"?\s*:/i.test(firstLine)) return undefined;
 	const sanitized = firstLine
 		.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, (id) => id.slice(0, 8))
 		.replace(/\b[A-Za-z]:\\[^\s]+|(?:^|\s)\/(?:[^\s/]+\/)*[^\s]+/g, " [path hidden]")
@@ -140,13 +195,73 @@ function compactSummary(value: string | undefined): string | undefined {
 	return sanitized.length > 100 ? `${sanitized.slice(0, 99)}…` : sanitized;
 }
 
+interface LegacySupervisorContent {
+	question?: string;
+	interview?: unknown;
+}
+
+function extractLegacySupervisorContent(content: string | undefined): LegacySupervisorContent {
+	if (!content?.trim()) return {};
+	const lines = content.split(/\r?\n/);
+	const structuredIndex = lines.findIndex((line) => /^Structured response requested\./i.test(line.trim()));
+	const replyIndex = lines.findIndex((line) => /^Reply with:/i.test(line.trim()));
+	const questionEnd = structuredIndex >= 0 ? structuredIndex : replyIndex >= 0 ? replyIndex : lines.length;
+	const question = substantiveText(lines.slice(0, questionEnd)
+		.filter((line) => !/^Subagent (?:requests|progress update|needs)/i.test(line.trim()))
+		.filter((line) => !/^(?:Run|Agent|Child index|Child intercom target):/i.test(line.trim()))
+		.join("\n"));
+
+	let interview: unknown;
+	if (structuredIndex >= 0) {
+		const serialized = lines.slice(structuredIndex + 1, replyIndex >= 0 ? replyIndex : lines.length).join("\n").trim();
+		if (serialized) {
+			try {
+				interview = JSON.parse(serialized);
+			} catch {
+				// Legacy content is untrusted display data. Never fall back to showing raw JSON.
+			}
+		}
+	}
+	return { ...(question ? { question } : {}), ...(interview !== undefined ? { interview } : {}) };
+}
+
+interface LegacyControlContent {
+	observed?: string;
+	recentFailures?: string;
+	diagnostics?: string;
+	recommendation?: string;
+}
+
+function extractLegacyControlContent(content: string | undefined): LegacyControlContent {
+	if (!content?.trim()) return {};
+	const result: LegacyControlContent = {};
+	for (const line of content.split(/\r?\n/)) {
+		if (isInternalLine(line)) continue;
+		const match = line.match(/^\s*(Signal|Recent failures|Facts|Hint|Next):\s*(.+?)\s*$/i);
+		if (!match) continue;
+		const value = substantiveText(match[2]);
+		if (!value) continue;
+		switch (match[1]?.toLowerCase()) {
+			case "signal": result.observed = value; break;
+			case "recent failures": result.recentFailures = value; break;
+			case "facts": result.diagnostics = value; break;
+			case "hint":
+			case "next": result.recommendation = value; break;
+		}
+	}
+	return result;
+}
+
 function humanizeKey(key: string): string {
 	return key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase());
 }
 
 function formatStructuredValue(value: unknown, indent = ""): string[] {
 	if (value === null || value === undefined) return [];
-	if (typeof value !== "object") return [`${indent}${String(value)}`];
+	if (typeof value !== "object") {
+		const text = substantiveText(String(value));
+		return text ? [`${indent}${text}`] : [];
+	}
 	if (Array.isArray(value)) {
 		return value.flatMap((entry) => {
 			const lines = formatStructuredValue(entry, `${indent}  `);
@@ -154,10 +269,16 @@ function formatStructuredValue(value: unknown, indent = ""): string[] {
 			return [`${indent}- ${lines[0]!.trimStart()}`, ...lines.slice(1)];
 		});
 	}
-	return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => {
-		if (entry === null || entry === undefined) return [];
-		if (typeof entry !== "object") return [`${indent}${humanizeKey(key)}: ${String(entry)}`];
-		return [`${indent}${humanizeKey(key)}:`, ...formatStructuredValue(entry, `${indent}  `)];
+	const record = value as Record<string, unknown>;
+	if (hasInternalCommand(record)) return [];
+	return Object.entries(record).flatMap(([key, entry]) => {
+		if (entry === null || entry === undefined || key === "childTarget") return [];
+		if (typeof entry !== "object") {
+			const text = substantiveText(String(entry));
+			return text ? [`${indent}${humanizeKey(key)}: ${text}`] : [];
+		}
+		const lines = formatStructuredValue(entry, `${indent}  `);
+		return lines.length > 0 ? [`${indent}${humanizeKey(key)}:`, ...lines] : [];
 	});
 }
 
@@ -165,6 +286,7 @@ export function formatHumanSupervisorRequest(
 	details: SupervisorRequestMessageDetails,
 	expanded: boolean,
 	expandKey: string,
+	legacyContent?: string,
 ): string {
 	const position = logicalPosition(details);
 	const run = `run ${shortRunId(details.runId)}`;
@@ -174,7 +296,10 @@ export function formatHumanSupervisorRequest(
 		: details.reason === "interview_request"
 			? `⚠ Supervisor interview needed · ${subject}`
 			: `⚠ Supervisor decision needed · ${subject}`;
-	const summary = compactSummary(details.question)
+	const legacy = extractLegacySupervisorContent(legacyContent);
+	const question = substantiveText(details.question) ?? legacy.question;
+	const interview = details.interview ?? legacy.interview;
+	const summary = compactSummary(question)
 		?? (details.reason === "interview_request" ? "Structured input requested" : undefined);
 	const location = [position, run].filter(Boolean).join(" · ");
 	if (!expanded) {
@@ -186,8 +311,8 @@ export function formatHumanSupervisorRequest(
 		heading,
 		`${details.label} [${details.role}] · ${location} · ${details.expectsReply ? "Reply required" : "No reply required"}`,
 	];
-	if (details.question?.trim()) lines.push("", details.question.trim());
-	const interviewLines = formatStructuredValue(details.interview);
+	if (question) lines.push("", question);
+	const interviewLines = formatStructuredValue(interview);
 	if (interviewLines.length > 0) lines.push("", "Structured interview:", ...interviewLines);
 	return lines.join("\n");
 }

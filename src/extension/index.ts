@@ -355,7 +355,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			...(details.totalSteps !== undefined ? { totalSteps: details.totalSteps } : {}),
 			event: details.event,
 		};
-		return new Text(theme.fg("accent", formatHumanControlNotice(presentation, options.expanded, keyText("app.tools.expand"))), 0, 0);
+		const legacyContent = typeof message.content === "string" ? message.content : undefined;
+		return new Text(theme.fg("accent", formatHumanControlNotice(presentation, options.expanded, keyText("app.tools.expand"), legacyContent)), 0, 0);
 	});
 
 	pi.registerMessageRenderer<SupervisorRequestMessageDetails>(SUBAGENT_SUPERVISOR_MESSAGE_TYPE, (message, options, theme) => {
@@ -367,7 +368,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			role: details.role ?? details.agent,
 		};
 		const color = details.reason === "progress_update" ? "muted" : "accent";
-		return new Text(theme.fg(color, formatHumanSupervisorRequest(presentation, options.expanded, keyText("app.tools.expand"))), 0, 0);
+		const legacyContent = typeof message.content === "string" ? message.content : undefined;
+		return new Text(theme.fg(color, formatHumanSupervisorRequest(presentation, options.expanded, keyText("app.tools.expand"), legacyContent)), 0, 0);
 	});
 
 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
