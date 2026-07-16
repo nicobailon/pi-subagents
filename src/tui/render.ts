@@ -229,6 +229,12 @@ function buildLiveStatusLine(progress: Pick<AgentProgress, "activityState" | "la
 	return undefined;
 }
 
+function buildPausedStatusLine(progress: Pick<AgentProgress, "lastActivityAt">, snapshotNow?: number): string {
+	if (progress.lastActivityAt === undefined || snapshotNow === undefined) return "paused";
+	const activity = formatActivityLabel(progress.lastActivityAt, undefined, snapshotNow);
+	return activity ? `paused · last ${activity}` : "paused";
+}
+
 function themeBold(theme: Theme, text: string): string {
 	return ((theme as { bold?: (value: string) => string }).bold?.(text)) ?? text;
 }
@@ -340,6 +346,12 @@ function widgetJobName(job: AsyncJobState): string {
 }
 
 function widgetActivity(job: AsyncJobState): string {
+	if (job.status === "queued") return "queued…";
+	if (job.status === "paused") return buildPausedStatusLine(job, job.updatedAt);
+	if (job.status === "stopped") return "Stopped";
+	if (job.status === "failed") return "Failed";
+	if (job.status !== "running") return "Done";
+
 	const facts: string[] = [];
 	if (job.currentTool && job.currentToolStartedAt !== undefined && job.updatedAt !== undefined) facts.push(`${job.currentTool} ${formatDuration(Math.max(0, job.updatedAt - job.currentToolStartedAt))}`);
 	else if (job.currentTool) facts.push(job.currentTool);
@@ -350,12 +362,7 @@ function widgetActivity(job: AsyncJobState): string {
 	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
 	if (activity) return activity;
 	if (facts.length) return facts.join(" · ");
-	if (job.status === "running") return "thinking…";
-	if (job.status === "queued") return "queued…";
-	if (job.status === "paused") return "Paused";
-	if (job.status === "stopped") return "Stopped";
-	if (job.status === "failed") return "Failed";
-	return "Done";
+	return "thinking…";
 }
 
 function widgetStepRunningSeed(step: NonNullable<AsyncJobState["steps"]>[number], fallbackIndex?: number): number | undefined {
@@ -431,6 +438,9 @@ function widgetStepDisplay(step: NonNullable<AsyncJobState["steps"]>[number], th
 }
 
 function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], snapshotNow?: number): string {
+	if (step.status === "paused") return buildPausedStatusLine(step, snapshotNow);
+	if (step.status !== "running") return "";
+
 	const facts: string[] = [];
 	if (step.currentTool && step.currentToolStartedAt !== undefined && snapshotNow !== undefined) facts.push(`${step.currentTool} ${formatDuration(Math.max(0, snapshotNow - step.currentToolStartedAt))}`);
 	else if (step.currentTool) facts.push(step.currentTool);
@@ -508,7 +518,14 @@ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, 
 			continue;
 		}
 		if (expanded) lines.push(...foregroundStyleWidgetStepLines(job, theme, step, "Step", span.stepIndex + 1, total, true, width));
-		else lines.push(compactWidgetStepLine(job, theme, step, "Step", span.stepIndex + 1, total, width));
+		else {
+			lines.push(compactWidgetStepLine(job, theme, step, "Step", span.stepIndex + 1, total, width));
+			if (step.status === "running") {
+				lines.push(theme.fg("accent", `    ${liveDetailHintText()}`));
+				const output = widgetOutputPath(job, step);
+				if (output) lines.push(theme.fg("dim", `    output: ${shortenPath(output)}`));
+			}
+		}
 	}
 	return lines;
 }
@@ -522,9 +539,10 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 	for (const [index, step] of job.steps.entries()) {
 		const marker = index === job.steps.length - 1 ? "└" : "├";
 		const activity = widgetStepActivity(step, job.updatedAt);
+		const stats = widgetStepStats(theme, step);
 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.label?.trim() || step.agent}${step.label?.trim() && step.label.trim() !== step.agent ? ` [${step.agent}]` : ""} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.label?.trim() || step.agent}${step.label?.trim() && step.label.trim() !== step.agent ? ` [${step.agent}]` : ""} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}${stats ? ` · ${stats}` : ""}`)}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1)) lines.push(`    ${nestedLine}`);
 	}
 	return lines;
@@ -827,12 +845,11 @@ function modelThinkingBadge(theme: Theme, model?: string, thinking?: string): st
 }
 
 function widgetStepActivityLine(step: NonNullable<AsyncJobState["steps"]>[number], width: number, expanded: boolean, snapshotNow?: number): string {
+	if (step.status === "paused") return buildPausedStatusLine(step, snapshotNow);
+	if (step.status !== "running") return "";
 	const toolLine = formatCurrentToolLine(step, width, expanded, snapshotNow);
 	if (toolLine) return toolLine;
-	const activity = buildLiveStatusLine(step, snapshotNow);
-	if (activity) return activity;
-	if (step.status === "running") return "thinking…";
-	return "";
+	return buildLiveStatusLine(step, snapshotNow) ?? "thinking…";
 }
 
 function widgetOutputPath(job: AsyncJobState, step: NonNullable<AsyncJobState["steps"]>[number]): string | undefined {
@@ -859,23 +876,41 @@ function nestedRunSeed(run: NestedRunSummary): number | undefined {
 	return runningSeed(run.lastUpdate, run.lastActivityAt, run.currentStep, run.toolCount, run.turnCount, run.totalTokens?.total, run.currentToolStartedAt);
 }
 
-function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount">, state: NestedRunSummary["state"] | NestedStepSummary["status"], snapshotNow?: number): string {
+function nestedActivity(input: Pick<NestedRunSummary | NestedStepSummary, "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath">, state: NestedRunSummary["state"] | NestedStepSummary["status"], snapshotNow?: number): string {
+	if (state === "queued" || state === "pending") return "queued…";
+	if (state === "paused") return buildPausedStatusLine(input, snapshotNow);
+	if (state === "stopped") return "Stopped";
+	if (state === "failed") return "Failed";
+	if (state === "complete" || state === "completed") return "Done";
+
 	const facts: string[] = [];
 	if (input.currentTool && input.currentToolStartedAt !== undefined && snapshotNow !== undefined) facts.push(`${input.currentTool} ${formatDuration(Math.max(0, snapshotNow - input.currentToolStartedAt))}`);
 	else if (input.currentTool) facts.push(input.currentTool);
 	if (input.currentPath) facts.push(shortenPath(input.currentPath));
-	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
-	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
 	const activity = buildLiveStatusLine(input, snapshotNow);
 	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
 	if (activity) return activity;
 	if (facts.length) return facts.join(" · ");
-	if (state === "running") return "thinking…";
-	if (state === "queued" || state === "pending") return "queued…";
-	if (state === "paused") return "Paused";
-	if (state === "stopped") return "Stopped";
-	if (state === "failed") return "Failed";
-	return "Done";
+	return "thinking…";
+}
+
+function nestedStats(theme: Theme, input: {
+	turnCount?: number;
+	toolCount?: number;
+	tokens?: NestedStepSummary["tokens"];
+	totalTokens?: NestedRunSummary["totalTokens"];
+	durationMs?: number;
+	startedAt?: number;
+	endedAt?: number;
+}): string {
+	const tokens = input.tokens ?? input.totalTokens;
+	const durationMs = input.durationMs ?? (input.startedAt !== undefined && input.endedAt !== undefined ? Math.max(0, input.endedAt - input.startedAt) : undefined);
+	return statJoin(theme, [
+		input.turnCount !== undefined ? `${input.turnCount} turns` : "",
+		input.toolCount !== undefined ? formatToolUseStat(input.toolCount) : "",
+		tokens?.total ? formatTokenStat(tokens.total) : "",
+		durationMs !== undefined ? formatDuration(durationMs) : "",
+	]);
 }
 
 function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme: Theme, width: number, expanded: boolean, snapshotNow?: number, lineBudget = expanded ? 12 : 1): string[] {
@@ -901,8 +936,9 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 				return;
 			}
 			const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate);
+			const stats = nestedStats(theme, child);
 			const error = child.error ? ` · ${child.error}` : "";
-			lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${error}`));
+			lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${stats ? ` · ${stats}` : ""}${error}`));
 			if (depth === maxDepth) {
 				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
 				if (aggregate && lines.length < lineBudget) lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
@@ -910,7 +946,8 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
-				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.label?.trim() || step.agent}${step.label?.trim() && step.label.trim() !== step.agent ? ` [${step.agent}]` : ""} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
+				const stats = nestedStats(theme, step);
+				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.label?.trim() || step.agent}${step.label?.trim() && step.label.trim() !== step.agent ? ` [${step.agent}]` : ""} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}${stats ? ` · ${stats}` : ""}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
 			append(child.children, depth + 1, `${prefix}  `);

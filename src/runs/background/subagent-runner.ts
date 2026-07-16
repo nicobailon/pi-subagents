@@ -321,10 +321,15 @@ function isTerminalAssistantStop(message: Message): boolean {
 	return (message as { stopReason?: string }).stopReason === "stop" && !assistantStartsToolCall(message);
 }
 
-function resetStepLiveDetail(step: RunnerStatusStep): void {
+function clearStepTransientLiveness(step: RunnerStatusStep): void {
+	step.activityState = undefined;
 	step.currentTool = undefined;
 	step.currentToolArgs = undefined;
 	step.currentToolStartedAt = undefined;
+}
+
+function resetStepLiveDetail(step: RunnerStatusStep): void {
+	clearStepTransientLiveness(step);
 	step.currentPath = undefined;
 	step.recentTools = [];
 	step.recentOutput = [];
@@ -1440,6 +1445,7 @@ function markParallelGroupSetupFailure(input: {
 		input.statusPayload.steps[flatTaskIndex].endedAt = input.failedAt;
 		input.statusPayload.steps[flatTaskIndex].durationMs = 0;
 		input.statusPayload.steps[flatTaskIndex].exitCode = 1;
+		clearStepTransientLiveness(input.statusPayload.steps[flatTaskIndex]);
 		input.results.push({ agent: input.group.parallel[taskIndex].agent, output: input.setupError, success: false, exitCode: 1, sessionFile: input.group.parallel[taskIndex].sessionFile });
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
@@ -1473,7 +1479,7 @@ function markParallelGroupRunning(input: {
 		input.statusPayload.steps[flatTaskIndex].endedAt = undefined;
 		input.statusPayload.steps[flatTaskIndex].durationMs = undefined;
 		input.statusPayload.steps[flatTaskIndex].lastActivityAt = undefined;
-		input.statusPayload.steps[flatTaskIndex].activityState = undefined;
+		clearStepTransientLiveness(input.statusPayload.steps[flatTaskIndex]);
 		input.statusPayload.steps[flatTaskIndex].error = undefined;
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
@@ -2442,11 +2448,14 @@ async function runSubagent(
 		statusPayload.state = "paused";
 		currentActivityState = undefined;
 		statusPayload.activityState = undefined;
+		statusPayload.currentTool = undefined;
+		statusPayload.currentToolStartedAt = undefined;
+		statusPayload.currentPath = undefined;
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
 			if (step.status === "running") {
 				step.status = "paused";
-				step.activityState = undefined;
+				clearStepTransientLiveness(step);
 				step.endedAt = now;
 				step.durationMs = step.startedAt ? now - step.startedAt : undefined;
 				step.lastActivityAt = now;
@@ -2470,6 +2479,9 @@ async function runSubagent(
 		statusPayload.error = stopMessage;
 		currentActivityState = undefined;
 		statusPayload.activityState = undefined;
+		statusPayload.currentTool = undefined;
+		statusPayload.currentToolStartedAt = undefined;
+		statusPayload.currentPath = undefined;
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
 			if (step.status !== "running" && step.status !== "pending") continue;
@@ -2477,7 +2489,7 @@ async function runSubagent(
 			step.error = stopMessage;
 			step.exitCode = 1;
 			step.stopped = true;
-			step.activityState = undefined;
+			clearStepTransientLiveness(step);
 			step.endedAt = now;
 			step.durationMs = step.startedAt ? now - step.startedAt : 0;
 			step.lastActivityAt = now;
@@ -2503,6 +2515,9 @@ async function runSubagent(
 		statusPayload.error = message;
 		currentActivityState = undefined;
 		statusPayload.activityState = undefined;
+		statusPayload.currentTool = undefined;
+		statusPayload.currentToolStartedAt = undefined;
+		statusPayload.currentPath = undefined;
 		statusPayload.lastUpdate = now;
 		for (const step of statusPayload.steps) {
 			if (step.status !== "running" && step.status !== "pending") continue;
@@ -2510,7 +2525,7 @@ async function runSubagent(
 			step.error = message;
 			step.exitCode = 1;
 			step.timedOut = true;
-			step.activityState = undefined;
+			clearStepTransientLiveness(step);
 			step.endedAt = now;
 			step.durationMs = step.startedAt ? now - step.startedAt : 0;
 			step.lastActivityAt = now;
@@ -2617,6 +2632,7 @@ async function runSubagent(
 					placeholder.endedAt = now;
 					placeholder.durationMs = 0;
 					placeholder.exitCode = 1;
+					clearStepTransientLiveness(placeholder);
 				}
 				statusPayload.lastUpdate = now;
 				markDynamicGraphGroup(stepIndex, "failed", message);
@@ -2651,6 +2667,7 @@ async function runSubagent(
 					placeholder.startedAt = now;
 					placeholder.endedAt = now;
 					placeholder.durationMs = 0;
+					clearStepTransientLiveness(placeholder);
 				}
 				previousOutput = "Dynamic fanout produced 0 results.";
 				const groupAcceptance = effectiveDynamicGroupAcceptance.explicit && !timedOut && !stopped
@@ -2809,6 +2826,7 @@ async function runSubagent(
 					statusPayload.steps[fi].endedAt = skippedAt;
 					statusPayload.steps[fi].durationMs = 0;
 					statusPayload.steps[fi].exitCode = -1;
+					clearStepTransientLiveness(statusPayload.steps[fi]);
 					statusPayload.lastUpdate = skippedAt;
 					writeStatusPayload();
 					return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
@@ -2888,6 +2906,8 @@ async function runSubagent(
 				statusPayload.steps[fi].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
 				statusPayload.steps[fi].acceptance = singleResult.acceptance;
 				statusPayload.steps[fi].watchdog = singleResult.watchdog;
+				clearStepTransientLiveness(statusPayload.steps[fi]);
+				syncTopLevelCurrentTool();
 				statusPayload.lastUpdate = taskEndTime;
 				writeStatusPayload();
 				appendJsonl(eventsPath, JSON.stringify({
@@ -3096,7 +3116,7 @@ async function runSubagent(
 							statusPayload.steps[fi].endedAt = skippedAt;
 							statusPayload.steps[fi].durationMs = 0;
 							statusPayload.steps[fi].exitCode = -1;
-							statusPayload.steps[fi].activityState = undefined;
+							clearStepTransientLiveness(statusPayload.steps[fi]);
 							statusPayload.lastUpdate = skippedAt;
 							writeStatusPayload();
 							appendJsonl(eventsPath, JSON.stringify({
@@ -3197,6 +3217,8 @@ async function runSubagent(
 						statusPayload.steps[fi].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
 						statusPayload.steps[fi].acceptance = singleResult.acceptance;
 						statusPayload.steps[fi].watchdog = singleResult.watchdog;
+						clearStepTransientLiveness(statusPayload.steps[fi]);
+						syncTopLevelCurrentTool();
 						statusPayload.lastUpdate = taskEndTime;
 						writeStatusPayload();
 
@@ -3465,6 +3487,8 @@ async function runSubagent(
 			statusPayload.steps[flatIndex].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
 			statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
 			statusPayload.steps[flatIndex].watchdog = singleResult.watchdog;
+			clearStepTransientLiveness(statusPayload.steps[flatIndex]);
+			syncTopLevelCurrentTool();
 			if (stepTokens) {
 				statusPayload.steps[flatIndex].tokens = stepTokens;
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
@@ -3586,6 +3610,10 @@ async function runSubagent(
 	}
 	const runEndedAt = Date.now();
 	statusPayload.activityState = undefined;
+	statusPayload.currentTool = undefined;
+	statusPayload.currentToolStartedAt = undefined;
+	statusPayload.currentPath = undefined;
+	for (const step of statusPayload.steps) clearStepTransientLiveness(step);
 	if (stopped) {
 		statusPayload.stopped = true;
 		statusPayload.error = stopMessage;

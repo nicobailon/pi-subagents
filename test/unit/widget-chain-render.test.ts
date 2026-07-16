@@ -65,6 +65,25 @@ describe("async chain widget groups", () => {
 		assert.doesNotMatch(text, /Agent 1\/1/);
 	});
 
+	it("does not render stale live activity for terminal or pending group members", () => {
+		const stale = { activityState: "needs_attention" as const, lastActivityAt: 1_000, currentTool: "bash", currentToolArgs: "npm test", currentToolStartedAt: 2_000 };
+		const steps = [
+			{ ...step(0, "reviewer", "Completed review", "complete"), ...stale, model: "provider/model", thinking: "high", toolCount: 3, tokens: { input: 800, output: 200, total: 1_000 }, durationMs: 4_000 },
+			{ ...step(1, "reviewer", "Failed review", "failed"), ...stale },
+			{ ...step(2, "reviewer", "Queued review", "pending"), ...stale },
+		];
+		const graph: WorkflowGraphSnapshot = {
+			runId: "chain-run", mode: "chain", phases: [], nodes: [{
+				id: "step-0", kind: "parallel-group", label: "Legacy review group", status: "failed", stepIndex: 0,
+				children: steps.map((item, index) => ({ id: `child-${index}`, kind: "agent", agent: item.agent, label: item.label!, status: item.status, flatIndex: index, stepIndex: 0 })),
+			}],
+		};
+		const text = buildWidgetLines([chainJob(steps, graph, [{ start: 0, count: 3, stepIndex: 0 }])], theme as never, 180, false).join("\n");
+		assert.match(text, /Completed review \[reviewer\] · complete \(model · thinking high\)/);
+		assert.match(text, /3 tool uses · 1\.0k token · 4\.0s/);
+		assert.doesNotMatch(text, /no activity|needs attention|bash|npm test/);
+	});
+
 	it("uses a named overflow row when a large group exceeds the collapsed budget", () => {
 		const steps = Array.from({ length: 12 }, (_, index) => step(index, "reviewer", `Review target ${index + 1}`));
 		const graph: WorkflowGraphSnapshot = {

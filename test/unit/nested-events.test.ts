@@ -287,6 +287,54 @@ describe("nested event parsing and projection", () => {
 		}]), true);
 	});
 
+	it("preserves terminal nested metrics while dropping stale live fields", () => {
+		const route = trackRoute();
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: 300,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: {
+				...child("nested-terminal-metrics", "complete", 300),
+				activityState: "needs_attention",
+				currentTool: "bash",
+				currentToolStartedAt: 200,
+				currentPath: "src/stale.ts",
+				turnCount: 4,
+				toolCount: 5,
+				totalTokens: { input: 800, output: 200, total: 1_000 },
+				endedAt: 300,
+				steps: [{
+					agent: "leaf",
+					status: "complete",
+					activityState: "needs_attention",
+					currentTool: "bash",
+					currentToolStartedAt: 200,
+					currentPath: "src/stale.ts",
+					turnCount: 2,
+					toolCount: 3,
+					tokens: { input: 600, output: 400, total: 1_000 },
+					durationMs: 250,
+				}],
+			},
+		});
+
+		const summary = projectNestedEvents(route).children[0];
+		assert.equal(summary?.currentTool, undefined);
+		assert.equal(summary?.currentToolStartedAt, undefined);
+		assert.equal(summary?.currentPath, undefined);
+		assert.equal(summary?.activityState, undefined);
+		assert.equal(summary?.turnCount, 4);
+		assert.equal(summary?.toolCount, 5);
+		assert.deepEqual(summary?.totalTokens, { input: 800, output: 200, total: 1_000 });
+		assert.equal(summary?.steps?.[0]?.currentTool, undefined);
+		assert.equal(summary?.steps?.[0]?.activityState, undefined);
+		assert.equal(summary?.steps?.[0]?.turnCount, 2);
+		assert.equal(summary?.steps?.[0]?.toolCount, 3);
+		assert.deepEqual(summary?.steps?.[0]?.tokens, { input: 600, output: 400, total: 1_000 });
+		assert.equal(summary?.steps?.[0]?.durationMs, 250);
+	});
+
 	it("accepts only complete numeric token usage at the nested event boundary", () => {
 		const route = trackRoute();
 		writeNestedEvent(route, {

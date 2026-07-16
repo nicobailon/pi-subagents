@@ -657,7 +657,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(controlEvents[0]?.reason, "turn_threshold");
 		assert.equal(controlEvents[0]?.turns, 2);
 		assert.equal(result.controlEvents?.[0]?.type, "active_long_running");
-		assert.equal(result.progress.activityState, "active_long_running");
+		assert.equal(result.progress.activityState, undefined);
 	});
 
 	it("escalates repeated mutating tool failures to needs attention", async () => {
@@ -689,7 +689,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(failureEvent?.type, "needs_attention");
 		assert.equal(failureEvent?.currentPath, "src/runs/background/async-status.ts");
 		assert.match(failureEvent?.recentFailureSummary ?? "", /No exact match/);
-		assert.equal(result.progress.activityState, "needs_attention");
+		assert.equal(result.progress.activityState, undefined);
 	});
 
 	it("does not surface control state or events when control is disabled", async () => {
@@ -1170,6 +1170,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(runningToolUpdate?.details?.progress?.[0]?.currentTool, "read");
 		assert.equal(typeof runningToolUpdate?.details?.progress?.[0]?.currentToolStartedAt, "number");
 		assert.equal(typeof result.progress.lastActivityAt, "number");
+		assert.equal(result.progress.activityState, undefined);
+		assert.equal(result.progress.currentTool, undefined);
+		assert.equal(result.progress.currentToolArgs, undefined);
 		assert.equal(result.progress.currentToolStartedAt, undefined);
 	});
 
