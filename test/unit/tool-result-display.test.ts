@@ -29,45 +29,60 @@ describe("compact tool result presentation", () => {
 		expandKey: "Ctrl+E",
 	};
 
-	it("distinguishes fleet, transcript, and ordinary status calls", () => {
-		assert.equal(buildCompactToolResultDisplay({ ...base, args: { action: "status", view: "fleet" } }), "Subagent fleet · Ctrl+E expand");
+	it("summarizes fleet, transcript, and ordinary status results", () => {
+		assert.equal(
+			buildCompactToolResultDisplay({ ...base, args: { action: "status", view: "fleet" }, content: "No active subagent fleet." }),
+			"0 active · Ctrl+E expand",
+		);
+		assert.equal(
+			buildCompactToolResultDisplay({
+				...base,
+				args: { action: "status", view: "fleet" },
+				content: "Subagent fleet: 3 tracked\n\nAsync runs:\n- run-a | running | parallel\n- run-b | queued | chain\n- run-c | running | single",
+			}),
+			"3 tracked · 2 running · 1 queued · Ctrl+E expand",
+		);
 		assert.equal(
 			buildCompactToolResultDisplay({
 				...base,
 				args: { action: "status", view: "transcript", id: "12345678-abcd", index: 2 },
+				content: "Run: 12345678-abcd\nState: running\nTranscript tail:",
 			}),
-			"Subagent transcript · run 12345678 · child 3 · Ctrl+E expand",
+			"transcript · running · run 12345678 · child 3 · Ctrl+E expand",
 		);
 		assert.equal(
-			buildCompactToolResultDisplay({ ...base, args: { action: "status", runId: "abcdef012345" } }),
-			"Subagent status · run abcdef01 · Ctrl+E expand",
+			buildCompactToolResultDisplay({ ...base, args: { action: "status", runId: "abcdef012345" }, content: "Run: abcdef012345\nState: complete\nProgress: step 1/1" }),
+			"complete · step 1/1 · run abcdef01 · Ctrl+E expand",
 		);
 	});
 
-	it("summarizes management actions and their argument targets", () => {
-		assert.equal(buildCompactToolResultDisplay({ ...base, args: { action: "list" } }), "Subagent list · Ctrl+E expand");
+	it("summarizes list counts and management outcomes", () => {
+		assert.equal(
+			buildCompactToolResultDisplay({ ...base, args: { action: "list" }, content: "Executable agents:\n- delegate\n- worker\n\nChains:\n- (none)\n\nProactive skill subagent suggestions:\n- design review" }),
+			"2 agents · 0 chains · Ctrl+E expand",
+		);
 		assert.equal(
 			buildCompactToolResultDisplay({ ...base, args: { action: "get", agent: "reviewer" } }),
-			"Subagent get · agent reviewer · Ctrl+E expand",
+			"done · Ctrl+E expand",
 		);
 		assert.equal(
 			buildCompactToolResultDisplay({ ...base, args: { action: "schedule-status", id: "schedule-123456" } }),
-			"Subagent schedule status · job schedule · Ctrl+E expand",
+			"done · job schedule · Ctrl+E expand",
 		);
 		assert.equal(
-			buildCompactToolResultDisplay({ ...base, args: { action: "status", dir: "C:\\tmp\\async-runs\\run-directory" } }),
-			"Subagent status · dir run-directory · Ctrl+E expand",
+			buildCompactToolResultDisplay({ ...base, args: { action: "status", dir: "C:\\tmp\\async-runs\\run-directory" }, content: "State: running" }),
+			"running · dir run-directory · Ctrl+E expand",
 		);
 	});
 
 	it("summarizes scheduled parallel and chain launches", () => {
 		assert.equal(
 			buildCompactToolResultDisplay({ ...base, args: { action: "schedule", tasks: [{}, {}] } }),
-			"Subagent schedule · parallel (2) · Ctrl+E expand",
+			"scheduled · parallel 2 · Ctrl+E expand",
 		);
 		assert.equal(
 			buildCompactToolResultDisplay({ ...base, args: { action: "schedule", chain: [{}, {}, {}] } }),
-			"Subagent schedule · chain (3) · Ctrl+E expand",
+			"scheduled · chain 3 · Ctrl+E expand",
 		);
 	});
 
@@ -78,23 +93,23 @@ describe("compact tool result presentation", () => {
 				args: { agent: "worker" },
 				details: { mode: "single", asyncId: "12345678-abcd" },
 			}),
-			"Async subagent · run 12345678 · Ctrl+E expand",
+			"started · run 12345678 · Ctrl+E expand",
 		);
 		assert.equal(
 			buildCompactToolResultDisplay({ ...base, args: {}, details: { mode: "parallel", asyncId: "parallel-id" } }),
-			"Async subagent parallel · run parallel · Ctrl+E expand",
+			"started · run parallel · Ctrl+E expand",
 		);
 		assert.equal(
 			buildCompactToolResultDisplay({ ...base, args: {}, details: { mode: "chain", asyncId: "chain-id" } }),
-			"Async subagent chain · run chain-id · Ctrl+E expand",
+			"started · run chain-id · Ctrl+E expand",
 		);
 	});
 
 	it("renders compact summaries on the tool-call line", () => {
 		const state: Record<string, unknown> = {};
 		const call = renderCompactAwareToolCall("subagent list", { state });
-		const result = renderCompactResultOnToolCall("· Subagent list · Ctrl+E expand", state);
-		assert.deepEqual(call.render(120).map((line) => line.trimEnd()), ["subagent list · Subagent list · Ctrl+E expand"]);
+		const result = renderCompactResultOnToolCall("· 8 agents · 0 chains · Ctrl+E expand", state);
+		assert.deepEqual(call.render(120).map((line) => line.trimEnd()), ["subagent list · 8 agents · 0 chains · Ctrl+E expand"]);
 		assert.deepEqual(result.render(120), []);
 	});
 

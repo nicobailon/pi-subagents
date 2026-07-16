@@ -441,7 +441,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			let text: string;
 			if (args.action) {
 				const target = args.agent || args.chainName || "";
-				text = `${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`;
+				const actionLabel = args.action === "status" && (args.view === "fleet" || args.view === "transcript") ? args.view : args.action;
+				text = `${theme.fg("toolTitle", theme.bold("subagent "))}${actionLabel}${target ? ` ${theme.fg("accent", target)}` : ""}`;
 			} else {
 				const isParallel = (args.tasks?.length ?? 0) > 0;
 				const parallelCount = effectiveParallelTaskCount(args.tasks as Array<{ count?: unknown }> | undefined);
@@ -462,10 +463,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				clearLegacyResultAnimationTimer(context);
 			}
 			if (toolResultDisplay === "compact") {
+				const content = result.content
+					.filter((entry): entry is { type: "text"; text: string } => entry.type === "text")
+					.map((entry) => entry.text)
+					.join("\n");
 				const compactResult = buildCompactToolResultDisplay({
 					toolResultDisplay,
 					args: context.args,
 					details: result.details,
+					content,
 					expanded: options.expanded,
 					isError: result.isError === true || context.isError,
 					expandKey: keyText("app.tools.expand"),

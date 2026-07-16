@@ -142,6 +142,7 @@ describe("subagent extension child mode", () => {
 				if (!registeredTool || !registeredWaitTool) throw new Error("tools not registered");
 				const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
 				const result = { content: [{ type: "text", text: "FULL_RESULT_SENTINEL" }], details: { mode: "management", results: [] } };
+				const listResult = { content: [{ type: "text", text: "Executable agents:\n- delegate\n- worker\n\nChains:\n- (none)" }], details: { mode: "management", results: [] } };
 				const render = (tool, value, expanded, args, isError = false) => {
 					const state = {};
 					const context = { args, state, isError, invalidate() {} };
@@ -149,14 +150,14 @@ describe("subagent extension child mode", () => {
 					const output = tool.renderResult(value, { expanded, isPartial: false }, theme, context);
 					return { call: call.render(160).join("\n"), output: output.render(160).join("\n") };
 				};
-				const collapsed = render(registeredTool, result, false, { action: "list" });
-				if (!collapsed.call.includes("subagent list · Subagent list") || collapsed.call.includes("FULL_RESULT_SENTINEL") || collapsed.output) throw new Error("unexpected compact list: " + JSON.stringify(collapsed));
+				const collapsed = render(registeredTool, listResult, false, { action: "list" });
+				if (!collapsed.call.includes("subagent list · 2 agents · 0 chains") || collapsed.call.includes("Executable agents") || collapsed.output) throw new Error("unexpected compact list: " + JSON.stringify(collapsed));
 				const expanded = render(registeredTool, result, true, { action: "list" });
 				if (!expanded.output.includes("FULL_RESULT_SENTINEL")) throw new Error("expanded result was compacted: " + JSON.stringify(expanded));
 				const error = render(registeredTool, { ...result, isError: true }, false, { action: "list" }, true);
 				if (!error.output.includes("FULL_RESULT_SENTINEL")) throw new Error("error result was compacted: " + JSON.stringify(error));
-				const asyncLaunch = render(registeredTool, { ...result, details: { mode: "chain", results: [], asyncId: "12345678-abcd" } }, false, { chain: [], async: true });
-				if (!asyncLaunch.call.includes("Async subagent chain") || !asyncLaunch.call.includes("12345678") || asyncLaunch.output) throw new Error("unexpected async summary: " + JSON.stringify(asyncLaunch));
+				const asyncLaunch = render(registeredTool, { ...result, details: { mode: "chain", results: [], asyncId: "12345678-abcd" } }, false, { chain: [{ agent: "worker" }], async: true });
+				if (!asyncLaunch.call.includes("subagent chain (1) [async] · started · run 12345678") || asyncLaunch.output) throw new Error("unexpected async summary: " + JSON.stringify(asyncLaunch));
 				const foreground = render(registeredTool, { ...result, details: { mode: "single", results: [] } }, false, { agent: "worker" });
 				if (!foreground.output.includes("FULL_RESULT_SENTINEL")) throw new Error("foreground result was compacted: " + JSON.stringify(foreground));
 				const waitResult = { content: [{ type: "text", text: "Waited 28.0s for run; done. Completion/control events observed." }], details: { mode: "management", results: [] } };

@@ -1296,7 +1296,7 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 { "toolResultDisplay": "compact" }
 ```
 
-Controls only the collapsed TUI presentation of successful `subagent` management results, detached async launch acknowledgements, `subagent_wait` results, and completion notifications. `full` is the default for compatibility. `compact` folds a concise action, async-mode, or wait summary into the tool-call line with the run/child target when supplied and Pi's configured expand-key hint. Collapsed completion notifications omit redundant child-agent labels and session paths. Expanding the row or notification restores the complete existing output; errors and normal foreground execution always use the existing full renderer, and the complete content remains in model context and session persistence.
+Controls only the collapsed TUI presentation of successful `subagent` management results, detached async launch acknowledgements, `subagent_wait` results, and completion notifications. `full` is the default for compatibility. `compact` folds a concise summary into the tool-call line: list rows show agent/chain counts, fleet and status rows show lifecycle counts or state/progress, and async launches show the shortened run id. Run/child targets and Pi's configured expand-key hint remain visible when relevant. Collapsed completion notifications omit redundant child-agent labels and session paths. Expanding the row or notification restores the complete existing output; errors and normal foreground execution always use the existing full renderer, and the complete content remains in model context and session persistence.
 
 ### `toolDescriptionMode`
 
