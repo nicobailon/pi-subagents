@@ -6,7 +6,7 @@ import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunT
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
@@ -74,11 +74,11 @@ function nestedRunDisplayName(run: NestedRunSummary): string {
 	return run.id;
 }
 
-function formatSteeringSummary(input: { steerCount?: number; lastSteerAt?: number }): string | undefined {
-	const parts: string[] = [];
-	if (input.steerCount !== undefined) parts.push(`${input.steerCount} steer${input.steerCount === 1 ? "" : "s"}`);
-	if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt)) parts.push(`last ${new Date(input.lastSteerAt).toISOString()}`);
-	return parts.length ? parts.join(", ") : undefined;
+function formatSteeringSummary(input: { steering?: SteeringStatus }): string | undefined {
+	const steering = input.steering;
+	if (!steering || steering.requested === 0) return undefined;
+	const lateAcknowledgments = steering.recent.reduce((count, request) => count + request.targets.filter((target) => target.lateDeliveredAt !== undefined).length, 0);
+	return `${steering.requested} requested, ${steering.scheduled} scheduled, ${steering.pending} pending, ${steering.delivered} delivered, ${steering.failed} failed, ${steering.recovered} recovered${lateAcknowledgments ? `, ${lateAcknowledgments} late acknowledged` : ""}`;
 }
 
 function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][number]): string {

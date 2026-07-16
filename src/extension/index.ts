@@ -40,6 +40,7 @@ import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDet
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "../runs/background/subagent-wait.ts";
 import registerSubagentNotify, { parseSubagentNotifyContent, type SubagentNotifyDetails } from "../runs/background/notify.ts";
+import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_MESSAGE_TYPE, type SubagentSteeringMessageDetails } from "./steering-notices.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
@@ -55,6 +56,7 @@ import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	SUBAGENT_CONTROL_EVENT,
+	SUBAGENT_STEERING_NOTICE_EVENT,
 	WIDGET_KEY,
 } from "../shared/types.ts";
 import {
@@ -357,6 +359,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return new Text(text, 0, 0);
 	});
 
+	pi.registerMessageRenderer<SubagentSteeringMessageDetails>(SUBAGENT_STEERING_MESSAGE_TYPE, (message, _options, theme) => {
+		const details = message.details as SubagentSteeringMessageDetails | undefined;
+		if (!details) return undefined;
+		return new Text(theme.fg(details.state === "recovered" ? "warning" : "error", formatSteeringNotice(details)), 0, 0);
+	});
+
 	pi.registerMessageRenderer<SubagentControlMessageDetails>(SUBAGENT_CONTROL_MESSAGE_TYPE, (message, _options, theme) => {
 		const details = message.details as SubagentControlMessageDetails | undefined;
 		if (!details?.event) return undefined;
@@ -538,10 +546,14 @@ subagent_wait also returns when a run needs attention (a child that went idle or
 			details: payload as SubagentControlMessageDetails,
 		});
 	};
+	const steeringNoticeHandler = (payload: unknown) => {
+		handleSubagentSteeringNotice({ pi, state, details: payload as SubagentSteeringMessageDetails });
+	};
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
+		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
 		rpcBridge.dispose,
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;

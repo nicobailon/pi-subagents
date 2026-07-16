@@ -8,13 +8,15 @@ class FakeFs {
 	madeDirs: string[] = [];
 	renameCalls = 0;
 	failRenameCodes: string[] = [];
+	writeOptions = new Map<string, unknown>();
 
 	mkdirSync(dirPath: string): void {
 		this.madeDirs.push(dirPath);
 	}
 
-	writeFileSync(filePath: string, contents: string): void {
+	writeFileSync(filePath: string, contents: string, options?: unknown): void {
 		this.files.set(filePath, contents);
+		this.writeOptions.set(filePath, options);
 	}
 
 	renameSync(sourcePath: string, targetPath: string): void {
@@ -63,6 +65,22 @@ describe("writeAtomicJson", () => {
 		assert.deepEqual(fakeFs.madeDirs, [path.dirname(targetPath)]);
 		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ state: "running" }, null, 2));
 		assert.equal(fakeFs.files.size, 1);
+	});
+
+	it("writes the temporary descriptor with the requested private mode", () => {
+		const fakeFs = new FakeFs();
+		const writeAtomicJson = createAtomicJsonWriter({
+			fs: fakeFs as any,
+			now: () => 12345,
+			pid: 678,
+			random: () => 0.5,
+			mode: 0o600,
+		});
+		const targetPath = path.join("/tmp", "recovery-descriptor.json");
+
+		writeAtomicJson(targetPath, { sourceRunId: "run" });
+
+		assert.deepEqual([...fakeFs.writeOptions.values()], [{ encoding: "utf-8", mode: 0o600 }]);
 	});
 
 	it("uses longer default retries for transient Windows rename locks", () => {

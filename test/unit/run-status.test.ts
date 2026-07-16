@@ -456,9 +456,8 @@ describe("async run status inspection", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				currentStep: 0,
-				steerCount: 2,
-				lastSteerAt: 150,
-				steps: [{ agent: "worker", status: "running", startedAt: 100, steerCount: 2, lastSteerAt: 150 }],
+				steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] },
+				steps: [{ agent: "worker", status: "running", startedAt: 100, steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] } }],
 			}, null, 2), "utf-8");
 
 			const exact = inspectSubagentStatus({ id: "run-steered" }, {
@@ -469,8 +468,8 @@ describe("async run status inspection", () => {
 			});
 			const exactText = textContent(exact);
 			assert.equal(exact.isError, undefined);
-			assert.match(exactText, /Steering: 2 steers, last 1970-01-01T00:00:00\.150Z/);
-			assert.match(exactText, /Step 1: worker running, steering: 2 steers, last 1970-01-01T00:00:00\.150Z/);
+			assert.match(exactText, /Steering: 2 requested, 1 scheduled, 1 pending, 2 delivered, 0 failed, 1 recovered, 1 late acknowledged/);
+			assert.match(exactText, /Step 1: worker running/);
 
 			const list = inspectSubagentStatus({}, {
 				asyncDirRoot: asyncRoot,
@@ -480,7 +479,7 @@ describe("async run status inspection", () => {
 			});
 			const listText = textContent(list);
 			assert.equal(list.isError, undefined);
-			assert.match(listText, /2 steers \| last steer 1970-01-01T00:00:00\.150Z/);
+			assert.match(listText, /steering 1 scheduled, 1 pending, 2 delivered, 0 failed, 1 recovered/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

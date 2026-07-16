@@ -38,7 +38,7 @@ function createRunningAsync(state: SubagentState, runId: string, options: { trac
 		runId,
 		mode: "single",
 		state: runState,
-		...(options.sessionId ? { sessionId: options.sessionId } : {}),
+		sessionId: options.sessionId ?? "session",
 		...(options.pid !== undefined ? { pid: options.pid } : runState === "running" ? { pid: 12345 } : {}),
 		cwd: os.tmpdir(),
 		startedAt: 100,
@@ -96,11 +96,13 @@ describe("async interrupt action", () => {
 		const runId = `steer-disk-${Date.now().toString(36)}`;
 		const asyncDir = createRunningAsync(state, runId, { track: false });
 		try {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), 10);
 			const result = await executorWithKill(state, () => true)
-				.execute("steer", { action: "steer", id: runId, message: "Focus on tests." }, new AbortController().signal, undefined, ctx());
+				.execute("steer", { action: "steer", id: runId, message: "Focus on tests." }, controller.signal, undefined, ctx());
 
 			assert.equal(result.isError, undefined);
-			assert.match(text(result), new RegExp(`Steering queued for async run ${runId}`));
+			assert.match(text(result), new RegExp(`Steering pending for async run ${runId}`));
 			const requests = consumeSteerRequests(asyncDir);
 			assert.equal(requests.length, 1);
 			assert.equal(requests[0]?.message, "Focus on tests.");
@@ -116,11 +118,13 @@ describe("async interrupt action", () => {
 		const runId = `steer-dir-${Date.now().toString(36)}`;
 		const asyncDir = createRunningAsync(state, runId, { track: false });
 		try {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), 10);
 			const result = await executorWithKill(state, () => true)
-				.execute("steer", { action: "steer", dir: asyncDir, message: "Focus on validation." }, new AbortController().signal, undefined, ctx());
+				.execute("steer", { action: "steer", dir: asyncDir, message: "Focus on validation." }, controller.signal, undefined, ctx());
 
 			assert.equal(result.isError, undefined);
-			assert.match(text(result), new RegExp(`Steering queued for async run ${runId}`));
+			assert.match(text(result), new RegExp(`Steering pending for async run ${runId}`));
 			const requests = consumeSteerRequests(asyncDir);
 			assert.equal(requests.length, 1);
 			assert.equal(requests[0]?.message, "Focus on validation.");
@@ -135,6 +139,7 @@ describe("async interrupt action", () => {
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		writeJson(path.join(asyncDir, "status.json"), {
 			runId,
+			sessionId: "session",
 			mode: "chain",
 			state: "running",
 			pid: 12345,
@@ -155,6 +160,21 @@ describe("async interrupt action", () => {
 			assert.equal(requests.length, 1);
 			assert.equal(requests[0]?.message, "Use the new API.");
 			assert.equal(requests[0]?.targetIndex, 1);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects steering async runs outside the active session", async () => {
+		const state = createState();
+		const runId = `steer-other-session-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "other-session" });
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("steer", { action: "steer", id: runId, message: "do not deliver" }, new AbortController().signal, undefined, ctx());
+			assert.equal(result.isError, true);
+			assert.match(text(result), /active session/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-requests")), false);
 		} finally {
 			cleanup(runId, asyncDir);
 		}

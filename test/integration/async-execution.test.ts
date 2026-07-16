@@ -18,7 +18,7 @@ import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
-import { SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
 
 interface AsyncExecutionResult {
 	content: Array<{ text?: string }>;
@@ -1782,8 +1782,19 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 
+		const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
+		const descriptor = JSON.parse(fs.readFileSync(descriptorPath, "utf-8"));
+		assert.equal(descriptor.sourceRunId, id);
+		assert.equal(descriptor.agent, "worker");
+		assert.equal(descriptor.model, "openai/gpt-5-mini:high");
+		assert.deepEqual(descriptor.fallbackModels, ["anthropic/claude-sonnet-4:low"]);
+		assert.equal(descriptor.cwd, tempDir);
+		assert.equal(descriptor.sessionDir, path.join(sessionRoot, `async-${id}`));
+		assert.equal(Object.hasOwn(descriptor, "task"), false);
+		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);
+
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-		assert.equal(payload.lifecycleArtifactVersion, 1);
+		assert.equal(payload.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4:low");
 		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4:low"]);
@@ -1791,7 +1802,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(payload.results[0].totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.deepEqual(payload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		const statusPayload = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(statusPayload.lifecycleArtifactVersion, 1);
+		assert.equal(statusPayload.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		assert.equal(statusPayload.steps[0]?.model, "anthropic/claude-sonnet-4:low");
 		assert.equal(statusPayload.steps[0]?.thinking, "low");
 		assert.ok(statusPayload.totalTokens!.total > 0);
@@ -1799,9 +1810,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(statusPayload.steps[0]?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.deepEqual(statusPayload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line));
-		assert.equal(events.find((event) => event.type === "subagent.run.started")?.lifecycleArtifactVersion, 1);
+		assert.equal(events.find((event) => event.type === "subagent.run.started")?.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		const completed = events.find((event) => event.type === "subagent.run.completed");
-		assert.equal(completed?.lifecycleArtifactVersion, 1);
+		assert.equal(completed?.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		assert.deepEqual(completed?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);

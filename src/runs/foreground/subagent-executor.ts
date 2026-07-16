@@ -57,8 +57,10 @@ import {
 	resolveSubagentResultStatus,
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
-import { buildRevivedAsyncTask, interruptLiveAsyncResumeTarget, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
+import { applySteeringRecoveryAgentConfig, buildRevivedAsyncTask, interruptLiveAsyncResumeTarget, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
 import { deliverInterruptRequest, deliverStopRequest, requestAsyncSteer } from "../background/control-channel.ts";
+import { waitForSteeringAction } from "../background/steering.ts";
+import { steerAsyncRun } from "./async-steering-action.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
@@ -77,6 +79,7 @@ import {
 } from "../shared/worktree.ts";
 import {
 	type AgentProgress,
+	type AsyncStatus,
 	type AcceptanceInput,
 	type ArtifactConfig,
 	type ArtifactPaths,
@@ -658,66 +661,6 @@ function stopAsyncRun(
 	}
 }
 
-function steerAsyncRun(input: {
-	state: SubagentState;
-	runId: string;
-	message: string;
-	index?: number;
-	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-	location: { asyncDir: string | null; resolvedId?: string };
-}): AgentToolResult<Details> {
-	if (!input.location.asyncDir) {
-		return {
-			content: [{ type: "text", text: `Async run '${input.runId}' has no live run directory to steer.` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
-	}
-	const status = reconcileAsyncRun(input.location.asyncDir, { kill: input.kill }).status;
-	if (!status || (status.state !== "running" && status.state !== "queued")) {
-		return {
-			content: [{ type: "text", text: `Async run '${input.runId}' is not running or queued and cannot be steered.` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
-	}
-	const steps = status.steps ?? [];
-	if (input.index !== undefined) {
-		if (input.index < 0 || input.index >= steps.length) {
-			return {
-				content: [{ type: "text", text: `Async run '${status.runId}' has ${steps.length} children. Index ${input.index} is out of range.` }],
-				isError: true,
-				details: { mode: "management", results: [] },
-			};
-		}
-		const targetStep = steps[input.index];
-		if (targetStep && targetStep.status !== "running" && targetStep.status !== "pending") {
-			return {
-				content: [{ type: "text", text: `Async run '${status.runId}' child ${input.index} is ${targetStep.status} and cannot be steered.` }],
-				isError: true,
-				details: { mode: "management", results: [] },
-			};
-		}
-	} else {
-		const running = steps.filter((step) => step.status === "running");
-		if (running.length === 0 && steps.length > 1) {
-			return {
-				content: [{ type: "text", text: `Async run '${status.runId}' has no running child yet. Provide index to steer a queued child.` }],
-				isError: true,
-				details: { mode: "management", results: [] },
-			};
-		}
-	}
-	requestAsyncSteer(input.location.asyncDir, { message: input.message, targetIndex: input.index, source: "steer-action" });
-	const tracked = input.state.asyncJobs.get(status.runId);
-	if (tracked) tracked.updatedAt = Date.now();
-	const childText = input.index !== undefined ? ` child ${input.index}` : " running child";
-	return {
-		content: [{ type: "text", text: `Steering queued for async run ${status.runId}${childText}. Delivery requires a live Pi child session that supports mid-run steering.` }],
-		details: { mode: "management", results: [] },
-	};
-}
-
 function duplicateNames(names: string[]): string[] {
 	const seen = new Set<string>();
 	const duplicates = new Set<string>();
@@ -1004,7 +947,7 @@ function directNestedAsyncInterrupt(target: ResolvedSubagentRunId & { kind: "nes
 	}
 }
 
-function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number }): AgentToolResult<Details> | undefined {
+async function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number; signal?: AbortSignal }): Promise<AgentToolResult<Details> | undefined> {
 	const run = input.target.match.run;
 	const asyncDir = resolveNestedAsyncDir(input.target.match.rootRunId, run);
 	if (!asyncDir) return undefined;
@@ -1016,8 +959,32 @@ function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & { kind:
 		const step = steps[input.index];
 		if (step && step.status !== "running" && step.status !== "pending") return { content: [{ type: "text", text: `Nested async run ${run.id} child ${input.index} is ${step.status} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	requestAsyncSteer(asyncDir, { message: input.message, targetIndex: input.index, source: "nested-steer" });
-	return { content: [{ type: "text", text: `Steering queued for nested async run ${run.id}. Delivery requires a live Pi child session that supports mid-run steering.` }], details: { mode: "management", results: [] } };
+	const runningIndexes = steps
+		.map((step, index) => step.status === "running" ? index : undefined)
+		.filter((index): index is number => index !== undefined);
+	const effectiveTargetIndex = input.index ?? (status.mode === "single" && runningIndexes.length === 0 && steps[0]?.status === "pending" ? 0 : undefined);
+	const targetIndexes = effectiveTargetIndex !== undefined ? [effectiveTargetIndex] : runningIndexes;
+	if (targetIndexes.length === 0) return { content: [{ type: "text", text: `Nested async run ${run.id} has no running child to steer.` }], isError: true, details: { mode: "management", results: [] } };
+	const requestId = randomUUID();
+	try {
+		requestAsyncSteer(asyncDir, {
+			message: input.message,
+			...(effectiveTargetIndex !== undefined ? { targetIndex: effectiveTargetIndex } : { targetIndexes }),
+			source: "nested-steer",
+			id: requestId,
+		});
+	} catch (error) {
+		return { content: [{ type: "text", text: `Failed to queue steering for nested async run ${run.id}: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const targets = targetIndexes.map((index) => ({ index, state: steps[index]?.status === "pending" ? "scheduled" as const : "pending" as const }));
+	if (targets.every((target) => target.state === "scheduled")) {
+		const scheduled = { requestId, state: "scheduled" as const, sourceRunId: run.id, targets };
+		return { content: [{ type: "text", text: `Steering scheduled for nested async run ${run.id} (request ${requestId}).` }], details: { mode: "management", results: [], steering: scheduled } };
+	}
+	const waited = await waitForSteeringAction({ asyncDir, sourceRunId: run.id, requestId, timeoutMs: 3_000, signal: input.signal });
+	const result = waited ?? { requestId, state: "pending" as const, sourceRunId: run.id, targets };
+	const stateText = result.state === "delivered" ? "delivered" : result.state === "failed" ? "failed" : result.state === "partial" ? "partial" : "pending";
+	return { content: [{ type: "text", text: `Steering ${stateText} for nested async run ${run.id} (request ${requestId}).` }], ...(result.state === "failed" || result.state === "partial" ? { isError: true } : {}), details: { mode: "management", results: [], steering: result } };
 }
 
 async function interruptNestedRun(target: ResolvedSubagentRunId & { kind: "nested" }): Promise<AgentToolResult<Details>> {
@@ -1039,10 +1006,10 @@ async function resumeLiveNestedRun(input: { target: ResolvedSubagentRunId & { ki
 	return { content: [{ type: "text", text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
 }
 
-function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number }): AgentToolResult<Details> {
+async function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "nested" }; message: string; index?: number; signal?: AbortSignal }): Promise<AgentToolResult<Details>> {
 	const run = input.target.match.run;
 	if (run.state !== "running" && run.state !== "queued") return { content: [{ type: "text", text: `Nested run ${run.id} is ${run.state} and cannot be steered.` }], isError: true, details: { mode: "management", results: [] } };
-	const direct = directNestedAsyncSteer(input);
+	const direct = await directNestedAsyncSteer(input);
 	if (direct) return direct;
 	return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
 }
@@ -1052,6 +1019,7 @@ async function resumeAsyncRun(input: {
 	requestCwd: string;
 	ctx: ExtensionContext;
 	deps: ExecutorDeps;
+	absoluteDeadlineAt?: number;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
@@ -1166,7 +1134,18 @@ async function resumeAsyncRun(input: {
 	const agents = intercomBridge.active
 		? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 		: discoveredAgents;
-	const agentConfig = agents.find((agent) => agent.name === target.agent);
+	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
+	const discoveredAgentConfig = agents.find((agent) => agent.name === target.agent);
+	const agentConfig: AgentConfig | undefined = discoveredAgentConfig ?? (recoveryDescriptor ? {
+		name: recoveryDescriptor.agent,
+		description: "Persisted async recovery contract",
+		systemPrompt: "",
+		systemPromptMode: recoveryDescriptor.systemPromptMode,
+		inheritProjectContext: recoveryDescriptor.inheritProjectContext,
+		inheritSkills: recoveryDescriptor.inheritSkills,
+		source: "project",
+		filePath: recoveryDescriptor.agentFilePath ?? path.join(recoveryDescriptor.cwd, ".pi-subagents-recovery-agent"),
+	} : undefined);
 	if (!agentConfig) {
 		return {
 			content: [{ type: "text", text: `Unknown agent for resume: ${target.agent}` }],
@@ -1251,14 +1230,15 @@ async function resumeAsyncRun(input: {
 	}
 
 	const runId = randomUUID().slice(0, 8);
-	const artifactConfig: ArtifactConfig = { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
-	const artifactsDir = getArtifactsDir(parentSessionFile, effectiveCwd);
+	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
+	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
+	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd);
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const result = executeAsyncSingle(runId, {
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target, followUp),
 		goal: followUp,
-		agentConfig,
+		agentConfig: recoveryAgentConfig,
 		ctx: {
 			pi: input.deps.pi,
 			cwd: input.requestCwd,
@@ -1269,11 +1249,12 @@ async function resumeAsyncRun(input: {
 			modelScope,
 		},
 		cwd: effectiveCwd,
-		maxOutput: input.params.maxOutput,
+		maxOutput: input.params.maxOutput ?? recoveryDescriptor?.maxOutput,
 		artifactsDir,
 		artifactConfig,
-		shareEnabled: input.params.share === true,
+		shareEnabled: recoveryDescriptor?.share ?? input.params.share === true,
 		sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
+		...(recoveryDescriptor?.sessionDir ? { sessionDir: recoveryDescriptor.sessionDir } : {}),
 		sessionFile: target.sessionFile,
 		revivalLease: {
 			sessionFile: target.sessionFile,
@@ -1281,17 +1262,25 @@ async function resumeAsyncRun(input: {
 			sourceRunId: target.runId,
 			...(input.deps.state.currentSessionId ? { parentSessionId: input.deps.state.currentSessionId } : {}),
 		},
-		modelOverride: input.params.model ?? target.model,
-		thinkingOverride: input.params.model ? undefined : target.thinking,
+		modelOverride: input.params.model ?? recoveryDescriptor?.model ?? target.model,
+		thinkingOverride: input.params.model ? undefined : recoveryDescriptor?.thinking ?? target.thinking,
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
-		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
+		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
-		controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
+		controlConfig: recoveryDescriptor?.controlConfig ?? resolveControlConfig(input.deps.config.control, input.params.control),
 		controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 		childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 		availableModels,
+		output: recoveryDescriptor?.outputPath,
+		outputMode: recoveryDescriptor?.outputMode,
+		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
+		...(recoveryDescriptor?.acceptance !== undefined && input.params.acceptance === undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
+		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
+		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
+		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),
+		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 	});
 	if (result.isError) return result;
 
@@ -3337,6 +3326,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
 			}
 			if (action === "steer") {
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 				const message = (paramsWithResolvedCwd.message ?? paramsWithResolvedCwd.task ?? "").trim();
 				if (!message) return { content: [{ type: "text", text: "action='steer' requires message." }], isError: true, details: { mode: "management", results: [] } };
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
@@ -3344,7 +3334,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
-						return steerAsyncRun({ state: deps.state, runId, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location });
+						return steerAsyncRun({ state: deps.state, runId, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, absoluteDeadlineAt }) });
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
@@ -3358,10 +3348,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const text = error instanceof Error ? error.message : String(error);
 					return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
 				}
-				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index });
+				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index, signal });
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
-				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location });
+				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: resolved!.id, message }, requestCwd, ctx, deps, absoluteDeadlineAt }) });
 			}
 			if (action === "append-step") {
 				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });

@@ -211,8 +211,107 @@ export interface ControlEvent {
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
 export type SubagentRunMode = "single" | "parallel" | "chain";
-export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
+export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 2;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
+
+export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
+export type SteeringTargetState = "scheduled" | "routed" | "delivered" | "late" | "failed" | "recovered";
+
+export interface SteeringTargetStatus {
+	index: number;
+	state: SteeringTargetState;
+	routedAt?: number;
+	deliveredAt?: number;
+	lateDeliveredAt?: number;
+	failedAt?: number;
+	recoveredAt?: number;
+	reason?: string;
+	replacementRunId?: string;
+}
+
+export interface SteeringRequestStatus {
+	id: string;
+	requestedAt: number;
+	source?: string;
+	messagePreview: string;
+	targets: SteeringTargetStatus[];
+}
+
+export interface SteeringStatus {
+	requested: number;
+	scheduled: number;
+	pending: number;
+	delivered: number;
+	failed: number;
+	recovered: number;
+	lastRequestedAt?: number;
+	lastDeliveredAt?: number;
+	recent: SteeringRequestStatus[];
+}
+
+export interface SteerActionTarget {
+	index: number;
+	state: SteeringTargetState;
+	deliveredAt?: number;
+	lateDeliveredAt?: number;
+	reason?: string;
+	replacementRunId?: string;
+}
+
+export interface SteerActionResult {
+	requestId: string;
+	state: SteeringActionState;
+	sourceRunId: string;
+	replacementRunId?: string;
+	targets: SteerActionTarget[];
+}
+
+export interface SteeringNotice {
+	type: "subagent.steering.notice";
+	ts: number;
+	runId: string;
+	requestId: string;
+	state: "failed" | "partial" | "recovered";
+	message: string;
+	currentSessionId?: string;
+}
+
+export interface SteeringRecoveryDescriptor {
+	version: 1;
+	sourceRunId: string;
+	agent: string;
+	sessionFile?: string;
+	cwd: string;
+	model?: string;
+	fallbackModels?: string[];
+	thinking?: string;
+	tools?: string[];
+	extensions?: string[];
+	subagentOnlyExtensions?: string[];
+	mcpDirectTools?: string[];
+	systemPrompt?: string;
+	systemPromptMode: "append" | "replace";
+	inheritProjectContext: boolean;
+	inheritSkills: boolean;
+	skills?: string[];
+	skillPath?: string[];
+	agentFilePath?: string;
+	completionGuard?: boolean;
+	memory?: { scope: "project" | "user"; path: string };
+	outputPath?: string;
+	outputMode: "inline" | "file-only";
+	acceptance?: AcceptanceInput;
+	controlConfig?: ResolvedControlConfig;
+	absoluteDeadlineAt?: number;
+	initialTurnBudget?: ResolvedTurnBudget;
+	initialToolBudget?: ResolvedToolBudget;
+	maxSubagentDepth: number;
+	maxOutput?: MaxOutputConfig;
+	share: boolean;
+	sessionDir?: string;
+	artifactsDir?: string;
+	artifactConfig?: ArtifactConfig;
+}
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
@@ -531,6 +630,7 @@ export interface Details {
 	context?: "fresh" | "fork";
 	results: SingleResult[];
 	controlEvents?: ControlEvent[];
+	steering?: SteerActionResult;
 	asyncId?: string;
 	asyncDir?: string;
 	timeoutMs?: number;
@@ -713,6 +813,7 @@ export interface AsyncStatus {
 	runId: string;
 	sessionId?: string;
 	mode: SubagentRunMode;
+	isNested?: boolean;
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	error?: string;
 	activityState?: ActivityState;
@@ -722,8 +823,7 @@ export interface AsyncStatus {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
-	steerCount?: number;
-	lastSteerAt?: number;
+	steering?: SteeringStatus;
 	startedAt: number;
 	endedAt?: number;
 	lastUpdate?: number;
@@ -782,8 +882,7 @@ export interface AsyncStatus {
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		totalCost?: CostSummary;
-		steerCount?: number;
-		lastSteerAt?: number;
+		steering?: SteeringStatus;
 		error?: string;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
@@ -816,8 +915,7 @@ export interface AsyncJobState {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
-	steerCount?: number;
-	lastSteerAt?: number;
+	steering?: SteeringStatus;
 	mode?: SubagentRunMode;
 	agents?: string[];
 	currentStep?: number;
@@ -951,6 +1049,7 @@ export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
+export const SUBAGENT_STEERING_NOTICE_EVENT = "subagent:steering-notice";
 export const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom-delivery";
 

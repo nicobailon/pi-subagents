@@ -8,6 +8,7 @@ type AtomicJsonWriterOptions = {
 	now?: () => number;
 	pid?: number;
 	random?: () => number;
+	mode?: number;
 	retryRenameErrors?: boolean;
 	retryDelaysMs?: readonly number[];
 	wait?: (delayMs: number) => void;
@@ -65,6 +66,7 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 	const now = options.now ?? Date.now;
 	const pid = options.pid ?? process.pid;
 	const random = options.random ?? Math.random;
+	const mode = options.mode;
 	const retryRenameErrors = options.retryRenameErrors ?? process.platform === "win32";
 	const retryDelaysMs = retryRenameErrors ? options.retryDelaysMs ?? DEFAULT_RENAME_RETRY_DELAYS_MS : [];
 	const wait = options.wait ?? waitSync;
@@ -75,7 +77,7 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 			`.${path.basename(filePath)}.${pid}.${now()}.${random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			fsImpl.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf-8");
+			fsImpl.writeFileSync(tempPath, JSON.stringify(payload, null, 2), mode === undefined ? "utf-8" : { encoding: "utf-8", mode });
 			renameWithRetry(fsImpl, tempPath, filePath, retryDelaysMs, wait);
 		} finally {
 			fsImpl.rmSync(tempPath, { force: true });
@@ -84,3 +86,4 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 }
 
 export const writeAtomicJson = createAtomicJsonWriter();
+export const writePrivateAtomicJson = createAtomicJsonWriter({ mode: 0o600 });

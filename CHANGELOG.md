@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added acknowledged async steering: action `steer` returns a correlated request id and waits up to three seconds for child-Pi input acceptance, supports scheduled pending children, records a bounded steering ledger, and fail-closed single-run recovery after confirmed pause within a further 15-second bound. Chain, parallel, and nested runs report per-child partial/failure states without automatic interruption.
 - Added a native, live-refreshing, inspection-only fleet opened by `/subagents-fleet` or `Ctrl+Alt+F`, with current-session foreground and recent async child navigation, transcript detail, and completed output/session paths. The textual status view remains available without a TUI, while stop, steer, and resume stay in explicit commands. Thanks to Jakub Neumann (@neumie) for #454 and Manfred Liiv (@manfredlift) for #412.
 - Added `asyncWidget: false` to disable the above-editor background-run widget for companion footer/dashboard extensions, and exposed the workflow-level `goal` on `subagent:async-started` lifecycle events.
 - Added agent-local `skillPath` discovery so custom agents can select private skills without publishing them to Pi's parent/global catalog. Relative paths resolve from the defining agent file, local matches take precedence, and missing or unreadable candidates fall back to normal discovery. Thanks to Kylegl (@kylegl) for #428.

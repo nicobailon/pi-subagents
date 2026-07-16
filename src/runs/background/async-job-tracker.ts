@@ -7,11 +7,13 @@ import {
 	type AsyncJobState,
 	type AsyncStartedEvent,
 	type ControlEvent,
+	type SteeringNotice,
 	type SubagentState,
 	POLL_INTERVAL_MS,
 	RESULTS_DIR,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
+	SUBAGENT_STEERING_NOTICE_EVENT,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -53,6 +55,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
+	const steeringNoticeSeen = new Map<string, number>();
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
 		ctx.ui.requestRender?.();
@@ -86,6 +89,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			currentPath: run.currentPath,
 			turnCount: run.turnCount,
 			toolCount: run.toolCount,
+			steering: run.steering,
 			mode: run.mode,
 			agents: visibleSteps.map((step) => step.agent),
 			currentStep: run.currentStep,
@@ -158,7 +162,24 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
 					return;
 				}
-				if (!parsed || typeof parsed !== "object" || (parsed as { type?: unknown }).type !== "subagent.control") return;
+				if (!parsed || typeof parsed !== "object") return;
+				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {
+					const notice = parsed as Partial<SteeringNotice>;
+					if (typeof notice.requestId !== "string" || typeof notice.runId !== "string" || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string") return;
+					if (typeof state.currentSessionId === "string" && notice.currentSessionId !== state.currentSessionId) return;
+					const key = `${notice.runId}:${notice.requestId}:${notice.state}`;
+					if (steeringNoticeSeen.has(key)) return;
+					const now = Date.now();
+					steeringNoticeSeen.set(key, now);
+					if (steeringNoticeSeen.size > 200) {
+						for (const [seenKey, seenAt] of steeringNoticeSeen) {
+							if (now - seenAt > 10 * 60 * 1000 || steeringNoticeSeen.size > 200) steeringNoticeSeen.delete(seenKey);
+						}
+					}
+					pi.events.emit(SUBAGENT_STEERING_NOTICE_EVENT, { ...notice, source: "async", asyncDir: job.asyncDir, noticeText: notice.message });
+					return;
+				}
+				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
 				if (!record.event || !Array.isArray(record.channels)) return;
 				const payload = {
@@ -292,6 +313,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.currentPath = status.currentPath;
 						job.turnCount = status.turnCount ?? job.turnCount;
 						job.toolCount = status.toolCount ?? job.toolCount;
+						job.steering = status.steering ?? job.steering;
 						job.mode = status.mode;
 						job.currentStep = status.currentStep ?? job.currentStep;
 						job.chainStepCount = status.chainStepCount ?? job.chainStepCount;

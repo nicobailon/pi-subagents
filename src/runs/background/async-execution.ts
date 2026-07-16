@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
+import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { applyThinkingSuffix } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
@@ -36,6 +37,7 @@ import {
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type SubagentRunMode,
+	type SteeringRecoveryDescriptor,
 	ASYNC_DIR,
 	RESULTS_DIR,
 	SUBAGENT_ASYNC_STARTED_EVENT,
@@ -162,6 +164,7 @@ interface AsyncSingleParams {
 	artifactConfig: ArtifactConfig;
 	shareEnabled: boolean;
 	sessionRoot?: string;
+	sessionDir?: string;
 	sessionFile?: string;
 	revivalLease?: SessionLeaseRequest;
 	skills?: string[];
@@ -181,6 +184,7 @@ interface AsyncSingleParams {
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
+	absoluteDeadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
@@ -1089,8 +1093,61 @@ export function executeAsyncSingle(
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
+	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
+		? deadlineAt - Date.now()
+		: params.timeoutMs;
+	if (timeoutMs !== undefined && timeoutMs <= 0) return formatAsyncStartError("single", "The source run's absolute deadline expired before recovery could launch.");
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
+	const resolvedSessionDir = params.sessionDir ?? (sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined);
+	const resolvedAcceptance = resolveEffectiveAcceptance({
+		explicit: params.acceptance,
+		agentName: agent,
+		task,
+		mode: "single",
+		async: true,
+	});
+	const recoveryDescriptor: SteeringRecoveryDescriptor = {
+		version: 1,
+		sourceRunId: id,
+		agent,
+		...(sessionFile ? { sessionFile } : {}),
+		cwd: runnerCwd,
+		...(model ? { model } : {}),
+		...(agentConfig.fallbackModels ? { fallbackModels: [...agentConfig.fallbackModels] } : {}),
+		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
+		...(agentConfig.tools ? { tools: [...agentConfig.tools] } : {}),
+		...(agentConfig.extensions ? { extensions: [...agentConfig.extensions] } : {}),
+		...(agentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...agentConfig.subagentOnlyExtensions] } : {}),
+		...(agentConfig.mcpDirectTools ? { mcpDirectTools: [...agentConfig.mcpDirectTools] } : {}),
+		...(agentConfig.systemPrompt ? { systemPrompt: agentConfig.systemPrompt } : {}),
+		systemPromptMode: agentConfig.systemPromptMode,
+		inheritProjectContext: agentConfig.inheritProjectContext,
+		inheritSkills: agentConfig.inheritSkills,
+		...(resolvedSkills.length ? { skills: resolvedSkills.map((skill) => skill.name) } : {}),
+		...(agentConfig.skillPath ? { skillPath: [...agentConfig.skillPath] } : {}),
+		...(agentConfig.filePath ? { agentFilePath: agentConfig.filePath } : {}),
+		...(agentConfig.completionGuard !== undefined ? { completionGuard: agentConfig.completionGuard } : {}),
+		...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
+		...(outputPath ? { outputPath } : {}),
+		outputMode,
+		...(resolvedAcceptance ? { acceptance: resolvedAcceptance } : {}),
+		...(controlConfig ? { controlConfig } : {}),
+		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
+		...(params.turnBudget ? { initialTurnBudget: params.turnBudget } : {}),
+		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
+		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
+		...(maxOutput ? { maxOutput } : {}),
+		share: shareEnabled,
+		...(resolvedSessionDir ? { sessionDir: resolvedSessionDir } : {}),
+		...(artifactsDir ? { artifactsDir } : {}),
+		artifactConfig,
+	};
+	try {
+		writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
+	} catch (error) {
+		return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
+	}
 	let spawnResult: { pid?: number; error?: string } = {};
 	try {
 		spawnResult = spawnRunner(
@@ -1121,13 +1178,7 @@ export function executeAsyncSingle(
 						outputMode,
 						sessionFile,
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
-						effectiveAcceptance: resolveEffectiveAcceptance({
-							explicit: params.acceptance,
-							agentName: agent,
-							task,
-							mode: "single",
-							async: true,
-						}),
+						effectiveAcceptance: resolvedAcceptance,
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 					},
 				],
@@ -1138,7 +1189,7 @@ export function executeAsyncSingle(
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
 				share: shareEnabled,
-				sessionDir: sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined,
+				sessionDir: resolvedSessionDir,
 				asyncDir,
 				sessionId: ctx.currentSessionId,
 				piPackageRoot,
@@ -1147,7 +1198,7 @@ export function executeAsyncSingle(
 				worktreeSetupHookTimeoutMs,
 				worktreeBaseDir,
 				controlConfig,
-				timeoutMs: params.timeoutMs,
+				timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
@@ -1201,7 +1252,7 @@ export function executeAsyncSingle(
 						agent,
 						agents: [agent],
 						chainStepCount: 1,
-						...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+						...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
 						...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 						startedAt: now,
 						lastUpdate: now,
@@ -1222,7 +1273,7 @@ export function executeAsyncSingle(
 			goal: (params.goal ?? task).slice(0, 120),
 			cwd: runnerCwd,
 			asyncDir,
-			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			nestedRoute,
 		});
@@ -1230,6 +1281,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
 	};
 }
