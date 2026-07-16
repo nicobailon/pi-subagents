@@ -2195,7 +2195,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("background runs fail closed on extension bootstrap diagnostics without retrying", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		const stderr = `Failed to load extension "/tmp/broken.ts": missing dependency\n${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}\nTAIL-EVIDENCE`;
+		const stderr = `  Error: Failed to load extension "/tmp/broken.ts": Failed to load extension: missing dependency\n${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}\nTAIL-EVIDENCE`;
 		mockPi.onCall({ stderr, exitCode: 1 });
 		mockPi.onCall({ output: "fallback must not run" });
 		const id = `async-extension-bootstrap-${Date.now().toString(36)}`;
@@ -2228,7 +2228,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 		assert.equal(payload.success, false);
 		assert.equal(payload.results[0].diagnostic?.classification, "extension-bootstrap-suspected");
-		assert.match(payload.results[0].diagnostic?.evidence ?? "", /^Failed to load extension/);
+		assert.match(payload.results[0].diagnostic?.evidence ?? "", /^  Error: Failed to load extension/);
 		assert.match(payload.results[0].diagnostic?.evidence ?? "", /TAIL-EVIDENCE$/);
 		assert.equal(status.steps[0].diagnostic?.classification, "extension-bootstrap-suspected");
 		assert.equal(payload.results[0].modelAttempts.length, 1);

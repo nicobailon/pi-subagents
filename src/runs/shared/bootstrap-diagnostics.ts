@@ -2,7 +2,7 @@ import type { ExtensionBootstrapDiagnostic } from "../../shared/types.ts";
 
 export const EXTENSION_BOOTSTRAP_SUSPECTED = "extension-bootstrap-suspected" as const;
 
-const PI_EXTENSION_LOAD_FAILURE = /(?:^|\r?\n)(\s*Failed to load extension\s+(?:["'][^"']+["']|\S+):\s*\S[^\r\n]*)/;
+const PI_EXTENSION_LOAD_FAILURE = /^[ \t]*(?:Error:[ \t]*)?(Failed to load extension[ \t]+(?:"[^"\r\n]+"|'[^'\r\n]+'|(?:[A-Za-z]:[\\/]|\\\\|\/|\.\.?[\\/]|~[\\/])\S+):[ \t]*\S[^\r\n]*)/m;
 
 /**
  * Classify only Pi's explicit extension-loader diagnostic. Module resolution,

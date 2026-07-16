@@ -808,7 +808,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("fails closed on extension bootstrap diagnostics without a second Pi call", async () => {
-		const stderr = `Failed to load extension "/tmp/broken.ts": missing dependency\n${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}\nTAIL-EVIDENCE`;
+		const stderr = `  Error: Failed to load extension "/tmp/broken.ts": Failed to load extension: missing dependency\n${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}\nTAIL-EVIDENCE`;
 		mockPi.onCall({ stderr, exitCode: 1 });
 		const agents = [makeAgent("echo", {
 			model: "openai/gpt-5-mini",
@@ -818,7 +818,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.diagnostic?.classification, "extension-bootstrap-suspected");
 		assert.equal(result.diagnostic?.retryable, false);
-		assert.match(result.diagnostic?.evidence ?? "", /^Failed to load extension/);
+		assert.match(result.diagnostic?.evidence ?? "", /^  Error: Failed to load extension/);
 		assert.match(result.diagnostic?.evidence ?? "", /TAIL-EVIDENCE$/);
 		assert.doesNotMatch(result.error ?? "", /TAIL-EVIDENCE/);
 		assert.equal(result.modelAttempts?.length, 1);
