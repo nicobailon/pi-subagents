@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { tryImport } from "../support/helpers.ts";
 
 interface TopLevelAsyncModule {
-	applyForceTopLevelAsyncOverride<T extends { async?: boolean; clarify?: boolean }>(
+	applyForceTopLevelAsyncOverride<T extends { async?: boolean; clarify?: boolean; foregroundOnly?: boolean }>(
 		params: T,
 		depth: number,
 		forceTopLevelAsync: boolean,
@@ -21,6 +21,12 @@ describe("force top-level async helper", { skip: !available ? "pi packages not a
 		assert.equal(next.async, true);
 		assert.equal(next.clarify, false);
 		assert.equal(next.agent, "worker");
+	});
+
+	it("keeps bridge-owned foreground calls attached", () => {
+		const params = { async: false, clarify: false, foregroundOnly: true };
+		const next = mod!.applyForceTopLevelAsyncOverride(params, 0, true);
+		assert.equal(next, params);
 	});
 
 	it("leaves nested calls unchanged", () => {

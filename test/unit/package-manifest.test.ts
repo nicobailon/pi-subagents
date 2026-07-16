@@ -25,7 +25,7 @@ function collectTsFiles(dir: string): string[] {
 	return files;
 }
 
-test("published Pi extension uses the package-root entrypoint", () => {
+test("published Pi extension and delegation API use supported package entrypoints", async () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
 
 	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
@@ -34,6 +34,14 @@ test("published Pi extension uses the package-root entrypoint", () => {
 		fs.readFileSync(path.join(projectRoot, "index.ts"), "utf-8").trim(),
 		'export { default } from "./src/extension/index.ts";',
 	);
+	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.ts")), true);
+	assert.deepEqual(packageJson.exports, {
+		".": "./index.ts",
+		"./delegation": "./src/api/delegation.ts",
+	});
+	const delegation = await import("pi-subagents/delegation");
+	assert.equal(delegation.SUBAGENT_DELEGATION_PROTOCOL_VERSION, 1);
+	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
 });
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {

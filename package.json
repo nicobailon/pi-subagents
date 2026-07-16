@@ -5,6 +5,10 @@
   "author": "Nico Bailon",
   "license": "MIT",
   "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./delegation": "./src/api/delegation.ts"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nicobailon/pi-subagents.git"
