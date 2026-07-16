@@ -342,6 +342,8 @@ The child can use one dedicated coordination tool:
 
 The parent replies with `subagent_supervisor({ action: "reply", replyTo, message })` or checks pending requests with `subagent_supervisor({ action: "pending" })`. Supervisor messages are scoped to the exact Pi session id that spawned the child. A second Pi session in the same repository does not receive those requests.
 
+Visible supervisor requests and subagent control notices use a compact human summary by default. Press Pi's configured expand key (`Ctrl+O` by default) to show the full question, structured interview, or control diagnostics. This only changes terminal presentation: the complete control or coordination message remains in the conversation for the parent model.
+
 Child-side routine completion handoffs are still not expected. If a child appears stalled, needs-attention notices can show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child.
 
 If messages do not show up, run:

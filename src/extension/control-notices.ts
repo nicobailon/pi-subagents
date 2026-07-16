@@ -1,10 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.ts";
 import type { ControlEvent, SubagentState } from "../shared/types.ts";
+import { resolveChildPresentation, type ChildPresentationDetails } from "./human-messages.ts";
 
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 
-export interface SubagentControlMessageDetails {
+export interface SubagentControlMessageDetails extends Partial<ChildPresentationDetails> {
 	event: ControlEvent;
 	source?: "foreground" | "async";
 	asyncDir?: string;
@@ -37,6 +38,7 @@ export function clearPendingForegroundControlNotices(state: SubagentState, runId
 
 function deliverControlNotice(input: {
 	pi: Pick<ExtensionAPI, "sendMessage">;
+	state: SubagentState;
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
 }): void {
@@ -45,12 +47,18 @@ function deliverControlNotice(input: {
 	if (input.visibleControlNotices.has(key)) return;
 	input.visibleControlNotices.add(key);
 	const noticeText = input.details.noticeText ?? formatControlNoticeMessage(input.details.event, childIntercomTarget);
+	const presentation = resolveChildPresentation(
+		input.state,
+		input.details.event.runId,
+		input.details.event.agent,
+		input.details.event.index,
+	);
 	input.pi.sendMessage(
 		{
 			customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
 			content: noticeText,
 			display: true,
-			details: { ...input.details, childIntercomTarget, noticeText },
+			details: { ...input.details, ...presentation, childIntercomTarget, noticeText },
 		},
 		{ triggerTurn: input.details.source !== "foreground" },
 	);

@@ -18,7 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
@@ -63,11 +63,16 @@ import {
 } from "../shared/types.ts";
 import {
 	clearPendingForegroundControlNotices,
-	formatSubagentControlNotice,
 	handleSubagentControlNotice,
 	SUBAGENT_CONTROL_MESSAGE_TYPE,
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
+import {
+	formatHumanControlNotice,
+	formatHumanSupervisorRequest,
+	SUBAGENT_SUPERVISOR_MESSAGE_TYPE,
+	type SupervisorRequestMessageDetails,
+} from "./human-messages.ts";
 
 export { loadConfig } from "./config.ts";
 
@@ -181,34 +186,6 @@ function createSlashResultComponent(
 		return Container.prototype.render.call(container, width);
 	};
 	return container;
-}
-
-class SubagentControlNoticeComponent implements Component {
-	constructor(
-		private readonly details: SubagentControlMessageDetails,
-		private readonly theme: ExtensionContext["ui"]["theme"],
-	) {}
-
-	invalidate(): void {}
-
-	render(width: number): string[] {
-		const eventLabel = this.details.event.type.replaceAll("_", " ");
-		if (width < 3) return [truncateToWidth(`Subagent ${eventLabel}`, width)];
-		const bodyWidth = Math.max(1, width - 2);
-		const borderChar = "─";
-		const header = ` ⚠ Subagent ${eventLabel}: ${this.details.event.agent} `;
-		const headerText = truncateToWidth(header, bodyWidth, "");
-		const headerPadding = Math.max(0, bodyWidth - visibleWidth(headerText));
-		const lines = [this.theme.fg("accent", `╭${headerText}${borderChar.repeat(headerPadding)}╮`)];
-
-		for (const line of wrapTextWithAnsi(formatSubagentControlNotice(this.details), bodyWidth)) {
-			const text = truncateToWidth(line, bodyWidth, "");
-			const padding = Math.max(0, bodyWidth - visibleWidth(text));
-			lines.push(this.theme.fg("accent", `│${text}${" ".repeat(padding)}│`));
-		}
-		lines.push(this.theme.fg("accent", `╰${borderChar.repeat(bodyWidth)}╯`));
-		return lines;
-	}
 }
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
@@ -370,11 +347,29 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return new Text(theme.fg(details.state === "recovered" ? "warning" : "error", formatSteeringNotice(details)), 0, 0);
 	});
 
-	pi.registerMessageRenderer<SubagentControlMessageDetails>(SUBAGENT_CONTROL_MESSAGE_TYPE, (message, _options, theme) => {
+	pi.registerMessageRenderer<SubagentControlMessageDetails>(SUBAGENT_CONTROL_MESSAGE_TYPE, (message, options, theme) => {
 		const details = message.details as SubagentControlMessageDetails | undefined;
 		if (!details?.event) return undefined;
-		const content = typeof message.content === "string" ? message.content : undefined;
-		return new SubagentControlNoticeComponent({ ...details, noticeText: formatSubagentControlNotice(details, content) }, theme);
+		const presentation = {
+			label: details.label ?? details.event.agent,
+			role: details.role ?? details.event.agent,
+			...(details.logicalStep !== undefined ? { logicalStep: details.logicalStep } : {}),
+			...(details.totalSteps !== undefined ? { totalSteps: details.totalSteps } : {}),
+			event: details.event,
+		};
+		return new Text(theme.fg("accent", formatHumanControlNotice(presentation, options.expanded, keyText("app.tools.expand"))), 0, 0);
+	});
+
+	pi.registerMessageRenderer<SupervisorRequestMessageDetails>(SUBAGENT_SUPERVISOR_MESSAGE_TYPE, (message, options, theme) => {
+		const details = message.details as SupervisorRequestMessageDetails | undefined;
+		if (!details?.id || !details.runId || !details.agent) return undefined;
+		const presentation = {
+			...details,
+			label: details.label ?? details.agent,
+			role: details.role ?? details.agent,
+		};
+		const color = details.reason === "progress_update" ? "muted" : "accent";
+		return new Text(theme.fg(color, formatHumanSupervisorRequest(presentation, options.expanded, keyText("app.tools.expand"))), 0, 0);
 	});
 
 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {

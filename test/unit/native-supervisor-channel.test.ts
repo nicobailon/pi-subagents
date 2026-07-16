@@ -48,7 +48,19 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	};
 }
 
-function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; createdAt?: number; expiresAt?: number }): string {
+function writeRequest(input: {
+	sessionId: string;
+	runId: string;
+	agent?: string;
+	index?: number;
+	message?: string;
+	question?: string;
+	reason?: "need_decision" | "interview_request" | "progress_update";
+	expectsReply?: boolean;
+	interview?: unknown;
+	createdAt?: number;
+	expiresAt?: number;
+}): string {
 	const agent = input.agent ?? "worker";
 	const index = input.index ?? 0;
 	const channelDir = resolveSupervisorChannelDir(input.runId, agent, index);
@@ -60,14 +72,16 @@ function writeRequest(input: { sessionId: string; runId: string; agent?: string;
 		id: requestId,
 		createdAt: input.createdAt ?? Date.now(),
 		...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-		reason: "need_decision",
+		reason: input.reason ?? "need_decision",
 		message: input.message ?? "Need a decision",
-		expectsReply: true,
+		expectsReply: input.expectsReply ?? true,
 		orchestratorSessionId: input.sessionId,
 		orchestratorTarget: "shared-name",
 		runId: input.runId,
 		agent,
 		childIndex: index,
+		...(input.question ? { question: input.question } : {}),
+		...(input.interview !== undefined ? { interview: input.interview } : {}),
 	}, null, "\t"));
 	return requestId;
 }
@@ -140,6 +154,90 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent.map((message) => message.details?.id), [matchingId]);
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
 		assert.equal(sent.some((message) => message.details?.id === otherId), false);
+	});
+
+	it("adds complete structured presentation details without changing model-facing request content", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const modelContent = [
+			"Subagent requests a structured supervisor interview.",
+			`Run: ${runId}`,
+			"Agent: worker",
+			"Child index: 1",
+			"",
+			"Choose the compatible status code. Full context remains model-visible.",
+			"",
+			"Structured response requested. Reply with JSON matching the requested interview shape.",
+			'{"choices":[404,410]}',
+		].join("\n");
+		const question = "Choose the compatible status code.\nFull context remains model-visible.";
+		const interview = { title: "Status code", questions: [{ id: "status", choices: [404, 410] }] };
+		const requestId = writeRequest({
+			sessionId: currentSessionId,
+			runId,
+			index: 1,
+			reason: "interview_request",
+			message: modelContent,
+			question,
+			interview,
+		});
+		const sent: Array<{
+			customType?: string;
+			content?: string;
+			display?: boolean;
+			details?: Record<string, unknown>;
+		}> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const state = makeState(currentSessionId, ctx);
+		state.asyncJobs.set(runId, {
+			asyncId: runId,
+			asyncDir: `/tmp/${runId}`,
+			status: "running",
+			mode: "chain",
+			chainStepCount: 3,
+			steps: [
+				{ index: 0, agent: "scout", label: "Discover", status: "complete" },
+				{ index: 1, agent: "worker", label: "Implement API", status: "running" },
+				{ index: 2, agent: "tester", label: "Validate", status: "pending" },
+			],
+		});
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: typeof sent[number]) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, state);
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0]?.customType, "subagent_supervisor_request");
+		assert.equal(sent[0]?.display, true);
+		assert.equal(sent[0]?.content, `${modelContent}\n\nReply with: ${NATIVE_SUPERVISOR_TOOL_NAME}({ action: "reply", replyTo: "${requestId}", message: "..." })`);
+		assert.deepEqual(sent[0]?.details, {
+			id: requestId,
+			reason: "interview_request",
+			expectsReply: true,
+			runId,
+			agent: "worker",
+			childIndex: 1,
+			label: "Implement API",
+			role: "worker",
+			logicalStep: 2,
+			totalSteps: 3,
+			question,
+			interview,
+		});
 	});
 
 	it("prunes stale empty supervisor channel directories before polling", () => {
