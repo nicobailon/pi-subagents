@@ -372,6 +372,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
 		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
 		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
+		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
 		"```acceptance-report",
 		JSON.stringify({
 			criteriaSatisfied: acceptance.criteria
@@ -808,8 +809,8 @@ function validateAcceptanceReport(value: unknown, pathLabel = ""): { report?: Ac
 	if (report.noStagedFiles !== undefined && typeof report.noStagedFiles !== "boolean") pushTypeError(errors, pathFor(pathLabel, "noStagedFiles"), "boolean", report.noStagedFiles);
 	if (report.diffSummary !== undefined && (typeof report.diffSummary !== "string" || !report.diffSummary.trim())) pushTypeError(errors, pathFor(pathLabel, "diffSummary"), "non-empty string", report.diffSummary);
 	if (report.reviewFindings !== undefined) validateStringArrayField(errors, report.reviewFindings, pathFor(pathLabel, "reviewFindings"));
-	if (report.manualNotes !== undefined && (typeof report.manualNotes !== "string" || !report.manualNotes.trim())) pushTypeError(errors, pathFor(pathLabel, "manualNotes"), "non-empty string", report.manualNotes);
-	if (report.notes !== undefined && (typeof report.notes !== "string" || !report.notes.trim())) pushTypeError(errors, pathFor(pathLabel, "notes"), "non-empty string", report.notes);
+	if (report.manualNotes !== undefined && typeof report.manualNotes !== "string") pushTypeError(errors, pathFor(pathLabel, "manualNotes"), "string", report.manualNotes);
+	if (report.notes !== undefined && typeof report.notes !== "string") pushTypeError(errors, pathFor(pathLabel, "notes"), "string", report.notes);
 	if (errors.length > 0) return { errors };
 	const hasReportField = report.criteriaSatisfied !== undefined
 		|| report.changedFiles !== undefined

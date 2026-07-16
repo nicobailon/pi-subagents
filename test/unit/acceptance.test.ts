@@ -80,6 +80,7 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /array fields contain strings/);
 		assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied, not-satisfied, not-applicable/);
 		assert.match(prompt, /commandsRun\[\]\.result.*passed, failed, not-run/);
+		assert.match(prompt, /manualNotes.*optional strings.*empty string.*does not satisfy.*manual-notes/);
 		assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
 	});
 
@@ -304,6 +305,34 @@ describe("acceptance gates", () => {
 			const parsed = parseAcceptanceReport(report(overrides));
 			assert.equal(parsed.report, undefined);
 			assert.match(parsed.error ?? "", expected);
+		}
+	});
+
+	it("accepts empty optional note strings without treating them as evidence", async () => {
+		for (const field of ["manualNotes", "notes"] as const) {
+			const parsed = parseAcceptanceReport(report({ notes: undefined, [field]: "" }));
+			assert.equal(parsed.error, undefined);
+			assert.equal(parsed.report?.[field], "");
+		}
+
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "Return a concise result",
+				explicit: { level: "attested", evidence: ["manual-notes"] },
+			});
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({ notes: undefined, manualNotes: "" }),
+				cwd,
+			});
+			assert.equal(ledger.childReportParseError, undefined);
+			assert.equal(ledger.childReport?.manualNotes, "");
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "evidence:manual-notes")?.status, "failed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
 		}
 	});
 
