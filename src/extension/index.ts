@@ -24,6 +24,7 @@ import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "..
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
+import { buildCompactToolResultDisplay, resolveToolResultDisplay } from "../tui/tool-result-display.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -231,6 +232,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
+	const toolResultDisplay = resolveToolResultDisplay(config);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
@@ -463,6 +465,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				ensureSubagentResultAnimation(context);
 			} else {
 				clearLegacyResultAnimationTimer(context);
+			}
+			if (toolResultDisplay === "compact") {
+				const compactResult = buildCompactToolResultDisplay({
+					toolResultDisplay,
+					args: context.args,
+					details: result.details,
+					expanded: options.expanded,
+					isError: result.isError === true || context.isError,
+					expandKey: keyText("app.tools.expand"),
+				});
+				if (compactResult) return new Text(theme.fg("dim", compactResult), 0, 0);
 			}
 			const frame = (context.state as { frame?: number } | undefined)?.frame ?? 0;
 			return renderSubagentResult(result, options, theme, frame);

@@ -1290,6 +1290,14 @@ After a worktree parallel step completes, per-agent diff stats are appended to t
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`.
 
+### `toolResultDisplay`
+
+```json
+{ "toolResultDisplay": "compact" }
+```
+
+Controls only the collapsed TUI presentation of successful `subagent` management results and detached async launch acknowledgements. `full` is the default for compatibility. `compact` shows a one-line action or async-mode summary with the run/child target when supplied and Pi's configured expand-key hint. Expanding the tool row still shows the complete result, errors and normal foreground execution always use the existing full renderer, and the complete tool result remains in model context and session persistence.
+
 ### `toolDescriptionMode`
 
 ```json

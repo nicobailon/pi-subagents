@@ -115,6 +115,54 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("renders compact management and detached async results while preserving full expanded, error, and foreground results", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-result-display-"));
+		try {
+			const configDir = path.join(agentDir, "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ toolResultDisplay: "compact" }), "utf-8");
+			const script = String.raw`
+				import registerSubagentExtension from "./index.ts";
+				const handlers = new Map();
+				const events = { on() { return () => {}; }, emit() {} };
+				let registeredTool;
+				const fakePi = new Proxy({
+					events,
+					on(name, handler) { handlers.set(name, handler); },
+					registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
+					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {},
+					getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				registerSubagentExtension(fakePi);
+				if (!registeredTool) throw new Error("tool not registered");
+				const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+				const result = { content: [{ type: "text", text: "FULL_RESULT_SENTINEL" }], details: { mode: "management", results: [] } };
+				const render = (value, expanded, args, isError = false) => registeredTool.renderResult(
+					value,
+					{ expanded, isPartial: false },
+					theme,
+					{ args, state: {}, isError, invalidate() {} },
+				).render(160).join("\n");
+				const collapsed = render(result, false, { action: "list" });
+				if (!collapsed.includes("Subagent list") || collapsed.includes("FULL_RESULT_SENTINEL")) throw new Error("unexpected compact list: " + collapsed);
+				const expanded = render(result, true, { action: "list" });
+				if (!expanded.includes("FULL_RESULT_SENTINEL")) throw new Error("expanded result was compacted: " + expanded);
+				const error = render({ ...result, isError: true }, false, { action: "list" }, true);
+				if (!error.includes("FULL_RESULT_SENTINEL")) throw new Error("error result was compacted: " + error);
+				const asyncLaunch = render({ ...result, details: { mode: "chain", results: [], asyncId: "12345678-abcd" } }, false, { chain: [], async: true });
+				if (!asyncLaunch.includes("Async subagent chain") || !asyncLaunch.includes("12345678")) throw new Error("unexpected async summary: " + asyncLaunch);
+				const foreground = render({ ...result, details: { mode: "single", results: [] } }, false, { agent: "worker" });
+				if (!foreground.includes("FULL_RESULT_SENTINEL")) throw new Error("foreground result was compacted: " + foreground);
+				handlers.get("session_shutdown")?.();
+			`;
+			const env = parentToolEnv();
+			env.PI_CODING_AGENT_DIR = agentDir;
+			execFileSync(process.execPath, ["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers only subagent_wait and honors waitTool disabled config", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
 		try {
