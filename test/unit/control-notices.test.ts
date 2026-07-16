@@ -60,9 +60,16 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 
 function makeRecorder() {
 	const sent: Array<{ message: unknown; options: unknown }> = [];
+	const events: Array<{ channel: string; data: unknown }> = [];
 	return {
 		sent,
+		events,
 		pi: {
+			events: {
+				emit(channel: string, data: unknown) {
+					events.push({ channel, data });
+				},
+			},
 			sendMessage(message: unknown, options: unknown) {
 				sent.push({ message, options });
 			},
@@ -151,6 +158,7 @@ describe("subagent control notice delivery", () => {
 			updatedAt: 0,
 			currentAgent: "worker",
 			currentIndex: 0,
+			currentStatus: "running",
 			currentActivityState: "needs_attention",
 		});
 		const recorder = makeRecorder();
@@ -178,6 +186,7 @@ describe("subagent control notice delivery", () => {
 			updatedAt: 0,
 			currentAgent: "worker",
 			currentIndex: 0,
+			currentStatus: "running",
 			currentActivityState: "needs_attention",
 		});
 		const recorder = makeRecorder();
@@ -205,6 +214,7 @@ describe("subagent control notice delivery", () => {
 			updatedAt: 0,
 			currentAgent: "worker",
 			currentIndex: 0,
+			currentStatus: "running",
 			currentActivityState: "needs_attention",
 		});
 		const recorder = makeRecorder();
@@ -223,6 +233,7 @@ describe("subagent control notice delivery", () => {
 			updatedAt: 0,
 			currentAgent: "writer",
 			currentIndex: 1,
+			currentStatus: "running",
 			currentActivityState: undefined,
 		});
 
@@ -268,6 +279,7 @@ describe("subagent control notice delivery", () => {
 			updatedAt: 0,
 			currentAgent: "worker",
 			currentIndex: 0,
+			currentStatus: "running",
 			currentActivityState: "needs_attention",
 			lastActivityAt: 1,
 		});
@@ -285,5 +297,114 @@ describe("subagent control notice delivery", () => {
 		});
 		await wait(15);
 		assert.equal(recorder.sent.length, 2);
+	});
+
+	it("suppresses a terminal foreground child while another parallel child remains live", async () => {
+		const state = makeState();
+		state.foregroundControls.set("run-1", {
+			runId: "run-1",
+			mode: "parallel",
+			startedAt: 0,
+			updatedAt: 2,
+			currentAgent: "reviewer",
+			currentIndex: 1,
+			currentStatus: "running",
+			currentActivityState: undefined,
+			childSnapshots: new Map([
+				[0, { agent: "worker", status: "complete", activityState: "needs_attention" }],
+				[1, { agent: "reviewer", status: "running" }],
+			]),
+		});
+		const recorder = makeRecorder();
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state,
+			visibleControlNotices: new Set(),
+			details: { source: "foreground", event: needsAttentionEvent() },
+			foregroundDelayMs: 5,
+		});
+
+		await wait(15);
+		assert.equal(recorder.sent.length, 0);
+		assert.equal(recorder.events.length, 0);
+	});
+
+	it("delivers configured intercom content only after the actionable gate", async () => {
+		const state = makeState();
+		state.foregroundControls.set("run-1", {
+			runId: "run-1",
+			mode: "single",
+			startedAt: 0,
+			updatedAt: 1,
+			currentAgent: "worker",
+			currentIndex: 0,
+			currentStatus: "running",
+			currentActivityState: "needs_attention",
+			lastActivityAt: 1,
+		});
+		const recorder = makeRecorder();
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state,
+			visibleControlNotices: new Set(),
+			details: {
+				source: "foreground",
+				event: needsAttentionEvent(),
+				channels: ["intercom"],
+				intercom: { to: "main", message: "UNCHANGED INTERCOM CONTENT" },
+			},
+			foregroundDelayMs: 5,
+		});
+
+		assert.equal(recorder.events.length, 0);
+		await wait(15);
+		assert.equal(recorder.sent.length, 0);
+		assert.deepEqual(recorder.events, [{
+			channel: "subagent:control-intercom",
+			data: {
+				source: "foreground",
+				event: needsAttentionEvent(),
+				channels: ["intercom"],
+				intercom: { to: "main", message: "UNCHANGED INTERCOM CONTENT" },
+				to: "main",
+				message: "UNCHANGED INTERCOM CONTENT",
+			},
+		}]);
+	});
+
+	it("suppresses intercom delivery when the exact child recovers during debounce", async () => {
+		const state = makeState();
+		const childSnapshots = new Map([
+			[0, { agent: "worker", status: "running" as const, activityState: "needs_attention" as const, lastActivityAt: 1 }],
+		]);
+		state.foregroundControls.set("run-1", {
+			runId: "run-1",
+			mode: "parallel",
+			startedAt: 0,
+			updatedAt: 1,
+			currentAgent: "worker",
+			currentIndex: 0,
+			currentStatus: "running",
+			currentActivityState: "needs_attention",
+			childSnapshots,
+		});
+		const recorder = makeRecorder();
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state,
+			visibleControlNotices: new Set(),
+			details: {
+				source: "foreground",
+				event: needsAttentionEvent(),
+				channels: ["intercom"],
+				intercom: { to: "main", message: "UNCHANGED INTERCOM CONTENT" },
+			},
+			foregroundDelayMs: 10,
+		});
+		childSnapshots.set(0, { agent: "worker", status: "running", lastActivityAt: 2 });
+
+		await wait(25);
+		assert.equal(recorder.sent.length, 0);
+		assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), false);
 	});
 });

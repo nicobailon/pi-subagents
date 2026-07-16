@@ -11,8 +11,8 @@ import {
 	type SubagentState,
 	POLL_INTERVAL_MS,
 	RESULTS_DIR,
+	SUBAGENT_CONTROL_DELIVERY_EVENT,
 	SUBAGENT_CONTROL_EVENT,
-	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
@@ -136,27 +136,36 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}, completionRetentionMs);
 		state.cleanupTimers.set(asyncId, timer);
 	};
-	const controlEventIsCurrentlyActionable = (job: AsyncJobState, event: ControlEvent): boolean => {
+	const classifyControlEvent = (job: AsyncJobState, event: ControlEvent): "actionable" | "retry" | "stale" => {
 		let status;
 		try {
 			status = readStatus(job.asyncDir);
 		} catch {
-			return false;
+			return "retry";
 		}
-		if (!status) return false;
+		if (!status) return "retry";
+		if (status.runId !== event.runId || status.state !== "running" || event.reason === "completion_guard") return "stale";
 		const index = event.index ?? status.currentStep ?? (status.steps?.length === 1 ? 0 : undefined);
-		if (index === undefined) return false;
+		if (index === undefined) return "retry";
 		const step = status.steps?.[index];
-		if (!step) return false;
-		return isControlEventActionable(event, {
+		if (!step) return "retry";
+		if (step.agent !== event.agent) return "stale";
+		if (step.status !== "running") return step.status === "pending" ? "retry" : "stale";
+		if (isControlEventActionable(event, {
 			runId: status.runId,
 			state: status.state,
 			agent: step.agent,
 			index,
+			status: step.status,
 			activityState: step.activityState,
 			lastActivityAt: step.lastActivityAt,
 			currentTool: step.currentTool,
-		});
+		})) return "actionable";
+		const evidence = event.evidenceLastActivityAt ?? event.activityEpoch;
+		if (evidence !== undefined && step.lastActivityAt !== undefined && step.lastActivityAt <= evidence && step.activityState === undefined && !step.currentTool) {
+			return "retry";
+		}
+		return "stale";
 	};
 	const emitNewControlEvents = (job: AsyncJobState) => {
 		const eventsPath = path.join(job.asyncDir, "events.jsonl");
@@ -176,22 +185,22 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			if (startedFromTail) cursor = stat.size - CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (stat.size <= cursor) return;
 			const scanEnd = Math.min(stat.size, cursor + CONTROL_EVENT_SCAN_WINDOW_BYTES);
-			const handleLine = (line: string) => {
-				if (!line.trim()) return;
+			const handleLine = (line: string): "consumed" | "retry" => {
+				if (!line.trim()) return "consumed";
 				let parsed: unknown;
 				try {
 					parsed = JSON.parse(line);
 				} catch (error) {
 					console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
-					return;
+					return "consumed";
 				}
-				if (!parsed || typeof parsed !== "object") return;
+				if (!parsed || typeof parsed !== "object") return "consumed";
 				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {
 					const notice = parsed as Partial<SteeringNotice>;
-					if (typeof notice.requestId !== "string" || typeof notice.runId !== "string" || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string") return;
-					if (typeof state.currentSessionId === "string" && notice.currentSessionId !== state.currentSessionId) return;
+					if (typeof notice.requestId !== "string" || typeof notice.runId !== "string" || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string") return "consumed";
+					if (typeof state.currentSessionId === "string" && notice.currentSessionId !== state.currentSessionId) return "consumed";
 					const key = `${notice.runId}:${notice.requestId}:${notice.state}`;
-					if (steeringNoticeSeen.has(key)) return;
+					if (steeringNoticeSeen.has(key)) return "consumed";
 					const now = Date.now();
 					steeringNoticeSeen.set(key, now);
 					if (steeringNoticeSeen.size > 200) {
@@ -200,35 +209,36 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						}
 					}
 					pi.events.emit(SUBAGENT_STEERING_NOTICE_EVENT, { ...notice, source: "async", asyncDir: job.asyncDir, noticeText: notice.message });
-					return;
+					return "consumed";
 				}
-				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
+				if ((parsed as { type?: unknown }).type !== "subagent.control") return "consumed";
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
-				if (!record.event || !Array.isArray(record.channels)) return;
-				if (!controlEventIsCurrentlyActionable(job, record.event)) return;
+				if (!record.event || !Array.isArray(record.channels)) return "consumed";
+				const classification = classifyControlEvent(job, record.event);
+				if (classification === "retry") return "retry";
+				if (classification === "stale") return "consumed";
 				const payload = {
 					event: record.event,
 					source: "async" as const,
 					asyncDir: job.asyncDir,
+					channels: record.channels,
+					intercom: record.intercom,
 					childIntercomTarget: record.childIntercomTarget,
 					noticeText: record.noticeText ?? formatControlNoticeMessage(record.event, record.childIntercomTarget),
 				};
-				if (record.channels.includes("event")) {
-					pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+				if (record.event.type === "active_long_running") {
+					if (record.channels.includes("event")) pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+				} else if (record.channels.includes("event") || (record.channels.includes("intercom") && record.intercom?.to && record.intercom.message)) {
+					pi.events.emit(SUBAGENT_CONTROL_DELIVERY_EVENT, payload);
 				}
-				if (record.event.type !== "active_long_running" && record.channels.includes("intercom") && record.intercom?.to && record.intercom.message) {
-					pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
-						...payload,
-						to: record.intercom.to,
-						message: record.intercom.message,
-					});
-				}
+				return "consumed";
 			};
 			let readCursor = cursor;
 			let lastCompleteCursor = cursor;
 			let lineParts: Buffer[] = [];
 			let lineBytes = 0;
 			let skippingOversizedLine = startedFromTail;
+			let retryPending = false;
 			const appendLineSegment = (segment: Buffer) => {
 				if (segment.length === 0 || skippingOversizedLine) return;
 				if (lineBytes + segment.length > MAX_CONTROL_EVENT_LINE_BYTES) {
@@ -250,8 +260,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				for (let index = 0; index < chunk.length; index++) {
 					if (chunk[index] !== 0x0a) continue;
 					appendLineSegment(chunk.subarray(lineStart, index));
-					if (!skippingOversizedLine && lineBytes > 0) {
-						handleLine(Buffer.concat(lineParts, lineBytes).toString("utf-8"));
+					if (!skippingOversizedLine && lineBytes > 0 && handleLine(Buffer.concat(lineParts, lineBytes).toString("utf-8")) === "retry") {
+						retryPending = true;
+						break;
 					}
 					lineParts = [];
 					lineBytes = 0;
@@ -259,11 +270,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					lastCompleteCursor = readCursor + index + 1;
 					lineStart = index + 1;
 				}
+				if (retryPending) break;
 				appendLineSegment(chunk.subarray(lineStart));
 				readCursor += bytesRead;
 				if (skippingOversizedLine) job.controlEventCursor = readCursor;
 			}
-			if (lastCompleteCursor > cursor) job.controlEventCursor = lastCompleteCursor;
+			if (retryPending) job.controlEventCursor = lastCompleteCursor;
+			else if (lastCompleteCursor > cursor) job.controlEventCursor = lastCompleteCursor;
 			else if (scanEnd < stat.size || startedFromTail) job.controlEventCursor = scanEnd;
 		} catch (error) {
 			console.error(`Failed to read async control events for '${job.asyncDir}':`, error);

@@ -1988,6 +1988,9 @@ async function runSubagent(
 			? controlConfig.notifyChannels.filter((channel) => channel !== "intercom")
 			: controlConfig.notifyChannels;
 		if (channels.length === 0 || !claimControlNotification(controlConfig, event, emittedControlEventKeys, childIntercomTarget)) return;
+		// Publish the actionable status atomically before exposing its event record.
+		// Readers may then safely advance their JSONL cursor without losing the notice.
+		writeStatusPayload();
 		appendJsonl(eventsPath, JSON.stringify({
 			type: "subagent.control",
 			event,

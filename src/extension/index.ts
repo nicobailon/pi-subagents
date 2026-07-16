@@ -57,7 +57,7 @@ import {
 	SLASH_TEXT_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
-	SUBAGENT_CONTROL_EVENT,
+	SUBAGENT_CONTROL_DELIVERY_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
 	WIDGET_KEY,
 } from "../shared/types.ts";
@@ -511,7 +511,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
-		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
+		pi.events.on(SUBAGENT_CONTROL_DELIVERY_EVENT, controlEventHandler),
 		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
 		rpcBridge.dispose,
 	];

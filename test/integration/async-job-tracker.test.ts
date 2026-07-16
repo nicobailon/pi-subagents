@@ -461,7 +461,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				},
 			})}\n`, "utf-8");
 			await new Promise((resolve) => setTimeout(resolve, 40));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-delivery"), true);
 			assert.equal(ui.renderRequests, requestsAfterStatusLoaded, "unchanged status and control cursors should not request widget redraws");
 
 			writeStatus(3000, 1);
@@ -472,18 +472,20 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("suppresses a queued control event when the exact child already completed", async () => {
+	it("suppresses a terminal child control event while another child keeps the run live", async () => {
 		const asyncRoot = createTempDir("pi-async-job-terminal-notice-");
 		try {
 			const runDir = path.join(asyncRoot, "run-terminal-notice");
 			fs.mkdirSync(runDir, { recursive: true });
 			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
 				runId: "run-terminal-notice",
-				mode: "single",
-				state: "complete",
+				mode: "parallel",
+				state: "running",
 				startedAt: 1,
-				endedAt: 3,
-				steps: [{ agent: "worker", status: "complete", activityState: "needs_attention", lastActivityAt: 1 }],
+				steps: [
+					{ agent: "worker", status: "complete", activityState: "needs_attention", lastActivityAt: 1 },
+					{ agent: "reviewer", status: "running", lastActivityAt: 2 },
+				],
 			}));
 			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.control",
@@ -815,7 +817,59 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			fs.appendFileSync(eventPath, "\n", "utf-8");
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-delivery"), true);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("retries a complete control record until status exposes the matching attention state", async () => {
+		const asyncRoot = createTempDir("pi-async-job-ordering-");
+		try {
+			const runDir = path.join(asyncRoot, "run-event-before-status");
+			fs.mkdirSync(runDir, { recursive: true });
+			const writeStatus = (activityState?: "needs_attention") => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-event-before-status",
+				mode: "single",
+				state: "running",
+				startedAt: 1,
+				lastUpdate: 100,
+				steps: [{ agent: "worker", status: "running", activityState, lastActivityAt: 100 }],
+			}), "utf-8");
+			writeStatus();
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.control",
+				channels: ["event", "intercom"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 200,
+					runId: "run-event-before-status",
+					agent: "worker",
+					index: 0,
+					message: "worker needs attention",
+					activityEpoch: 100,
+					evidenceLastActivityAt: 100,
+				},
+				intercom: { to: "main", message: "UNCHANGED INTERCOM CONTENT" },
+			})}\n`, "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.handleStarted({ id: "run-event-before-status", asyncDir: runDir, agent: "worker" });
+
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-delivery"), false);
+			assert.equal(state.asyncJobs.get("run-event-before-status")?.controlEventCursor, 0, "retry must retain the record cursor");
+
+			writeStatus("needs_attention");
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === "subagent:control-delivery"),
+				"ordered control delivery",
+			);
+			const delivery = recorder.events.find((event) => event.channel === "subagent:control-delivery");
+			assert.deepEqual((delivery?.data as { intercom?: unknown }).intercom, { to: "main", message: "UNCHANGED INTERCOM CONTENT" });
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -867,7 +921,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-chunked-control", asyncDir: runDir, agent: "worker" });
 
 			await waitForCondition(
-				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				() => recorder.events.some((event) => event.channel === "subagent:control-delivery"),
 				"chunked control event",
 			);
 			assert.ok(allocationSizes.length > 0, "expected the tracker to allocate read buffers");
@@ -919,7 +973,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-new-large-control", asyncDir: runDir, agent: "worker" });
 
 			await waitForCondition(
-				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				() => recorder.events.some((event) => event.channel === "subagent:control-delivery"),
 				"new large log control event",
 			);
 		} finally {
@@ -986,7 +1040,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.ensurePoller();
 
 			await waitForCondition(
-				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				() => recorder.events.some((event) => event.channel === "subagent:control-delivery"),
 				"tail-window control event",
 			);
 			assert.ok(allocationSizes.length > 0, "expected the tracker to allocate read buffers");
@@ -1084,8 +1138,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-channels", asyncDir: runDir, agent: "worker" });
 
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), false);
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), true);
+			const delivery = recorder.events.find((event) => event.channel === "subagent:control-delivery");
+			assert.ok(delivery);
+			assert.deepEqual((delivery.data as { channels?: string[] }).channels, ["intercom"]);
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), false);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -1171,10 +1227,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			await new Promise((resolve) => setTimeout(resolve, 40));
 
-			const controlEvent = recorder.events.find((event) => event.channel === "subagent:control-event");
-			assert.ok(controlEvent);
-			assert.match((controlEvent.data as { noticeText?: string }).noticeText ?? "", /subagent-worker-run-3-1/);
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), true);
+			const controlDelivery = recorder.events.find((event) => event.channel === "subagent:control-delivery");
+			assert.ok(controlDelivery);
+			assert.match((controlDelivery.data as { noticeText?: string }).noticeText ?? "", /subagent-worker-run-3-1/);
+			assert.deepEqual((controlDelivery.data as { channels?: string[] }).channels, ["event", "intercom"]);
+			assert.deepEqual((controlDelivery.data as { intercom?: unknown }).intercom, { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-3." });
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-intercom"), false);
 		} finally {
 			removeTempDir(asyncRoot);
 		}

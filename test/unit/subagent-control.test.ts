@@ -259,10 +259,11 @@ describe("subagent control attention state", () => {
 
 	it("requires exact active state and unchanged activity evidence", () => {
 		const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", index: 2, lastActivityAt: 100 });
-		const active = { runId: "run-1", state: "running", agent: "worker", index: 2, activityState: "needs_attention" as const, lastActivityAt: 100 };
+		const active = { runId: "run-1", state: "running", agent: "worker", index: 2, status: "running", activityState: "needs_attention" as const, lastActivityAt: 100 };
 		assert.equal(isControlEventActionable(event, active), true);
 		assert.equal(isControlEventActionable(event, { ...active, lastActivityAt: 101 }), false);
 		assert.equal(isControlEventActionable(event, { ...active, state: "complete" }), false);
+		assert.equal(isControlEventActionable(event, { ...active, status: "complete" }), false);
 		assert.equal(isControlEventActionable(event, { ...active, index: 3 }), false);
 		assert.equal(isControlEventActionable(event, { ...active, currentTool: "bash" }), false);
 	});

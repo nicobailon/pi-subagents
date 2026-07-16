@@ -4,7 +4,13 @@ import {
 	formatControlNoticeMessage,
 	isControlEventActionable,
 } from "../runs/shared/subagent-control.ts";
-import type { AsyncStatus, ControlEvent, SubagentState } from "../shared/types.ts";
+import {
+	SUBAGENT_CONTROL_EVENT,
+	SUBAGENT_CONTROL_INTERCOM_EVENT,
+	type AsyncStatus,
+	type ControlEvent,
+	type SubagentState,
+} from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { resolveChildPresentation, type ChildPresentationDetails } from "./human-messages.ts";
 
@@ -16,6 +22,8 @@ export interface SubagentControlMessageDetails extends Partial<ChildPresentation
 	asyncDir?: string;
 	childIntercomTarget?: string;
 	noticeText?: string;
+	channels?: string[];
+	intercom?: { to?: string; message?: string };
 }
 
 export function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
@@ -42,7 +50,7 @@ export function clearPendingForegroundControlNotices(state: SubagentState, runId
 }
 
 function deliverControlNotice(input: {
-	pi: Pick<ExtensionAPI, "sendMessage">;
+	pi: Pick<ExtensionAPI, "events" | "sendMessage">;
 	state: SubagentState;
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
@@ -50,23 +58,41 @@ function deliverControlNotice(input: {
 	const childIntercomTarget = controlNoticeTarget(input.details);
 	const key = controlNotificationKey(input.details.event, childIntercomTarget);
 	if (input.visibleControlNotices.has(key)) return;
+	const channels = input.details.channels ?? ["event"];
+	const deliverVisible = channels.includes("event");
+	const deliverIntercom = channels.includes("intercom")
+		&& input.details.event.type !== "active_long_running"
+		&& typeof input.details.intercom?.to === "string"
+		&& typeof input.details.intercom.message === "string";
+	if (!deliverVisible && !deliverIntercom) return;
 	input.visibleControlNotices.add(key);
 	const noticeText = input.details.noticeText ?? formatControlNoticeMessage(input.details.event, childIntercomTarget);
-	const presentation = resolveChildPresentation(
-		input.state,
-		input.details.event.runId,
-		input.details.event.agent,
-		input.details.event.index,
-	);
-	input.pi.sendMessage(
-		{
-			customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
-			content: noticeText,
-			display: true,
-			details: { ...input.details, ...presentation, childIntercomTarget, noticeText },
-		},
-		{ triggerTurn: input.details.source !== "foreground" },
-	);
+	if (deliverVisible) {
+		const presentation = resolveChildPresentation(
+			input.state,
+			input.details.event.runId,
+			input.details.event.agent,
+			input.details.event.index,
+		);
+		const details = { ...input.details, ...presentation, childIntercomTarget, noticeText };
+		input.pi.events.emit(SUBAGENT_CONTROL_EVENT, details);
+		input.pi.sendMessage(
+			{
+				customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
+				content: noticeText,
+				display: true,
+				details,
+			},
+			{ triggerTurn: input.details.source !== "foreground" },
+		);
+	}
+	if (deliverIntercom) {
+		input.pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
+			...input.details,
+			to: input.details.intercom!.to,
+			message: input.details.intercom!.message,
+		});
+	}
 }
 
 function asyncStatusSnapshot(status: AsyncStatus, event: ControlEvent) {
@@ -79,6 +105,7 @@ function asyncStatusSnapshot(status: AsyncStatus, event: ControlEvent) {
 		state: status.state,
 		agent: step.agent,
 		index,
+		status: step.status,
 		activityState: step.activityState,
 		lastActivityAt: step.lastActivityAt,
 		currentTool: step.currentTool,
@@ -100,11 +127,22 @@ function isNoticeStillActionable(state: SubagentState, details: SubagentControlM
 
 	const control = state.foregroundControls.get(details.event.runId);
 	if (!control) return false;
-	return isControlEventActionable(details.event, {
+	const child = details.event.index !== undefined ? control.childSnapshots?.get(details.event.index) : undefined;
+	return isControlEventActionable(details.event, child ? {
+		runId: control.runId,
+		state: "running",
+		agent: child.agent,
+		index: details.event.index,
+		status: child.status,
+		activityState: child.activityState,
+		lastActivityAt: child.lastActivityAt,
+		currentTool: child.currentTool,
+	} : {
 		runId: control.runId,
 		state: "running",
 		agent: control.currentAgent,
 		index: control.currentIndex,
+		status: control.currentStatus,
 		activityState: control.currentActivityState,
 		lastActivityAt: control.lastActivityAt,
 		currentTool: control.currentTool,
@@ -112,7 +150,7 @@ function isNoticeStillActionable(state: SubagentState, details: SubagentControlM
 }
 
 export function handleSubagentControlNotice(input: {
-	pi: Pick<ExtensionAPI, "sendMessage">;
+	pi: Pick<ExtensionAPI, "events" | "sendMessage">;
 	state: SubagentState;
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;

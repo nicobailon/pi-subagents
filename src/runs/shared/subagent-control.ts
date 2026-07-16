@@ -164,6 +164,7 @@ export interface ControlEventActionabilitySnapshot {
 	state: string;
 	agent?: string;
 	index?: number;
+	status?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -171,7 +172,7 @@ export interface ControlEventActionabilitySnapshot {
 
 export function isControlEventActionable(event: ControlEvent, snapshot: ControlEventActionabilitySnapshot | undefined): boolean {
 	if (!snapshot || event.reason === "completion_guard") return false;
-	if (snapshot.runId !== event.runId || snapshot.state !== "running") return false;
+	if (snapshot.runId !== event.runId || snapshot.state !== "running" || snapshot.status !== "running") return false;
 	if (snapshot.agent !== event.agent) return false;
 	if (event.index !== undefined && snapshot.index !== event.index) return false;
 	if (snapshot.activityState !== event.to) return false;

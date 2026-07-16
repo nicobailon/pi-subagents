@@ -999,7 +999,16 @@ export interface SubagentState {
 		updatedAt: number;
 		currentAgent?: string;
 		currentIndex?: number;
+		currentStatus?: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped";
 		currentActivityState?: ActivityState;
+		/** Exact per-child live snapshots for concurrent foreground children. */
+		childSnapshots?: Map<number, {
+			agent: string;
+			status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped";
+			activityState?: ActivityState;
+			lastActivityAt?: number;
+			currentTool?: string;
+		}>;
 		lastActivityAt?: number;
 		currentTool?: string;
 		currentToolStartedAt?: number;
@@ -1055,6 +1064,8 @@ export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
+/** Internal route for control delivery that still requires debounce and final revalidation. */
+export const SUBAGENT_CONTROL_DELIVERY_EVENT = "subagent:control-delivery";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const SUBAGENT_STEERING_NOTICE_EVENT = "subagent:steering-notice";

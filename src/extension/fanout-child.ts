@@ -12,7 +12,8 @@ import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { SubagentParams } from "./schemas.ts";
 import { loadConfig } from "./config.ts";
-import { type Details, type SubagentState } from "../shared/types.ts";
+import { handleSubagentControlNotice, type SubagentControlMessageDetails } from "./control-notices.ts";
+import { SUBAGENT_CONTROL_DELIVERY_EVENT, type Details, type SubagentState } from "../shared/types.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {
 	if (parentSessionFile) {
@@ -170,5 +171,9 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	};
 
 	pi.registerTool(tool);
+	const visibleControlNotices = new Set<string>();
+	pi.events.on(SUBAGENT_CONTROL_DELIVERY_EVENT, (payload) => {
+		handleSubagentControlNotice({ pi, state, visibleControlNotices, details: payload as SubagentControlMessageDetails });
+	});
 	startNestedControlInboxListener(pi, state);
 }

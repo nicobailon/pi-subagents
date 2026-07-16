@@ -103,8 +103,8 @@ import {
 	DEFAULT_FORK_PREAMBLE,
 	RESULTS_DIR,
 	SUBAGENT_ACTIONS,
+	SUBAGENT_CONTROL_DELIVERY_EVENT,
 	SUBAGENT_CONTROL_EVENT,
-	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	checkSubagentDepth,
 	resolveMaxSubagentSpawnsPerSession,
@@ -572,21 +572,26 @@ function emitControlNotification(input: {
 	const childIntercomTarget = input.intercomBridge.active
 		? resolveSubagentIntercomTarget(input.event.runId, input.event.agent, input.event.index)
 		: undefined;
+	const channels = input.controlConfig.notifyChannels;
 	const payload = {
 		event: input.event,
 		source: "foreground" as const,
+		channels,
 		childIntercomTarget,
 		noticeText: formatControlNoticeMessage(input.event, childIntercomTarget),
+		...(channels.includes("intercom") && input.intercomBridge.active && input.intercomBridge.orchestratorTarget ? {
+			intercom: {
+				to: input.intercomBridge.orchestratorTarget,
+				message: formatControlIntercomMessage(input.event, childIntercomTarget),
+			},
+		} : {}),
 	};
-	if (input.controlConfig.notifyChannels.includes("event")) {
-		input.pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+	if (input.event.type === "active_long_running" || input.event.reason === "completion_guard") {
+		if (channels.includes("event")) input.pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+		return;
 	}
-	if (input.event.type !== "active_long_running" && input.controlConfig.notifyChannels.includes("intercom") && input.intercomBridge.active && input.intercomBridge.orchestratorTarget) {
-		input.pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
-			...payload,
-			to: input.intercomBridge.orchestratorTarget,
-			message: formatControlIntercomMessage(input.event, childIntercomTarget),
-		});
+	if (channels.includes("event") || channels.includes("intercom")) {
+		input.pi.events.emit(SUBAGENT_CONTROL_DELIVERY_EVENT, payload);
 	}
 }
 
@@ -2425,7 +2430,10 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		if (input.foregroundControl) {
 			input.foregroundControl.currentAgent = task.agent;
 			input.foregroundControl.currentIndex = index;
+			input.foregroundControl.currentStatus = "running";
 			input.foregroundControl.currentActivityState = undefined;
+			input.foregroundControl.childSnapshots ??= new Map();
+			input.foregroundControl.childSnapshots.set(index, { agent: task.agent, status: "running" });
 			input.foregroundControl.updatedAt = Date.now();
 			input.foregroundControl.interrupt = () => {
 				if (interruptController.signal.aborted) return false;
@@ -2472,17 +2480,24 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			deadlineAt: input.deadlineAt,
 			turnBudget: input.turnBudget,
 			toolBudget: input.toolBudgets[index],
-			onUpdate: input.onUpdate
-				? (progressUpdate) => {
+			onUpdate: (progressUpdate) => {
 					const stepResults = progressUpdate.details?.results || [];
 					const stepProgress = progressUpdate.details?.progress || [];
 					if (input.foregroundControl && stepProgress.length > 0) {
 						const current = stepProgress[0];
 						input.foregroundControl.currentAgent = task.agent;
 						input.foregroundControl.currentIndex = index;
+						input.foregroundControl.currentStatus = "running";
 						input.foregroundControl.currentActivityState = current?.activityState;
 						input.foregroundControl.lastActivityAt = current?.lastActivityAt;
 						input.foregroundControl.currentTool = current?.currentTool;
+						input.foregroundControl.childSnapshots?.set(index, {
+							agent: task.agent,
+							status: "running",
+							activityState: current?.activityState,
+							lastActivityAt: current?.lastActivityAt,
+							currentTool: current?.currentTool,
+						});
 						input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
 						input.foregroundControl.currentPath = current?.currentPath;
 						input.foregroundControl.turnCount = current?.turnCount;
@@ -2504,13 +2519,22 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 							totalSteps: input.tasks.length,
 						},
 					});
-				}
-				: undefined,
-		}).finally(() => {
+				},
+		}).then((result) => {
+			const status = result.interrupted || result.detached ? "paused" : result.exitCode === 0 ? "complete" : "failed";
+			const snapshot = input.foregroundControl?.childSnapshots?.get(index);
+			if (snapshot) snapshot.status = status;
 			if (input.foregroundControl?.currentIndex === index) {
+				input.foregroundControl.currentStatus = status;
 				input.foregroundControl.interrupt = undefined;
 				input.foregroundControl.updatedAt = Date.now();
 			}
+			return result;
+		}, (error) => {
+			const snapshot = input.foregroundControl?.childSnapshots?.get(index);
+			if (snapshot) snapshot.status = "failed";
+			if (input.foregroundControl?.currentIndex === index) input.foregroundControl.currentStatus = "failed";
+			throw error;
 		});
 	}, input.globalSemaphore);
 }
@@ -3040,6 +3064,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (foregroundControl) {
 		foregroundControl.currentAgent = params.agent;
 		foregroundControl.currentIndex = 0;
+		foregroundControl.currentStatus = "running";
 		foregroundControl.currentActivityState = undefined;
 		foregroundControl.updatedAt = Date.now();
 		foregroundControl.interrupt = () => {
@@ -3057,6 +3082,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				const firstProgress = update.details?.progress?.[0];
 				foregroundControl.currentAgent = params.agent;
 				foregroundControl.currentIndex = firstProgress?.index ?? 0;
+				foregroundControl.currentStatus = "running";
 				foregroundControl.currentActivityState = firstProgress?.activityState;
 				foregroundControl.lastActivityAt = firstProgress?.lastActivityAt;
 				foregroundControl.currentTool = firstProgress?.currentTool;
@@ -3113,6 +3139,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	});
 	if (foregroundControl?.currentIndex === 0) {
 		foregroundControl.interrupt = undefined;
+		foregroundControl.currentStatus = r.interrupted || r.detached ? "paused" : r.exitCode === 0 ? "complete" : "failed";
 		foregroundControl.currentActivityState = r.progress?.activityState;
 		foregroundControl.lastActivityAt = r.progress?.lastActivityAt;
 		foregroundControl.currentTool = r.progress?.currentTool;
@@ -3707,7 +3734,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				updatedAt: Date.now(),
 				currentAgent: undefined,
 				currentIndex: undefined,
+				currentStatus: undefined,
 				currentActivityState: undefined,
+				childSnapshots: undefined,
 				nestedRoute,
 				interrupt: undefined,
 			};

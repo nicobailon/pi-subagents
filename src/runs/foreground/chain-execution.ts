@@ -295,9 +295,13 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
 			if (input.foregroundControl) {
+				const childIndex = input.globalTaskIndex + taskIndex;
 				input.foregroundControl.currentAgent = task.agent;
-				input.foregroundControl.currentIndex = input.globalTaskIndex + taskIndex;
+				input.foregroundControl.currentIndex = childIndex;
+				input.foregroundControl.currentStatus = "running";
 				input.foregroundControl.currentActivityState = undefined;
+				input.foregroundControl.childSnapshots ??= new Map();
+				input.foregroundControl.childSnapshots.set(childIndex, { agent: task.agent, status: "running" });
 				input.foregroundControl.updatedAt = Date.now();
 				input.foregroundControl.interrupt = () => {
 					if (interruptController.signal.aborted) return false;
@@ -350,17 +354,25 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 					? (result) => input.onDetachedExit?.(input.globalTaskIndex + taskIndex, result)
 					: undefined,
 				toolBudget: toolBudget.toolBudget,
-				onUpdate: input.onUpdate
-					? (progressUpdate) => {
+				onUpdate: (progressUpdate) => {
 						const stepResults = progressUpdate.details?.results || [];
 						const stepProgress = progressUpdate.details?.progress || [];
 						if (input.foregroundControl && stepProgress.length > 0) {
 							const current = stepProgress[0];
 							input.foregroundControl.currentAgent = task.agent;
 							input.foregroundControl.currentIndex = input.globalTaskIndex + taskIndex;
+							const childIndex = input.globalTaskIndex + taskIndex;
+							input.foregroundControl.currentStatus = "running";
 							input.foregroundControl.currentActivityState = current?.activityState;
 							input.foregroundControl.lastActivityAt = current?.lastActivityAt;
 							input.foregroundControl.currentTool = current?.currentTool;
+							input.foregroundControl.childSnapshots?.set(childIndex, {
+								agent: task.agent,
+								status: "running",
+								activityState: current?.activityState,
+								lastActivityAt: current?.lastActivityAt,
+								currentTool: current?.currentTool,
+							});
 							input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
 							input.foregroundControl.currentPath = current?.currentPath;
 							input.foregroundControl.turnCount = current?.turnCount;
@@ -391,10 +403,14 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 								}),
 							},
 						});
-					}
-					: undefined,
+					},
 			});
-			if (input.foregroundControl?.currentIndex === input.globalTaskIndex + taskIndex) {
+			const childIndex = input.globalTaskIndex + taskIndex;
+			const childStatus = result.interrupted || result.detached ? "paused" : result.exitCode === 0 ? "complete" : "failed";
+			const childSnapshot = input.foregroundControl?.childSnapshots?.get(childIndex);
+			if (childSnapshot) childSnapshot.status = childStatus;
+			if (input.foregroundControl?.currentIndex === childIndex) {
+				input.foregroundControl.currentStatus = childStatus;
 				input.foregroundControl.interrupt = undefined;
 				input.foregroundControl.updatedAt = Date.now();
 			}
@@ -1149,6 +1165,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			if (foregroundControl) {
 				foregroundControl.currentAgent = seqStep.agent;
 				foregroundControl.currentIndex = childIndex;
+				foregroundControl.currentStatus = "running";
 				foregroundControl.currentActivityState = undefined;
 				foregroundControl.updatedAt = Date.now();
 				foregroundControl.interrupt = () => {
@@ -1227,6 +1244,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 							const current = stepProgress[0];
 							foregroundControl.currentAgent = seqStep.agent;
 							foregroundControl.currentIndex = childIndex;
+							foregroundControl.currentStatus = "running";
 							foregroundControl.currentActivityState = current?.activityState;
 							foregroundControl.lastActivityAt = current?.lastActivityAt;
 							foregroundControl.currentTool = current?.currentTool;
@@ -1264,6 +1282,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					: undefined,
 			});
 			if (foregroundControl?.currentIndex === childIndex) {
+				foregroundControl.currentStatus = r.interrupted || r.detached ? "paused" : r.exitCode === 0 ? "complete" : "failed";
 				foregroundControl.interrupt = undefined;
 				foregroundControl.updatedAt = Date.now();
 			}
