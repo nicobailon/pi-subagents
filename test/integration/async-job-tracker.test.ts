@@ -232,11 +232,11 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(job);
 			assert.equal(job.status, "running");
 			assert.equal(job.sessionId, "session-restored");
-			assert.deepEqual(job.agents, ["reviewer", "worker"]);
-			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [1, 2]);
-			assert.equal(job.stepsTotal, 2);
+			assert.deepEqual(job.agents, ["scout", "reviewer", "worker", "writer"]);
+			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [0, 1, 2, 3]);
+			assert.equal(job.stepsTotal, 4);
 			assert.equal(job.runningSteps, 2);
-			assert.equal(job.completedSteps, 0);
+			assert.equal(job.completedSteps, 1);
 			assert.equal(job.activeParallelGroup, true);
 			assert.ok(state.poller, "expected restored active jobs to start polling");
 			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
@@ -363,17 +363,17 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			});
 
 			const job = state.asyncJobs.get("run-parallel-start");
-			assert.deepEqual(job?.agents, ["scout", "reviewer", "worker"]);
+			assert.deepEqual(job?.agents, ["scout", "reviewer", "worker", "writer"]);
 			assert.equal(job?.chainStepCount, 2);
 			assert.deepEqual(job?.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
-			assert.equal(job?.stepsTotal, 3);
+			assert.equal(job?.stepsTotal, 4);
 			assert.equal(job?.activeParallelGroup, true);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
 	});
 
-	it("adds flat step indexes to polled active parallel group steps", async () => {
+	it("keeps all chain steps with flat indexes while a parallel group is active", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
 			const runDir = path.join(asyncRoot, "run-chain");
@@ -414,12 +414,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			const job = state.asyncJobs.get("run-chain");
-			assert.deepEqual(job?.steps?.map((step: { index?: number }) => step.index), [1, 2]);
-			assert.deepEqual(job?.agents, ["reviewer", "auditor"]);
-			assert.equal(job?.steps?.[0]?.currentTool, "read");
-			assert.equal(job?.steps?.[0]?.currentToolArgs, "src/tui/render.ts");
-			assert.deepEqual(job?.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "grep", args: "async widget" }]);
-			assert.deepEqual(job?.steps?.[0]?.recentOutput, ["reviewer line"]);
+			assert.deepEqual(job?.steps?.map((step: { index?: number }) => step.index), [0, 1, 2, 3]);
+			assert.deepEqual(job?.agents, ["scout", "reviewer", "auditor", "writer"]);
+			assert.equal(job?.steps?.[1]?.currentTool, "read");
+			assert.equal(job?.steps?.[1]?.currentToolArgs, "src/tui/render.ts");
+			assert.deepEqual(job?.steps?.[1]?.recentTools?.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "grep", args: "async widget" }]);
+			assert.deepEqual(job?.steps?.[1]?.recentOutput, ["reviewer line"]);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
