@@ -24,6 +24,7 @@
 - Added a chain quick-reference (sequential, parallel fan-out, and mixed examples) to the `subagent` tool description in both full and compact modes so agents have the correct nested schema format up front. Thanks to Nicolas Marchildon (@elecnix) for #417 and #424.
 
 ### Changed
+- Made visible subagent control notices and native supervisor requests compact by default, with full human-readable diagnostics and structured request details available through Pi's expand key while preserving complete model-facing message content.
 - Updated the bundled `pi-subagents` skill so Fable mode is the default orchestration posture for complex work, and refreshed recent command/config guidance.
 - Documented `contact_supervisor` structured interview requests in the default child bridge instructions.
 

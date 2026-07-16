@@ -14,6 +14,11 @@ import {
 } from "../runs/shared/pi-args.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
+import {
+	resolveChildPresentation,
+	SUBAGENT_SUPERVISOR_MESSAGE_TYPE,
+	type SupervisorRequestMessageDetails,
+} from "../extension/human-messages.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
@@ -41,6 +46,7 @@ interface SupervisorRequest {
 	agent: string;
 	childIndex: number;
 	childTarget?: string;
+	question?: string;
 	interview?: unknown;
 }
 
@@ -248,6 +254,7 @@ async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: A
 		agent: metadata.agent,
 		childIndex: metadata.childIndex,
 		...(metadata.childTarget ? { childTarget: metadata.childTarget } : {}),
+		...(params.message?.trim() ? { question: params.message.trim() } : {}),
 		...(params.interview !== undefined ? { interview: params.interview } : {}),
 	};
 	const serialized = JSON.stringify(request, null, "\t");
@@ -633,18 +640,23 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			else {
 				removeRequestFile(request.requestFile);
 			}
+			const presentation = resolveChildPresentation(state, request.runId, request.agent, request.childIndex);
+			const messageDetails: SupervisorRequestMessageDetails = {
+				id: request.id,
+				reason: request.reason,
+				expectsReply: request.expectsReply,
+				runId: request.runId,
+				agent: request.agent,
+				childIndex: request.childIndex,
+				...presentation,
+				...(request.question ? { question: request.question } : {}),
+				...(request.interview !== undefined ? { interview: request.interview } : {}),
+			};
 			pi.sendMessage({
-				customType: "subagent_supervisor_request",
+				customType: SUBAGENT_SUPERVISOR_MESSAGE_TYPE,
 				content: requestVisibleText(request),
 				display: true,
-				details: {
-					id: request.id,
-					reason: request.reason,
-					expectsReply: request.expectsReply,
-					runId: request.runId,
-					agent: request.agent,
-					childIndex: request.childIndex,
-				},
+				details: messageDetails,
 			});
 			if (request.expectsReply) {
 				(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
