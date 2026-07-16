@@ -211,6 +211,177 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("disposes pending completion notifications on session shutdown", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-notify-shutdown-"));
+		const configDir = path.join(agentDir, "extensions", "subagent");
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ completionBatch: { enabled: true, debounceMs: 150 } }), "utf-8");
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const pendingTimers = new Map();
+			const realSetTimeout = globalThis.setTimeout;
+			const realClearTimeout = globalThis.clearTimeout;
+			globalThis.setTimeout = (handler) => {
+				const token = {};
+				pendingTimers.set(token, handler);
+				return token;
+			};
+			globalThis.clearTimeout = (token) => pendingTimers.delete(token);
+			const eventListeners = new Map();
+			const events = {
+				on(channel, handler) {
+					let listeners = eventListeners.get(channel);
+					if (!listeners) eventListeners.set(channel, listeners = new Set());
+					listeners.add(handler);
+					return () => listeners.delete(handler);
+				},
+				emit(channel, payload) {
+					for (const handler of [...(eventListeners.get(channel) ?? [])]) handler(payload);
+				},
+			};
+			const handlers = new Map();
+			const sent = [];
+			const fakePi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage(message) { sent.push(message); }, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const ctx = {
+				cwd: process.cwd(), hasUI: false,
+				ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+				sessionManager: { getSessionId() { return "notify-shutdown-session"; }, getSessionFile() { return null; }, getEntries() { return []; } },
+				modelRegistry: { getAvailable() { return []; } },
+			};
+			registerSubagentExtension(fakePi);
+			handlers.get("session_start")({}, ctx);
+			sent.length = 0;
+			events.emit("subagent:async-complete", {
+				id: "shutdown-held-completion", agent: "worker", success: true, summary: "Done",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-shutdown-session",
+			});
+			if (sent.length !== 0) throw new Error("completion was not queued before shutdown");
+			const heldTimers = [...pendingTimers.values()];
+			if (heldTimers.length === 0) throw new Error("completion did not schedule a timer");
+			handlers.get("session_shutdown")();
+			if (pendingTimers.size !== 0) throw new Error("shutdown left completion timers pending");
+			for (const handler of heldTimers) handler();
+			if (sent.length !== 0) throw new Error("stale completion sent after shutdown");
+			globalThis.setTimeout = realSetTimeout;
+			globalThis.clearTimeout = realClearTimeout;
+		`;
+
+		try {
+			const env = parentToolEnv();
+			env.PI_CODING_AGENT_DIR = agentDir;
+			execFileSync(
+				process.execPath,
+				["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				{ cwd: projectRoot, env, stdio: "pipe" },
+			);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("disposes pending completion notifications during runtime reload cleanup", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-notify-reload-"));
+		const configDir = path.join(agentDir, "extensions", "subagent");
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ completionBatch: { enabled: true, debounceMs: 150 } }), "utf-8");
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const pendingTimers = new Map();
+			const realSetTimeout = globalThis.setTimeout;
+			const realClearTimeout = globalThis.clearTimeout;
+			globalThis.setTimeout = (handler) => {
+				const token = {};
+				pendingTimers.set(token, handler);
+				return token;
+			};
+			globalThis.clearTimeout = (token) => pendingTimers.delete(token);
+			function createRuntime(sessionId) {
+				const eventListeners = new Map();
+				const handlers = new Map();
+				const sent = [];
+				const events = {
+					on(channel, handler) {
+						let listeners = eventListeners.get(channel);
+						if (!listeners) eventListeners.set(channel, listeners = new Set());
+						listeners.add(handler);
+						return () => listeners.delete(handler);
+					},
+					emit(channel, payload) {
+						for (const handler of [...(eventListeners.get(channel) ?? [])]) handler(payload);
+					},
+				};
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, handler); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage(message) { sent.push(message); }, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const ctx = {
+					cwd: process.cwd(), hasUI: false,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				return { pi, events, handlers, sent, ctx };
+			}
+			const oldRuntime = createRuntime("notify-reload-old");
+			registerSubagentExtension(oldRuntime.pi);
+			oldRuntime.handlers.get("session_start")({}, oldRuntime.ctx);
+			oldRuntime.sent.length = 0;
+			const timersBeforeOldCompletion = new Set(pendingTimers.keys());
+			oldRuntime.events.emit("subagent:async-complete", {
+				id: "reload-held-completion", agent: "worker", success: true, summary: "Old",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-old",
+			});
+			if (oldRuntime.sent.length !== 0) throw new Error("old completion was not queued before reload");
+			const oldCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeOldCompletion.has(token));
+			if (oldCompletionTimers.length === 0) throw new Error("old completion did not schedule a timer");
+			// Remove the notifier's registration-time fallback hooks so this test
+			// proves previousRuntimeCleanup owns and cancels the old timer.
+			delete globalThis.__pi_subagents_notify_unsubscribe__;
+			delete globalThis.__pi_subagents_notify_batcher__;
+
+			const newRuntime = createRuntime("notify-reload-new");
+			registerSubagentExtension(newRuntime.pi);
+			newRuntime.handlers.get("session_start")({}, newRuntime.ctx);
+			for (const [, handler] of oldCompletionTimers) handler();
+			if (oldRuntime.sent.length !== 0) throw new Error("stale completion sent after runtime cleanup");
+
+			const timersBeforeNewCompletion = new Set(pendingTimers.keys());
+			newRuntime.events.emit("subagent:async-complete", {
+				id: "reload-new-completion", agent: "reviewer", success: true, summary: "New",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-new",
+			});
+			const newCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeNewCompletion.has(token));
+			if (newCompletionTimers.length === 0) throw new Error("new completion did not schedule a timer");
+			for (const [token, handler] of newCompletionTimers) {
+				pendingTimers.delete(token);
+				handler();
+			}
+			if (newRuntime.sent.length !== 1) throw new Error("new notifier was not active after reload cleanup");
+			newRuntime.handlers.get("session_shutdown")();
+			globalThis.setTimeout = realSetTimeout;
+			globalThis.clearTimeout = realClearTimeout;
+		`;
+
+		try {
+			const env = parentToolEnv();
+			env.PI_CODING_AGENT_DIR = agentDir;
+			execFileSync(
+				process.execPath,
+				["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				{ cwd: projectRoot, env, stdio: "pipe" },
+			);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

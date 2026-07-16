@@ -11,8 +11,24 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
+function createEventBus() {
+	const emitter = new EventEmitter();
+	return {
+		on(event: string, listener: (...args: unknown[]) => void) {
+			emitter.on(event, listener);
+			return () => emitter.off(event, listener);
+		},
+		emit(event: string, ...args: unknown[]) {
+			return emitter.emit(event, ...args);
+		},
+		listenerCount(event: string) {
+			return emitter.listenerCount(event);
+		},
+	};
+}
+
 function createPi(currentSessionId = "session-1", registerOptions: RegisterSubagentNotifyOptions = {}) {
-	const events = new EventEmitter();
+	const events = createEventBus();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
 	const pi = {
 		events,
@@ -23,13 +39,13 @@ function createPi(currentSessionId = "session-1", registerOptions: RegisterSubag
 
 	// Formatting-focused tests run with batching disabled so single completions
 	// emit synchronously. Batching behavior is covered by the dedicated suite below.
-	registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
+	const dispose = registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
 
-	return { events, sent };
+	return { events, sent, dispose };
 }
 
 function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSessionId = "session-a") {
-	const events = new EventEmitter();
+	const events = createEventBus();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
 	const pi = {
 		events,
@@ -37,12 +53,12 @@ function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSess
 			sent.push({ message, options });
 		},
 	};
-	registerSubagentNotify(pi as never, { currentSessionId }, {
+	const dispose = registerSubagentNotify(pi as never, { currentSessionId }, {
 		batchConfig: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
 		timers: clock.api,
 		now: clock.now,
 	});
-	return { events, sent };
+	return { events, sent, dispose };
 }
 
 interface FakeJob {
@@ -317,6 +333,50 @@ describe("registerSubagentNotify", () => {
 		assert.equal(sent.length, 1);
 		assert.match((sent[0]!.message as { content: string }).content, /^Background task completed: \*\*alpha\*\*/);
 		assert.doesNotMatch((sent[0]!.message as { content: string }).content, /boom/);
+	});
+
+	it("disposes queued completions without emitting and is idempotent", () => {
+		const clock = createFakeClock();
+		const { events, sent, dispose } = createBatchingPi(clock);
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "dispose-held-1" }));
+		assert.equal(sent.length, 0);
+		assert.equal(events.listenerCount(SUBAGENT_ASYNC_COMPLETE_EVENT), 1);
+		assert.equal(events.listenerCount(SUBAGENT_FOREGROUND_COMPLETE_EVENT), 1);
+
+		dispose();
+		dispose();
+		assert.equal(events.listenerCount(SUBAGENT_ASYNC_COMPLETE_EVENT), 0);
+		assert.equal(events.listenerCount(SUBAGENT_FOREGROUND_COMPLETE_EVENT), 0);
+
+		clock.advance(1000);
+		assert.equal(sent.length, 0);
+	});
+
+	it("does not let an older disposer clear a newer registration", () => {
+		const globalStore = globalThis as Record<string, unknown>;
+		const oldClock = createFakeClock();
+		const oldRegistration = createBatchingPi(oldClock);
+		oldRegistration.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "old-owner-held-1" }));
+
+		// Simulate a runtime ownership handoff without invoking the old disposer,
+		// so its later call exercises the identity guards rather than idempotency.
+		delete globalStore.__pi_subagents_notify_unsubscribe__;
+		delete globalStore.__pi_subagents_notify_batcher__;
+		const newClock = createFakeClock();
+		const newRegistration = createBatchingPi(newClock);
+		const newerBatcherRegistration = globalStore.__pi_subagents_notify_batcher__;
+
+		oldRegistration.dispose();
+		oldClock.advance(1000);
+		assert.equal(oldRegistration.sent.length, 0);
+		assert.equal(globalStore.__pi_subagents_notify_unsubscribe__, newRegistration.dispose);
+		assert.equal(globalStore.__pi_subagents_notify_batcher__, newerBatcherRegistration);
+
+		newRegistration.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "new-owner-1" }));
+		newClock.advance(150);
+		assert.equal(newRegistration.sent.length, 1);
+		newRegistration.dispose();
 	});
 });
 

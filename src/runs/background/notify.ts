@@ -193,7 +193,7 @@ export default function registerSubagentNotify(
 	pi: ExtensionAPI,
 	state: Pick<SubagentState, "currentSessionId">,
 	options: RegisterSubagentNotifyOptions = {},
-): void {
+): () => void {
 	const unsubscribeStoreKey = "__pi_subagents_notify_unsubscribe__";
 	const batcherStoreKey = "__pi_subagents_notify_batcher__";
 	const globalStore = globalThis as Record<string, unknown>;
@@ -219,14 +219,10 @@ export default function registerSubagentNotify(
 	const nowFn = options.now ?? Date.now;
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<SubagentNotifyDetails>>();
-	globalStore[batcherStoreKey] = {
-		dispose() {
-			for (const batcher of batchers.values()) batcher.dispose();
-			batchers.clear();
-		},
-	};
+	let disposed = false;
 
 	const handleComplete = (data: unknown) => {
+		if (disposed) return;
 		const result = data as SubagentResult;
 		if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return;
 		const now = nowFn();
@@ -264,7 +260,35 @@ export default function registerSubagentNotify(
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
 		pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, handleComplete),
 	].filter((unsubscribe): unsubscribe is () => void => typeof unsubscribe === "function");
-	globalStore[unsubscribeStoreKey] = () => {
-		for (const unsubscribe of unsubscribers) unsubscribe();
-	};
+	const batcherRegistration = { dispose };
+
+	function dispose(): void {
+		if (disposed) return;
+		disposed = true;
+		for (const batcher of batchers.values()) {
+			try {
+				batcher.dispose();
+			} catch {
+				// Best effort cleanup must continue through every owned batcher.
+			}
+		}
+		batchers.clear();
+		for (const unsubscribe of unsubscribers) {
+			try {
+				unsubscribe();
+			} catch {
+				// Best effort cleanup must continue through every owned handler.
+			}
+		}
+		if (globalStore[unsubscribeStoreKey] === dispose) {
+			delete globalStore[unsubscribeStoreKey];
+		}
+		if (globalStore[batcherStoreKey] === batcherRegistration) {
+			delete globalStore[batcherStoreKey];
+		}
+	}
+
+	globalStore[unsubscribeStoreKey] = dispose;
+	globalStore[batcherStoreKey] = batcherRegistration;
+	return dispose;
 }

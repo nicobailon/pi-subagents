@@ -261,6 +261,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
+	let disposeSubagentNotify = () => {};
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
@@ -271,6 +272,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	primeExistingResults();
 
 	const runtimeCleanup = () => {
+		disposeSubagentNotify();
 		mainWatchdog.dispose();
 		stopResultWatcher();
 		scheduledRunManager.stop();
@@ -492,7 +494,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		}
 	}
-	registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	disposeSubagentNotify = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
 
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
@@ -570,6 +572,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", () => {
+		disposeSubagentNotify();
 		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {
 			try {
