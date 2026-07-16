@@ -350,17 +350,24 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		let text = `${icon} ${theme.bold(details.agent)} ${theme.fg("dim", details.status)}`;
 		if (parts.length > 0) text += ` ${theme.fg("dim", "·")} ${parts.map((part) => theme.fg("dim", part)).join(` ${theme.fg("dim", "·")} `)}`;
 		const trimmedPreview = details.resultPreview.trim();
-		const previewLines = options.expanded
-			? trimmedPreview.split("\n").filter((line) => line.trim())
-			: [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
+		const allPreviewLines = trimmedPreview.split("\n").filter((line) => line.trim());
+		let previewLines = options.expanded ? allPreviewLines : allPreviewLines.slice(0, 1);
+		if (toolResultDisplay === "compact" && !options.expanded && allPreviewLines.length > 1) {
+			const firstLabel = allPreviewLines[0]?.trim().match(/^([^:]+):$/)?.[1]?.trim();
+			const agentLabels = details.agent.replace(/^(?:parallel|chain):/, "").split("+").map((label) => label.trim());
+			if (firstLabel && agentLabels.includes(firstLabel)) previewLines = allPreviewLines.slice(1, 2);
+		}
 		for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
 			text += `\n  ${theme.fg("dim", `⎿  ${line}`)}`;
 		}
-		if (!options.expanded && trimmedPreview.includes("\n")) {
+		const hideSession = toolResultDisplay === "compact"
+			&& !options.expanded
+			&& details.sessionLabel?.toLowerCase() !== "session share error";
+		if (!options.expanded && (trimmedPreview.includes("\n") || (hideSession && details.sessionValue))) {
 			const expandKey = keyText("app.tools.expand");
 			text += `\n  ${theme.fg("dim", `${expandKey} full notification`)}`;
 		}
-		if (details.sessionLabel && details.sessionValue) {
+		if (details.sessionLabel && details.sessionValue && !hideSession) {
 			text += `\n  ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
 		}
 		return new Text(text, 0, 0);

@@ -124,6 +124,7 @@ describe("subagent extension child mode", () => {
 			const script = String.raw`
 				import registerSubagentExtension from "./index.ts";
 				const handlers = new Map();
+				const messageRenderers = new Map();
 				const events = { on() { return () => {}; }, emit() {} };
 				let registeredTool;
 				let registeredWaitTool;
@@ -134,7 +135,7 @@ describe("subagent extension child mode", () => {
 						if (tool.name === "subagent") registeredTool = tool;
 						if (tool.name === "subagent_wait") registeredWaitTool = tool;
 					},
-					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {},
+					registerCommand() {}, registerShortcut() {}, registerMessageRenderer(type, renderer) { messageRenderers.set(type, renderer); }, sendMessage() {},
 					getSessionName() { return undefined; },
 				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 				registerSubagentExtension(fakePi);
@@ -161,6 +162,13 @@ describe("subagent extension child mode", () => {
 				const waitResult = { content: [{ type: "text", text: "Waited 28.0s for run; done. Completion/control events observed." }], details: { mode: "management", results: [] } };
 				const compactWait = render(registeredWaitTool, waitResult, false, { id: "9599e8ca-f11e" });
 				if (!compactWait.call.includes("subagent_wait · done · 28.0s · run 9599e8ca") || compactWait.output) throw new Error("unexpected compact wait: " + JSON.stringify(compactWait));
+				const notificationRenderer = messageRenderers.get("subagent-notify");
+				if (!notificationRenderer) throw new Error("notification renderer not registered");
+				const notification = { content: "Background task completed: **delegate**\n\ndelegate:\nCOMPACT-OK\n\nSession file: C:\\tmp\\session.jsonl" };
+				const compactNotification = notificationRenderer(notification, { expanded: false }, theme).render(200).join("\n");
+				if (!compactNotification.includes("COMPACT-OK") || compactNotification.includes("⎿  delegate:") || compactNotification.includes("session.jsonl")) throw new Error("unexpected compact notification: " + compactNotification);
+				const expandedNotification = notificationRenderer(notification, { expanded: true }, theme).render(200).join("\n");
+				if (!expandedNotification.includes("⎿  delegate:") || !expandedNotification.includes("session.jsonl")) throw new Error("expanded notification lost details: " + expandedNotification);
 				handlers.get("session_shutdown")?.();
 			`;
 			const env = parentToolEnv();
