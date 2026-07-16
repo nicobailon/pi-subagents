@@ -21,7 +21,7 @@ function parentToolEnv(): NodeJS.ProcessEnv {
 describe("subagent extension child mode", () => {
 	it("collapses tool detail before direct subagent tool execution", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
 			const fakePi = new Proxy({
@@ -73,7 +73,7 @@ describe("subagent extension child mode", () => {
 
 	it("does not show async badge for explicit foreground clarify chain calls", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
 			const fakePi = new Proxy({
@@ -123,7 +123,7 @@ describe("subagent extension child mode", () => {
 			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ waitTool: { enabled: false } }), "utf-8");
 
 			const script = String.raw`
-				import registerSubagentExtension from "./src/extension/index.ts";
+				import registerSubagentExtension from "./index.ts";
 				const events = { on() { return () => {}; }, emit() {} };
 				let subagentWaitTool;
 				let legacyWaitRegistered = false;
@@ -178,7 +178,7 @@ describe("subagent extension child mode", () => {
 			fs.mkdirSync(configDir, { recursive: true });
 			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncWidget: false }), "utf-8");
 			const script = String.raw`
-				import registerSubagentExtension from "./src/extension/index.ts";
+				import registerSubagentExtension from "./index.ts";
 				const eventHandlers = new Map();
 				const handlers = new Map();
 				const events = { on(channel, handler) { eventHandlers.set(channel, handler); return () => {}; }, emit() {} };
@@ -213,7 +213,7 @@ describe("subagent extension child mode", () => {
 
 	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			const commands = [];
 			const renderers = [];
@@ -252,7 +252,7 @@ describe("subagent extension child mode", () => {
 
 	it("returns before registering anything for non-fanout children", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerSubagentExtension from "./index.ts";
 			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
 			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "0";
@@ -287,7 +287,7 @@ describe("subagent extension child mode", () => {
 
 	it("returns before registering anything for fanout children", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerSubagentExtension from "./index.ts";
 			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
 			process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
@@ -323,7 +323,7 @@ describe("subagent extension child mode", () => {
 
 	it("does not double-register the child-safe subagent tool when index and fanout-child both load", () => {
 		const script = String.raw`
-			import registerSubagentExtension from "./src/extension/index.ts";
+			import registerSubagentExtension from "./index.ts";
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
 			import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";

@@ -25,6 +25,17 @@ function collectTsFiles(dir: string): string[] {
 	return files;
 }
 
+test("published Pi extension uses the package-root entrypoint", () => {
+	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
+
+	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
+	assert.equal(packageJson.files?.includes("index.ts"), true);
+	assert.equal(
+		fs.readFileSync(path.join(projectRoot, "index.ts"), "utf-8").trim(),
+		'export { default } from "./src/extension/index.ts";',
+	);
+});
+
 test("direct @earendil-works runtime imports are declared for CI installs", () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
 	const declared = new Set([
