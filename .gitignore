@@ -5,3 +5,9 @@ AGENTS.md
 node_modules/
 .fallow/
 tmp/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
