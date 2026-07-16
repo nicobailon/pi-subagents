@@ -74,9 +74,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const activeGroup = run.currentStep !== undefined
 			? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
 			: undefined;
-		const visibleSteps = activeGroup
-			? run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
-			: run.steps.map((step, index) => ({ ...step, index }));
+		const allSteps = run.steps.map((step, index) => ({ ...step, index }));
 		return {
 			asyncId: run.id,
 			asyncDir: run.asyncDir,
@@ -91,14 +89,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			toolCount: run.toolCount,
 			steering: run.steering,
 			mode: run.mode,
-			agents: visibleSteps.map((step) => step.agent),
+			agents: allSteps.map((step) => step.agent),
 			currentStep: run.currentStep,
 			chainStepCount: run.chainStepCount,
 			parallelGroups: groups,
-			steps: visibleSteps,
-			stepsTotal: visibleSteps.length,
-			runningSteps: visibleSteps.filter((step) => step.status === "running").length,
-			completedSteps: visibleSteps.filter((step) => step.status === "complete" || step.status === "completed").length,
+			workflowGraph: run.workflowGraph,
+			steps: allSteps,
+			stepsTotal: allSteps.length,
+			runningSteps: allSteps.filter((step) => step.status === "running").length,
+			completedSteps: allSteps.filter((step) => step.status === "complete" || step.status === "completed").length,
 			hasParallelGroups: groups.length > 0,
 			activeParallelGroup: Boolean(activeGroup),
 			startedAt: run.startedAt,
@@ -317,6 +316,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.mode = status.mode;
 						job.currentStep = status.currentStep ?? job.currentStep;
 						job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
+						job.workflowGraph = status.workflowGraph ?? job.workflowGraph;
 						job.startedAt = status.startedAt ?? job.startedAt;
 						if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
 						if (status.steps?.length) {
@@ -326,17 +326,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							const activeGroup = status.currentStep !== undefined
 								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
 								: undefined;
-							const visibleSteps = activeGroup
-								? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
-								: status.steps.map((step, index) => ({ ...step, index }));
+							const allSteps = status.steps.map((step, index) => ({ ...step, index }));
 							job.activeParallelGroup = Boolean(activeGroup);
-							job.agents = visibleSteps.map((step) => step.agent);
-							job.steps = visibleSteps;
+							job.agents = allSteps.map((step) => step.agent);
+							job.steps = allSteps;
 							refreshNestedProjection();
-							job.stepsTotal = visibleSteps.length;
-							job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
-							job.completedSteps = visibleSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
-							if (status.state === "complete") job.completedSteps = visibleSteps.length;
+							job.stepsTotal = allSteps.length;
+							job.runningSteps = allSteps.filter((step) => step.status === "running").length;
+							job.completedSteps = allSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
+							if (status.state === "complete") job.completedSteps = allSteps.length;
 						}
 						job.sessionDir = status.sessionDir ?? job.sessionDir;
 						job.outputFile = status.outputFile ?? job.outputFile;
@@ -390,10 +388,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const rawAgents = info.agents?.length ? info.agents : info.chain && info.chain.length > 0 ? info.chain : info.agent ? [info.agent] : undefined;
 		const validParallelGroups = normalizeParallelGroups(info.parallelGroups, Number.MAX_SAFE_INTEGER, info.chainStepCount ?? Number.MAX_SAFE_INTEGER);
 		const firstGroup = validParallelGroups.find((group) => group.start === 0);
-		const firstGroupCount = firstGroup?.count;
-		const agents = firstGroupCount && firstGroupCount > 0
-			? rawAgents?.slice(0, firstGroupCount)
-			: rawAgents;
+		const graphSteps = info.workflowGraph?.nodes.flatMap((node) => node.children?.length ? node.children : [node])
+			.filter((node) => node.flatIndex !== undefined && node.agent)
+			.sort((left, right) => left.flatIndex! - right.flatIndex!)
+			.map((node) => ({ index: node.flatIndex, agent: node.agent!, label: node.label, status: "pending" as const, recentTools: [], recentOutput: [] }));
+		const agents = graphSteps?.length ? graphSteps.map((step) => step.agent) : rawAgents;
 		state.asyncJobs.set(info.id, {
 			asyncId: info.id,
 			asyncDir,
@@ -404,10 +403,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			agents,
 			chainStepCount: info.chainStepCount,
 			parallelGroups: validParallelGroups,
+			workflowGraph: info.workflowGraph,
+			...(graphSteps?.length ? { steps: graphSteps } : {}),
 			nestedRoute: info.nestedRoute,
-			stepsTotal: firstGroupCount ?? agents?.length,
+			stepsTotal: graphSteps?.length ?? agents?.length,
 			hasParallelGroups: validParallelGroups.length > 0,
-			activeParallelGroup: Boolean(firstGroupCount && firstGroupCount > 0),
+			activeParallelGroup: Boolean(firstGroup),
 			startedAt: now,
 			updatedAt: now,
 			timeoutMs: info.timeoutMs,

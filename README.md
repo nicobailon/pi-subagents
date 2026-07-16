@@ -1536,7 +1536,7 @@ Foreground runs show compact live progress for single, chain, and parallel modes
 
 Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
 
-Sequential chains show a flow line like `done scout → running planner`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
+Sequential chains show a flow line like `done scout → running planner`. Live async chains render each parallel step as a named group row with its member agents visible while pending, running, and complete; member rows use the resolved label first and the agent role second. Dynamic groups show `awaiting targets` until children materialize. Collapsed widgets keep the adaptive row budget and replace omitted group members with a `+N more agents` row. Chain status uses `label` and `phase` metadata when present, while falling back to deterministic task-derived names for older calls.
 
 ## Session sharing
 

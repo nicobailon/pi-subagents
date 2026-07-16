@@ -310,6 +310,7 @@ export function widgetRenderKey(job: AsyncJobState): string {
 		currentStep: job.currentStep,
 		chainStepCount: job.chainStepCount,
 		parallelGroups: job.parallelGroups,
+		workflowGraph: job.workflowGraph,
 		steps: job.steps,
 		nestedChildren: job.nestedChildren,
 		stepsTotal: job.stepsTotal,
@@ -422,6 +423,12 @@ function widgetStepStatus(status: AsyncJobStep["status"], theme: Theme): string 
 	return theme.fg("dim", status);
 }
 
+function widgetStepDisplay(step: NonNullable<AsyncJobState["steps"]>[number], theme: Theme): string {
+	const label = step.label?.trim() || step.agent;
+	const role = label === step.agent ? "" : ` ${theme.fg("dim", `[${step.agent}]`)}`;
+	return `${themeBold(theme, label)}${role}`;
+}
+
 function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], snapshotNow?: number): string {
 	const facts: string[] = [];
 	if (step.currentTool && step.currentToolStartedAt !== undefined && snapshotNow !== undefined) facts.push(`${step.currentTool} ${formatDuration(Math.max(0, snapshotNow - step.currentToolStartedAt))}`);
@@ -437,15 +444,61 @@ function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], s
 }
 
 
+function compactWidgetStepLine(
+	job: AsyncJobState,
+	theme: Theme,
+	step: NonNullable<AsyncJobState["steps"]>[number],
+	itemTitle: "Agent" | "Step",
+	index: number,
+	total: number,
+	width: number,
+): string {
+	const status = widgetStepStatus(step.status, theme);
+	const stats = widgetStepStats(theme, step);
+	const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
+	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+	return `  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1))} ${itemTitle} ${index}/${total}: ${widgetStepDisplay(step, theme)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : ""}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`;
+}
+
 function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth()): string[] {
 	if (!job.steps?.length) return [];
 	const total = job.chainStepCount ?? job.steps.length;
+	const spans = buildAsyncChainStepSpans(total, job.steps.length, job.parallelGroups);
+	const bodyBudget = expanded ? Number.POSITIVE_INFINITY : Math.max(spans.length, collapsedWidgetLineBudget(currentTerminalRows()) - 2);
+	let memberBudget = Math.max(0, bodyBudget - spans.length);
 	const lines: string[] = [];
-	for (const span of buildAsyncChainStepSpans(total, job.steps.length, job.parallelGroups)) {
-		const steps = job.steps.slice(span.start, span.start + span.count);
-		if (span.isParallel) {
-			const status = aggregateStepStatus(steps);
-			lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count))}`);
+	for (const span of spans) {
+		const graphNode = job.workflowGraph?.nodes.find((node) => node.stepIndex === span.stepIndex);
+		const graphMembers = graphNode?.children?.map((node) => node.flatIndex === undefined ? undefined : job.steps?.[node.flatIndex]).filter((step): step is AsyncJobStep => Boolean(step));
+		const steps = graphNode?.kind === "dynamic-parallel-group" && !graphNode.children?.length
+			? []
+			: graphMembers?.length ? graphMembers : job.steps.slice(span.start, span.start + span.count);
+		const isGroup = span.isParallel || graphNode?.kind === "parallel-group" || graphNode?.kind === "dynamic-parallel-group";
+		if (isGroup) {
+			const status = steps.length ? aggregateStepStatus(steps) : (graphNode?.status ?? "pending") as AsyncJobStep["status"];
+			const label = graphNode?.label || (graphNode?.kind === "dynamic-parallel-group" ? "Dynamic fanout" : "Parallel group");
+			const memberCount = Math.max(span.count, graphNode?.children?.length ?? 0);
+			const outcome = graphNode?.kind === "dynamic-parallel-group" && !graphNode.children?.length
+				? "awaiting targets"
+				: steps.length > 0 && steps.every((step) => step.status === "pending")
+					? `pending · ${memberCount} agents`
+					: formatParallelOutcome(steps, memberCount);
+			lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, label)} ${theme.fg("dim", `· parallel · ${outcome}`)}`);
+			if (!steps.length) continue;
+			let visibleCount = steps.length;
+			let showOverflow = false;
+			if (!expanded && visibleCount > memberBudget) {
+				showOverflow = memberBudget > 0;
+				visibleCount = Math.max(0, memberBudget - (showOverflow ? 1 : 0));
+			}
+			for (let index = 0; index < visibleCount; index++) {
+				const childLines = expanded
+					? foregroundStyleWidgetStepLines(job, theme, steps[index]!, "Agent", index + 1, steps.length, true, width)
+					: [compactWidgetStepLine(job, theme, steps[index]!, "Agent", index + 1, steps.length, width)];
+				lines.push(...childLines.map((line) => `  ${line}`));
+			}
+			if (showOverflow) lines.push(theme.fg("dim", `    +${steps.length - visibleCount} more agents`));
+			if (!expanded) memberBudget = Math.max(0, memberBudget - visibleCount - (showOverflow ? 1 : 0));
 			continue;
 		}
 		const step = steps[0];
@@ -453,7 +506,8 @@ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, 
 			lines.push(`  ${theme.fg("dim", `◦ Step ${span.stepIndex + 1}/${total}: pending`)}`);
 			continue;
 		}
-		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, "Step", span.stepIndex + 1, total, expanded, width));
+		if (expanded) lines.push(...foregroundStyleWidgetStepLines(job, theme, step, "Step", span.stepIndex + 1, total, true, width));
+		else lines.push(compactWidgetStepLine(job, theme, step, "Step", span.stepIndex + 1, total, width));
 	}
 	return lines;
 }
@@ -461,7 +515,7 @@ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, 
 function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth()): string[] {
 	if (!job.steps?.length) return [];
 	if (job.mode !== "parallel" && job.mode !== "chain") return [];
-	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width);
+	if (job.mode === "chain" && (job.parallelGroups?.length || job.workflowGraph?.nodes.some((node) => node.kind === "dynamic-parallel-group"))) return widgetChainDetails(job, theme, expanded, width);
 	const total = job.stepsTotal ?? job.steps.length;
 	const lines: string[] = [];
 	for (const [index, step] of job.steps.entries()) {
@@ -469,7 +523,7 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const activity = widgetStepActivity(step, job.updatedAt);
 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.label?.trim() || step.agent}${step.label?.trim() && step.label.trim() !== step.agent ? ` [${step.agent}]` : ""} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1)) lines.push(`    ${nestedLine}`);
 	}
 	return lines;
@@ -855,7 +909,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
-				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
+				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.label?.trim() || step.agent}${step.label?.trim() && step.label.trim() !== step.agent ? ` [${step.agent}]` : ""} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
 			append(child.children, depth + 1, `${prefix}  `);
@@ -878,7 +932,7 @@ function foregroundStyleWidgetStepLines(
 	const status = widgetStepStatus(step.status, theme);
 	const stats = widgetStepStats(theme, step);
 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1))} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1))} ${itemTitle} ${index}/${total}: ${widgetStepDisplay(step, theme)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt)) {
@@ -909,7 +963,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 		`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 		...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt).map((line) => `  ${line}`),
 	];
-	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width);
+	if (job.mode === "chain" && (job.parallelGroups?.length || job.workflowGraph?.nodes.some((node) => node.kind === "dynamic-parallel-group"))) return widgetChainDetails(job, theme, expanded, width);
 	const total = job.stepsTotal ?? job.steps.length;
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 	const lines: string[] = [];
@@ -949,7 +1003,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const stepStats = widgetStepStats(theme, step);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${widgetStepDisplay(step, theme)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt)) lines.push(`    ${nestedLine}`);
 	}
 	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
