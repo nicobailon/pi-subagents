@@ -279,10 +279,11 @@ function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps)
 
 function reserveSubagentSpawns(input: { state: SubagentState; config: ExtensionConfig; sessionId: string | null; requested: number; mode: "single" | "parallel" | "chain" }): AgentToolResult<Details> | undefined {
 	if (input.requested <= 0) return undefined;
+	const maxSpawns = resolveMaxSubagentSpawnsPerSession(input.config.maxSubagentSpawnsPerSession);
+	if (maxSpawns === undefined) return undefined;
 	if (input.state.subagentSpawns?.sessionId !== input.sessionId) {
 		input.state.subagentSpawns = { sessionId: input.sessionId, count: 0 };
 	}
-	const maxSpawns = resolveMaxSubagentSpawnsPerSession(input.config.maxSubagentSpawnsPerSession);
 	const used = input.state.subagentSpawns.count;
 	if (used + input.requested > maxSpawns) {
 		return {

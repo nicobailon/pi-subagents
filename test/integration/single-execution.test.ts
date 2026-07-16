@@ -278,10 +278,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		agents = [makeAgent("echo")],
 		config: Record<string, unknown> = {},
 		asyncByDefault = false,
+		initialSpawnState?: { sessionId: string | null; count: number },
 	) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			state: {
+				baseCwd: tempDir,
+				currentSessionId: initialSpawnState?.sessionId ?? null,
+				...(initialSpawnState ? { subagentSpawns: initialSpawnState } : {}),
+				asyncJobs: new Map(),
+				foregroundControls: new Map(),
+				lastForegroundControlId: null,
+			},
 			config,
 			asyncByDefault,
 			tempArtifactsDir: tempDir,
@@ -409,7 +417,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("blocks total subagent spawns after the per-session quota", async () => {
+	it("does not impose a cumulative spawn cap by default", async () => {
+		mockPi.onCall({ output: "continued after forty launches" });
+		const spawnState = { sessionId: "session-123", count: 40 };
+		const executor = makeExecutor([makeAgent("echo")], {}, false, spawnState);
+		const ctx = makeMinimalCtx(tempDir);
+
+		const result = await executor.execute("forty-one", { agent: "echo", task: "Continue work" }, new AbortController().signal, undefined, ctx);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(spawnState.count, 40, "unlimited sessions should bypass cumulative accounting");
+	});
+
+	it("blocks total subagent spawns after an opt-in per-session quota", async () => {
 		mockPi.onCall({ output: "first call completed" });
 		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 });
 		const ctx = makeMinimalCtx(tempDir);

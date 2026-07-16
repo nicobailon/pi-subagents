@@ -4,7 +4,6 @@ import {
 	checkSubagentDepth,
 	getSubagentDepthEnv,
 	DEFAULT_SUBAGENT_MAX_DEPTH,
-	DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION,
 	normalizeMaxSubagentDepth,
 	normalizeMaxSubagentSpawnsPerSession,
 	resolveMaxSubagentSpawnsPerSession,
@@ -39,12 +38,6 @@ describe("DEFAULT_SUBAGENT_MAX_DEPTH", () => {
 	});
 });
 
-describe("DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION", () => {
-	it("is 40", () => {
-		assert.equal(DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION, 40);
-	});
-});
-
 describe("normalizeMaxSubagentDepth", () => {
 	it("accepts integers >= 0", () => {
 		assert.equal(normalizeMaxSubagentDepth(0), 0);
@@ -74,20 +67,35 @@ describe("normalizeMaxSubagentSpawnsPerSession", () => {
 });
 
 describe("resolveMaxSubagentSpawnsPerSession", () => {
-	it("uses env when present", () => {
+	it("uses positive env values as opt-in caps", () => {
 		process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = "5";
 		assert.equal(resolveMaxSubagentSpawnsPerSession(1), 5);
 	});
 
-	it("falls back to config when env is absent", () => {
+	it("falls back to a positive config cap when env is absent", () => {
 		delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
 		assert.equal(resolveMaxSubagentSpawnsPerSession(7), 7);
 	});
 
-	it("falls back to default when neither env nor config is valid", () => {
+	it("ignores invalid env values and falls back to config", () => {
+		for (const value of ["garbage", "-1", "1.5"]) {
+			process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = value;
+			assert.equal(resolveMaxSubagentSpawnsPerSession(7), 7);
+			assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), undefined);
+		}
+	});
+
+	it("is unlimited by default", () => {
 		delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
-		assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), 40);
-		assert.equal(resolveMaxSubagentSpawnsPerSession(-1), 40);
+		assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), undefined);
+		assert.equal(resolveMaxSubagentSpawnsPerSession(-1), undefined);
+	});
+
+	it("treats zero as an explicit unlimited override", () => {
+		process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = "0";
+		assert.equal(resolveMaxSubagentSpawnsPerSession(7), undefined);
+		delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
+		assert.equal(resolveMaxSubagentSpawnsPerSession(0), undefined);
 	});
 });
 

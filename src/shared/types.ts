@@ -1159,6 +1159,7 @@ export interface ExtensionConfig {
 	defaultSessionDir?: string;
 	singleRunOutputBaseDir?: string;
 	maxSubagentDepth?: number;
+	/** Optional cumulative session cap. Unset or 0 means unlimited. */
 	maxSubagentSpawnsPerSession?: number;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
@@ -1266,7 +1267,6 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 40;
 export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "interrupt", "resume", "steer", "stop", "append-step", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
@@ -1352,10 +1352,11 @@ export function normalizeMaxSubagentSpawnsPerSession(value: unknown): number | u
 	return normalizeNonNegativeInteger(value);
 }
 
-export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): number {
-	return normalizeMaxSubagentSpawnsPerSession(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION)
-		?? normalizeMaxSubagentSpawnsPerSession(configMaxSpawns)
-		?? DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION;
+export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): number | undefined {
+	const envMaxSpawns = normalizeMaxSubagentSpawnsPerSession(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION);
+	if (envMaxSpawns !== undefined) return envMaxSpawns === 0 ? undefined : envMaxSpawns;
+	const configuredMaxSpawns = normalizeMaxSubagentSpawnsPerSession(configMaxSpawns);
+	return configuredMaxSpawns === 0 ? undefined : configuredMaxSpawns;
 }
 
 // ============================================================================
