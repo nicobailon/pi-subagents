@@ -111,6 +111,8 @@ export interface DynamicParallelStep {
 /** Parallel step: multiple agents running concurrently */
 export interface ParallelStep {
 	parallel: ParallelTaskItem[];
+	phase?: string;
+	label?: string;
 	concurrency?: number;
 	failFast?: boolean;
 	worktree?: boolean;

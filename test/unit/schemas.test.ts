@@ -10,9 +10,11 @@ interface SubagentParamsSchema {
 			enum?: string[];
 			description?: string;
 		};
+		label?: JsonSchemaNode;
 		tasks?: {
 			items?: {
 				properties?: {
+					label?: JsonSchemaNode;
 					count?: {
 						minimum?: number;
 						description?: string;
@@ -153,8 +155,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(description, /overrides every child/);
 	});
 
-	it("includes count and concurrency on top-level parallel mode", () => {
+	it("includes labels, count, and concurrency on top-level execution modes", () => {
+		assert.equal(SubagentParams?.properties?.label?.type, "string");
 		const taskSchema = SubagentParams?.properties?.tasks?.items?.properties;
+		assert.equal(taskSchema?.label?.type, "string");
 		const taskCountSchema = taskSchema?.count;
 		assert.ok(taskCountSchema, "tasks[].count schema should exist");
 		assert.equal(taskCountSchema.minimum, 1);
