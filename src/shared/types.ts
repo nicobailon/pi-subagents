@@ -928,6 +928,7 @@ export interface AsyncJobState {
 	currentStep?: number;
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
+	workflowGraph?: WorkflowGraphSnapshot;
 	steps?: AsyncJobStep[];
 	stepsTotal?: number;
 	runningSteps?: number;
