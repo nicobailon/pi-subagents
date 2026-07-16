@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Added YAML folded block scalar support for agent and chain frontmatter descriptions, preserving quoted indicators, more-indented content, and blank-line separators. Thanks to Luis Cinco (@tekniko24) for #488.
 - Distinguished interactive async yielding from headless auto-drain guidance, so interactive sessions return control by default while non-interactive sessions retain a completion path. Thanks to Luke Chen (@lukechen526) for #480.
 - Deferred hard turn-budget termination when an assistant starts tool work at the limit, exposing `termination-deferred` until the next safe assistant boundary while elapsed timeout and explicit stop retain precedence. Guidance now conservatively keeps hard turn and tool-call caps off mutation-capable workers. Thanks to JT (@juicetin) for #482 and #483.
 - Prevented watchdog idle notices while a child tool is actively running and made top-level live async `resume` a non-destructive error that directs callers to `steer`; paused, completed, or failed children retain current-session-scoped revival behavior, while stopped runs remain non-resumable. Thanks to Vlad Bereznyuk (@vrolok) for #496 and #497, and @wiansapu for confirming #496's user impact.

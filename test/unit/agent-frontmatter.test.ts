@@ -7,6 +7,7 @@ import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
 import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
+import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
@@ -53,6 +54,86 @@ afterEach(() => {
 		if (!dir) continue;
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+describe("folded frontmatter blocks", () => {
+	it("folds ordinary lines and paragraph breaks for > and >-", () => {
+		const expected = "first line second line\nthird line";
+		const folded = parseFrontmatter(`---
+name: worker
+description: >
+  first line
+  second line
+
+  third line
+---
+body`);
+		const stripped = parseFrontmatter(`---
+name: worker
+description: >-
+  first line
+  second line
+
+  third line
+---
+body`);
+
+		assert.equal(folded.frontmatter.description, expected);
+		assert.equal(stripped.frontmatter.description, expected);
+		assert.equal(folded.frontmatter.name, "worker");
+	});
+
+	it("keeps quoted indicators as literal values", () => {
+		const parsed = parseFrontmatter(`---
+description: ">"
+other: '>-'
+---
+body`);
+
+		assert.equal(parsed.frontmatter.description, ">");
+		assert.equal(parsed.frontmatter.other, ">-");
+	});
+
+	it("preserves more-indented lines and repeated whitespace-only separators", () => {
+		const parsed = parseFrontmatter(`---
+description: >
+  normal
+    code
+  next
+
+  first
+
+  ${" ".repeat(3)}
+  second
+name: worker
+---
+body`);
+
+		assert.equal(parsed.frontmatter.description, "normal\n  code\nnext\nfirst\n\nsecond");
+		assert.equal(parsed.frontmatter.name, "worker");
+	});
+
+	it("keeps paragraph breaks adjacent to more-indented lines", () => {
+		const afterIndented = parseFrontmatter(`---
+description: >
+  normal
+    code
+
+  next
+---
+body`);
+		const beforeIndented = parseFrontmatter(`---
+description: >
+  normal
+
+    code
+  next
+---
+body`);
+
+		assert.equal(afterIndented.frontmatter.description, "normal\n  code\n\nnext");
+		assert.equal(beforeIndented.frontmatter.description, "normal\n\n  code\nnext");
+	});
 });
 
 describe("agent skillPath frontmatter", () => {
