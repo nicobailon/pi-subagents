@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceInput, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceRole, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
@@ -65,6 +65,7 @@ export interface BuiltinAgentOverrideBase {
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
 	defaultContext?: AgentDefaultContext;
+	acceptanceRole?: AcceptanceRole;
 	disabled?: boolean;
 	systemPrompt: string;
 	skills?: string[];
@@ -84,6 +85,7 @@ interface BuiltinAgentOverrideConfig {
 	inheritProjectContext?: boolean;
 	inheritSkills?: boolean;
 	defaultContext?: AgentDefaultContext | false;
+	acceptanceRole?: AcceptanceRole | false;
 	disabled?: boolean;
 	systemPrompt?: string;
 	skills?: string[] | false;
@@ -124,6 +126,7 @@ export interface AgentConfig {
 	defaultTimeoutMs?: number;
 	defaultTurnBudget?: TurnBudgetConfig;
 	defaultAcceptance?: AcceptanceInput;
+	acceptanceRole?: AcceptanceRole;
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
@@ -503,6 +506,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
 		defaultContext: agent.defaultContext,
+		acceptanceRole: agent.acceptanceRole,
 		disabled: agent.disabled,
 		systemPrompt: agent.systemPrompt,
 		skills: agent.skills ? [...agent.skills] : undefined,
@@ -526,6 +530,7 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 		...(override.inheritProjectContext !== undefined ? { inheritProjectContext: override.inheritProjectContext } : {}),
 		...(override.inheritSkills !== undefined ? { inheritSkills: override.inheritSkills } : {}),
 		...(override.defaultContext !== undefined ? { defaultContext: override.defaultContext } : {}),
+		...(override.acceptanceRole !== undefined ? { acceptanceRole: override.acceptanceRole } : {}),
 		...(override.disabled !== undefined ? { disabled: override.disabled } : {}),
 		...(override.systemPrompt !== undefined ? { systemPrompt: override.systemPrompt } : {}),
 		...(override.skills !== undefined ? { skills: override.skills === false ? false : [...override.skills] } : {}),
@@ -658,6 +663,14 @@ function parseBuiltinOverrideEntry(
 			override.defaultContext = input.defaultContext;
 		} else {
 			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'defaultContext'; expected 'fresh', 'fork', or false.`);
+		}
+	}
+
+	if ("acceptanceRole" in input) {
+		if (input.acceptanceRole === "read-only" || input.acceptanceRole === "writer" || input.acceptanceRole === false) {
+			override.acceptanceRole = input.acceptanceRole;
+		} else {
+			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'acceptanceRole'; expected 'read-only', 'writer', or false.`);
 		}
 	}
 
@@ -796,6 +809,7 @@ function applyBuiltinOverride(
 	if (override.inheritProjectContext !== undefined) next.inheritProjectContext = override.inheritProjectContext;
 	if (override.inheritSkills !== undefined) next.inheritSkills = override.inheritSkills;
 	if (override.defaultContext !== undefined) next.defaultContext = override.defaultContext === false ? undefined : override.defaultContext;
+	if (override.acceptanceRole !== undefined) next.acceptanceRole = override.acceptanceRole === false ? undefined : override.acceptanceRole;
 	if (override.disabled !== undefined) next.disabled = override.disabled;
 	if (override.systemPrompt !== undefined) next.systemPrompt = override.systemPrompt;
 	if (override.skills !== undefined) next.skills = override.skills === false ? undefined : [...override.skills];
@@ -930,6 +944,9 @@ function applyCustomAgentOverride(
 	if (override.defaultContext !== undefined) {
 		fill("defaultContext", ["defaultContext"], override.defaultContext === false ? undefined : override.defaultContext);
 	}
+	if (override.acceptanceRole !== undefined) {
+		fill("acceptanceRole", ["acceptanceRole"], override.acceptanceRole === false ? undefined : override.acceptanceRole);
+	}
 	if (override.disabled !== undefined && agent.disabled === undefined) {
 		mutable().disabled = override.disabled;
 		anyFilled = true;
@@ -987,7 +1004,7 @@ function applyCustomAgentOverrides(
 
 export function buildBuiltinOverrideConfig(
 	base: BuiltinAgentOverrideBase,
-	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget">,
+	draft: Pick<AgentConfig, "model" | "fallbackModels" | "thinking" | "systemPromptMode" | "inheritProjectContext" | "inheritSkills" | "defaultContext" | "acceptanceRole" | "disabled" | "systemPrompt" | "skills" | "tools" | "mcpDirectTools" | "subagentOnlyExtensions" | "completionGuard" | "toolBudget">,
 ): BuiltinAgentOverrideConfig | undefined {
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -998,6 +1015,7 @@ export function buildBuiltinOverrideConfig(
 	if (draft.inheritProjectContext !== base.inheritProjectContext) override.inheritProjectContext = draft.inheritProjectContext;
 	if (draft.inheritSkills !== base.inheritSkills) override.inheritSkills = draft.inheritSkills;
 	if (draft.defaultContext !== base.defaultContext) override.defaultContext = draft.defaultContext ?? false;
+	if (draft.acceptanceRole !== base.acceptanceRole) override.acceptanceRole = draft.acceptanceRole ?? false;
 	if (draft.disabled !== base.disabled) override.disabled = draft.disabled ?? false;
 	if (draft.systemPrompt !== base.systemPrompt) override.systemPrompt = draft.systemPrompt;
 	if (!arraysEqual(draft.skills, base.skills)) override.skills = draft.skills ? [...draft.skills] : false;
@@ -1287,6 +1305,11 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			defaultTurnBudget = resolved.turnBudget;
 		}
 		const defaultAcceptance = parseAgentAcceptanceFrontmatter(frontmatter.acceptance, localName);
+		let acceptanceRole: AcceptanceRole | undefined;
+		if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
+			if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer") acceptanceRole = frontmatter.acceptanceRole;
+			else throw new Error(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
+		}
 
 		let extensions: string[] | undefined;
 		if (frontmatter.extensions !== undefined) {
@@ -1341,6 +1364,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			defaultTimeoutMs,
 			defaultTurnBudget,
 			defaultAcceptance,
+			acceptanceRole,
 			systemPrompt: body,
 			source,
 			filePath,

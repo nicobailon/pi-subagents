@@ -9,6 +9,7 @@ import type {
 	AcceptanceLedger,
 	AcceptanceLevel,
 	AcceptanceReport,
+	AcceptanceRole,
 	AcceptanceRuntimeCheck,
 	AcceptanceRuntimeCheckStatus,
 	AcceptanceReviewResult,
@@ -71,6 +72,7 @@ function requiredEvidenceForLevel(level: Exclude<AcceptanceLevel, "auto">): Acce
 
 function inferLevel(input: {
 	agentName: string;
+	acceptanceRole?: AcceptanceRole;
 	task?: string;
 	mode?: SubagentRunMode;
 	async?: boolean;
@@ -80,17 +82,27 @@ function inferLevel(input: {
 	const agent = input.agentName.toLowerCase();
 	const task = input.task?.toLowerCase() ?? "";
 	const reasons: string[] = [];
-	const intent = classifyTaskMutationIntent(input.agentName, input.task ?? "");
-	const readOnlyAgent = /\b(?:reviewer|scout|context-builder|researcher|analyst)\b/.test(agent);
+	// Declared roles replace name heuristics, so use the full writer grammar to detect explicit mutation independently of the actual agent name.
+	const intent = classifyTaskMutationIntent(input.acceptanceRole ? "worker" : input.agentName, input.task ?? "");
 	const readOnlyTask = intent.kind === "read-only"
 		|| (intent.kind === "unknown" && /\b(?:read[- ]only|review[- ]only|no edits|without edits|inspect|summari[sz]e)\b/.test(task));
-	const writeTask = taskMayMutate(input.task ?? "")
-		|| intent.kind === "implementation"
-		|| (/\bworker\b/.test(agent) && !readOnlyTask);
+	const rolePatchTask = input.acceptanceRole !== undefined
+		&& intent.kind !== "read-only"
+		&& !/\b(?:do not|don't|must not)\s+patch\b/.test(task)
+		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(task);
+	const taskMayWrite = taskMayMutate(input.task ?? "") || intent.kind === "implementation" || rolePatchTask;
+	const readOnlyAgent = input.acceptanceRole === "read-only"
+		|| (input.acceptanceRole === undefined && /\b(?:reviewer|scout|context-builder|researcher|analyst)\b/.test(agent));
+	const writeTask = taskMayWrite
+		|| (input.acceptanceRole === "writer" && !readOnlyTask)
+		|| (input.acceptanceRole === undefined && /\bworker\b/.test(agent) && !readOnlyTask);
+	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskMayWrite);
+	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
+	const keywordRiskReadOnly = input.acceptanceRole === undefined ? intent.kind === "read-only" : inferredReadOnly;
 	const risky = Boolean(input.async && writeTask)
-		|| Boolean(input.dynamic)
-		|| Boolean(input.dynamicGroup)
-		|| (intent.kind !== "read-only" && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
+		|| (Boolean(input.dynamic) && !roleResolvesReadOnly)
+		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly)
+		|| (!keywordRiskReadOnly && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
 
 	if (risky) {
 		reasons.push(input.async ? "async write-capable or risky run" : "risky write-capable run");
@@ -104,7 +116,7 @@ function inferLevel(input: {
 		};
 	}
 	if (writeTask && !readOnlyTask) {
-		reasons.push("write-capable worker/task");
+		reasons.push(input.acceptanceRole === "writer" && !taskMayWrite ? "declared writer acceptance role" : "write-capable worker/task");
 		return {
 			level: "checked",
 			reasons,
@@ -113,7 +125,7 @@ function inferLevel(input: {
 		};
 	}
 	if (readOnlyAgent || readOnlyTask) {
-		reasons.push(readOnlyAgent ? "read-only/reviewer-style agent" : "read-only task wording");
+		reasons.push(input.acceptanceRole === "read-only" && !readOnlyTask ? "declared read-only acceptance role" : readOnlyAgent ? "read-only/reviewer-style agent" : "read-only task wording");
 		return {
 			level: "attested",
 			reasons,
@@ -306,6 +318,7 @@ function normalizeCriteria(criteria: Array<string | { id?: string; must?: string
 export function resolveEffectiveAcceptance(input: {
 	explicit?: AcceptanceInput;
 	agentName: string;
+	acceptanceRole?: AcceptanceRole;
 	task?: string;
 	mode?: SubagentRunMode;
 	async?: boolean;

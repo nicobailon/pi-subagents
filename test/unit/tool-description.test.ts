@@ -55,6 +55,10 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /schedule-list/);
 		assert.match(description, /action: "eject"/);
 		assert.match(description, /action: "disable"/);
+		assert.match(description, /acceptanceRole affects inferred acceptance only/i);
+		assert.match(description, /Explicit task mutation\/no-edit intent wins/i);
+		assert.match(description, /omission preserves name heuristics/i);
+		assert.match(description, /false or an empty string to clear it/i);
 		assert.match(description, /status\.json/);
 		assert.match(description, /events\.jsonl/);
 		// Chain quick-reference: both sequential and parallel fan-out examples (#417)
@@ -90,6 +94,10 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /schedule-list/);
 		assert.match(description, /eject/);
 		assert.match(description, /disable/);
+		assert.match(description, /acceptanceRole.*affects inferred acceptance only/i);
+		assert.match(description, /Explicit task intent wins/i);
+		assert.match(description, /omission keeps name heuristics/i);
+		assert.match(description, /false or an empty string to clear it/i);
 		assert.match(description, /status\.json/);
 		assert.match(description, /events\.jsonl/);
 		// Compact mode keeps a chain quick-reference too (#417)

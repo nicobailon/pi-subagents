@@ -214,6 +214,7 @@ function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		inheritProjectContext: base.inheritProjectContext,
 		inheritSkills: base.inheritSkills,
 		defaultContext: base.defaultContext,
+		acceptanceRole: base.acceptanceRole,
 		disabled: base.disabled,
 		systemPrompt: base.systemPrompt,
 		skills: base.skills ? [...base.skills] : undefined,
@@ -273,6 +274,7 @@ function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string,
 	if (hasKey(cfg, "timeoutMs")) changed("timeoutMs");
 	if (hasKey(cfg, "turnBudget")) changed("turnBudget");
 	if (hasKey(cfg, "acceptance")) changed("acceptance");
+	if (hasKey(cfg, "acceptanceRole")) changed("acceptanceRole");
 	if (hasKey(cfg, "output")) changed("output");
 	if (hasKey(cfg, "reads")) changed("defaultReads");
 	if (hasKey(cfg, "progress")) changed("defaultProgress");
@@ -463,6 +465,11 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.defaultAcceptance = cfg.acceptance as AcceptanceInput;
 		}
 	}
+	if (hasKey(cfg, "acceptanceRole")) {
+		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") target.acceptanceRole = undefined;
+		else if (cfg.acceptanceRole === "read-only" || cfg.acceptanceRole === "writer") target.acceptanceRole = cfg.acceptanceRole;
+		else return "config.acceptanceRole must be 'read-only', 'writer', or false when provided.";
+	}
 	if (hasKey(cfg, "output")) {
 		if (cfg.output === false || cfg.output === "") target.output = undefined;
 		else if (typeof cfg.output === "string") target.output = cfg.output;
@@ -564,6 +571,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.defaultTimeoutMs !== undefined) lines.push(`Timeout: ${agent.defaultTimeoutMs}ms`);
 	if (agent.defaultTurnBudget) lines.push(`Turn budget: ${JSON.stringify(agent.defaultTurnBudget)}`);
 	if (agent.defaultAcceptance !== undefined) lines.push(`Acceptance: ${typeof agent.defaultAcceptance === "object" ? JSON.stringify(agent.defaultAcceptance) : String(agent.defaultAcceptance)}`);
+	if (agent.acceptanceRole) lines.push(`Acceptance role: ${agent.acceptanceRole}`);
 	if (agent.source === "builtin") lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
 	if (agent.extensions !== undefined) lines.push(`Extensions: ${agent.extensions.length ? agent.extensions.join(", ") : "(none)"}`);
 	if (agent.subagentOnlyExtensions !== undefined) lines.push(`Subagent-only extensions: ${agent.subagentOnlyExtensions.length ? agent.subagentOnlyExtensions.join(", ") : "(none)"}`);

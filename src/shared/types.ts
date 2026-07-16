@@ -20,6 +20,8 @@ export interface MaxOutputConfig {
 
 export type OutputMode = "inline" | "file-only";
 
+export type AcceptanceRole = "read-only" | "writer";
+
 export type JsonSchemaObject = Record<string, unknown>;
 
 export interface ChainOutputMapEntry {

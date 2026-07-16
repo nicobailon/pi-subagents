@@ -210,6 +210,23 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
 	});
 
+	it("applies agent acceptance roles to inferred parallel acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "exploration complete" });
+		const executor = makeExecutor([
+			makeAgent("worker", { acceptanceRole: "read-only" }),
+		]);
+
+		const result = await executor.execute(
+			"parallel-agent-acceptance-role",
+			{ tasks: [{ agent: "worker", task: "Explore the authentication flow" }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
+	});
+
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "Saved report" });
 		const executor = makeExecutor();

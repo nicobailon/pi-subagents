@@ -234,7 +234,8 @@ Direct settings example:
       "reviewer": {
         "model": "anthropic/claude-sonnet-4",
         "thinking": "high",
-        "fallbackModels": ["openai/gpt-5-mini"]
+        "fallbackModels": ["openai/gpt-5-mini"],
+        "acceptanceRole": "read-only"
       }
     }
   }
@@ -243,7 +244,8 @@ Direct settings example:
 
 Useful override fields: `model`, `fallbackModels`, `thinking`,
 `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`,
-`disabled`, `skills`, `tools`, and `systemPrompt`. Create a user or project
+`acceptanceRole`, `disabled`, `skills`, `tools`, and `systemPrompt`. Use
+`acceptanceRole: false` to clear an override. Create a user or project
 agent with the same name only when you want a substantially different agent.
 
 If a provider rejects model IDs with thinking suffixes, use
@@ -685,8 +687,11 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 - `memory`
 - `maxSubagentDepth`
 - `acceptance`
+- `acceptanceRole`
 
 `acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; chain and parallel acceptance remains configured on the task or step. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
+
+`acceptanceRole` is `read-only` or `writer` and controls automatic acceptance inference only. Explicit task mutation or no-edit intent wins; otherwise the role replaces agent-name guessing. Omission preserves the current name heuristics. The field does not grant or revoke tools. Management accepts `false` or an empty string to clear it.
 
 `tools` is a strict child allowlist, not an extension loader. For a named extension tool, keep its registered name in `tools` and load its provider through normal Pi discovery, `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. For example, pair `tools: read, fixture_search` with `subagentOnlyExtensions: ./tools/fixture-search.ts` when the provider should exist only in that agent's child sessions. The child now fails with the unavailable names and provider-loading guidance instead of silently continuing when a requested tool is absent; internal `structured_output` is allowed automatically when an output schema requires it.
 

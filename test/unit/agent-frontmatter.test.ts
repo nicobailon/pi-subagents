@@ -230,6 +230,38 @@ Do work
 		);
 	});
 
+	it("parses, serializes, and validates acceptance roles", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-acceptance-role-"));
+		tempDirs.push(dir);
+		const filePath = path.join(dir, ".pi", "agents", "explorer.md");
+		writeAgent(filePath, `---
+name: explorer
+description: Explorer
+acceptanceRole: read-only
+---
+
+Explore the codebase
+`);
+
+		const explorer = discoverAgents(dir, "project").agents.find((agent) => agent.name === "explorer");
+		assert.equal(explorer?.acceptanceRole, "read-only");
+		assert.match(serializeAgent(explorer!), /^acceptanceRole: read-only$/m);
+		assert.equal(explorer?.extraFields?.acceptanceRole, undefined);
+
+		writeAgent(filePath, `---
+name: explorer
+description: Explorer
+acceptanceRole: observer
+---
+
+Explore the codebase
+`);
+		assert.throws(
+			() => discoverAgents(dir, "project"),
+			/Agent 'explorer' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'/,
+		);
+	});
+
 	it("rejects invalid launch defaults instead of silently ignoring them", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-invalid-launch-defaults-"));
 		tempDirs.push(dir);

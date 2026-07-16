@@ -17,6 +17,7 @@ export const KNOWN_FIELDS = new Set([
 	"timeoutMs",
 	"turnBudget",
 	"acceptance",
+	"acceptanceRole",
 	"skill",
 	"skills",
 	"skillPath",
@@ -77,6 +78,7 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 				? JSON.stringify(config.defaultAcceptance)
 				: String(config.defaultAcceptance)}`);
 	}
+	if (config.acceptanceRole || preserve("acceptanceRole")) lines.push(`acceptanceRole: ${config.acceptanceRole ?? ""}`);
 
 	const skillsValue = joinComma(config.skills);
 	if (skillsValue || preserve("skill", "skills")) lines.push(`skills: ${skillsValue ?? ""}`);

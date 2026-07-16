@@ -311,6 +311,35 @@ Inspect
 		assert.match(readText(chainResult), /config\.steps\[0\]\.toolBudget\.block must contain at least one tool name/);
 	});
 
+	it("creates, updates, reports, clears, and validates acceptance roles", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const created = handleCreate(
+			{ config: { name: "explorer", description: "Explore code", scope: "project", acceptanceRole: "read-only" } },
+			ctx,
+		);
+		assert.equal(created.isError, false);
+
+		const filePath = path.join(tempDir, ".pi", "agents", "explorer.md");
+		assert.match(fs.readFileSync(filePath, "utf-8"), /^acceptanceRole: read-only$/m);
+		assert.match(readText(handleManagementAction("get", { agent: "explorer" }, ctx)), /Acceptance role: read-only/);
+
+		const updated = handleUpdate({ agent: "explorer", config: { acceptanceRole: "writer" } }, ctx);
+		assert.equal(updated.isError, false);
+		assert.match(fs.readFileSync(filePath, "utf-8"), /^acceptanceRole: writer$/m);
+
+		const cleared = handleUpdate({ agent: "explorer", config: { acceptanceRole: false } }, ctx);
+		assert.equal(cleared.isError, false);
+		assert.doesNotMatch(fs.readFileSync(filePath, "utf-8"), /^acceptanceRole:/m);
+
+		assert.equal(handleUpdate({ agent: "explorer", config: { acceptanceRole: "read-only" } }, ctx).isError, false);
+		assert.equal(handleUpdate({ agent: "explorer", config: { acceptanceRole: "" } }, ctx).isError, false);
+		assert.doesNotMatch(fs.readFileSync(filePath, "utf-8"), /^acceptanceRole:/m);
+
+		const invalid = handleUpdate({ agent: "explorer", config: { acceptanceRole: "observer" } }, ctx);
+		assert.equal(invalid.isError, true);
+		assert.match(readText(invalid), /config\.acceptanceRole must be 'read-only', 'writer', or false/);
+	});
+
 	it("creates agents with completion guard disabled", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 		const result = handleCreate(

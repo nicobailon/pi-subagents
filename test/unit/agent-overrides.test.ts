@@ -127,6 +127,7 @@ describe("builtin agent overrides", () => {
 						systemPromptMode: "replace",
 						inheritProjectContext: true,
 						inheritSkills: true,
+						acceptanceRole: "writer",
 						subagentOnlyExtensions: ["./tools/child-review.ts"],
 						completionGuard: false,
 					},
@@ -142,6 +143,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.systemPromptMode, "replace");
 		assert.equal(reviewer.inheritProjectContext, true);
 		assert.equal(reviewer.inheritSkills, true);
+		assert.equal(reviewer.acceptanceRole, "writer");
 		assert.deepEqual(reviewer.subagentOnlyExtensions, ["./tools/child-review.ts"]);
 		assert.equal(reviewer.completionGuard, false);
 		assert.equal(reviewer.override?.scope, "user");
@@ -261,6 +263,35 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.override?.path, path.join(tempProject, ".pi", "settings.json"));
 	});
 
+	it("applies acceptance role precedence and false clearing to builtin and custom agents", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					reviewer: { acceptanceRole: "read-only" },
+					scout: { acceptanceRole: "read-only" },
+					implementer: { acceptanceRole: "read-only" },
+				},
+			},
+		});
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					reviewer: { acceptanceRole: "writer" },
+					scout: { acceptanceRole: false },
+					implementer: { acceptanceRole: false },
+				},
+			},
+		});
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+
+		const agents = discoverAgents(tempProject, "both").agents;
+		assert.equal(agents.find((agent) => agent.name === "reviewer")?.acceptanceRole, "writer");
+		assert.equal(agents.find((agent) => agent.name === "scout")?.acceptanceRole, undefined);
+		assert.equal(agents.find((agent) => agent.name === "implementer")?.acceptanceRole, undefined);
+		assert.equal(agents.find((agent) => agent.name === "implementer")?.override?.scope, "project");
+	});
+
 	it("does not apply project settings overrides when scope is user", () => {
 		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
@@ -329,6 +360,7 @@ describe("builtin agent overrides", () => {
 						inheritProjectContext: true,
 						inheritSkills: true,
 						defaultContext: "fork",
+						acceptanceRole: "writer",
 						tools: ["bash", "mcp:xcodebuild_list_sims"],
 						skills: ["tdd"],
 						subagentOnlyExtensions: ["./tools/child-review.ts"],
@@ -349,6 +381,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.inheritProjectContext, true);
 		assert.equal(implementer.inheritSkills, true);
 		assert.equal(implementer.defaultContext, "fork");
+		assert.equal(implementer.acceptanceRole, "writer");
 		assert.deepEqual(implementer.tools, ["bash"]);
 		assert.deepEqual(implementer.mcpDirectTools, ["xcodebuild_list_sims"]);
 		assert.deepEqual(implementer.skills, ["tdd"]);
@@ -412,12 +445,13 @@ describe("builtin agent overrides", () => {
 						skills: ["override-skill"],
 						inheritProjectContext: true,
 						defaultContext: "fork",
+						acceptanceRole: "writer",
 						completionGuard: true,
 					},
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -428,6 +462,7 @@ describe("builtin agent overrides", () => {
 		assert.deepEqual(implementer.skills, ["agent-skill"]);
 		assert.equal(implementer.inheritProjectContext, false);
 		assert.equal(implementer.defaultContext, "fresh");
+		assert.equal(implementer.acceptanceRole, "read-only");
 		assert.equal(implementer.completionGuard, false);
 		assert.equal(implementer.override, undefined);
 	});
@@ -508,6 +543,27 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
+	it("surfaces malformed acceptance role override values", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, {
+			subagents: {
+				agentOverrides: {
+					reviewer: {
+						acceptanceRole: "observer",
+					},
+				},
+			},
+		});
+
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("reviewer")
+				&& error.message.includes("acceptanceRole"),
+		);
+	});
+
 	it("surfaces malformed completion guard override values", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		writeJson(settingsPath, {
@@ -539,6 +595,7 @@ describe("builtin agent overrides", () => {
 				inheritProjectContext: true,
 				inheritSkills: false,
 				defaultContext: "fork",
+				acceptanceRole: "read-only",
 				systemPrompt: "Base prompt",
 				skills: ["safe-bash"],
 				tools: ["bash"],
@@ -554,6 +611,7 @@ describe("builtin agent overrides", () => {
 				inheritProjectContext: false,
 				inheritSkills: false,
 				defaultContext: undefined,
+				acceptanceRole: undefined,
 				systemPrompt: "Base prompt",
 				skills: undefined,
 				tools: undefined,
@@ -570,6 +628,7 @@ describe("builtin agent overrides", () => {
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
 			defaultContext: false,
+			acceptanceRole: false,
 			skills: false,
 			tools: false,
 			subagentOnlyExtensions: false,

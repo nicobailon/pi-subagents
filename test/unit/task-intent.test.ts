@@ -8,6 +8,10 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Research the current code path and patch the bug").kind, "implementation");
 	});
 
+	it("does not broaden the shared completion-guard classifier for role-only path patches", () => {
+		assert.equal(classifyTaskMutationIntent("worker", "Patch src/auth.ts").kind, "unknown");
+	});
+
 	it("treats scoped no-edit constraints as constraints, not task intent", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Do not modify tests; implement the fix").kind, "implementation");
 		assert.equal(classifyTaskMutationIntent("worker", "Fix the bug. Do not edit files outside src/.").kind, "implementation");

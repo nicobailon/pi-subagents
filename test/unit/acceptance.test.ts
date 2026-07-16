@@ -54,6 +54,93 @@ describe("acceptance gates", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }).level, "reviewed");
 	});
 
+	it("uses explicit agent roles for ambiguous tasks while preserving task-intent precedence", () => {
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "explorer",
+			acceptanceRole: "read-only",
+			task: "Explore the authentication flow",
+			mode: "single",
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "reviewer",
+			acceptanceRole: "writer",
+			task: "Handle the authentication flow",
+			mode: "single",
+		}).level, "checked");
+		for (const task of ["Implement the authentication fix", "Create a fixture", "Add coverage", "Replace the dependency", "Patch src/auth.ts"]) {
+			assert.equal(resolveEffectiveAcceptance({
+				agentName: "worker",
+				acceptanceRole: "read-only",
+				task,
+				mode: "single",
+			}).level, "checked", task);
+		}
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "worker",
+			acceptanceRole: "read-only",
+			task: "Patch src/auth.ts",
+			mode: "single",
+			async: true,
+		}).level, "reviewed");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "worker",
+			acceptanceRole: "read-only",
+			task: "Create a report",
+			mode: "single",
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "worker",
+			acceptanceRole: "writer",
+			task: "Review only; do not edit files",
+			mode: "single",
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "reviewer",
+			acceptanceRole: "writer",
+			task: "Handle the authentication flow",
+			mode: "single",
+			async: true,
+		}).level, "reviewed");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "worker",
+			acceptanceRole: "read-only",
+			task: "Explore the authentication flow",
+			mode: "single",
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "explorer",
+			acceptanceRole: "read-only",
+			task: "Audit the security posture",
+			mode: "single",
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "explorer",
+			acceptanceRole: "read-only",
+			task: "Explore each target",
+			mode: "chain",
+			dynamic: true,
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "worker",
+			acceptanceRole: "writer",
+			task: "Review only; do not edit files",
+			mode: "chain",
+			dynamicGroup: true,
+		}).level, "attested");
+		assert.equal(resolveEffectiveAcceptance({
+			agentName: "reviewer",
+			task: "Review each target",
+			mode: "chain",
+			dynamic: true,
+		}).level, "reviewed");
+	});
+
+	it("preserves risky keyword inference when acceptance role metadata is omitted", () => {
+		for (const task of ["Inspect the security posture", "Read-only security audit"]) {
+			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task }).level, "reviewed", task);
+		}
+	});
+
 	it("explicit acceptance can strengthen inferred policy", () => {
 		const resolved = resolveEffectiveAcceptance({
 			agentName: "reviewer",

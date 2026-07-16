@@ -93,7 +93,7 @@ import {
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
@@ -2582,6 +2582,16 @@ async function runSubagent(
 				break;
 			}
 
+			const effectiveDynamicGroupAcceptance = resolveEffectiveAcceptance({
+				explicit: step.acceptanceInput,
+				agentName: step.parallel.agent,
+				acceptanceRole: step.acceptanceRole,
+				task: materialized.parallel.map((task) => task.task ?? step.parallel.task).join("\n") || step.parallel.task,
+				mode: config.mode,
+				async: true,
+				dynamicGroup: true,
+			});
+
 			if (materialized.parallel.length === 0) {
 				const now = Date.now();
 				const collection = materialized.collectedOnEmpty ?? [];
@@ -2600,9 +2610,9 @@ async function runSubagent(
 					placeholder.durationMs = 0;
 				}
 				previousOutput = "Dynamic fanout produced 0 results.";
-				const groupAcceptance = step.effectiveAcceptance?.explicit && !timedOut && !stopped
+				const groupAcceptance = effectiveDynamicGroupAcceptance.explicit && !timedOut && !stopped
 					? await evaluateAcceptance({
-						acceptance: step.effectiveAcceptance,
+						acceptance: effectiveDynamicGroupAcceptance,
 						output: "",
 						report: aggregateAcceptanceReport({
 							results: [],
@@ -2651,9 +2661,19 @@ async function runSubagent(
 					? path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath))
 					: step.parallel.outputPath;
 				const taskText = task.task ?? step.parallel.task;
+				const materializedTask = step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText;
 				return {
 					...step.parallel,
-					task: step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText,
+					task: materializedTask,
+					effectiveAcceptance: resolveEffectiveAcceptance({
+						explicit: step.parallel.acceptanceInput,
+						agentName: step.parallel.agent,
+						acceptanceRole: step.parallel.acceptanceRole,
+						task: materializedTask,
+						mode: config.mode,
+						async: true,
+						dynamic: step.parallel.acceptanceInput === undefined,
+					}),
 					systemPrompt: step.parallel.namespaceOutputPath ? injectOutputPathSystemPrompt(step.parallel.systemPrompt ?? "", outputPath, step.parallel) : step.parallel.systemPrompt,
 					outputPath,
 					label: task.label ?? step.parallel.label,
@@ -2882,9 +2902,9 @@ async function runSubagent(
 						stepIndex,
 					};
 					statusPayload.outputs = outputs;
-					const groupAcceptance = step.effectiveAcceptance && !timedOut && !stopped
+					const groupAcceptance = !timedOut && !stopped
 						? await evaluateAcceptance({
-							acceptance: step.effectiveAcceptance,
+							acceptance: effectiveDynamicGroupAcceptance,
 							output: "",
 							report: aggregateAcceptanceReport({
 								results: parallelResults,
@@ -2898,7 +2918,7 @@ async function runSubagent(
 					const groupStopped = stopped || stopAbortController.signal.aborted;
 					const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
 					const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
-					const groupAcceptanceFailure = effectiveGroupAcceptance ? acceptanceFailureMessage(effectiveGroupAcceptance) : undefined;
+					const groupAcceptanceFailure = effectiveDynamicGroupAcceptance.explicit && effectiveGroupAcceptance ? acceptanceFailureMessage(effectiveGroupAcceptance) : undefined;
 					const groupError = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure;
 					markDynamicGraphGroup(stepIndex, groupError ? groupStopped ? "stopped" : "failed" : "completed", groupError, effectiveGroupAcceptance);
 					if (groupError) {
