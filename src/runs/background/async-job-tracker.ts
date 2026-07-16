@@ -6,6 +6,7 @@ import { formatControlNoticeMessage } from "../shared/subagent-control.ts";
 import {
 	type AsyncJobState,
 	type AsyncStartedEvent,
+	type AsyncWidgetPlacement,
 	type ControlEvent,
 	type SteeringNotice,
 	type SubagentState,
@@ -26,6 +27,7 @@ interface AsyncJobTrackerOptions {
 	pollIntervalMs?: number;
 	resultsDir?: string;
 	widgetEnabled?: boolean;
+	widgetPlacement?: AsyncWidgetPlacement;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 }
@@ -57,7 +59,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
 	const steeringNoticeSeen = new Map<string, number>();
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
-		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
+		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs, options.widgetPlacement);
 		ctx.ui.requestRender?.();
 	};
 	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);
