@@ -207,3 +207,28 @@ test("static sequential and static parallel chain rendering keep existing labels
 	assert.match(parallel, /Agent 2\/2: auditor/);
 	assert.match(parallel, /Step 3: writer/);
 });
+
+test("extension bootstrap evidence appears only in expanded result diagnostics", () => {
+	const failed = {
+		...result("worker", ""),
+		exitCode: 1,
+		error: "extension-bootstrap-suspected: Pi reported a child extension load failure; automatic retry is disabled.",
+		diagnostic: {
+			classification: "extension-bootstrap-suspected" as const,
+			retryable: false as const,
+			summary: "extension-bootstrap-suspected: Pi reported a child extension load failure; automatic retry is disabled.",
+			diagnosticLine: "Failed to load extension broken.ts: missing dependency",
+			evidence: "Failed to load extension broken.ts: missing dependency\nTAIL-EVIDENCE",
+		},
+	};
+	const input = {
+		content: [{ type: "text" as const, text: failed.error }],
+		details: { mode: "single" as const, results: [failed] },
+	};
+	const compact = componentText(renderSubagentResult(input, { expanded: false }, theme as any));
+	const expanded = componentText(renderSubagentResult(input, { expanded: true }, theme as any));
+	assert.doesNotMatch(compact, /TAIL-EVIDENCE/);
+	assert.match(expanded, /Diagnostic: extension-bootstrap-suspected \(non-retryable\)/);
+	assert.match(expanded, /Failed to load extension broken\.ts/);
+	assert.match(expanded, /TAIL-EVIDENCE/);
+});

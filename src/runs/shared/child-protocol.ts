@@ -87,11 +87,80 @@ export function createBoundedLineReader(options: {
 	};
 }
 
-function trimToUtf8Boundary(buffer: Buffer, maxBytes: number): Buffer {
-	if (buffer.length <= maxBytes) return buffer;
-	let start = buffer.length - maxBytes;
+function trimUtf8Start(buffer: Buffer, maxBytes: number): Buffer {
+	let start = Math.max(0, buffer.length - maxBytes);
 	while (start < buffer.length && (buffer[start]! & 0xc0) === 0x80) start++;
 	return buffer.subarray(start);
+}
+
+function trimIncompleteUtf8End(buffer: Buffer): Buffer {
+	if (buffer.length === 0) return buffer;
+	let start = buffer.length - 1;
+	while (start >= 0 && (buffer[start]! & 0xc0) === 0x80) start--;
+	if (start < 0) return Buffer.alloc(0);
+	const lead = buffer[start]!;
+	const expected = lead < 0x80 ? 1 : lead >= 0xc2 && lead <= 0xdf ? 2 : lead >= 0xe0 && lead <= 0xef ? 3 : lead >= 0xf0 && lead <= 0xf4 ? 4 : 1;
+	return buffer.length - start < expected ? buffer.subarray(0, start) : buffer;
+}
+
+const BOUNDED_CAPTURE_SEPARATOR = Buffer.from("\n...[stderr truncated]...\n");
+
+/**
+ * Capture both the beginning and end of a byte stream without exceeding the
+ * configured retained-byte bound. The rendered text also stays within that
+ * bound and never begins or ends with a partial UTF-8 sequence.
+ */
+export function createBoundedByteCapture(maxBytes = MAX_CHILD_STDERR_BYTES): {
+	push(chunk: Buffer | string): void;
+	text(): string;
+	byteLength(): number;
+	truncated(): boolean;
+} {
+	if (!Number.isInteger(maxBytes) || maxBytes < 1) throw new Error("maxBytes must be a positive integer.");
+	const separator = maxBytes > BOUNDED_CAPTURE_SEPARATOR.length + 1 ? BOUNDED_CAPTURE_SEPARATOR : Buffer.alloc(0);
+	const evidenceBytes = maxBytes - separator.length;
+	const headLimit = Math.ceil(evidenceBytes / 2);
+	const tailLimit = evidenceBytes - headLimit;
+	let head = Buffer.alloc(0);
+	let tail = Buffer.alloc(0);
+	let wasTruncated = false;
+
+	const firstBytes = (left: Buffer, right: Buffer, limit: number): Buffer => {
+		if (left.length >= limit) return left.subarray(0, limit);
+		return Buffer.concat([left, right.subarray(0, limit - left.length)]);
+	};
+	const lastBytes = (left: Buffer, right: Buffer, limit: number): Buffer => {
+		if (limit === 0) return Buffer.alloc(0);
+		if (right.length >= limit) return right.subarray(right.length - limit);
+		const leftBytes = Math.min(left.length, limit - right.length);
+		return Buffer.concat([left.subarray(left.length - leftBytes), right]);
+	};
+
+	return {
+		push(chunk) {
+			const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+			if (bytes.length === 0) return;
+			if (!wasTruncated && head.length + bytes.length <= maxBytes) {
+				head = Buffer.concat([head, bytes]);
+				return;
+			}
+			if (!wasTruncated) {
+				tail = lastBytes(head, bytes, tailLimit);
+				head = firstBytes(head, bytes, headLimit);
+				wasTruncated = true;
+				return;
+			}
+			tail = lastBytes(tail, bytes, tailLimit);
+		},
+		text() {
+			if (!wasTruncated) return trimIncompleteUtf8End(head).toString("utf8");
+			const safeHead = trimIncompleteUtf8End(head);
+			const safeTail = trimIncompleteUtf8End(trimUtf8Start(tail, tail.length));
+			return Buffer.concat([safeHead, separator, safeTail]).toString("utf8");
+		},
+		byteLength: () => wasTruncated ? head.length + tail.length : head.length,
+		truncated: () => wasTruncated,
+	};
 }
 
 export function createBoundedByteTail(maxBytes = MAX_CHILD_STDERR_BYTES): {
@@ -104,9 +173,9 @@ export function createBoundedByteTail(maxBytes = MAX_CHILD_STDERR_BYTES): {
 	return {
 		push(chunk) {
 			const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-			tail = trimToUtf8Boundary(Buffer.concat([tail, bytes]), maxBytes);
+			tail = trimUtf8Start(Buffer.concat([tail, bytes]), maxBytes);
 		},
-		text: () => tail.toString("utf8"),
+		text: () => trimIncompleteUtf8End(tail).toString("utf8"),
 		byteLength: () => tail.length,
 	};
 }

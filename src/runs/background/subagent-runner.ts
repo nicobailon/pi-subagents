@@ -17,6 +17,7 @@ import {
 	type AsyncStatus,
 	type ChainOutputMap,
 	type CostSummary,
+	type ExtensionBootstrapDiagnostic,
 	type ModelAttempt,
 	type NestedRouteInfo,
 	type NestedRunSummary,
@@ -99,7 +100,8 @@ import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChai
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { createBoundedByteCapture, createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { classifyExtensionBootstrapDiagnostic } from "../shared/bootstrap-diagnostics.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
@@ -152,6 +154,7 @@ interface StepResult {
 	agent: string;
 	output: string;
 	error?: string;
+	diagnostic?: ExtensionBootstrapDiagnostic;
 	protocolError?: ProtocolOutputLimit;
 	success: boolean;
 	exitCode?: number | null;
@@ -363,6 +366,7 @@ interface ChildEvent {
 
 interface RunPiStreamingResult {
 	stderr: string;
+	diagnostic?: ExtensionBootstrapDiagnostic;
 	exitCode: number | null;
 	messages: Message[];
 	usage: Usage;
@@ -415,7 +419,7 @@ function runPiStreaming(
 			env: spawnEnv,
 			windowsHide: true,
 		});
-		const stderrTail = createBoundedByteTail();
+		const stderrCapture = createBoundedByteCapture();
 		const rawStdoutTail = createBoundedByteTail();
 		const messages: Message[] = [];
 		const usage = emptyUsage();
@@ -610,7 +614,7 @@ function runPiStreaming(
 		const clearStdioGuard = attachPostExitStdioGuard(child, { idleMs: 2000, hardMs: 8000 });
 		child.stdout.on("data", (chunk: Buffer) => stdoutReader.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => {
-			stderrTail.push(chunk);
+			stderrCapture.push(chunk);
 			stderrReader.push(chunk);
 			outputStream.write(chunk);
 		});
@@ -753,12 +757,14 @@ function runPiStreaming(
 			stdoutReader.end();
 			stderrReader.end();
 			outputStream.end();
-			const stderr = stderrTail.text();
+			const stderr = stderrCapture.text();
+			const diagnostic = classifyExtensionBootstrapDiagnostic(stderr);
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
-			const finalError = error ?? assistantError;
+			const finalError = error ?? diagnostic?.summary ?? assistantError;
 			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !finalError;
 			resolve({
 				stderr,
+				diagnostic,
 				exitCode: timedOut || stopped ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
@@ -793,10 +799,11 @@ function runPiStreaming(
 			stdoutReader.end();
 			stderrReader.end();
 			outputStream.end();
-			const stderr = stderrTail.text();
+			const stderr = stderrCapture.text();
+			const diagnostic = classifyExtensionBootstrapDiagnostic(stderr);
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
+			resolve({ stderr, diagnostic, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? diagnostic?.summary ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
 		});
 	});
 }
@@ -1249,6 +1256,7 @@ async function runSingleStep(
 			success: effectiveExitCode === 0 && !error,
 			exitCode: effectiveExitCode,
 			error,
+			diagnostic: run.diagnostic,
 			usage: run.usage,
 		};
 		modelAttempts.push(attempt);
@@ -1263,7 +1271,7 @@ async function runSingleStep(
 		}
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput } as RunPiStreamingResult & { structuredOutput?: unknown };
 		if (run.turnBudgetExceeded) break;
-		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
+		if (run.stopped || run.timedOut || run.diagnostic?.retryable === false || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		if (attempt.success || completionGuardTriggered) break;
 		if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
@@ -1357,6 +1365,7 @@ async function runSingleStep(
 					model: finalResult?.model,
 					attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
 					modelAttempts,
+					diagnostic: finalResult?.diagnostic,
 					error: effectiveFinalError,
 					acceptance: effectiveAcceptance,
 					...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
@@ -1374,6 +1383,7 @@ async function runSingleStep(
 		output: outputForSummary,
 		exitCode: effectiveFinalExitCode,
 		error: effectiveFinalError,
+		diagnostic: finalResult?.diagnostic,
 		protocolError: finalResult?.protocolError,
 		sessionFile: step.sessionFile,
 		intercomTarget: ctx.childIntercomTarget,
@@ -2879,6 +2889,7 @@ async function runSubagent(
 				statusPayload.steps[fi].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[fi].thinking);
 				statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 				statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
+				statusPayload.steps[fi].diagnostic = singleResult.diagnostic;
 				statusPayload.steps[fi].totalCost = singleResult.totalCost;
 				statusPayload.steps[fi].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 				statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
@@ -2905,6 +2916,7 @@ async function runSubagent(
 					agent: pr.agent,
 					output: pr.output,
 					error: pr.error,
+					diagnostic: pr.diagnostic,
 					protocolError: pr.protocolError,
 					success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
 					exitCode: pr.interrupted === true ? 0 : pr.exitCode,
@@ -3188,6 +3200,7 @@ async function runSubagent(
 						statusPayload.steps[fi].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[fi].thinking);
 						statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
+						statusPayload.steps[fi].diagnostic = singleResult.diagnostic;
 						statusPayload.steps[fi].totalCost = singleResult.totalCost;
 						statusPayload.steps[fi].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 						statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
@@ -3250,6 +3263,7 @@ async function runSubagent(
 						agent: pr.agent,
 						output: pr.output,
 						error: pr.error,
+						diagnostic: pr.diagnostic,
 						protocolError: pr.protocolError,
 						success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
 						exitCode: pr.interrupted === true ? 0 : pr.exitCode,
@@ -3378,6 +3392,7 @@ async function runSubagent(
 				agent: singleResult.agent,
 				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
+				diagnostic: singleResult.diagnostic,
 				protocolError: singleResult.protocolError,
 				success: !stopped && !childStopped && !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
 				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
@@ -3456,6 +3471,7 @@ async function runSubagent(
 			statusPayload.steps[flatIndex].thinking = resolveEffectiveThinking(singleResult.model, statusPayload.steps[flatIndex].thinking);
 			statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
 			statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
+			statusPayload.steps[flatIndex].diagnostic = singleResult.diagnostic;
 			statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
 			statusPayload.steps[flatIndex].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 			statusPayload.steps[flatIndex].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
@@ -3665,6 +3681,7 @@ async function runSubagent(
 				agent: r.agent,
 				output: r.output,
 				error: r.error,
+				diagnostic: r.diagnostic,
 				protocolError: r.protocolError,
 				success: r.success,
 				skipped: r.skipped || undefined,

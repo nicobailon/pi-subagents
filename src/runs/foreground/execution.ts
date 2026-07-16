@@ -74,7 +74,8 @@ import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAccepta
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { createBoundedByteCapture, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { classifyExtensionBootstrapDiagnostic } from "../shared/bootstrap-diagnostics.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -833,7 +834,7 @@ async function runSingleAttempt(
 			timeoutTimer.unref?.();
 		}
 
-		const stderrTail = createBoundedByteTail();
+		const stderrCapture = createBoundedByteCapture();
 		const failProtocol = (limit: ProtocolOutputLimit): void => {
 			if (result.protocolError) return;
 			result.protocolError = limit;
@@ -861,7 +862,7 @@ async function runSingleAttempt(
 		const clearStdioGuard = attachPostExitStdioGuard(proc, { idleMs: 2000, hardMs: 8000 });
 		proc.stdout.on("data", (chunk: Buffer) => stdoutReader.push(chunk));
 		proc.stderr.on("data", (chunk: Buffer) => {
-			stderrTail.push(chunk);
+			stderrCapture.push(chunk);
 			stderrReader.push(chunk);
 		});
 		proc.on("exit", () => {
@@ -878,8 +879,10 @@ async function runSingleAttempt(
 			cleanupTempDir(tempDir);
 			stdoutReader.end();
 			stderrReader.end();
-			const stderr = stderrTail.text();
-			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
+			const stderr = stderrCapture.text();
+			const bootstrapDiagnostic = classifyExtensionBootstrapDiagnostic(stderr);
+			if (bootstrapDiagnostic) result.diagnostic = bootstrapDiagnostic;
+			let closeError = result.error ?? bootstrapDiagnostic?.summary ?? toolDiagnosticError ?? assistantError;
 			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
@@ -1272,6 +1275,7 @@ export async function runSync(
 			model: target.model,
 			attemptedModels: target.attemptedModels,
 			modelAttempts: target.modelAttempts,
+			diagnostic: target.diagnostic,
 			durationMs: target.progressSummary?.durationMs,
 			toolCount: target.progressSummary?.toolCount,
 			error: target.error,
@@ -1351,10 +1355,11 @@ export async function runSync(
 			success: attemptSucceeded,
 			exitCode: result.exitCode,
 			error: result.error,
+			diagnostic: result.diagnostic,
 			usage: { ...result.usage },
 		};
 		modelAttempts.push(attempt);
-		if (result.detached || result.timedOut || result.turnBudgetExceeded) {
+		if (result.detached || result.timedOut || result.turnBudgetExceeded || result.diagnostic?.retryable === false) {
 			break;
 		}
 		if (attemptSucceeded) {

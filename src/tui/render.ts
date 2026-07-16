@@ -266,6 +266,14 @@ function firstOutputLine(text: string): string {
 	return text.split("\n").find((line) => line.trim())?.trim() ?? "";
 }
 
+function diagnosticLines(result: Pick<Details["results"][number], "diagnostic">, prefix = ""): string[] {
+	if (!result.diagnostic) return [];
+	return [
+		`${prefix}Diagnostic: ${result.diagnostic.classification} (non-retryable)`,
+		...result.diagnostic.evidence.split(/\r?\n/).map((line) => `${prefix}${line}`),
+	];
+}
+
 function resultStatusLine(result: Details["results"][number], output: string): string {
 	if (result.detached) return result.detachedReason ? `Detached: ${result.detachedReason}` : "Detached";
 	if (result.stopped) return "Stopped";
@@ -883,6 +891,9 @@ function foregroundStyleWidgetStepLines(
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt)) {
 		lines.push(`    ${nestedLine}`);
+	}
+	if (step.status !== "running" && expanded && step.diagnostic) {
+		for (const line of diagnosticLines(step, "    ")) lines.push(theme.fg("error", line));
 	}
 	if (step.status === "running") {
 		if (!expanded) lines.push(`    ${theme.fg("accent", liveDetailHintText())}`);
@@ -1516,6 +1527,10 @@ export function renderSubagentResult(
 		}
 
 		if (output) c.addChild(new Markdown(output, 0, 0, mdTheme));
+		if (r.diagnostic) {
+			if (output) c.addChild(new Spacer(1));
+			for (const line of diagnosticLines(r)) c.addChild(new Text(theme.fg("error", line), 0, 0));
+		}
 		c.addChild(new Spacer(1));
 		if (r.skills?.length) {
 			c.addChild(new Text(fit(theme.fg("dim", `Skills: ${r.skills.join(", ")}`)), 0, 0));
@@ -1744,6 +1759,10 @@ export function renderSubagentResult(
 			for (const line of recentLines) {
 				c.addChild(new Text(fit(theme.fg("dim", `      ${line}`)), 0, 0));
 			}
+		}
+
+		if (!rRunning && r.diagnostic) {
+			for (const line of diagnosticLines(r, "    ")) c.addChild(new Text(theme.fg("error", line), 0, 0));
 		}
 
 		if (!rRunning && r.artifactPaths) {

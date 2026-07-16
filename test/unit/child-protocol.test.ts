@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { describe, it } from "node:test";
 import {
+	createBoundedByteCapture,
 	createBoundedByteTail,
 	createBoundedLineReader,
 	formatProtocolOutputLimit,
@@ -47,13 +48,36 @@ describe("bounded child protocol reader", () => {
 	});
 });
 
-describe("bounded child stderr tail", () => {
-	it("keeps only the configured UTF-8-safe byte tail", () => {
+describe("bounded child stderr capture", () => {
+	it("retains both head and tail within the configured byte bound", () => {
+		const capture = createBoundedByteCapture(64);
+		capture.push(`HEAD:${"x".repeat(100)}`);
+		capture.push(":TAIL");
+		assert.equal(capture.truncated(), true);
+		assert.ok(capture.byteLength() <= 64);
+		assert.ok(Buffer.byteLength(capture.text()) <= 64);
+		assert.match(capture.text(), /^HEAD:/);
+		assert.match(capture.text(), /:TAIL$/);
+		assert.match(capture.text(), /stderr truncated/);
+	});
+
+	it("keeps split UTF-8 head and tail evidence valid and bounded", () => {
+		const capture = createBoundedByteCapture(48);
+		const bytes = Buffer.from(`始${"界".repeat(40)}终`);
+		for (let index = 0; index < bytes.length; index += 2) capture.push(bytes.subarray(index, index + 2));
+		const text = capture.text();
+		assert.ok(capture.byteLength() <= 48);
+		assert.ok(Buffer.byteLength(text) <= 48);
+		assert.equal(text.includes("�"), false);
+		assert.match(text, /^始/);
+		assert.match(text, /终$/);
+	});
+});
+
+describe("bounded byte tail", () => {
+	it("retains tail-only behavior for non-diagnostic stdout fallback", () => {
 		const tail = createBoundedByteTail(8);
-		const bytes = Buffer.from("old-你好-tail");
-		tail.push(bytes.subarray(0, 7));
-		tail.push(bytes.subarray(7));
-		assert.ok(tail.byteLength() <= 8);
+		tail.push("old-你好-tail");
 		assert.equal(tail.text(), "好-tail");
 	});
 });

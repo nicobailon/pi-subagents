@@ -2194,6 +2194,47 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("background runs fail closed on extension bootstrap diagnostics without retrying", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const stderr = `Failed to load extension "/tmp/broken.ts": missing dependency\n${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}\nTAIL-EVIDENCE`;
+		mockPi.onCall({ stderr, exitCode: 1 });
+		mockPi.onCall({ output: "fallback must not run" });
+		const id = `async-extension-bootstrap-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", {
+				model: "openai/gpt-5-mini:high",
+				fallbackModels: ["anthropic/claude-sonnet-4:low"],
+			}),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+			],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"));
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.equal(payload.success, false);
+		assert.equal(payload.results[0].diagnostic?.classification, "extension-bootstrap-suspected");
+		assert.match(payload.results[0].diagnostic?.evidence ?? "", /^Failed to load extension/);
+		assert.match(payload.results[0].diagnostic?.evidence ?? "", /TAIL-EVIDENCE$/);
+		assert.equal(status.steps[0].diagnostic?.classification, "extension-bootstrap-suspected");
+		assert.equal(payload.results[0].modelAttempts.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("background runs do not retry the fallback model for a trailing tool failure", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [

@@ -418,11 +418,20 @@ interface ProgressSummary {
 // Results
 // ============================================================================
 
+export interface ExtensionBootstrapDiagnostic {
+	classification: "extension-bootstrap-suspected";
+	retryable: false;
+	summary: string;
+	diagnosticLine: string;
+	evidence: string;
+}
+
 export interface ModelAttempt {
 	model: string;
 	success: boolean;
 	exitCode?: number | null;
 	error?: string;
+	diagnostic?: ExtensionBootstrapDiagnostic;
 	usage?: Usage;
 }
 
@@ -603,6 +612,7 @@ export interface SingleResult {
 	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
 	error?: string;
+	diagnostic?: ExtensionBootstrapDiagnostic;
 	protocolError?: ProtocolOutputLimit;
 	sessionFile?: string;
 	skills?: string[];
@@ -887,6 +897,7 @@ export interface AsyncStatus {
 		totalCost?: CostSummary;
 		steering?: SteeringStatus;
 		error?: string;
+		diagnostic?: ExtensionBootstrapDiagnostic;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;

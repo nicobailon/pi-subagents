@@ -187,6 +187,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.thinking ? { thinking: step.thinking } : {}),
 			...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 			...(step.error ? { error: step.error } : {}),
+			...(step.diagnostic ? { diagnostic: step.diagnostic } : {}),
 			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
 			...(step.stopped !== undefined ? { stopped: step.stopped } : {}),
 			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
