@@ -10,7 +10,9 @@ Default to a maximum of 3 review rounds unless I specify a different cap. Count 
 
 If the invocation includes an implementation request, first launch one async `worker` to implement the approved scope. If the current diff is already the target, start with review. The sequence can be launched up front as an async/background chain when the workflow is already clear, or continued as follow-up subagent runs after each async completion. For an initial chain, pass `async: true` so the main chat is unblocked; do not set `clarify: true` unless I explicitly want the foreground clarify UI. Use only one writer against the active worktree at a time unless I explicitly ask for isolated worktrees.
 
-For each review round, launch fresh-context `reviewer` agents in parallel. Reviewers must inspect the repository, relevant instructions, and current diff directly from files and commands. They must not rely on the main conversation history and must not edit files.
+Do not set `turnBudget` or a hard `toolBudget` on the implementation worker or any later fix worker. Give each writer a narrow delivery slice and an outer elapsed `timeoutMs` or `maxRuntimeMs` sized with enough margin for that slice. An elapsed timeout is not a mutation-safe boundary and may still signal the writer during a tool call. Before the limit, use steering or an attention notice to request a mutation-safe checkpoint after the current tool returns: changed files, build/test state, remaining work, and commit or PR state. Do not use the timeout itself as the checkpoint trigger or knowingly leave an unbuildable worktree.
+
+For each review round, launch fresh-context `reviewer` agents in parallel. Reviewers must inspect the repository, relevant instructions, and current diff directly from files and commands. They must not rely on the main conversation history and must not edit files. These explicitly read-only reviewers may use bounded `turnBudget` or `toolBudget` limits.
 
 Choose review angles from the actual change. Common angles are correctness/regressions, tests/validation, and simplicity/maintainability. Add security, performance, docs/API contracts, or user-flow validation when the work calls for it. Prefer three strong reviewers over many vague reviewers.
 
@@ -24,7 +26,7 @@ Do not blindly apply every reviewer suggestion. If reviewers surface an unapprov
 
 When an async implementation worker completes, treat its handoff as the transition into review, not as final completion, unless I explicitly asked for worker-only work, review-only output, or to stop after implementation.
 
-When there are fixes worth doing now and the workflow is implementation-authorized, launch one async forked `worker` to apply only those synthesized fixes. Ask it to preserve the approved scope, run focused validation, and report changed files, commands run with exit codes, validation evidence, surprises, and anything left undone.
+When there are fixes worth doing now and the workflow is implementation-authorized, launch one async forked `worker` to apply only those synthesized fixes. Ask it to preserve the approved scope, run focused validation, and report changed files, commands run with exit codes, validation evidence, surprises, and anything left undone. Keep this fix worker free of hard turn and tool-call caps.
 
 After a fix worker returns, run another review round only when it made material changes or addressed non-trivial findings. Do not keep looping for optional polish, speculative improvements, or findings already deferred by the parent.
 
