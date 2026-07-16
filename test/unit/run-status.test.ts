@@ -144,7 +144,8 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Run: run-transcript/);
-			assert.match(text, /Step: 0 \(worker\) \| running/);
+			assert.match(text, /Run state: running/);
+		assert.match(text, /Selected state: running \| Position: Child 1 \(worker\)/);
 			assert.match(text, new RegExp(`Transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tail truncated\\):`));
 			assert.doesNotMatch(text, /first line/);
 			assert.match(text, /second line/);
@@ -186,9 +187,10 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Agent: 1 \(reviewer\) \| pending/);
-			assert.match(text, /Recent output from status\.json:/);
-			assert.match(text, /RIGHT_CHILD_RECENT/);
+			assert.match(text, /Selected state: pending \| Position: Agent 2 \(reviewer\)/);
+			assert.match(text, /Not started/);
+			assert.doesNotMatch(text, /Recent output from status\.json:/);
+			assert.doesNotMatch(text, /RIGHT_CHILD_RECENT/);
 			assert.doesNotMatch(text, /WRONG_CHILD_OUTPUT/);
 			assert.doesNotMatch(text, new RegExp(`Transcript tail from ${wrongOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 		} finally {

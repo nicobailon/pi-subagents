@@ -61,7 +61,7 @@ const theme = {
 };
 
 describe("native subagent fleet", () => {
-	it("collects current-session foreground and flattened async children", () => {
+	it("collects current-session foreground and hierarchical async children", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-collect-"));
 		try {
 			writeAsyncRun(root, { id: "async-current", agents: ["worker", "reviewer"], output: "CURRENT OUTPUT" });
@@ -95,6 +95,7 @@ describe("native subagent fleet", () => {
 			const snapshot = collectFleetSnapshot(state, { asyncDirRoot: root, resultsDir: path.join(root, "results") });
 			assert.deepEqual(snapshot.items.map((item) => item.key), [
 				"foreground-active:foreground-live:1",
+				"async:async-current",
 				"async:async-current:0",
 				"async:async-current:1",
 				"foreground-recent:foreground-recent:0",
@@ -132,10 +133,56 @@ describe("native subagent fleet", () => {
 		});
 
 		const snapshot = collectFleetSnapshot(state);
-		assert.equal(snapshot.items.length, 21);
+		assert.equal(snapshot.items.filter((item) => item.nodeKind === "run").length, 21);
 		assert.equal(snapshot.items[0]?.runId, "active-old");
 		assert.equal(snapshot.items.find((item) => item.runId === "terminal-21")?.state, "complete");
 		assert.ok(!snapshot.items.some((item) => item.runId === "terminal-0"));
+	});
+
+	it("builds workflow and nested hierarchy with accurate pending detail", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-tree-"));
+		try {
+			const asyncDir = path.join(root, "tree-run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "tree-run", sessionId: "session-current", mode: "chain", state: "running", startedAt: 100, lastUpdate: 200,
+				chainStepCount: 2, currentStep: 0,
+				workflowGraph: { runId: "tree-run", mode: "chain", phases: [], nodes: [
+					{ id: "step-0", kind: "step", agent: "worker", label: "Prepare inputs", status: "running", flatIndex: 0, stepIndex: 0 },
+					{ id: "step-1", kind: "parallel-group", label: "Native reviews", status: "pending", stepIndex: 1, children: [
+						{ id: "review-a", kind: "agent", agent: "reviewer", label: "Review ABI", status: "pending", flatIndex: 1, stepIndex: 1 },
+						{ id: "review-b", kind: "agent", agent: "reviewer", label: "Review portability", status: "pending", flatIndex: 2, stepIndex: 1 },
+					] },
+				] },
+				steps: [
+					{ agent: "worker", label: "Prepare inputs", status: "running", children: [{ id: "nested-one", parentRunId: "tree-run", parentStepIndex: 0, depth: 1, path: [{ runId: "tree-run", stepIndex: 0 }], state: "running", agent: "delegate", lastUpdate: 200, steps: [{ agent: "reviewer", label: "Nested review", status: "pending" }] }] },
+					{ agent: "reviewer", label: "Review ABI", status: "pending" },
+					{ agent: "reviewer", label: "Review portability", status: "pending" },
+				],
+			}, null, 2));
+			const state = stateForTest();
+			const snapshot = collectFleetSnapshot(state, { asyncDirRoot: root, resultsDir: path.join(root, "results") });
+			assert.deepEqual(snapshot.items.map((item) => item.nodeKind), ["run", "step", "parallel-group", "agent", "agent"]);
+			assert.equal(snapshot.items.find((item) => item.agent === "Review ABI")?.parentKey, "async:tree-run:step-1");
+
+			const tui = { terminal: { rows: 32, columns: 120 }, requestRender: () => {} };
+			const component = new SubagentFleetComponent(tui as never, theme as never, state, () => {}, { asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000 });
+			try {
+				component.handleInput("j"); component.handleInput("j"); component.handleInput("j");
+				const text = component.render(120).join("\n");
+				assert.match(text, /Run state: running/);
+				assert.match(text, /Selected state: pending/);
+				assert.match(text, /Not started/);
+			} finally { component.dispose(); }
+
+			state.fleetJobs = new Map([["nested-tracked", {
+				asyncId: "nested-tracked", asyncDir: path.join(root, "missing"), sessionId: "session-current", status: "running", mode: "single", agents: ["worker"], startedAt: 1, updatedAt: 2,
+				steps: [{ index: 0, agent: "worker", label: "Parent task", status: "running", children: [{ id: "nested-child", parentRunId: "nested-tracked", parentStepIndex: 0, depth: 1, path: [{ runId: "nested-tracked", stepIndex: 0 }], state: "running", agent: "delegate", lastUpdate: 2, steps: [{ agent: "reviewer", label: "Nested review", status: "pending" }] }] }],
+			}]]);
+			const nestedSnapshot = collectFleetSnapshot(state);
+			assert.ok(nestedSnapshot.items.some((item) => item.nodeKind === "nested-run" && item.agent === "delegate"));
+			assert.ok(nestedSnapshot.items.some((item) => item.nodeKind === "nested-step" && item.agent.includes("Nested review")));
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
 	});
 
 	it("renders selectable transcript detail and completed artifact paths within terminal width", () => {
@@ -154,6 +201,7 @@ describe("native subagent fleet", () => {
 				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000 },
 			);
 			try {
+				component.handleInput("j");
 				const lines = component.render(100);
 				assert.ok(lines.some((line) => line.includes("FINAL ASYNC OUTPUT")));
 				assert.ok(lines.some((line) => line.includes("output-0.log")));
@@ -194,6 +242,8 @@ describe("native subagent fleet", () => {
 				await new Promise((resolve) => setTimeout(resolve, 35));
 				let lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("appeared")));
+				component.handleInput("j");
+				lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("output line 39")));
 				fs.appendFileSync(path.join(asyncDir, "output-0.log"), "\nLATEST LIVE OUTPUT", "utf-8");
 				await new Promise((resolve) => setTimeout(resolve, 35));

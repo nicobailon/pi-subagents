@@ -386,8 +386,8 @@ function stepStateLine(mode: SubagentRunMode, index: number | undefined, step: A
 	if (index === undefined || !step) return undefined;
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	const parts = [
-		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})`,
-		step.status,
+		`Selected state: ${step.status}`,
+		`Position: ${mode === "parallel" ? "Agent" : "Child"} ${index + 1} (${step.agent})`,
 		formatActivityFacts(step),
 		modelThinking,
 		step.error ? `error: ${step.error}` : undefined,
@@ -430,11 +430,15 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 
 	const lines = [
 		`Run: ${status.runId}`,
-		`State: ${status.state}`,
+		`Run state: ${status.state}`,
 		`Mode: ${status.mode}`,
 		stepStateLine(status.mode, selected.index, selected.step),
 		selected.hint,
 	].filter((line): line is string => Boolean(line));
+	if (selected.step?.status === "pending") {
+		lines.push("", "Not started", "Waiting for earlier chain steps to complete.");
+		return lines.join("\n");
+	}
 	appendKnownArtifacts(lines, { outputPaths, sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined });
 
 	const warnings: string[] = [];
