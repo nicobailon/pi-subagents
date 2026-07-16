@@ -2040,6 +2040,7 @@ async function runSubagent(
 			toolCount: step.toolCount,
 			currentTool: step.currentTool,
 			currentToolDurationMs: step.currentToolStartedAt ? Math.max(0, now - step.currentToolStartedAt) : undefined,
+			lastActivityAt: step.lastActivityAt,
 			currentPath: step.currentPath,
 			elapsedMs: now - (step.startedAt ?? overallStartTime),
 		});
@@ -2248,6 +2249,7 @@ async function runSubagent(
 		if (!step) return;
 		const now = Date.now();
 		statusPayload.currentStep = flatIndex;
+		if (step.activityState === "needs_attention") step.activityState = undefined;
 		if (isChildWatchdogStatusEvent(event)) {
 			const next = acceptChildWatchdogEvent({
 				current: step.watchdog,
@@ -2333,6 +2335,8 @@ async function runSubagent(
 						currentToolDurationMs: toolSnapshot.startedAt ? Math.max(0, now - toolSnapshot.startedAt) : undefined,
 						currentPath: toolSnapshot.path,
 						recentFailureSummary: summarizeRecentMutatingFailures(state),
+						lastActivityAt: now,
+						activityEpoch: now,
 					}));
 				}
 			} else if (toolSnapshot?.mutates) {
@@ -2366,6 +2370,12 @@ async function runSubagent(
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
+		currentActivityState = statusPayload.steps.some((candidate) => candidate.activityState === "needs_attention")
+			? "needs_attention"
+			: statusPayload.steps.some((candidate) => candidate.activityState === "active_long_running")
+				? "active_long_running"
+				: undefined;
+		statusPayload.activityState = currentActivityState;
 		writeStatusPayload();
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
@@ -2386,6 +2396,7 @@ async function runSubagent(
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
 				currentTool: step.currentTool,
+				currentToolStartedAt: step.currentToolStartedAt,
 				now,
 			});
 			if (idleState === "needs_attention") {
@@ -2403,8 +2414,12 @@ async function runSubagent(
 					}));
 					changed = true;
 				}
-			} else if (maybeEmitActiveLongRunning(index, now)) {
-				changed = true;
+			} else {
+				if (step.activityState === "needs_attention") {
+					step.activityState = undefined;
+					changed = true;
+				}
+				if (maybeEmitActiveLongRunning(index, now)) changed = true;
 			}
 		}
 		if (statusPayload.lastActivityAt !== runLastActivityAt) {

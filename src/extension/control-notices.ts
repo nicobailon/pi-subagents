@@ -1,6 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { controlNotificationKey, formatControlNoticeMessage } from "../runs/shared/subagent-control.ts";
-import type { ControlEvent, SubagentState } from "../shared/types.ts";
+import {
+	controlNotificationKey,
+	formatControlNoticeMessage,
+	isControlEventActionable,
+} from "../runs/shared/subagent-control.ts";
+import type { AsyncStatus, ControlEvent, SubagentState } from "../shared/types.ts";
+import { readStatus } from "../shared/utils.ts";
 import { resolveChildPresentation, type ChildPresentationDetails } from "./human-messages.ts";
 
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
@@ -64,12 +69,46 @@ function deliverControlNotice(input: {
 	);
 }
 
-function isForegroundNoticeStillActionable(state: SubagentState, details: SubagentControlMessageDetails): boolean {
+function asyncStatusSnapshot(status: AsyncStatus, event: ControlEvent) {
+	const index = event.index ?? status.currentStep ?? (status.steps?.length === 1 ? 0 : undefined);
+	if (index === undefined) return undefined;
+	const step = status.steps?.[index];
+	if (!step) return undefined;
+	return {
+		runId: status.runId,
+		state: status.state,
+		agent: step.agent,
+		index,
+		activityState: step.activityState,
+		lastActivityAt: step.lastActivityAt,
+		currentTool: step.currentTool,
+	};
+}
+
+function isNoticeStillActionable(state: SubagentState, details: SubagentControlMessageDetails): boolean {
+	if (details.source === "async") {
+		const job = state.asyncJobs.get(details.event.runId);
+		if (!job || job.status !== "running") return false;
+		let status: AsyncStatus | null;
+		try {
+			status = readStatus(details.asyncDir ?? job.asyncDir);
+		} catch {
+			return false;
+		}
+		return status !== null && isControlEventActionable(details.event, asyncStatusSnapshot(status, details.event));
+	}
+
 	const control = state.foregroundControls.get(details.event.runId);
 	if (!control) return false;
-	if (control.currentAgent && control.currentAgent !== details.event.agent) return false;
-	if (details.event.index !== undefined && control.currentIndex !== details.event.index) return false;
-	return control.currentActivityState === "needs_attention";
+	return isControlEventActionable(details.event, {
+		runId: control.runId,
+		state: "running",
+		agent: control.currentAgent,
+		index: control.currentIndex,
+		activityState: control.currentActivityState,
+		lastActivityAt: control.lastActivityAt,
+		currentTool: control.currentTool,
+	});
 }
 
 export function handleSubagentControlNotice(input: {
@@ -78,12 +117,9 @@ export function handleSubagentControlNotice(input: {
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
 	foregroundDelayMs?: number;
+	asyncDelayMs?: number;
 }): void {
-	if (!input.details?.event || input.details.event.type === "active_long_running") return;
-	if (input.details.source !== "foreground") {
-		deliverControlNotice(input);
-		return;
-	}
+	if (!input.details?.event || input.details.event.type === "active_long_running" || input.details.event.reason === "completion_guard") return;
 
 	const pending = input.state.pendingForegroundControlNotices ?? new Map<string, ReturnType<typeof setTimeout>>();
 	input.state.pendingForegroundControlNotices = pending;
@@ -92,9 +128,9 @@ export function handleSubagentControlNotice(input: {
 	if (existing) clearTimeout(existing);
 	const timer = setTimeout(() => {
 		pending.delete(timerKey);
-		if (!isForegroundNoticeStillActionable(input.state, input.details)) return;
+		if (!isNoticeStillActionable(input.state, input.details)) return;
 		deliverControlNotice(input);
-	}, input.foregroundDelayMs ?? 1000);
+	}, input.details.source === "foreground" ? input.foregroundDelayMs ?? 1000 : input.asyncDelayMs ?? 1000);
 	timer.unref?.();
 	pending.set(timerKey, timer);
 }

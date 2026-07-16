@@ -344,7 +344,7 @@ The parent replies with `subagent_supervisor({ action: "reply", replyTo, message
 
 Visible supervisor requests and subagent control notices use a compact human summary by default. Press Pi's configured expand key (`Ctrl+O` by default) to show the full question, structured interview, or control diagnostics. This only changes terminal presentation: the complete control or coordination message remains in the conversation for the parent model.
 
-Child-side routine completion handoffs are still not expected. If a child appears stalled, needs-attention notices can show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child.
+Child-side routine completion handoffs are still not expected. If a child appears stalled, needs-attention notices can show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child. Delivery is debounced and revalidated against the exact live run and child, so recovery, newer activity, completion, stop, reset, reload, or run ownership replacement suppresses stale notices. A later genuine stall can notify again after activity begins a new interval. Known in-flight tools remain active (and may become `active_long_running`) rather than being classified as ordinary idle time. Control thresholds remain configurable through `needsAttentionAfterMs` and `activeNoticeAfterMs`; their defaults remain 60 seconds and 4 minutes.
 
 If messages do not show up, run:
 

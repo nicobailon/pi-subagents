@@ -16,6 +16,7 @@ interface AsyncJobTrackerModule {
 			widgetEnabled?: boolean;
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
+			onRunInactive?: (runId?: string) => void;
 		},
 	): {
 		ensurePoller(): void;
@@ -130,6 +131,24 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.fleetJobs.get("run-1")?.status, "complete", "fleet history should outlive widget cleanup");
 			assert.ok(ui.renderRequests > 0, "expected widget cleanup to request a rerender");
 			assert.equal(ui.widgets.at(-1), undefined);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("cancels pending notice ownership on replacement, completion, and reset", () => {
+		const asyncRoot = createTempDir("pi-async-job-cancel-notices-");
+		try {
+			const inactive: Array<string | undefined> = [];
+			const state = createState();
+			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				onRunInactive: (runId) => inactive.push(runId),
+			});
+			tracker.handleStarted({ id: "run-1", asyncDir: path.join(asyncRoot, "run-1"), agent: "worker" });
+			tracker.handleStarted({ id: "run-1", asyncDir: path.join(asyncRoot, "run-1-replacement"), agent: "worker" });
+			tracker.handleComplete({ id: "run-1", success: true });
+			tracker.resetJobs();
+			assert.deepEqual(inactive, ["run-1", "run-1", undefined]);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -411,7 +430,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				startedAt: 1000,
 				lastUpdate,
 				...(toolCount !== undefined ? { toolCount } : {}),
-				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "worker", status: "running", startedAt: 1000, activityState: "needs_attention" }],
 			}), "utf-8");
 			writeStatus(2000);
 
@@ -448,6 +467,36 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			writeStatus(3000, 1);
 			await new Promise((resolve) => setTimeout(resolve, 40));
 			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "changed non-terminal status should redraw the widget");
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("suppresses a queued control event when the exact child already completed", async () => {
+		const asyncRoot = createTempDir("pi-async-job-terminal-notice-");
+		try {
+			const runDir = path.join(asyncRoot, "run-terminal-notice");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-terminal-notice",
+				mode: "single",
+				state: "complete",
+				startedAt: 1,
+				endedAt: 3,
+				steps: [{ agent: "worker", status: "complete", activityState: "needs_attention", lastActivityAt: 1 }],
+			}));
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.control",
+				channels: ["event", "intercom"],
+				event: { type: "needs_attention", to: "needs_attention", ts: 2, runId: "run-terminal-notice", agent: "worker", index: 0, message: "stale", activityEpoch: 1, evidenceLastActivityAt: 1 },
+				intercom: { to: "main", message: "stale" },
+			})}\n`);
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10, completionRetentionMs: 5 });
+			tracker.handleStarted({ id: "run-terminal-notice", asyncDir: runDir, agent: "worker" });
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			assert.equal(recorder.events.length, 0);
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -737,7 +786,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			}), "utf-8");
 			const eventPath = path.join(runDir, "events.jsonl");
 			const partialRecord = JSON.stringify({
@@ -785,7 +834,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			}), "utf-8");
 			const largeDiagnostic = JSON.stringify({
 				type: "message_update",
@@ -840,7 +889,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			}), "utf-8");
 			const controlEvent = JSON.stringify({
 				type: "subagent.control",
@@ -893,7 +942,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			}), "utf-8");
 			const diagnosticLine = JSON.stringify({
 				type: "message_update",
@@ -1011,7 +1060,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			}), "utf-8");
 			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.control",
@@ -1053,7 +1102,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "active_long_running" }],
 			}), "utf-8");
 			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.control",
@@ -1095,7 +1144,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				startedAt: Date.now() - 1000,
 				lastUpdate: Date.now(),
-				steps: [{ agent: "worker", status: "running" }],
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
 			}), "utf-8");
 			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.control",

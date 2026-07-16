@@ -210,6 +210,10 @@ export interface ControlEvent {
 	currentPath?: string;
 	elapsedMs?: number;
 	recentFailureSummary?: string;
+	/** Meaningful-activity sequence for one notice per uninterrupted stale interval. */
+	activityEpoch?: number;
+	/** Last observed activity used as evidence when this event was classified. */
+	evidenceLastActivityAt?: number;
 }
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
@@ -1008,6 +1012,7 @@ export interface SubagentState {
 		interrupt?: () => boolean;
 	}>;
 	lastForegroundControlId: string | null;
+	/** Debounced foreground and async control notices awaiting final actionability checks. */
 	pendingForegroundControlNotices?: Map<string, ReturnType<typeof setTimeout>>;
 	cleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
 	lastUiContext: ExtensionContext | null;

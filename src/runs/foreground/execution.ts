@@ -525,6 +525,7 @@ async function runSingleAttempt(
 				currentToolDurationMs: input.currentToolDurationMs ?? currentToolDurationMs(now),
 				currentPath: input.currentPath ?? progress.currentPath,
 				recentFailureSummary: input.recentFailureSummary,
+				activityEpoch: progress.lastActivityAt,
 			});
 			emitControlEvent(event);
 			return previous !== "needs_attention";
@@ -549,6 +550,7 @@ async function runSingleAttempt(
 				toolCount: progress.toolCount,
 				currentTool: progress.currentTool,
 				currentToolDurationMs: currentToolDurationMs(now),
+				lastActivityAt: progress.lastActivityAt,
 				currentPath: progress.currentPath,
 				elapsedMs: now - startTime,
 			}));
@@ -612,6 +614,7 @@ async function runSingleAttempt(
 				startedAt: startTime,
 				lastActivityAt: progress.lastActivityAt,
 				currentTool: progress.currentTool,
+				currentToolStartedAt: progress.currentToolStartedAt,
 				now,
 			});
 			if (idleState === "needs_attention") {
@@ -690,6 +693,7 @@ async function runSingleAttempt(
 			const now = Date.now();
 			progress.durationMs = now - startTime;
 			progress.lastActivityAt = now;
+			if (progress.activityState === "needs_attention") progress.activityState = undefined;
 			updateActivityState(now);
 
 			if (evt.type === "tool_execution_start") {

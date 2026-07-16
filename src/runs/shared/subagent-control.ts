@@ -75,10 +75,15 @@ export function deriveActivityState(input: {
 	startedAt: number;
 	lastActivityAt?: number;
 	currentTool?: string;
+	currentToolStartedAt?: number;
 	now?: number;
 }): ActivityState | undefined {
-	if (!input.config.enabled || input.currentTool) return undefined;
+	if (!input.config.enabled) return undefined;
 	const now = input.now ?? Date.now();
+	if (input.currentTool) {
+		const toolStartedAt = input.currentToolStartedAt ?? input.lastActivityAt ?? input.startedAt;
+		return now - toolStartedAt >= input.config.activeNoticeAfterMs ? "active_long_running" : undefined;
+	}
 	const lastActivity = input.lastActivityAt ?? input.startedAt;
 	const ageMs = Math.max(0, now - lastActivity);
 	return ageMs > input.config.needsAttentionAfterMs ? "needs_attention" : undefined;
@@ -103,6 +108,7 @@ export function buildControlEvent(input: {
 	currentPath?: string;
 	elapsedMs?: number;
 	recentFailureSummary?: string;
+	activityEpoch?: number;
 }): ControlEvent {
 	const ts = input.ts ?? Date.now();
 	const type = input.type ?? (input.to === "active_long_running" ? "active_long_running" : "needs_attention");
@@ -131,6 +137,9 @@ export function buildControlEvent(input: {
 		...(input.currentPath ? { currentPath: input.currentPath } : {}),
 		...(elapsedMs !== undefined ? { elapsedMs } : {}),
 		...(input.recentFailureSummary ? { recentFailureSummary: input.recentFailureSummary } : {}),
+		...(input.activityEpoch !== undefined || input.lastActivityAt !== undefined
+			? { activityEpoch: input.activityEpoch ?? input.lastActivityAt, evidenceLastActivityAt: input.lastActivityAt ?? input.activityEpoch }
+			: {}),
 	};
 }
 
@@ -138,9 +147,38 @@ export function shouldNotifyControlEvent(config: ResolvedControlConfig, event: C
 	return config.enabled && config.notifyOn.includes(event.type);
 }
 
+export function controlEventEvidenceLastActivityAt(event: ControlEvent): number | undefined {
+	if (event.evidenceLastActivityAt !== undefined) return event.evidenceLastActivityAt;
+	if (event.elapsedMs !== undefined) return event.ts - event.elapsedMs;
+	return event.activityEpoch;
+}
+
 export function controlNotificationKey(event: ControlEvent, childIntercomTarget?: string): string {
 	const childKey = childIntercomTarget ?? (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
-	return `${childKey}:${event.type}:${event.reason ?? "idle"}`;
+	const epoch = event.activityEpoch ?? controlEventEvidenceLastActivityAt(event);
+	return `${childKey}:${event.type}:${event.reason ?? "idle"}:${epoch ?? "legacy"}`;
+}
+
+export interface ControlEventActionabilitySnapshot {
+	runId: string;
+	state: string;
+	agent?: string;
+	index?: number;
+	activityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+}
+
+export function isControlEventActionable(event: ControlEvent, snapshot: ControlEventActionabilitySnapshot | undefined): boolean {
+	if (!snapshot || event.reason === "completion_guard") return false;
+	if (snapshot.runId !== event.runId || snapshot.state !== "running") return false;
+	if (snapshot.agent !== event.agent) return false;
+	if (event.index !== undefined && snapshot.index !== event.index) return false;
+	if (snapshot.activityState !== event.to) return false;
+	if (event.reason === "idle" && snapshot.currentTool) return false;
+	const evidence = controlEventEvidenceLastActivityAt(event);
+	if (evidence !== undefined && snapshot.lastActivityAt !== undefined && snapshot.lastActivityAt > evidence) return false;
+	return true;
 }
 
 export function claimControlNotification(config: ResolvedControlConfig, event: ControlEvent, seenKeys: Set<string>, childIntercomTarget?: string): boolean {

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
-import { formatControlNoticeMessage } from "../shared/subagent-control.ts";
+import { formatControlNoticeMessage, isControlEventActionable } from "../shared/subagent-control.ts";
 import {
 	type AsyncJobState,
 	type AsyncStartedEvent,
@@ -28,6 +28,7 @@ interface AsyncJobTrackerOptions {
 	widgetEnabled?: boolean;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
+	onRunInactive?: (runId?: string) => void;
 }
 
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
@@ -135,6 +136,28 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}, completionRetentionMs);
 		state.cleanupTimers.set(asyncId, timer);
 	};
+	const controlEventIsCurrentlyActionable = (job: AsyncJobState, event: ControlEvent): boolean => {
+		let status;
+		try {
+			status = readStatus(job.asyncDir);
+		} catch {
+			return false;
+		}
+		if (!status) return false;
+		const index = event.index ?? status.currentStep ?? (status.steps?.length === 1 ? 0 : undefined);
+		if (index === undefined) return false;
+		const step = status.steps?.[index];
+		if (!step) return false;
+		return isControlEventActionable(event, {
+			runId: status.runId,
+			state: status.state,
+			agent: step.agent,
+			index,
+			activityState: step.activityState,
+			lastActivityAt: step.lastActivityAt,
+			currentTool: step.currentTool,
+		});
+	};
 	const emitNewControlEvents = (job: AsyncJobState) => {
 		const eventsPath = path.join(job.asyncDir, "events.jsonl");
 		let fd: number;
@@ -182,6 +205,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
 				if (!record.event || !Array.isArray(record.channels)) return;
+				if (!controlEventIsCurrentlyActionable(job, record.event)) return;
 				const payload = {
 					event: record.event,
 					source: "async" as const,
@@ -303,6 +327,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					const status = reconciliation.status ?? readStatus(job.asyncDir);
 					if (status) {
 						const previousStatus = job.status;
+						const previousActivityState = job.activityState;
 						job.status = status.state;
 						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
@@ -349,6 +374,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
 						job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 						job.sessionFile = status.sessionFile ?? job.sessionFile;
+						const becameTerminal = previousStatus !== job.status
+							&& (job.status === "complete" || job.status === "failed" || job.status === "paused" || job.status === "stopped");
+						if ((previousActivityState === "needs_attention" && job.activityState !== "needs_attention") || becameTerminal) {
+							options.onRunInactive?.(job.asyncId);
+						}
 						if (job.status === "complete" || job.status === "failed" || job.status === "paused" || job.status === "stopped") {
 							rememberFleetJob(state, job);
 							if (!nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
@@ -385,6 +415,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const info = data as AsyncStartedEvent;
 		if (!info.id) return;
 		if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId) return;
+		if (state.asyncJobs.has(info.id)) options.onRunInactive?.(info.id);
 		const now = Date.now();
 		const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
 		const rawAgents = info.agents?.length ? info.agents : info.chain && info.chain.length > 0 ? info.chain : info.agent ? [info.agent] : undefined;
@@ -428,6 +459,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const asyncId = result.id;
 		if (!asyncId) return;
 		const job = state.asyncJobs.get(asyncId);
+		options.onRunInactive?.(asyncId);
 		let nestedRefreshFailed = false;
 		if (job) {
 			job.status = result.state ?? (result.success ? "complete" : "failed");
@@ -449,6 +481,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {
+		options.onRunInactive?.();
 		for (const timer of state.cleanupTimers.values()) {
 			clearTimeout(timer);
 		}

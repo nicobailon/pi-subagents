@@ -689,7 +689,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(failureEvent?.type, "needs_attention");
 		assert.equal(failureEvent?.currentPath, "src/runs/background/async-status.ts");
 		assert.match(failureEvent?.recentFailureSummary ?? "", /No exact match/);
-		assert.equal(result.progress.activityState, "needs_attention");
+		assert.equal(result.progress.activityState, undefined, "later activity should recover the live attention state while preserving the event history");
 	});
 
 	it("does not surface control state or events when control is disabled", async () => {

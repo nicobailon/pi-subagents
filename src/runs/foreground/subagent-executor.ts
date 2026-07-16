@@ -3712,6 +3712,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				interrupt: undefined,
 			};
 		if (foregroundControl) {
+			clearPendingForegroundControlNotices(deps.state, runId);
 			deps.state.foregroundControls.set(runId, foregroundControl);
 			deps.state.lastForegroundControlId = runId;
 		}

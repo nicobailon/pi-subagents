@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	clearPendingForegroundControlNotices,
@@ -49,6 +52,8 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 		index: 0,
 		message: "worker needs attention",
 		reason: "idle",
+		activityEpoch: 1,
+		evidenceLastActivityAt: 1,
 		...overrides,
 	};
 }
@@ -70,53 +75,71 @@ function wait(ms: number): Promise<void> {
 }
 
 describe("subagent control notice delivery", () => {
-	it("delivers async needs-attention notices immediately without changing model-facing content", () => {
-		const state = makeState();
-		state.asyncJobs.set("run-1", {
-			asyncId: "run-1",
-			asyncDir: "/tmp/run-1",
-			status: "running",
-			mode: "chain",
-			chainStepCount: 2,
-			steps: [
-				{ index: 0, agent: "worker", label: "Implement API", status: "running" },
-				{ index: 1, agent: "tester", label: "Validate", status: "pending" },
-			],
-		});
-		const recorder = makeRecorder();
-		const event = needsAttentionEvent({
-			message: "worker needs attention with complete diagnostics",
-			currentPath: "/tmp/project/src/index.ts",
-			toolCount: 7,
-		});
-		const expectedModelContent = formatControlNoticeMessage(event);
+	it("debounces and revalidates async needs-attention notices without changing model-facing content", async () => {
+		const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "control-notice-"));
+		try {
+			const state = makeState();
+			state.asyncJobs.set("run-1", {
+				asyncId: "run-1",
+				asyncDir,
+				status: "running",
+				mode: "chain",
+				chainStepCount: 2,
+				steps: [
+					{ index: 0, agent: "worker", label: "Implement API", status: "running" },
+					{ index: 1, agent: "tester", label: "Validate", status: "pending" },
+				],
+			});
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-1",
+				mode: "chain",
+				state: "running",
+				startedAt: 0,
+				currentStep: 0,
+				steps: [
+					{ agent: "worker", label: "Implement API", status: "running", activityState: "needs_attention", lastActivityAt: 1 },
+					{ agent: "tester", label: "Validate", status: "pending" },
+				],
+			}));
+			const recorder = makeRecorder();
+			const event = needsAttentionEvent({
+				message: "worker needs attention with complete diagnostics",
+				currentPath: "/tmp/project/src/index.ts",
+				toolCount: 7,
+			});
+			const expectedModelContent = formatControlNoticeMessage(event);
 
-		handleSubagentControlNotice({
-			pi: recorder.pi,
-			state,
-			visibleControlNotices: new Set(),
-			details: { source: "async", event },
-			foregroundDelayMs: 20,
-		});
+			handleSubagentControlNotice({
+				pi: recorder.pi,
+				state,
+				visibleControlNotices: new Set(),
+				details: { source: "async", asyncDir, event },
+				asyncDelayMs: 5,
+			});
 
-		assert.equal(recorder.sent.length, 1);
-		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
-		const message = recorder.sent[0]?.message as SentControlNotice;
-		assert.equal(message.content, expectedModelContent);
-		assert.equal(message.details.noticeText, expectedModelContent);
-		assert.match(message.content, /worker needs attention with complete diagnostics/);
-		assert.match(message.content, /Status: subagent\(\{ action: "status"/);
-		assert.deepEqual({
-			label: message.details.label,
-			role: message.details.role,
-			logicalStep: message.details.logicalStep,
-			totalSteps: message.details.totalSteps,
-		}, {
-			label: "Implement API",
-			role: "worker",
-			logicalStep: 1,
-			totalSteps: 2,
-		});
+			assert.equal(recorder.sent.length, 0);
+			await wait(20);
+			assert.equal(recorder.sent.length, 1);
+			assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
+			const message = recorder.sent[0]?.message as SentControlNotice;
+			assert.equal(message.content, expectedModelContent);
+			assert.equal(message.details.noticeText, expectedModelContent);
+			assert.match(message.content, /worker needs attention with complete diagnostics/);
+			assert.match(message.content, /Status: subagent\(\{ action: "status"/);
+			assert.deepEqual({
+				label: message.details.label,
+				role: message.details.role,
+				logicalStep: message.details.logicalStep,
+				totalSteps: message.details.totalSteps,
+			}, {
+				label: "Implement API",
+				role: "worker",
+				logicalStep: 1,
+				totalSteps: 2,
+			});
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
 	});
 
 	it("queues foreground needs-attention notices until the same step is still actionable", async () => {
@@ -205,5 +228,62 @@ describe("subagent control notice delivery", () => {
 
 		await wait(25);
 		assert.equal(recorder.sent.length, 0);
+	});
+
+	it("suppresses async notices when activity resumes before delivery", async () => {
+		const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "control-notice-recovery-"));
+		try {
+			const state = makeState();
+			state.asyncJobs.set("run-1", { asyncId: "run-1", asyncDir, status: "running" });
+			const writeStatus = (lastActivityAt: number, activityState?: "needs_attention") => fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-1",
+				mode: "single",
+				state: "running",
+				startedAt: 0,
+				steps: [{ agent: "worker", status: "running", activityState, lastActivityAt }],
+			}));
+			writeStatus(1, "needs_attention");
+			const recorder = makeRecorder();
+			handleSubagentControlNotice({
+				pi: recorder.pi,
+				state,
+				visibleControlNotices: new Set(),
+				details: { source: "async", asyncDir, event: needsAttentionEvent() },
+				asyncDelayMs: 15,
+			});
+			writeStatus(2);
+			await wait(30);
+			assert.equal(recorder.sent.length, 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("allows a new notice after activity starts a later stale interval", async () => {
+		const state = makeState();
+		state.foregroundControls.set("run-1", {
+			runId: "run-1",
+			mode: "single",
+			startedAt: 0,
+			updatedAt: 0,
+			currentAgent: "worker",
+			currentIndex: 0,
+			currentActivityState: "needs_attention",
+			lastActivityAt: 1,
+		});
+		const recorder = makeRecorder();
+		const visible = new Set<string>();
+		handleSubagentControlNotice({ pi: recorder.pi, state, visibleControlNotices: visible, details: { source: "foreground", event: needsAttentionEvent() }, foregroundDelayMs: 5 });
+		await wait(15);
+		state.foregroundControls.get("run-1")!.lastActivityAt = 2;
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state,
+			visibleControlNotices: visible,
+			details: { source: "foreground", event: needsAttentionEvent({ activityEpoch: 2, evidenceLastActivityAt: 2 }) },
+			foregroundDelayMs: 5,
+		});
+		await wait(15);
+		assert.equal(recorder.sent.length, 2);
 	});
 });

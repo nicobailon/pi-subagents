@@ -7,6 +7,7 @@ import {
 	deriveActivityState,
 	formatControlIntercomMessage,
 	formatControlNoticeMessage,
+	isControlEventActionable,
 	resolveControlConfig,
 	shouldNotifyControlEvent,
 } from "../../src/runs/shared/subagent-control.ts";
@@ -24,6 +25,10 @@ describe("subagent control attention state", () => {
 		assert.equal(deriveActivityState({ config, startedAt: 0, now: 400 }), "needs_attention");
 	});
 
+	it("keeps a known in-flight tool active until the long-running threshold", () => {
+		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, currentTool: "bash", currentToolStartedAt: 100, now: 400 }), undefined);
+		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, currentTool: "bash", currentToolStartedAt: 100, now: 240_100 }), "active_long_running");
+	});
 
 	it("builds compact needs-attention control events", () => {
 		const event = buildControlEvent({
@@ -44,6 +49,8 @@ describe("subagent control attention state", () => {
 			message: "worker needs attention (no observed activity for 0s)",
 			reason: "idle",
 			elapsedMs: 900,
+			activityEpoch: 100,
+			evidenceLastActivityAt: 100,
 		});
 	});
 
@@ -229,13 +236,15 @@ describe("subagent control attention state", () => {
 		assert.match(message, /Routed live nested nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
 	});
 
-	it("dedupes notifications once per child target and attention state", () => {
-		const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", index: 0 });
+	it("dedupes once per activity epoch and permits a later genuine stall", () => {
+		const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", index: 0, lastActivityAt: 100 });
+		const laterStall = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", index: 0, lastActivityAt: 200 });
 		const seen = new Set<string>();
 
-		assert.equal(controlNotificationKey(event, "subagent-worker-run-1-1"), "subagent-worker-run-1-1:needs_attention:idle");
+		assert.equal(controlNotificationKey(event, "subagent-worker-run-1-1"), "subagent-worker-run-1-1:needs_attention:idle:100");
 		assert.equal(claimControlNotification(resolveControlConfig(), event, seen, "subagent-worker-run-1-1"), true);
 		assert.equal(claimControlNotification(resolveControlConfig(), event, seen, "subagent-worker-run-1-1"), false);
+		assert.equal(claimControlNotification(resolveControlConfig(), laterStall, seen, "subagent-worker-run-1-1"), true);
 
 		const terminalEvent = buildControlEvent({
 			to: "needs_attention",
@@ -246,5 +255,15 @@ describe("subagent control attention state", () => {
 			reason: "completion_guard",
 		});
 		assert.equal(claimControlNotification(resolveControlConfig(), terminalEvent, seen, "subagent-worker-run-1-1"), true);
+	});
+
+	it("requires exact active state and unchanged activity evidence", () => {
+		const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", index: 2, lastActivityAt: 100 });
+		const active = { runId: "run-1", state: "running", agent: "worker", index: 2, activityState: "needs_attention" as const, lastActivityAt: 100 };
+		assert.equal(isControlEventActionable(event, active), true);
+		assert.equal(isControlEventActionable(event, { ...active, lastActivityAt: 101 }), false);
+		assert.equal(isControlEventActionable(event, { ...active, state: "complete" }), false);
+		assert.equal(isControlEventActionable(event, { ...active, index: 3 }), false);
+		assert.equal(isControlEventActionable(event, { ...active, currentTool: "bash" }), false);
 	});
 });
