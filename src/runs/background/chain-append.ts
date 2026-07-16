@@ -7,6 +7,7 @@ import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, Workflow
 import { readStatus } from "../../shared/utils.ts";
 import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
+import { resolveDisplayLabel } from "../shared/display-label.ts";
 
 const APPEND_REQUESTS_DIR = "append-requests";
 
@@ -132,7 +133,7 @@ function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 	return {
 		agent: task.agent,
 		phase: task.phase,
-		label: task.label,
+		label: resolveDisplayLabel({ label: task.label, task: task.task, agent: task.agent }),
 		outputName: task.outputName,
 		structured: task.structured,
 		status: "pending",
@@ -152,7 +153,7 @@ function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
 		return [{
 			agent: `expand:${step.parallel.agent}`,
 			phase: step.phase ?? step.parallel.phase,
-			label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`,
+			label: resolveDisplayLabel({ label: step.label ?? step.parallel.label, task: `Dynamic fanout ${step.collect.as}`, agent: "Dynamic fanout" }),
 			outputName: step.collect.as,
 			structured: Boolean(step.collect.outputSchema),
 			status: "pending",
@@ -179,7 +180,7 @@ function graphNodeForSequential(step: RunnerSubagentStep, stepIndex: number, fla
 		kind: "step",
 		agent: step.agent,
 		phase: step.phase,
-		label: step.label?.trim() || step.agent || `Step ${stepIndex + 1}`,
+		label: resolveDisplayLabel({ label: step.label, task: step.task, agent: step.agent, ordinal: stepIndex + 1 }),
 		status: "pending",
 		flatIndex,
 		stepIndex,
@@ -197,7 +198,7 @@ function graphNodeForParallel(step: ParallelStepGroup, stepIndex: number, flatIn
 			kind: "agent" as const,
 			agent: task.agent,
 			phase: task.phase,
-			label: task.label?.trim() || task.agent || `Agent ${taskIndex + 1}`,
+			label: resolveDisplayLabel({ label: task.label, task: task.task, agent: task.agent, ordinal: taskIndex + 1 }),
 			status: "pending" as const,
 			flatIndex: flatIndex + taskIndex,
 			stepIndex,
@@ -208,7 +209,7 @@ function graphNodeForParallel(step: ParallelStepGroup, stepIndex: number, flatIn
 	return {
 		id: `step-${stepIndex}`,
 		kind: "parallel-group",
-		label: step.parallel.length === 1 ? "Parallel task" : `Parallel group (${step.parallel.length})`,
+		label: resolveDisplayLabel({ label: step.label, task: `Parallel group ${stepIndex + 1}`, agent: "Parallel group", ordinal: stepIndex + 1 }),
 		status: "pending",
 		stepIndex,
 		children,
@@ -219,7 +220,7 @@ function graphNodeForDynamic(step: DynamicRunnerGroup, stepIndex: number): Workf
 	return {
 		id: `step-${stepIndex}`,
 		kind: "dynamic-parallel-group",
-		label: step.label?.trim() || step.parallel.label?.trim() || `Dynamic fanout (${step.collect.as})`,
+		label: resolveDisplayLabel({ label: step.label ?? step.parallel.label, task: `Dynamic fanout ${step.collect.as}`, agent: "Dynamic fanout", ordinal: stepIndex + 1 }),
 		status: "pending",
 		stepIndex,
 		outputName: step.collect.as,

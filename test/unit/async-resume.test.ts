@@ -54,9 +54,13 @@ describe("async resume lookup", () => {
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			const descriptor = {
-				version: 1, sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
+				version: 1, sourceRunId: "run-descriptor", agent: "worker", label: "Audit auth", cwd: root, systemPromptMode: "replace",
 				inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 			};
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), descriptor);
+			const resolved = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(resolved.recoveryDescriptor?.label, "Audit auth");
+
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
 

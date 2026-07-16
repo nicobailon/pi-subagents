@@ -283,6 +283,7 @@ export interface SteeringRecoveryDescriptor {
 	version: 1;
 	sourceRunId: string;
 	agent: string;
+	label?: string;
 	sessionFile?: string;
 	cwd: string;
 	model?: string;
@@ -383,6 +384,7 @@ export interface ChildWatchdogProgress {
 export interface AgentProgress {
 	index: number;
 	agent: string;
+	label?: string;
 	status: "pending" | "running" | "completed" | "failed" | "detached";
 	activityState?: ActivityState;
 	task: string;
@@ -585,6 +587,7 @@ export interface ProtocolOutputLimit {
 export interface SingleResult {
 	agent: string;
 	task: string;
+	label?: string;
 	exitCode: number;
 	detached?: boolean;
 	detachedReason?: string;
@@ -712,6 +715,7 @@ export interface NestedRunAddress {
 
 export interface NestedStepSummary {
 	agent: string;
+	label?: string;
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped";
 	sessionFile?: string;
 	transcriptPath?: string;
@@ -1063,6 +1067,7 @@ export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom
 export interface RunSyncOptions {
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
+	label?: string;
 	cwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;

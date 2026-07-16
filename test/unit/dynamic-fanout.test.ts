@@ -35,6 +35,16 @@ describe("dynamic fanout helpers", () => {
 		assert.deepEqual(materialized.parallel.map((task) => task.label), ["Review src/a.ts", "Review src/b.ts"]);
 	});
 
+	it("derives resolved labels after dynamic items materialize", () => {
+		const step: ChainStep = {
+			expand: { from: { output: "targets", path: "/items" }, item: "target", maxItems: 4 },
+			parallel: { agent: "reviewer", task: "Review {target.path}" },
+			collect: { as: "reviews" },
+		};
+		const materialized = materializeDynamicParallelStep(step, outputs, 1);
+		assert.deepEqual(materialized.parallel.map((task) => task.label), ["Review src/a.ts", "Review src/b.ts"]);
+	});
+
 	it("rejects missing structured sources, over-limit arrays, duplicate keys, colliding ids, and bad templates", () => {
 		const base: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },

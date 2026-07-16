@@ -73,6 +73,7 @@ import {
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { resolveDisplayLabel } from "../shared/display-label.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
@@ -240,9 +241,11 @@ async function runSingleAttempt(
 		waitToolEnabled: options.waitToolEnabled,
 	});
 
+	const displayLabel = resolveDisplayLabel({ label: options.label, task: shared.originalTask ?? task, agent: agent.name, ordinal: (options.index ?? 0) + 1 });
 	const result: SingleResult = {
 		agent: agent.name,
 		task: shared.originalTask ?? task,
+		label: displayLabel,
 		exitCode: 0,
 		messages: [],
 		usage: emptyUsage(),
@@ -278,6 +281,7 @@ async function runSingleAttempt(
 	const progress: AgentProgress = {
 		index: options.index ?? 0,
 		agent: agent.name,
+		label: displayLabel,
 		status: "running",
 		task,
 		skills: shared.resolvedSkillNames,

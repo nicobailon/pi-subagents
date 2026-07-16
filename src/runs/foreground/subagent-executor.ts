@@ -18,6 +18,7 @@ import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
+import { resolveDisplayLabel, resolveSiblingDisplayLabels } from "../shared/display-label.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
 	buildChainInstructions,
@@ -119,6 +120,7 @@ const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "ejec
 interface TaskParam {
 	agent: string;
 	task: string;
+	label?: string;
 	cwd?: string;
 	count?: number;
 	output?: string | boolean;
@@ -141,6 +143,7 @@ export interface SubagentParamsLike {
 	lines?: number;
 	agent?: string;
 	task?: string;
+	label?: string;
 	message?: string;
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
@@ -1229,6 +1232,7 @@ async function resumeAsyncRun(input: {
 	const result = executeAsyncSingle(runId, {
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target, followUp),
+		label: recoveryDescriptor?.label,
 		goal: followUp,
 		agentConfig: recoveryAgentConfig,
 		ctx: {
@@ -1655,22 +1659,57 @@ function expandChainParallelCounts(chain: ChainStep[]): { chain?: ChainStep[]; e
 	return { chain: expandedChain };
 }
 
+function resolveExecutionDisplayLabels(params: SubagentParamsLike): SubagentParamsLike {
+	if (params.tasks) {
+		const labels = resolveSiblingDisplayLabels(params.tasks, (task) => task);
+		return { ...params, tasks: params.tasks.map((task, index) => ({ ...task, label: labels[index] })) };
+	}
+	if (params.chain) {
+		const chain = params.chain.map((step, stepIndex) => {
+			if (isParallelStep(step)) {
+				const labels = resolveSiblingDisplayLabels(step.parallel, (task) => task);
+				return {
+					...step,
+					label: resolveDisplayLabel({ label: step.label, task: `Parallel group ${stepIndex + 1}`, agent: "Parallel group", ordinal: stepIndex + 1 }),
+					parallel: step.parallel.map((task, index) => ({ ...task, label: labels[index] })),
+				};
+			}
+			if (isDynamicParallelStep(step)) {
+				return {
+					...step,
+					label: resolveDisplayLabel({ label: step.label, task: `Dynamic group ${stepIndex + 1}`, agent: "Dynamic group", ordinal: stepIndex + 1 }),
+					parallel: { ...step.parallel },
+				};
+			}
+			return {
+				...step,
+				label: resolveDisplayLabel({ label: step.label, task: step.task, agent: step.agent, ordinal: stepIndex + 1 }),
+			};
+		});
+		return { ...params, chain };
+	}
+	if (params.agent) {
+		return { ...params, label: resolveDisplayLabel({ label: params.label, task: params.task, agent: params.agent, ordinal: 1 }) };
+	}
+	return params;
+}
+
 function normalizeRepeatedParallelCounts(params: SubagentParamsLike): { params?: SubagentParamsLike; error?: AgentToolResult<Details> } {
 	if (params.tasks) {
 		const expandedTasks = expandTopLevelTaskCounts(params.tasks);
 		if (expandedTasks.error) {
 			return { error: buildRequestedModeError(params, expandedTasks.error) };
 		}
-		return { params: { ...params, tasks: expandedTasks.tasks } };
+		return { params: resolveExecutionDisplayLabels({ ...params, tasks: expandedTasks.tasks }) };
 	}
 	if (params.chain) {
 		const expandedChain = expandChainParallelCounts(params.chain);
 		if (expandedChain.error) {
 			return { error: buildRequestedModeError(params, expandedChain.error) };
 		}
-		return { params: { ...params, chain: expandedChain.chain } };
+		return { params: resolveExecutionDisplayLabels({ ...params, chain: expandedChain.chain }) };
 	}
-	return { params };
+	return { params: resolveExecutionDisplayLabels(params) };
 }
 
 function withForkContext(
@@ -1945,6 +1984,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const parallelTasks = params.tasks.map((task, index) => ({
 			agent: task.agent,
 			task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task) : task.task,
+			label: task.label,
 			cwd: task.cwd,
 			...(task.model !== undefined ? { model: task.model } : {}),
 			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
@@ -2050,6 +2090,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
+			label: params.label,
 			goal: params.task ?? "",
 			agentConfig: a,
 			ctx: asyncCtx,
@@ -2432,6 +2473,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		}
 		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			label: task.label,
 			cwd: taskCwd,
 			signal: input.signal,
 			interruptSignal: interruptController.signal,
@@ -2979,6 +3021,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			return executeAsyncSingle(id, {
 				agent: params.agent!,
 				task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(task) : task,
+				label: params.label,
 				goal: task,
 				agentConfig,
 				ctx: asyncCtx,
@@ -3067,6 +3110,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
 		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+		label: params.label,
 		cwd: effectiveCwd,
 		signal,
 		interruptSignal: interruptController.signal,

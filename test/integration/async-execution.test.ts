@@ -469,6 +469,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const result = executeAsyncSingle(id, {
 			agent: "worker",
 			task,
+			label: "Literal output refs",
 			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
@@ -485,6 +486,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 
 		assert.equal(result.isError, undefined);
+		assert.equal(result.details.workflowGraph?.nodes[0]?.label, "Literal output refs");
 		const call = await waitForMockPiCall(mockPi, 0, 10_000);
 		assert.match(call.args.at(-1) ?? "", /\{outputs\.name\}/);
 		const payload = await readAsyncPayload(id);
