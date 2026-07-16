@@ -1311,7 +1311,15 @@ Makes top-level calls use background execution when the request does not explici
 { "asyncWidget": false }
 ```
 
-Controls the above-editor widget for background runs. The default is `true`. Set it to `false` when another extension renders async lifecycle data in a custom footer, status line, or dashboard; status tracking, completion notifications, `/subagents-fleet`, and lifecycle events continue to work.
+Controls the widget for background runs. The default is `true`. Set it to `false` when another extension renders async lifecycle data in a custom footer, status line, or dashboard; status tracking, completion notifications, `/subagents-fleet`, and lifecycle events continue to work.
+
+### `asyncWidgetPlacement`
+
+```json
+{ "asyncWidgetPlacement": "belowEditor" }
+```
+
+Places the background-runs widget `aboveEditor` (the compatible default) or `belowEditor`. Placement is presentation-only: it does not change foreground/background execution, input focus, status tracking, or completion delivery. Invalid values warn and fall back to `aboveEditor`.
 
 ### `waitTool`
 

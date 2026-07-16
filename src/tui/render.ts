@@ -11,6 +11,7 @@ import {
 	type AsyncJobState,
 	type AsyncJobStep,
 	type AsyncParallelGroupStatus,
+	type AsyncWidgetPlacement,
 	type Details,
 	type NestedRunSummary,
 	type NestedStepSummary,
@@ -445,7 +446,10 @@ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, 
 		const steps = job.steps.slice(span.start, span.start + span.count);
 		if (span.isParallel) {
 			const status = aggregateStepStatus(steps);
-			lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count))}`);
+			const outcome = status === "pending"
+				? `pending · ${span.count} agent${span.count === 1 ? "" : "s"}`
+				: formatParallelOutcome(steps, span.count);
+			lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", outcome)}`);
 			continue;
 		}
 		const step = steps[0];
@@ -1275,14 +1279,18 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 /**
  * Render the async jobs widget
  */
-export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
+export function renderWidget(
+	ctx: ExtensionContext,
+	jobs: AsyncJobState[],
+	placement: AsyncWidgetPlacement = "aboveEditor",
+): void {
 	if (jobs.length === 0) {
 		resetWidgetLayoutSession();
 		if (ctx.hasUI) ctx.ui.setWidget(WIDGET_KEY, undefined);
 		return;
 	}
 	if (!ctx.hasUI) return;
-	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
+	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false), { placement });
 }
 
 function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme, frame?: number): Component {

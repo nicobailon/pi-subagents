@@ -45,7 +45,7 @@ import registerSubagentNotify, { parseSubagentNotifyContent, type SubagentNotify
 import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_MESSAGE_TYPE, type SubagentSteeringMessageDetails } from "./steering-notices.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, resolveAsyncWidgetPlacement } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
 import {
 	type Details,
@@ -231,6 +231,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
+	const asyncWidgetPlacement = resolveAsyncWidgetPlacement(config);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
@@ -285,6 +286,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR, {
 		widgetEnabled: config.asyncWidget !== false,
+		widgetPlacement: asyncWidgetPlacement,
 	});
 	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	const scheduledRunManager = createScheduledRunManager({

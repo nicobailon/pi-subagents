@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionConfig } from "../shared/types.ts";
+import type { AsyncWidgetPlacement, ExtensionConfig } from "../shared/types.ts";
 import { getAgentDir } from "../shared/utils.ts";
 
 export function getConfigPath(): string {
@@ -26,6 +26,17 @@ export function updateConfig(updater: (config: ExtensionConfig) => ExtensionConf
 	const next = updater(readConfigForUpdate(configPath));
 	saveConfig(next, configPath);
 	return next;
+}
+
+export function resolveAsyncWidgetPlacement(
+	config: Pick<ExtensionConfig, "asyncWidgetPlacement">,
+	warn: (message: string) => void = console.warn,
+): AsyncWidgetPlacement {
+	const placement = config.asyncWidgetPlacement;
+	if (placement === undefined || placement === "aboveEditor") return "aboveEditor";
+	if (placement === "belowEditor") return "belowEditor";
+	warn(`[pi-subagents] Ignoring invalid asyncWidgetPlacement ${JSON.stringify(placement)}; expected "aboveEditor" or "belowEditor".`);
+	return "aboveEditor";
 }
 
 export function loadConfig(): ExtensionConfig {

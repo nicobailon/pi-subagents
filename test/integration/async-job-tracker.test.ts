@@ -14,6 +14,7 @@ interface AsyncJobTrackerModule {
 			pollIntervalMs?: number;
 			resultsDir?: string;
 			widgetEnabled?: boolean;
+			widgetPlacement?: "aboveEditor" | "belowEditor";
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
 		},
@@ -82,6 +83,7 @@ async function waitForCondition(
 
 function createUiContext() {
 	const widgets: unknown[] = [];
+	const widgetPlacements: unknown[] = [];
 	let renderRequests = 0;
 	const ctx = {
 		hasUI: true,
@@ -89,8 +91,9 @@ function createUiContext() {
 			theme: {
 				fg: (_theme: string, text: string) => text,
 			},
-			setWidget: (_key: string, value: unknown) => {
+			setWidget: (_key: string, value: unknown, options?: unknown) => {
 				widgets.push(value);
+				widgetPlacements.push(options);
 			},
 			requestRender: () => {
 				renderRequests += 1;
@@ -101,6 +104,9 @@ function createUiContext() {
 		ctx,
 		get widgets() {
 			return widgets;
+		},
+		get widgetPlacements() {
+			return widgetPlacements;
 		},
 		get renderRequests() {
 			return renderRequests;
@@ -152,6 +158,26 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(ui.widgets.every((widget) => widget === undefined), "disabled widget must stay cleared");
 			tracker.resetJobs(ui.ctx as never);
 			assert.equal(state.fleetJobs.size, 0, "session reset should clear fleet history");
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("forwards configured below-editor placement to widget renders", () => {
+		const asyncRoot = createTempDir("pi-async-job-widget-placement-");
+		try {
+			const state = createState();
+			const ui = createUiContext();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				widgetPlacement: "belowEditor",
+			});
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-below", asyncDir: path.join(asyncRoot, "run-below"), agent: "worker" });
+
+			assert.equal(typeof ui.widgets.at(-1), "function");
+			assert.deepEqual(ui.widgetPlacements.at(-1), { placement: "belowEditor" });
+			tracker.resetJobs(ui.ctx as never);
 		} finally {
 			removeTempDir(asyncRoot);
 		}

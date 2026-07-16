@@ -1144,6 +1144,7 @@ export interface ProactiveSkillSubagentsConfig {
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
+export type AsyncWidgetPlacement = "aboveEditor" | "belowEditor";
 
 export interface ScheduledRunsConfig {
 	enabled?: boolean;
@@ -1153,8 +1154,10 @@ export interface ScheduledRunsConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
-	/** Show the above-editor async runs widget. Defaults to true. */
+	/** Show the async runs widget. Defaults to true. */
 	asyncWidget?: boolean;
+	/** Place the async runs widget above or below the editor. Defaults to aboveEditor. */
+	asyncWidgetPlacement?: AsyncWidgetPlacement;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
 	forceTopLevelAsync?: boolean;
