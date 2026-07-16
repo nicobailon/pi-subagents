@@ -84,6 +84,51 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 4, block: ["read"] });
 	});
 
+	it("resolves and persists deterministic labels for async hierarchy nodes", () => {
+		const result = buildAsyncRunnerSteps("run-labels", {
+			chain: [{
+				parallel: [
+					{ agent: "worker", task: "Review authentication" },
+					{ agent: "worker", task: "Review authentication" },
+				],
+				label: "Review group",
+			}],
+			agents: [agent("worker")],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		assert.ok("parallel" in result.steps[0]!);
+		assert.deepEqual(result.steps[0].parallel.map((task) => task.label), ["Review authentication #1", "Review authentication #2"]);
+		assert.equal(result.steps[0].label, "Review group");
+		assert.equal(result.workflowGraph.nodes[0]?.label, "Review group");
+		assert.deepEqual(result.workflowGraph.nodes[0]?.children?.map((node) => node.label), ["Review authentication #1", "Review authentication #2"]);
+	});
+
+	it("keeps dynamic label fallback deferred until items materialize", () => {
+		const result = buildAsyncRunnerSteps("run-dynamic-labels", {
+			chain: [
+				{ agent: "source", task: "List targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, maxItems: 2 },
+					parallel: { agent: "worker", task: "Review {item.path}" },
+					collect: { as: "reviews" },
+				},
+			],
+			agents: [agent("source"), agent("worker")],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok("steps" in result, "expected successful step build");
+		assert.ok("parallel" in result.steps[1]! && !Array.isArray(result.steps[1].parallel));
+		assert.equal(result.steps[1].parallel.label, undefined);
+		assert.match(result.workflowGraph.nodes[1]?.label ?? "", /Dynamic group/);
+	});
+
 	it("uses config default when no step, run, or agent budget exists", () => {
 		const result = buildAsyncRunnerSteps("run-3", {
 			chain: [{ agent: "worker", task: "config default" }],

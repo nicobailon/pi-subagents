@@ -24,6 +24,7 @@ import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
+import { resolveDisplayLabel, resolveSiblingDisplayLabels } from "../shared/display-label.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { resolveEffectiveAcceptance } from "../shared/acceptance.ts";
@@ -157,6 +158,7 @@ interface AsyncChainParams {
 interface AsyncSingleParams {
 	agent: string;
 	task?: string;
+	label?: string;
 	/** Raw caller-facing goal used only by the started event. */
 	goal?: string;
 	agentConfig: AgentConfig;
@@ -494,9 +496,30 @@ const UNAVAILABLE_SUBAGENT_SKILL_ERROR = "Skills not found: pi-subagents";
 class UnavailableSubagentSkillError extends Error {}
 class AsyncStartValidationError extends Error {}
 
+function resolveChainDisplayLabels(chain: ChainStep[]): ChainStep[] {
+	return chain.map((step, stepIndex) => {
+		if (isParallelStep(step)) {
+			const labels = resolveSiblingDisplayLabels(step.parallel, (task) => task);
+			return {
+				...step,
+				label: resolveDisplayLabel({ label: step.label, task: `Parallel group ${stepIndex + 1}`, agent: "Parallel group", ordinal: stepIndex + 1 }),
+				parallel: step.parallel.map((task, index) => ({ ...task, label: labels[index] })),
+			};
+		}
+		if (isDynamicParallelStep(step)) {
+			return {
+				...step,
+				label: resolveDisplayLabel({ label: step.label ?? step.parallel.label, task: `Dynamic group ${stepIndex + 1}`, agent: "Dynamic group", ordinal: stepIndex + 1 }),
+				parallel: { ...step.parallel },
+			};
+		}
+		return { ...step, label: resolveDisplayLabel({ label: step.label, task: step.task, agent: step.agent, ordinal: stepIndex + 1 }) };
+	});
+}
+
 export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildParams): AsyncRunnerStepBuildResult {
 	const {
-		chain,
+		chain: rawChain,
 		agents,
 		ctx,
 		cwd,
@@ -506,6 +529,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		worktreeBaseDir,
 		asyncDir,
 	} = params;
+	const chain = resolveChainDisplayLabels(rawChain);
 	const outputBaseDir = params.outputBaseDir;
 	const resultMode = params.resultMode ?? "chain";
 	const chainSkills = params.chainSkills ?? [];
@@ -629,7 +653,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			agent: s.agent,
 			task,
 			phase: s.phase,
-			label: s.label,
+			label: resolveDisplayLabel({ label: s.label, task: s.task ?? originalTask, agent: s.agent, ordinal: (flatIndex ?? 0) + 1 }),
 			outputName: s.as,
 			structured: Boolean(s.outputSchema),
 			cwd: stepCwd,
@@ -697,6 +721,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					progressInstructionCreated = true;
 				}
 				return {
+					phase: s.phase,
+					label: s.label,
 					parallel: s.parallel.map((t, taskIndex) => {
 						let behaviorCwd: string | undefined;
 						if (s.worktree) {
@@ -725,6 +751,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				const maxItems = s.expand.maxItems ?? params.dynamicFanoutMaxItems ?? 0;
 				const dynamicFlatSteps = Array.from({ length: maxItems }, () => nextFlatStep());
 				const parallel = buildSeqStep(s.parallel as SequentialStep, undefined, undefined, progressPrecreated, behavior, undefined, { stepIndex });
+				if (!s.parallel.label) parallel.label = undefined;
 				return {
 					expand: s.expand,
 					parallel,
@@ -1064,6 +1091,8 @@ export function executeAsyncSingle(
 		nestedRoute,
 	} = params;
 	const task = params.task ?? "";
+	const label = resolveDisplayLabel({ label: params.label, task, agent, ordinal: 1 });
+	const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: "single", steps: [{ agent, task, label }] });
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
 	const skillNames = params.skills ?? agentConfig.skills ?? [];
 	const availableModels = params.availableModels;
@@ -1138,6 +1167,7 @@ export function executeAsyncSingle(
 		version: 1,
 		sourceRunId: id,
 		agent,
+		...(label ? { label } : {}),
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: runnerCwd,
 		...(model ? { model } : {}),
@@ -1185,6 +1215,7 @@ export function executeAsyncSingle(
 						parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 						agent,
 						task: taskWithOutputInstruction,
+						label,
 						cwd: runnerCwd,
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
@@ -1210,6 +1241,7 @@ export function executeAsyncSingle(
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 					},
 				],
+				workflowGraph,
 				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(RESULTS_DIR, `${id}.json`),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
@@ -1297,8 +1329,10 @@ export function executeAsyncSingle(
 			sessionId: ctx.currentSessionId,
 			mode: "single",
 			agent,
+			label,
 			task: task?.slice(0, 50),
 			goal: (params.goal ?? task).slice(0, 120),
+			workflowGraph,
 			cwd: runnerCwd,
 			asyncDir,
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
@@ -1309,6 +1343,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
 	};
 }

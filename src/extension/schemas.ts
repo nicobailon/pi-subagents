@@ -95,6 +95,7 @@ const ToolBudgetOverride = Type.Object({
 const TaskItem = Type.Object({
 	agent: Type.String(), 
 	task: Type.String(), 
+	label: Type.Optional(Type.String({ description: "Short display label for this task" })),
 	cwd: Type.Optional(Type.String()),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
 	output: Type.Optional(OutputOverride),
@@ -216,6 +217,7 @@ const ControlOverrides = Type.Object({
 const SubagentParamsSchema = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Agent name (SINGLE mode) or target for management get/update/delete" })),
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
+	label: Type.Optional(Type.String({ description: "Short display label for SINGLE mode" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
 		description: "Management/control action only. Must be omitted for execution mode (single, parallel, or chain)."

@@ -231,6 +231,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		: "pending";
 	return {
 		agent,
+		...(stringValue(raw.label, 128) ? { label: stringValue(raw.label, 128) } : {}),
 		status,
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
@@ -873,6 +874,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
 		...(status.steps?.length ? { steps: status.steps.map((step) => ({
 			agent: step.agent,
+			...(step.label ? { label: step.label } : {}),
 			status: step.status,
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.activityState ? { activityState: step.activityState } : {}),

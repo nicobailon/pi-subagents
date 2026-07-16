@@ -2,6 +2,7 @@ import type { DynamicParallelStep, ParallelTaskItem } from "../../shared/setting
 import type { ArtifactPaths, ChainOutputMap, JsonSchemaObject, SingleResult } from "../../shared/types.ts";
 import { getSingleResultOutput } from "../../shared/utils.ts";
 import { validateStructuredOutputValue } from "./structured-output.ts";
+import { resolveSiblingDisplayLabels } from "./display-label.ts";
 
 export class DynamicFanoutError extends Error {}
 
@@ -249,7 +250,7 @@ export function materializeDynamicParallelStep(step: DynamicParallelStep, output
 		return { items, parallel: [], collectedOnEmpty: [] };
 	}
 	const itemName = step.expand.item ?? "item";
-	const parallel = items.map((entry) => {
+	const materialized = items.map((entry) => {
 		const task = resolveItemTemplate(step.parallel.task ?? "{previous}", itemName, entry.item);
 		const label = step.parallel.label ? resolveItemTemplate(step.parallel.label, itemName, entry.item) : undefined;
 		return {
@@ -258,6 +259,8 @@ export function materializeDynamicParallelStep(step: DynamicParallelStep, output
 			...(label !== undefined ? { label } : {}),
 		};
 	});
+	const labels = resolveSiblingDisplayLabels(materialized, (task) => task);
+	const parallel = materialized.map((task, index) => ({ ...task, label: labels[index] }));
 	return { items, parallel };
 }
 
