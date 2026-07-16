@@ -189,6 +189,8 @@ describe("async status helpers", () => {
 	it("formats paused runs as lifecycle state without activity state", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-paused-status-"));
 		try {
+			const lastActivityAt = Date.now() - 1_000;
+			const stale = { activityState: "needs_attention", lastActivityAt, currentTool: "bash", currentToolStartedAt: lastActivityAt - 500, currentPath: "src/stale.ts" };
 			createAsyncDir(root, "run-paused", {
 				runId: "run-paused",
 				mode: "single",
@@ -196,7 +198,8 @@ describe("async status helpers", () => {
 				startedAt: 100,
 				lastUpdate: 200,
 				endedAt: 200,
-				steps: [{ agent: "worker", status: "complete" }],
+				...stale,
+				steps: [{ agent: "worker", status: "complete", turnCount: 2, toolCount: 3, ...stale }],
 			});
 
 			const runs = listAsyncRuns(root, { states: ["paused"] });
@@ -205,9 +208,9 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps[0]?.activityState, undefined);
 
 			const text = formatAsyncRunList(runs, "Paused async runs");
-			assert.match(text, /run-paused \| paused/);
-			assert.match(text, /worker \| complete/);
-			assert.doesNotMatch(text, /paused\/paused/);
+			assert.match(text, /run-paused \| paused \| last active/);
+			assert.match(text, /worker \| complete \| 2 turns \| 3 tools/);
+			assert.doesNotMatch(text, /paused\/paused|no activity|needs attention|tool bash|stale\.ts/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

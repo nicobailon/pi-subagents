@@ -55,6 +55,7 @@ interface AsyncStatusPayload {
 	pid?: number;
 	activityState?: string;
 	currentTool?: string;
+	currentToolStartedAt?: number;
 	currentPath?: string;
 	state?: string;
 	error?: string;
@@ -76,6 +77,9 @@ interface AsyncStatusPayload {
 		skills?: string[];
 		activityState?: string;
 		currentTool?: string;
+		currentToolArgs?: string;
+		currentToolStartedAt?: number;
+		currentPath?: string;
 		status?: string;
 		exitCode?: number;
 		timedOut?: boolean;
@@ -3158,16 +3162,17 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("keeps top-level current tool/path aligned with still-running parallel children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
+			matchArgIncludes: "Inspect first child",
 			steps: [
 				{ jsonl: [events.toolStart("read", { path: "README.md" })] },
-				{ delay: 900, jsonl: [events.toolEnd("read"), events.toolResult("read", "done"), events.assistantMessage("reader done")] },
+				{ delay: 300, jsonl: [events.assistantMessage("reader done")] },
 			],
 		});
 		mockPi.onCall({
+			matchArgIncludes: "Inspect second child",
 			steps: [
-				{ delay: 100, jsonl: [events.toolStart("edit", { path: "docs.md" })] },
-				{ delay: 100, jsonl: [events.toolEnd("edit"), events.toolResult("edit", "ok")] },
-				{ delay: 700, jsonl: [events.assistantMessage("editor done")] },
+				{ delay: 100, jsonl: [events.toolStart("read", { path: "docs.md" })] },
+				{ delay: 1_000, jsonl: [events.toolEnd("read"), events.toolResult("read", "ok"), events.assistantMessage("editor done")] },
 			],
 		});
 
@@ -3176,7 +3181,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 
 		executeAsyncChain(id, {
-			chain: [{ parallel: [{ agent: "reader", task: "Read" }, { agent: "editor", task: "Edit" }] }],
+			chain: [{ parallel: [{ agent: "reader", task: "Inspect first child" }, { agent: "editor", task: "Inspect second child" }] }],
 			agents: [makeAgent("reader"), makeAgent("editor")],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -3188,16 +3193,26 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const statusPath = path.join(asyncDir, "status.json");
 		const doneDeadline = Date.now() + 10_000;
 		let sawRunningTool = false;
+		let sawResynchronizedSibling = false;
 		let invariantViolated = false;
 		while (!fs.existsSync(resultPath) && Date.now() < doneDeadline) {
 			if (fs.existsSync(statusPath)) {
 				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-				const runningTools = (status.steps ?? [])
-					.filter((step) => step.status === "running" && typeof step.currentTool === "string")
-					.map((step) => step.currentTool as string);
-				if (runningTools.length > 0) {
+				const runningToolSteps = (status.steps ?? [])
+					.filter((step) => step.status === "running" && typeof step.currentTool === "string");
+				if (runningToolSteps.length > 0) {
 					sawRunningTool = true;
-					if (!status.currentTool || !runningTools.includes(status.currentTool)) {
+					if (!status.currentTool || !runningToolSteps.some((step) => step.currentTool === status.currentTool)) {
+						invariantViolated = true;
+						break;
+					}
+				}
+				const sibling = runningToolSteps.find((step) => step.currentPath === "docs.md");
+				if (sibling && status.steps?.some((step) => step.status === "complete")) {
+					sawResynchronizedSibling = true;
+					if (status.currentTool !== sibling.currentTool
+						|| status.currentToolStartedAt !== sibling.currentToolStartedAt
+						|| status.currentPath !== sibling.currentPath) {
 						invariantViolated = true;
 						break;
 					}
@@ -3209,7 +3224,18 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 		}
 		assert.equal(sawRunningTool, true, "expected at least one polling interval with a running step tool");
-		assert.equal(invariantViolated, false, "top-level currentTool drifted from running step tools");
+		assert.equal(sawResynchronizedSibling, true, "expected the first child to finalize while its sibling tool remained active");
+		assert.equal(invariantViolated, false, "top-level tool metadata drifted from running step tools");
+		const terminalStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+		assert.equal(terminalStatus.currentTool, undefined);
+		assert.equal(terminalStatus.currentToolStartedAt, undefined);
+		assert.equal(terminalStatus.currentPath, undefined);
+		for (const step of terminalStatus.steps ?? []) {
+			assert.equal(step.activityState, undefined);
+			assert.equal(step.currentTool, undefined);
+			assert.equal(step.currentToolArgs, undefined);
+			assert.equal(step.currentToolStartedAt, undefined);
+		}
 	});
 
 	it("returns a tool error when the detached runner config cannot be written", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, () => {
@@ -3649,6 +3675,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			if (Date.now() > doneDeadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
+		const terminalStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+		assert.equal(terminalStatus.activityState, undefined);
+		assert.equal(terminalStatus.steps?.[0]?.activityState, undefined);
 	});
 
 	it("does not flag a delayed active tool as idle attention", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -3775,6 +3804,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			if (Date.now() > doneDeadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
+		const terminalStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+		assert.equal(terminalStatus.activityState, undefined);
+		assert.equal(terminalStatus.steps?.[0]?.activityState, undefined);
+		assert.equal(terminalStatus.steps?.[0]?.currentTool, undefined);
+		assert.equal(terminalStatus.steps?.[0]?.currentToolArgs, undefined);
+		assert.equal(terminalStatus.steps?.[0]?.currentToolStartedAt, undefined);
 	});
 
 	it("background event logs drop noisy message updates and cap child diagnostics", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

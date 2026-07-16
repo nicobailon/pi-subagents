@@ -145,6 +145,13 @@ function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): vo
 	}
 }
 
+function clearProgressTransientLiveness(progress: AgentProgress): void {
+	progress.activityState = undefined;
+	progress.currentTool = undefined;
+	progress.currentToolArgs = undefined;
+	progress.currentToolStartedAt = undefined;
+}
+
 function snapshotProgress(progress: AgentProgress): AgentProgress {
 	return {
 		...progress,
@@ -302,6 +309,7 @@ async function runSingleAttempt(
 		result.finalOutput = attemptTimeout.message;
 		progress.status = "failed";
 		progress.error = attemptTimeout.message;
+		clearProgressTransientLiveness(progress);
 		result.progressSummary = {
 			toolCount: progress.toolCount,
 			tokens: progress.tokens,
@@ -368,6 +376,7 @@ async function runSingleAttempt(
 			result.detachedReason = "intercom coordination";
 			progress.status = "detached";
 			progress.durationMs = Date.now() - startTime;
+			clearProgressTransientLiveness(progress);
 			result.progressSummary = {
 				toolCount: progress.toolCount,
 				tokens: progress.tokens,
@@ -570,6 +579,7 @@ async function runSingleAttempt(
 			progress.status = "failed";
 			progress.error = message;
 			progress.durationMs = Date.now() - startTime;
+			clearProgressTransientLiveness(progress);
 			fireUpdate();
 			trySignalChild(proc, "SIGINT");
 			turnBudgetTerminationTimer = setTimeout(() => {
@@ -821,6 +831,7 @@ async function runSingleAttempt(
 				progress.status = "failed";
 				progress.error = attemptTimeout.message;
 				progress.durationMs = Date.now() - startTime;
+				clearProgressTransientLiveness(progress);
 				fireUpdate();
 				trySignalChild(proc, "SIGINT");
 				timeoutTerminationTimer = setTimeout(() => {
@@ -845,6 +856,7 @@ async function runSingleAttempt(
 			progress.status = "failed";
 			progress.error = result.error;
 			progress.durationMs = Date.now() - startTime;
+			clearProgressTransientLiveness(progress);
 			fireUpdate();
 			if (!childExited) {
 				trySignalChild(proc, "SIGTERM");
@@ -980,7 +992,7 @@ async function runSingleAttempt(
 				progress.durationMs = Date.now() - startTime;
 				result.interrupted = true;
 				result.finalOutput = "Interrupted. Waiting for explicit next action.";
-				progress.activityState = undefined;
+				clearProgressTransientLiveness(progress);
 				fireUpdate();
 				trySignalChild(proc, "SIGINT");
 				setTimeout(() => {
@@ -1002,7 +1014,7 @@ async function runSingleAttempt(
 		result.error = undefined;
 		result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
 		result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
-		progress.activityState = undefined;
+		clearProgressTransientLiveness(progress);
 		progress.durationMs = Date.now() - startTime;
 		result.progressSummary = {
 			toolCount: progress.toolCount,
@@ -1013,6 +1025,7 @@ async function runSingleAttempt(
 	}
 	if (result.detached) {
 		result.exitCode = -2;
+		clearProgressTransientLiveness(progress);
 		result.finalOutput = "Detached for intercom coordination before task completion.";
 		result.outputMode = options.outputMode ?? "inline";
 		if (options.outputPath) {
@@ -1126,6 +1139,7 @@ async function runSingleAttempt(
 	}
 		artifactOutputByResult.set(result, fullOutput);
 		acceptanceOutputByResult.set(result, acceptanceOutput);
+	clearProgressTransientLiveness(progress);
 	result.outputMode = options.outputMode ?? "inline";
 	result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
 		? result.outputReference.message

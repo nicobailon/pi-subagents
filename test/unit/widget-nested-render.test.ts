@@ -74,6 +74,43 @@ describe("nested widget rendering", () => {
 		assert.match(expanded, /↳ . still-running · running/);
 	});
 
+	it("gates stale live fields while preserving nested terminal and paused metrics", () => {
+		const stale = { activityState: "needs_attention" as const, lastActivityAt: 1_000, currentTool: "bash", currentToolStartedAt: 2_000 };
+		const complete = nested("nested-complete", "root-run", "complete", {
+			...stale,
+			turnCount: 4,
+			toolCount: 5,
+			totalTokens: { input: 800, output: 200, total: 1_000 },
+			startedAt: 1_000,
+			endedAt: 7_000,
+			steps: [{
+				agent: "nested-worker",
+				status: "failed",
+				...stale,
+				turnCount: 2,
+				toolCount: 3,
+				tokens: { input: 600, output: 400, total: 1_000 },
+				durationMs: 5_000,
+			}],
+		});
+		const paused = nested("nested-paused", "root-run", "paused", {
+			...stale,
+			turnCount: 6,
+			toolCount: 7,
+			totalTokens: { input: 1_500, output: 500, total: 2_000 },
+			startedAt: 1_000,
+			endedAt: 8_000,
+		});
+		const state = job(complete);
+		state.nestedChildren = [complete, paused];
+		state.steps![0]!.children = [complete, paused];
+		const expanded = buildWidgetLines([state], theme as any, 240, true).join("\n");
+		assert.match(expanded, /nested-complete · complete · Done · 4 turns · 5 tool uses · 1\.0k token · 6\.0s/);
+		assert.match(expanded, /nested-worker · failed · Failed · 2 turns · 3 tool uses · 1\.0k token · 5\.0s/);
+		assert.match(expanded, /nested-paused · paused · paused · last active now · 6 turns · 7 tool uses · 2\.0k token · 7\.0s/);
+		assert.doesNotMatch(expanded, /no activity|needs attention|bash/);
+	});
+
 	it("degrades stale child summaries to id and state", () => {
 		const child = nested("missing-metadata", "root-run", "failed", { agent: undefined, error: "owner gone" });
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");

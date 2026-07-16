@@ -593,7 +593,7 @@ describe("async run status inspection", () => {
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
 			assert.match(text, /↳ reviewer \[nested-stale\] failed/);
-			assert.match(text, /1\. reviewer failed \| error: Async runner process 54321 exited or disappeared/);
+			assert.match(text, /1\. reviewer failed \| 350ms \| error: Async runner process 54321 exited or disappeared/);
 			assert.ok(fs.existsSync(path.join(resultsDir, "nested", "run-stale-nested-root", "nested-stale.json")));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

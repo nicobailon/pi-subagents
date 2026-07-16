@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Prevented terminal async and nested child rows from showing stale live inactivity or current-tool details, cleared transient liveness fields when foreground and background children finish, and gave paused rows neutral last-active wording while retaining final metrics and history.
 - Deferred hard turn-budget termination when an assistant starts tool work at the limit, exposing `termination-deferred` until the next safe assistant boundary while elapsed timeout and explicit stop retain precedence. Guidance now conservatively keeps hard turn and tool-call caps off mutation-capable workers. Thanks to JT (@juicetin) for #482 and #483.
 - Prevented watchdog idle notices while a child tool is actively running and made top-level live async `resume` a non-destructive error that directs callers to `steer`; paused, completed, or failed children retain current-session-scoped revival behavior, while stopped runs remain non-resumable. Thanks to Vlad Bereznyuk (@vrolok) for #496 and #497, and @wiansapu for confirming #496's user impact.
 - Removed the hidden default limit of 40 cumulative subagent launches per session. Sessions are unlimited unless a positive `maxSubagentSpawnsPerSession` or `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` cap is configured; `0` explicitly means unlimited. Thanks to @Maverobot, @KawaiiNahida, and @markng for the follow-up reports on #239.

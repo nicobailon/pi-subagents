@@ -155,6 +155,81 @@ describe("subagent async widget rendering", () => {
 		assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
 	});
 
+	it("keeps terminal parallel member metrics in multi-job widgets", () => {
+		const text = buildWidgetLines([
+			{
+				asyncId: "terminal-parallel",
+				asyncDir: "/tmp/terminal-parallel",
+				status: "complete",
+				mode: "parallel",
+				agents: ["reviewer"],
+				stepsTotal: 1,
+				updatedAt: 10_000,
+				steps: [{
+					index: 0,
+					agent: "reviewer",
+					status: "complete",
+					activityState: "needs_attention",
+					currentTool: "bash",
+					currentToolStartedAt: 1_000,
+					turnCount: 2,
+					toolCount: 3,
+					tokens: { input: 800, output: 200, total: 1_000 },
+					durationMs: 5_000,
+				}],
+			},
+			{ asyncId: "queued", asyncDir: "/tmp/queued", status: "queued", agents: ["worker"] },
+		], theme, 180).join("\n");
+
+		const row = text.split("\n").find((line) => line.includes("Agent 1/1: reviewer")) ?? "";
+		assert.match(row, /complete · 2 turns · 3 tool uses · 1\.0k token · 5\.0s/);
+		assert.doesNotMatch(row, /needs attention|bash/);
+	});
+
+	it("gates stale legacy activity fields by lifecycle while preserving running details", () => {
+		const now = 120_000;
+		const stale = {
+			activityState: "needs_attention",
+			lastActivityAt: 1_000,
+			currentTool: "bash",
+			currentToolArgs: "npm test",
+			currentToolStartedAt: 2_000,
+		};
+		const text = buildWidgetLines([{
+			asyncId: "legacy-terminal",
+			asyncDir: "/tmp/legacy-terminal",
+			status: "complete",
+			mode: "parallel",
+			agents: ["done", "failed", "stopped", "pending", "running", "paused"],
+			stepsTotal: 6,
+			updatedAt: now,
+			steps: [
+				{ index: 0, agent: "done", status: "complete", model: "provider/model", thinking: "high", turnCount: 3, toolCount: 4, tokens: { input: 800, output: 200, total: 1_000 }, durationMs: 5_000, ...stale },
+				{ index: 1, agent: "failed", status: "failed", durationMs: 6_000, ...stale },
+				{ index: 2, agent: "stopped", status: "stopped", durationMs: 7_000, ...stale },
+				{ index: 3, agent: "pending", status: "pending", ...stale },
+				{ index: 4, agent: "running", status: "running", model: "provider/live", thinking: "medium", turnCount: 2, toolCount: 5, tokens: { input: 900, output: 100, total: 1_000 }, durationMs: 8_000, ...stale },
+				{ index: 5, agent: "paused", status: "paused", ...stale },
+			],
+		}], theme, 200, true).join("\n");
+
+		for (const agent of ["done", "failed", "stopped", "pending"]) {
+			const row = text.split("\n").find((line) => line.includes(`: ${agent} ·`)) ?? "";
+			assert.doesNotMatch(row, /no activity|needs attention|bash|npm test/);
+		}
+		const doneRow = text.split("\n").find((line) => line.includes(": done ·")) ?? "";
+		assert.match(doneRow, /model · thinking high/);
+		assert.match(doneRow, /3 turns · 4 tool uses · 1\.0k token · 5\.0s/);
+		const runningBlock = text.split("\n").slice(text.split("\n").findIndex((line) => line.includes(": running ·"))).join("\n");
+		assert.match(runningBlock, /live · thinking medium/);
+		assert.match(runningBlock, /bash: npm test \| 1m58s/);
+		assert.match(runningBlock, /2 turns · 5 tool uses · 1\.0k token · 8\.0s/);
+		const pausedRowIndex = text.split("\n").findIndex((line) => line.includes(": paused ·"));
+		assert.ok(pausedRowIndex >= 0);
+		assert.match(text.split("\n")[pausedRowIndex + 1] ?? "", /paused · last active 1m ago/);
+		assert.doesNotMatch(text.split("\n")[pausedRowIndex + 1] ?? "", /needs attention|bash/);
+	});
+
 	it("locks crowded collapsed widget height for the current terminal session", () => {
 		resetWidgetLayout();
 		withStdoutSize(30, 120, () => {
@@ -525,8 +600,8 @@ describe("subagent async widget rendering", () => {
 		const text = lines.join("\n");
 		assert.match(text, /async subagent chain \(2\)/);
 		assert.match(text, /chain · step 2\/2/);
-		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
-		assert.match(text, /Step 2\/2: writer · running · 1 tool use/);
+		assert.match(text, /Step 1\/2: Parallel group · parallel · 3\/3 done/);
+		assert.match(text, /Step 2\/2: writer · running · thinking… · 1 tool use/);
 		assert.match(text, /Press configured-expand-key for live detail/);
 		assert.match(text, outputPathPattern("/tmp/chain/output-3.log"));
 		assert.doesNotMatch(text, /step 4\/4/);

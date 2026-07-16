@@ -57,16 +57,29 @@ function formatNestedActivity(input: {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
+	tokens?: NestedStepSummary["tokens"];
 	totalTokens?: NestedRunSummary["totalTokens"];
-}): string | undefined {
+	durationMs?: number;
+	startedAt?: number;
+	endedAt?: number;
+}, state: NestedRunSummary["state"] | NestedStepSummary["status"]): string | undefined {
 	const facts: string[] = [];
-	if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
-	else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
-	if (input.currentPath) facts.push(shortenPath(input.currentPath));
+	if (state === "running") {
+		if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+		else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
+		if (input.currentPath) facts.push(shortenPath(input.currentPath));
+	}
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
 	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
-	if (input.totalTokens) facts.push(`${formatTokens(input.totalTokens.total)} tok`);
-	const activity = formatActivityLabel(input.lastActivityAt, input.activityState as ActivityState | undefined);
+	const tokens = input.tokens ?? input.totalTokens;
+	if (tokens) facts.push(`${formatTokens(tokens.total)} tok`);
+	const durationMs = input.durationMs ?? (input.startedAt !== undefined && input.endedAt !== undefined ? Math.max(0, input.endedAt - input.startedAt) : undefined);
+	if (durationMs !== undefined) facts.push(formatDuration(durationMs));
+	const activity = state === "running"
+		? formatActivityLabel(input.lastActivityAt, input.activityState as ActivityState | undefined)
+		: state === "paused" && input.lastActivityAt !== undefined
+			? `last ${formatActivityLabel(input.lastActivityAt, undefined)}`
+			: undefined;
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
 
@@ -86,7 +99,7 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 				if (aggregate) lines[lines.length - 1] = `${indent}↳ ${aggregate}`;
 				return;
 			}
-			const activity = child.state === "running" ? formatNestedActivity(child) : undefined;
+			const activity = formatNestedActivity(child, child.state);
 			const error = child.error ? ` | error: ${child.error}` : "";
 			lines.push(`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${activity ? ` | ${activity}` : ""}${error}`);
 			if (options.commandHints && lines.length < options.maxLines) lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
@@ -97,7 +110,7 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 			}
 			for (const [stepIndex, step] of (child.steps ?? []).entries()) {
 				if (lines.length >= options.maxLines) return;
-				const stepActivity = step.status === "running" ? formatNestedActivity(step) : undefined;
+				const stepActivity = formatNestedActivity(step, step.status);
 				lines.push(`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${step.error}` : ""}`);
 				append(step.children, depth + 1, `${indent}    `);
 			}

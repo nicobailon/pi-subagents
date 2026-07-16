@@ -727,6 +727,8 @@ export interface NestedStepSummary {
 	currentPath?: string;
 	turnCount?: number;
 	toolCount?: number;
+	tokens?: TokenUsage;
+	durationMs?: number;
 	startedAt?: number;
 	endedAt?: number;
 	error?: string;

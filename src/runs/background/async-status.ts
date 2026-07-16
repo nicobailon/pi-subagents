@@ -131,7 +131,7 @@ function outputFileMtime(outputFile: string | undefined): number | undefined {
 }
 
 function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { activityState?: ActivityState; lastActivityAt?: number } {
-	if (status.state !== "running") return { activityState: status.activityState, lastActivityAt: status.lastActivityAt };
+	if (status.state !== "running") return { lastActivityAt: status.lastActivityAt };
 	const outputPath = status.outputFile ? (path.isAbsolute(status.outputFile) ? status.outputFile : path.join(asyncDir, status.outputFile)) : undefined;
 	const currentStep = typeof status.currentStep === "number" ? status.steps?.[status.currentStep] : undefined;
 	return {
@@ -159,7 +159,8 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		}
 	}
 	const summarizedSteps = steps.map((step, index) => {
-		const stepActivityState = step.activityState;
+		const running = step.status === "running";
+		const stepActivityState = running ? step.activityState : undefined;
 		const stepLastActivityAt = step.lastActivityAt;
 		return {
 			index,
@@ -171,10 +172,10 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			status: step.status,
 			...(stepActivityState ? { activityState: stepActivityState } : {}),
 			...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
-			...(step.currentTool ? { currentTool: step.currentTool } : {}),
-			...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
-			...(step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
-			...(step.currentPath ? { currentPath: step.currentPath } : {}),
+			...(running && step.currentTool ? { currentTool: step.currentTool } : {}),
+			...(running && step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
+			...(running && step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
+			...(running && step.currentPath ? { currentPath: step.currentPath } : {}),
 			...(step.recentTools ? { recentTools: step.recentTools.map((tool) => ({ ...tool })) } : {}),
 			...(step.recentOutput ? { recentOutput: [...step.recentOutput] } : {}),
 			...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
@@ -205,9 +206,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.error ? { error: status.error } : {}),
 		activityState,
 		lastActivityAt,
-		currentTool: status.currentTool,
-		currentToolStartedAt: status.currentToolStartedAt,
-		currentPath: status.currentPath,
+		currentTool: status.state === "running" ? status.currentTool : undefined,
+		currentToolStartedAt: status.state === "running" ? status.currentToolStartedAt : undefined,
+		currentPath: status.state === "running" ? status.currentPath : undefined,
 		turnCount: status.turnCount,
 		toolCount: status.toolCount,
 		steering: status.steering,
@@ -317,11 +318,16 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	return options.limit !== undefined ? sorted.slice(0, options.limit) : sorted;
 }
 
-function formatActivityFacts(input: { activityState?: ActivityState; lastActivityAt?: number; currentTool?: string; currentToolStartedAt?: number; currentPath?: string; turnCount?: number; toolCount?: number; steering?: SteeringStatus; turnBudget?: TurnBudgetState; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean }): string | undefined {
+function formatActivityFacts(
+	input: { activityState?: ActivityState; lastActivityAt?: number; currentTool?: string; currentToolStartedAt?: number; currentPath?: string; turnCount?: number; toolCount?: number; steering?: SteeringStatus; turnBudget?: TurnBudgetState; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean },
+	lifecycle: AsyncRunSummary["state"] | AsyncJobStep["status"],
+): string | undefined {
 	const facts: string[] = [];
-	if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
-	else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
-	if (input.currentPath) facts.push(shortenPath(input.currentPath));
+	if (lifecycle === "running") {
+		if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+		else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
+		if (input.currentPath) facts.push(shortenPath(input.currentPath));
+	}
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
 	if (input.turnBudgetExceeded && input.turnBudget) facts.push(`turn budget exceeded ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`);
 	else if (input.turnBudget?.outcome === "termination-deferred") facts.push(`turn-budget termination deferred ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`);
@@ -329,7 +335,11 @@ function formatActivityFacts(input: { activityState?: ActivityState; lastActivit
 	else if (input.turnBudget) facts.push(`turn budget ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`);
 	if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
 	if (input.steering) facts.push(`steering ${input.steering.scheduled} scheduled, ${input.steering.pending} pending, ${input.steering.delivered} delivered, ${input.steering.failed} failed, ${input.steering.recovered} recovered`);
-	const activity = formatActivityLabel(input.lastActivityAt, input.activityState);
+	const activity = lifecycle === "running"
+		? formatActivityLabel(input.lastActivityAt, input.activityState)
+		: lifecycle === "paused" && input.lastActivityAt !== undefined
+			? `last ${formatActivityLabel(input.lastActivityAt, undefined)}`
+			: undefined;
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
 
@@ -337,7 +347,7 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 	const phase = step.phase ? `[${step.phase}] ` : "";
 	const parts = [`${step.index + 1}. ${phase}${display}`, step.status];
-	const activity = formatActivityFacts(step);
+	const activity = formatActivityFacts(step, step.status);
 	if (activity) parts.push(activity);
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	if (modelThinking) parts.push(modelThinking);
@@ -375,7 +385,7 @@ export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | 
 function formatRunHeader(run: AsyncRunSummary): string {
 	const stepLabel = formatAsyncRunProgressLabel(run);
 	const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
-	const activity = formatActivityFacts(run);
+	const activity = formatActivityFacts(run, run.state);
 	const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
 	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
 }

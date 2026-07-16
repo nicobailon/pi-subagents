@@ -305,11 +305,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.status = status.state;
 						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
-						job.activityState = status.activityState;
+						job.activityState = job.status === "running" ? status.activityState : undefined;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
-						job.currentTool = status.currentTool;
-						job.currentToolStartedAt = status.currentToolStartedAt;
-						job.currentPath = status.currentPath;
+						job.currentTool = job.status === "running" ? status.currentTool : undefined;
+						job.currentToolStartedAt = job.status === "running" ? status.currentToolStartedAt : undefined;
+						job.currentPath = job.status === "running" ? status.currentPath : undefined;
 						job.turnCount = status.turnCount ?? job.turnCount;
 						job.toolCount = status.toolCount ?? job.toolCount;
 						job.steering = status.steering ?? job.steering;
@@ -326,7 +326,15 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							const activeGroup = status.currentStep !== undefined
 								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
 								: undefined;
-							const allSteps = status.steps.map((step, index) => ({ ...step, index }));
+							const allSteps = status.steps.map((step, index) => ({
+								...step,
+								index,
+								activityState: step.status === "running" ? step.activityState : undefined,
+								currentTool: step.status === "running" ? step.currentTool : undefined,
+								currentToolArgs: step.status === "running" ? step.currentToolArgs : undefined,
+								currentToolStartedAt: step.status === "running" ? step.currentToolStartedAt : undefined,
+								currentPath: step.status === "running" ? step.currentPath : undefined,
+							}));
 							job.activeParallelGroup = Boolean(activeGroup);
 							job.agents = allSteps.map((step) => step.agent);
 							job.steps = allSteps;
