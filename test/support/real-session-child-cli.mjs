@@ -3,15 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-	fauxAssistantMessage,
-	fauxText,
-	fauxToolCall,
-	registerFauxProvider,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
+	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -86,19 +82,6 @@ function parseArgs(argv) {
 	return parsed;
 }
 
-function createModelRegistry(model) {
-	return {
-		find: (provider, id) => provider === model.provider && id === model.id ? model : undefined,
-		getAll: () => [model],
-		getAvailable: () => [model],
-		hasConfiguredAuth: () => true,
-		isUsingOAuth: () => false,
-		getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "faux", headers: {} }),
-		registerProvider: () => {},
-		unregisterProvider: () => {},
-	};
-}
-
 function createSessionManager(parsed, cwd) {
 	if (parsed.sessionFile) {
 		const sessionDir = parsed.sessionDir ?? path.dirname(parsed.sessionFile);
@@ -120,11 +103,24 @@ async function main() {
 		: mkdtempSync(path.join(os.tmpdir(), "pi-e2e-agent-dir-"));
 	const agentDir = process.env.PI_CODING_AGENT_DIR ?? ownedAgentDir;
 
-	const faux = registerFauxProvider({
+	const faux = fauxProvider({
 		provider: "faux-e2e-child",
 		models: [{ id: "child", contextWindow: 200_000 }],
 	});
-	const model = faux.getModel();
+	const modelRuntime = await ModelRuntime.create({
+		authPath: path.join(agentDir, "auth.json"),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	modelRuntime.registerProvider(faux.provider.id, {
+		name: faux.provider.name,
+		api: faux.api,
+		apiKey: "faux",
+		streamSimple: faux.provider.streamSimple,
+		models: [...faux.models],
+	});
+	const model = modelRuntime.getModel(faux.provider.id, "child");
+	if (!model) throw new Error("faux child model was not registered");
 	let session;
 	faux.setResponses([
 		() => process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE
@@ -155,7 +151,7 @@ async function main() {
 			cwd,
 			agentDir,
 			model,
-			modelRegistry: createModelRegistry(model),
+			modelRuntime,
 			resourceLoader: loader,
 			sessionManager: createSessionManager(parsed, cwd),
 			settingsManager,
@@ -179,7 +175,6 @@ async function main() {
 		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		session.dispose();
 	} finally {
-		faux.unregister();
 		if (ownedAgentDir) rmSync(ownedAgentDir, { recursive: true, force: true });
 	}
 }
