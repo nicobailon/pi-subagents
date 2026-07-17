@@ -326,6 +326,7 @@ function clearStepTransientLiveness(step: RunnerStatusStep): void {
 	step.currentTool = undefined;
 	step.currentToolArgs = undefined;
 	step.currentToolStartedAt = undefined;
+	step.currentPath = undefined;
 }
 
 function resetStepLiveDetail(step: RunnerStatusStep): void {

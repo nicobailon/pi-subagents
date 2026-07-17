@@ -1174,6 +1174,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.progress.currentTool, undefined);
 		assert.equal(result.progress.currentToolArgs, undefined);
 		assert.equal(result.progress.currentToolStartedAt, undefined);
+		assert.equal(result.progress.currentPath, undefined);
 	});
 
 	it("does not flag a delayed active tool as idle attention", async () => {

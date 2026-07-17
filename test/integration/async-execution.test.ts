@@ -3235,6 +3235,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(step.currentTool, undefined);
 			assert.equal(step.currentToolArgs, undefined);
 			assert.equal(step.currentToolStartedAt, undefined);
+			assert.equal(step.currentPath, undefined);
 		}
 	});
 
@@ -3810,6 +3811,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(terminalStatus.steps?.[0]?.currentTool, undefined);
 		assert.equal(terminalStatus.steps?.[0]?.currentToolArgs, undefined);
 		assert.equal(terminalStatus.steps?.[0]?.currentToolStartedAt, undefined);
+		assert.equal(terminalStatus.steps?.[0]?.currentPath, undefined);
 	});
 
 	it("background event logs drop noisy message updates and cap child diagnostics", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

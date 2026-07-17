@@ -150,6 +150,7 @@ function clearProgressTransientLiveness(progress: AgentProgress): void {
 	progress.currentTool = undefined;
 	progress.currentToolArgs = undefined;
 	progress.currentToolStartedAt = undefined;
+	progress.currentPath = undefined;
 }
 
 function snapshotProgress(progress: AgentProgress): AgentProgress {
