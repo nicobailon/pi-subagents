@@ -307,6 +307,7 @@ async function runSingleAttempt(
 	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
+	let forcedDrainAfterFinalSuccess = false;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
@@ -880,7 +881,7 @@ async function runSingleAttempt(
 			stderrReader.end();
 			const stderr = stderrTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
 			}
@@ -1034,7 +1035,7 @@ async function runSingleAttempt(
 		const missingStructuredOutput = options.structuredOutput
 			? !existsSync(options.structuredOutput.outputPath)
 			: false;
-		if (!finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
+		if (!finalText?.trim() && (!options.structuredOutput || missingStructuredOutput) && !forcedDrainAfterFinalSuccess) {
 			result.exitCode = 1;
 			result.error = "Subagent produced no output (possible model cold-start or empty response).";
 		}

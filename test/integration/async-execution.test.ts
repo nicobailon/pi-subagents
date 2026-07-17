@@ -3567,6 +3567,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			shareEnabled: false,
 			sessionRoot: path.join(tempDir, "sessions"),
 			maxSubagentDepth: 2,
+			acceptance: false,
 		});
 
 		const deadline = Date.now() + 10_000;

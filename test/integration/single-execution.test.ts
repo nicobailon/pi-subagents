@@ -2182,7 +2182,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const agents = makeAgentConfigs(["echo"]);
 
 		const start = Date.now();
-		const result = await runSync(tempDir, agents, "echo", "Task", {});
+		const result = await runSync(tempDir, agents, "echo", "Task", { acceptance: false });
 		const elapsed = Date.now() - start;
 
 		assert.ok(elapsed < 4000, `should clean up shortly after empty terminal stop, took ${elapsed}ms`);

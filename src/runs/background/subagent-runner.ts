@@ -379,6 +379,7 @@ interface RunPiStreamingResult {
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	observedMutationAttempt?: boolean;
+	forcedDrainAfterFinalSuccess?: boolean;
 	watchdog?: ChildWatchdogStateSnapshot;
 }
 
@@ -773,6 +774,7 @@ function runPiStreaming(
 				turnBudgetExceeded,
 				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined,
 				observedMutationAttempt,
+				forcedDrainAfterFinalSuccess,
 				watchdog: childWatchdogState,
 			});
 		});
@@ -1200,7 +1202,7 @@ async function runSingleStep(
 		const missingStructuredOutput = effectiveStructuredOutput
 			? !fs.existsSync(effectiveStructuredOutput.outputPath)
 			: false;
-		const emptyOutputError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !run.finalOutput.trim() && (!effectiveStructuredOutput || missingStructuredOutput)
+		const emptyOutputError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !run.finalOutput.trim() && (!effectiveStructuredOutput || missingStructuredOutput) && !run.forcedDrainAfterFinalSuccess
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;
 		let structuredOutput: unknown;
