@@ -6,7 +6,8 @@ import {
 	type SubagentDelegationStatus,
 	type SubagentDelegationUpdate,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceLedger, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import { acceptanceBlocksRun } from "../runs/shared/acceptance.ts";
 
 export interface PromptTemplateDelegationTask {
 	agent: string;
@@ -70,6 +71,13 @@ export interface PromptTemplateDelegationUpdate {
 	taskProgress?: PromptTemplateDelegationTaskProgress[];
 }
 
+type PromptTemplateBridgeAcceptance = SubagentDelegationAcceptanceResult & {
+	effectiveAcceptance?: {
+		onFailure: "fail" | "warn";
+		deprecationWarnings?: string[];
+	};
+};
+
 export interface PromptTemplateBridgeResult {
 	isError?: boolean;
 	content?: unknown;
@@ -93,7 +101,7 @@ export interface PromptTemplateBridgeResult {
 			toolBudgetBlocked?: boolean;
 			savedOutputPath?: string;
 			sessionFile?: string;
-			acceptance?: SubagentDelegationAcceptanceResult;
+			acceptance?: PromptTemplateBridgeAcceptance;
 			usage?: { turns?: number };
 			progressSummary?: { toolCount?: number; durationMs?: number; tokens?: number };
 			skillsWarning?: string;
@@ -175,8 +183,8 @@ export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegat
 	const fallbackTask = tasks[0];
 	return {
 		requestId: value.requestId,
-		agent: hasSingle ? value.agent : fallbackTask!.agent,
-		task: hasSingle ? value.task : fallbackTask!.task,
+		agent: hasSingle ? value.agent! : fallbackTask!.agent,
+		task: hasSingle ? value.task! : fallbackTask!.task,
 		...(tasks.length > 0 ? { tasks } : {}),
 		context: value.context,
 		model: value.model,
@@ -373,6 +381,13 @@ export function toSubagentDelegationUpdate(requestId: string, result: PromptTemp
 	};
 }
 
+function delegationAcceptanceBlocksRun(acceptance: PromptTemplateBridgeAcceptance): boolean {
+	// Current executors return a complete AcceptanceLedger. Keep v1 transport
+	// compatibility with older bridges that only supplied status and explicit.
+	if (!acceptance.effectiveAcceptance) return acceptance.status === "rejected" && acceptance.explicit;
+	return acceptanceBlocksRun(acceptance as AcceptanceLedger);
+}
+
 function resolveSubagentDelegationStatus(
 	result: PromptTemplateBridgeResult,
 	aborted: boolean,
@@ -383,7 +398,7 @@ function resolveSubagentDelegationStatus(
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
+	if (child.acceptance && delegationAcceptanceBlocksRun(child.acceptance)) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";
@@ -396,8 +411,12 @@ export function toSubagentDelegationResponse(
 ): SubagentDelegationResponse {
 	const child = result.details?.results?.[0];
 	const progress = child?.progressSummary ?? result.details?.progress?.[0];
-	const warnings = [child?.skillsWarning, child?.outputSaveError, child?.transcriptError]
-		.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
+	const warnings = [
+		child?.skillsWarning,
+		child?.outputSaveError,
+		child?.transcriptError,
+		...(child?.acceptance?.effectiveAcceptance?.deprecationWarnings ?? []),
+	].filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
 	const status = resolveSubagentDelegationStatus(result, aborted);
 	const fallbackError = status === "failed" ? firstTextContent(result.content) : undefined;
 	return {

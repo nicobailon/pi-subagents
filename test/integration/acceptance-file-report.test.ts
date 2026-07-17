@@ -16,6 +16,7 @@ interface AcceptanceSummary {
 	status?: string;
 	childReport?: { criteriaSatisfied?: Array<{ id?: string; status?: string; evidence?: string }> };
 	runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
+	verifyRuns?: Array<{ id?: string; status?: string }>;
 }
 
 interface AcceptanceArtifactPaths {
@@ -380,6 +381,45 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			assert.equal(payload.results[0]?.acceptance?.status, "checked");
 			assert.match(payload.results[0]?.output ?? "", /# Findings/);
 			assert.doesNotMatch(payload.results[0]?.output ?? "", /```acceptance-report/);
+		});
+
+		it("inherits verify-only acceptance into async parallel children and lets false clear it", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+			mockPi.onCall({ matchArgIncludes: "Verified task", output: "verified output" });
+			mockPi.onCall({ matchArgIncludes: "Ungated task", output: "ungated output" });
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+				config: {},
+				asyncByDefault: false,
+				tempArtifactsDir: tempDir,
+				getSubagentSessionRoot: () => tempDir,
+				expandTilde: (p: string) => p,
+				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
+			});
+
+			const result = await executor.execute(
+				"acceptance-async-parallel-inheritance",
+				{
+					acceptance: { verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] },
+					tasks: [
+						{ agent: "worker", task: "Verified task" },
+						{ agent: "worker", task: "Ungated task", acceptance: false },
+					],
+					async: true,
+					clarify: false,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			const asyncId = result.details?.asyncId;
+			assert.ok(asyncId, JSON.stringify(result));
+			const payload = await waitForAsyncResult(asyncId);
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.acceptance?.status, "verified");
+			assert.equal(payload.results[0]?.acceptance?.verifyRuns?.[0]?.status, "passed");
+			assert.equal(payload.results[1]?.acceptance?.status, "not-required");
 		});
 
 		it("parallel children keep acceptance tied to their distinct configured outputs", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {

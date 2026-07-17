@@ -201,29 +201,39 @@ Review the diff
 		assert.deepEqual((parsed.steps[0] as { outputSchema?: unknown }).outputSchema, { type: "object" });
 	});
 
-	it("parses and validates acceptance in JSON chains", () => {
+	it("round-trips root acceptance defaults and preserves child overrides", () => {
+		const rootAcceptance = {
+			report: { criteria: ["Implement the requested change"], evidence: ["changed-files", "commands-run"] },
+			verify: [{ id: "tests", command: "npm test" }],
+			onFailure: "warn",
+		};
 		const parsed = parseJsonChain(JSON.stringify({
 			name: "accepted-chain",
 			description: "Chain with acceptance gates",
+			acceptance: rootAcceptance,
 			chain: [
-				{ agent: "worker", task: "Fix bug", acceptance: { level: "checked", evidence: ["changed-files", "commands-run"] } },
-				{
-					parallel: [
-						{ agent: "reviewer", task: "Review", acceptance: "attested" },
-					],
-				},
+				{ agent: "worker", task: "Fix bug" },
+				{ agent: "reviewer", task: "Review", acceptance: false },
+				{ parallel: [{ agent: "reviewer", task: "Review", acceptance: "attested" }] },
 			],
 		}), "project", "/tmp/accepted-chain.chain.json");
 
-		assert.deepEqual((parsed.steps[0] as { acceptance?: unknown }).acceptance, { level: "checked", evidence: ["changed-files", "commands-run"] });
-		assert.equal(((parsed.steps[1] as { parallel?: Array<{ acceptance?: unknown }> }).parallel?.[0]?.acceptance), "attested");
-		assert.throws(
-			() => parseJsonChain(JSON.stringify({
-				name: "bad-acceptance",
-				description: "Bad acceptance",
-				chain: [{ agent: "worker", acceptance: { level: "none" } }],
-			}), "project", "/tmp/bad-acceptance.chain.json"),
-			/step 1 acceptance\.reason is required/,
-		);
+		assert.deepEqual(parsed.acceptance, rootAcceptance);
+		assert.equal(parsed.steps[1]?.acceptance, false);
+		assert.equal(((parsed.steps[2] as { parallel?: Array<{ acceptance?: unknown }> }).parallel?.[0]?.acceptance), "attested");
+		const serialized = JSON.parse(serializeJsonChain(parsed)) as { acceptance?: unknown };
+		assert.deepEqual(serialized.acceptance, rootAcceptance);
+	});
+
+	it("validates acceptance at the JSON chain root and every child surface", () => {
+		for (const input of [
+			{ acceptance: { report: false, level: "checked" }, chain: [{ agent: "worker" }] },
+			{ acceptance: false, chain: [{ agent: "worker", acceptance: { report: false, level: "checked" } }] },
+		]) {
+			assert.throws(
+				() => parseJsonChain(JSON.stringify({ name: "bad-acceptance", description: "Bad acceptance", ...input }), "project", "/tmp/bad-acceptance.chain.json"),
+				/cannot mix legacy and canonical acceptance fields/,
+			);
+		}
 	});
 });

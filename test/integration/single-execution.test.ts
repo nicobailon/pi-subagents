@@ -335,7 +335,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
 	});
 
-	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("accepts deprecated string \"none\" as disabled acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "work complete" });
 		const executor = makeExecutor([makeAgent("echo")]);
 
 		const result = await executor.execute(
@@ -346,9 +347,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /acceptance level "none" requires a reason/);
-		assert.equal(mockPi.callCount(), 0);
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.results?.[0]?.acceptance?.status, "not-required");
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("rejects unknown action strings at runtime", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

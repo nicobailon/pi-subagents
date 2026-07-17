@@ -21,7 +21,7 @@ import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from
 import { scheduledRunStorePath } from "../runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
-import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+import { adaptLegacyAcceptance, validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
@@ -42,6 +42,7 @@ import {
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
 	ASYNC_DIR,
+	type AcceptanceInput,
 	type Details,
 	type JsonSchemaObject,
 	type SingleResult,
@@ -541,7 +542,7 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 			...(step.label ? { label: step.label } : {}),
 			...(step.as ? { as: step.as } : {}),
 			...(outputSchema ? { outputSchema } : {}),
-			...((step as { acceptance?: unknown }).acceptance !== undefined ? { acceptance: (step as { acceptance?: unknown }).acceptance } : {}),
+			...(step.acceptance !== undefined ? { acceptance: step.acceptance } : {}),
 			output: step.output,
 			outputMode: step.outputMode,
 			reads: step.reads,
@@ -992,17 +993,21 @@ type ChainStepObject = {
 	cwd?: string;
 	count?: number;
 	outputSchema?: JsonSchemaObject;
-	acceptance?: string;
+	acceptance?: AcceptanceInput;
 };
 
-const INLINE_ACCEPTANCE_LEVELS = new Set(["auto", "attested", "checked"]);
+const INLINE_ACCEPTANCE_LEVELS = new Set(["auto", "attested", "checked", "none"]);
 
-function validateInlineAcceptanceInput(value: string, agent: string): void {
+function validateInlineAcceptanceInput(value: string, agent: string, warn: (message: string) => void): AcceptanceInput {
+	if (value === "false") return false;
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
 	if (errors.length > 0) throw new SlashParseError(errors[0]!);
 	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {
-		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none or verified acceptance contracts; reviewed is inferred-only.`);
+		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, checked, none, or false. Use the subagent tool API or a saved .chain.json file for composable verify/review contracts; reviewed is inferred-only.`);
 	}
+	const adapted = adaptLegacyAcceptance(value as AcceptanceInput);
+	for (const warning of adapted.deprecationWarnings) warn(warning);
+	return adapted.contract === false && value === "none" ? false : value as AcceptanceInput;
 }
 
 // Load an inline `outputSchema=<path>` JSON file, resolved against the session cwd.
@@ -1026,10 +1031,12 @@ const mapParsedTaskToStepObject = (
 	step: ParsedStep,
 	fallbackTask: string | undefined,
 	isFirst: boolean,
-	opts: { baseCwd: string; inGroup: boolean },
+	opts: { baseCwd: string; inGroup: boolean; warn: (message: string) => void },
 ): ChainStepObject => {
 	const { name, config, task: stepTask } = step;
-	if (config.acceptance !== undefined) validateInlineAcceptanceInput(config.acceptance, name);
+	const acceptance = config.acceptance === undefined
+		? undefined
+		: validateInlineAcceptanceInput(config.acceptance, name, opts.warn);
 	return {
 		agent: name,
 		...(stepTask ? { task: stepTask } : isFirst && fallbackTask ? { task: fallbackTask } : {}),
@@ -1045,7 +1052,7 @@ const mapParsedTaskToStepObject = (
 		...(config.cwd ? { cwd: config.cwd } : {}),
 		...(opts.inGroup && config.count !== undefined ? { count: config.count } : {}),
 		...(config.outputSchema ? { outputSchema: loadInlineOutputSchema(opts.baseCwd, name, config.outputSchema) } : {}),
-		...(config.acceptance ? { acceptance: config.acceptance } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 	};
 };
 
@@ -1061,7 +1068,7 @@ export function buildChainExpressionSteps(
 		const baseCwd = state.baseCwd!; // parseAgentArgs already verified baseCwd is set
 		try {
 			const chain: ChainStep[] = parsed.steps.map((step, i) =>
-				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }),
+				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false, warn: (message) => ctx.ui.notify(message, "warning") }),
 			);
 			return { chain, task: parsed.task };
 		} catch (error) {
@@ -1116,7 +1123,7 @@ export function buildChainExpressionSteps(
 	try {
 		chain = expression.steps.map((step) => {
 			if (step.kind === "group") {
-				const parallel = step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false, { baseCwd, inGroup: true }));
+				const parallel = step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false, { baseCwd, inGroup: true, warn: (message) => ctx.ui.notify(message, "warning") }));
 				return {
 					parallel,
 					...(step.config.concurrency !== undefined ? { concurrency: step.config.concurrency } : {}),
@@ -1124,7 +1131,7 @@ export function buildChainExpressionSteps(
 					...(step.config.worktree !== undefined ? { worktree: step.config.worktree } : {}),
 				};
 			}
-			return mapParsedTaskToStepObject(step, sharedTask || undefined, false, { baseCwd, inGroup: false });
+			return mapParsedTaskToStepObject(step, sharedTask || undefined, false, { baseCwd, inGroup: false, warn: (message) => ctx.ui.notify(message, "warning") });
 		});
 	} catch (error) {
 		notify(error instanceof Error ? error.message : String(error));
@@ -1230,7 +1237,13 @@ export function registerSlashCommands(
 				ctx.ui.notify(`Unknown chain: ${chainName}`, "error");
 				return;
 			}
-			const params: SubagentParamsLike = { chain: mapSavedChainSteps(chain), task, clarify: false, agentScope: "both" };
+			const params: SubagentParamsLike = {
+				chain: mapSavedChainSteps(chain),
+				task,
+				clarify: false,
+				agentScope: "both",
+				...(chain.acceptance !== undefined ? { acceptance: chain.acceptance } : {}),
+			};
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
 			await runSlashSubagent(pi, ctx, params);

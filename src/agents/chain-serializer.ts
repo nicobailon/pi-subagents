@@ -165,6 +165,10 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 	if (!Array.isArray(input.chain)) {
 		throw new Error(`JSON chain '${filePath}' must include array chain.`);
 	}
+	const rootAcceptanceErrors = validateAcceptanceInput(input.acceptance, "root acceptance");
+	if (rootAcceptanceErrors.length > 0) {
+		throw new Error(`Invalid JSON chain '${filePath}': ${rootAcceptanceErrors.join(" ")}`);
+	}
 	for (let i = 0; i < input.chain.length; i++) {
 		const step = input.chain[i];
 		if (!step || typeof step !== "object" || Array.isArray(step)) {
@@ -217,6 +221,7 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 		description: input.description.trim(),
 		source,
 		filePath,
+		...(input.acceptance !== undefined ? { acceptance: input.acceptance as ChainConfig["acceptance"] } : {}),
 		steps: input.chain as ChainStepConfig[],
 		extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
 	};
@@ -226,12 +231,13 @@ export function serializeJsonChain(config: ChainConfig): string {
 	const root: Record<string, unknown> = {
 		name: frontmatterNameForConfig(config),
 		description: config.description,
+		...(config.acceptance !== undefined ? { acceptance: config.acceptance } : {}),
 		chain: config.steps,
 	};
 	if (config.packageName) root.package = config.packageName;
 	if (config.extraFields) {
 		for (const [key, value] of Object.entries(config.extraFields)) {
-			if (key !== "name" && key !== "description" && key !== "package" && key !== "chain") root[key] = value;
+			if (key !== "name" && key !== "description" && key !== "package" && key !== "acceptance" && key !== "chain") root[key] = value;
 		}
 	}
 	return `${JSON.stringify(root, null, 2)}\n`;

@@ -65,6 +65,7 @@ type TestChainStep = TestSequentialStep | {
 	failFast?: boolean;
 	worktree?: boolean;
 	cwd?: string;
+	acceptance?: unknown;
 } | {
 	expand: {
 		from: { output: string; path: string };
@@ -401,6 +402,32 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.match(failed.details.results[0]?.error ?? "", /tests-added evidence missing/);
 	});
 
+	it("merges top-level, static-parallel, and task acceptance by dimension", async () => {
+		mockPi.onCall({ output: acceptanceReport() });
+		mockPi.onCall({ output: "ungated" });
+		const agents = [makeAgent("worker", { completionGuard: false })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[{
+					parallel: [
+						{ agent: "worker", task: "Implement fix", acceptance: { report: { criteria: ["Patch bug"] } } },
+						{ agent: "worker", task: "Skip gate", acceptance: false },
+					],
+					acceptance: { onFailure: "warn" },
+				}],
+				agents,
+				{ acceptance: { verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] } },
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.equal(result.details.results[0]?.acceptance?.status, "verified");
+		assert.equal(result.details.results[0]?.acceptance?.verifyRuns?.[0]?.status, "passed");
+		assert.ok(result.details.results[0]?.acceptance?.childReport);
+		assert.equal(result.details.results[1]?.acceptance?.status, "not-required");
+	});
+
 	it("runs explicit verified acceptance commands and does not trust child command claims as verification", async () => {
 		const acceptanceReport = [
 			"implemented",
@@ -667,7 +694,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.itemKey), ["src/a.ts", "src/b.ts"]);
 	});
 
-	it("persists checked acceptance status for dynamic fanout materialized children and aggregate group", async () => {
+	it("merges top-level acceptance into dynamic templates while keeping aggregate acceptance separate", async () => {
 		mockPi.onCall({
 			output: "targets",
 			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
@@ -682,23 +709,24 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 					{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
 					{
 						expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
-						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: { level: "checked" } },
+						parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: { report: { criteria: ["Review the item"] } } },
 						collect: { as: "reviews" },
 						acceptance: { level: "checked" },
 						concurrency: 1,
 					},
 				],
 				agents,
+				{ acceptance: { verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] } },
 			),
 		);
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.acceptanceStatus, "checked");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["checked", "checked"]);
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["verified", "verified"]);
 	});
 
-	it("applies read-only acceptance roles to dynamic children and their aggregate group", async () => {
+	it("keeps omitted dynamic child and aggregate acceptance advisory-only", async () => {
 		mockPi.onCall({
 			output: "targets",
 			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
@@ -731,13 +759,13 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const explorerResults = result.details.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["attested", "attested"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["none", "none"]);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "attested");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["attested", "attested"]);
+		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);
 	});
 
-	it("infers foreground dynamic acceptance after materializing item templates", async () => {
+	it("keeps materialized dynamic inference advisory when acceptance is omitted", async () => {
 		mockPi.onCall({
 			output: "targets",
 			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
@@ -763,10 +791,10 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const explorerResults = result.details.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["reviewed", "reviewed"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["none", "none"]);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "rejected");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["rejected", "rejected"]);
+		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);
 	});
 
 	it("does not expose collected dynamic output when a child fails", async () => {

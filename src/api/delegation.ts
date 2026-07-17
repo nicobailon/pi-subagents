@@ -1,3 +1,14 @@
+import type {
+	AcceptanceConfig,
+	AcceptanceContract,
+	AcceptanceEvidenceKind,
+	AcceptanceGate,
+	AcceptanceInput,
+	AcceptanceLegacyInput,
+	AcceptanceReviewGate,
+	AcceptanceVerifyCommand,
+} from "../shared/types.ts";
+
 export const SUBAGENT_DELEGATION_PROTOCOL_VERSION = 1 as const;
 
 // This is the established extension-to-extension transport. The public API
@@ -19,59 +30,16 @@ export interface SubagentDelegationToolBudget {
 	block?: string[] | "*";
 }
 
-export type SubagentDelegationAcceptanceEvidence =
-	| "changed-files"
-	| "tests-added"
-	| "commands-run"
-	| "validation-output"
-	| "residual-risks"
-	| "no-staged-files"
-	| "diff-summary"
-	| "review-findings"
-	| "manual-notes";
-
-export interface SubagentDelegationAcceptanceCriterion {
-	id: string;
-	must: string;
-	evidence?: SubagentDelegationAcceptanceEvidence[];
-	severity?: "required" | "recommended";
-}
-
-export interface SubagentDelegationAcceptanceVerifyCommand {
-	id: string;
-	command: string;
-	timeoutMs?: number;
-	cwd?: string;
-	env?: Record<string, string>;
-	allowFailure?: boolean;
-}
-
-export interface SubagentDelegationAcceptanceReview {
-	agent?: string;
-	focus?: string;
-	required?: boolean;
-}
-
-interface SubagentDelegationAcceptanceFields {
-	criteria?: Array<string | SubagentDelegationAcceptanceCriterion>;
-	evidence?: SubagentDelegationAcceptanceEvidence[];
-	verify?: SubagentDelegationAcceptanceVerifyCommand[];
-	review?: SubagentDelegationAcceptanceReview | false;
-	stopRules?: string[];
-}
-
-export type SubagentDelegationAcceptanceConfig = SubagentDelegationAcceptanceFields & (
-	| { level: "none"; reason: string }
-	| { level?: "auto" | "attested" | "checked" | "verified"; reason?: string }
-);
-
-export type SubagentDelegationAcceptance =
-	| "auto"
-	| "attested"
-	| "checked"
-	| "verified"
-	| false
-	| SubagentDelegationAcceptanceConfig;
+// Public aliases intentionally mirror the canonical execution contract while
+// retaining every legacy v1 input. Runtime validation remains authoritative.
+export type SubagentDelegationAcceptanceEvidence = AcceptanceEvidenceKind;
+export type SubagentDelegationAcceptanceCriterion = AcceptanceGate;
+export type SubagentDelegationAcceptanceVerifyCommand = AcceptanceVerifyCommand;
+export type SubagentDelegationAcceptanceReview = AcceptanceReviewGate;
+export type SubagentDelegationAcceptanceConfig = AcceptanceConfig;
+export type SubagentDelegationAcceptanceContract = AcceptanceContract;
+export type SubagentDelegationLegacyAcceptance = AcceptanceLegacyInput;
+export type SubagentDelegationAcceptance = AcceptanceInput;
 
 export interface SubagentDelegationRequest {
 	version: typeof SUBAGENT_DELEGATION_PROTOCOL_VERSION;

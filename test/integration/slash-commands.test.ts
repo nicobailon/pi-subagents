@@ -878,28 +878,23 @@ Review {previous}
 		});
 	});
 
-	it("/run-chain preserves saved JSON chain acceptance contracts", async () => {
+	it("/run-chain preserves saved JSON root acceptance and child overrides", async () => {
 		await withTempProject("pi-run-chain-json-acceptance-", async (root) => {
+			const rootAcceptance = {
+				report: { evidence: ["commands-run"] },
+				verify: [{ id: "tests", command: "npm test" }],
+				onFailure: "warn",
+			};
 			writeProjectChain(root, "verified-flow.chain.json", JSON.stringify({
 				name: "verified-flow",
 				description: "Verified flow",
-				chain: [
-					{
-						agent: "worker",
-						task: "Implement fix",
-						acceptance: {
-							level: "verified",
-							verify: [{ id: "tests", command: "npm test" }],
-						},
-					},
-				],
+				acceptance: rootAcceptance,
+				chain: [{ agent: "worker", task: "Implement fix", acceptance: false }],
 			}));
 
 			const { params } = await captureSlashCommandParams("run-chain", "verified-flow -- Audit", root);
-			assert.deepEqual((params as { chain?: Array<{ acceptance?: unknown }> }).chain?.[0]?.acceptance, {
-				level: "verified",
-				verify: [{ id: "tests", command: "npm test" }],
-			});
+			assert.deepEqual((params as { acceptance?: unknown }).acceptance, rootAcceptance);
+			assert.equal((params as { chain?: Array<{ acceptance?: unknown }> }).chain?.[0]?.acceptance, false);
 		});
 	});
 

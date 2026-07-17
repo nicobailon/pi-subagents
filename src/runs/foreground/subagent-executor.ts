@@ -38,7 +38,7 @@ import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsy
 import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, adaptLegacyAcceptance, mergeAcceptanceContracts, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -116,6 +116,12 @@ import {
 } from "../../shared/types.ts";
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure"]);
+
+function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+	if (child === undefined) return parent;
+	if (parent === undefined) return child;
+	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
+}
 interface TaskParam {
 	agent: string;
 	task: string;
@@ -401,7 +407,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...child,
 		agent: input.result.agent,
 		index: input.index,
-		status: input.result.acceptance?.status === "rejected"
+		status: input.result.acceptance && acceptanceBlocksRun(input.result.acceptance)
 			? "failed"
 			: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
 		updatedAt,
@@ -420,7 +426,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	};
 	trimRememberedForegroundRuns(state);
 	const output = getSingleResultOutput(input.result).trim();
-	const success = input.result.exitCode === 0 && input.result.acceptance?.status !== "rejected";
+	const success = input.result.exitCode === 0 && !(input.result.acceptance && acceptanceBlocksRun(input.result.acceptance));
 	const summary = !success && input.result.error
 		? `${input.result.error}${output ? `\n\nOutput:\n${output}` : ""}`
 		: output || input.result.error || "Detached child exited without final output.";
@@ -826,6 +832,7 @@ function appendStepToAsyncChain(input: {
 		waitToolEnabled: input.deps.waitToolEnabled,
 		asyncDir: resolved.location.asyncDir,
 		validateOutputBindings: false,
+		acceptance: input.params.acceptance,
 	});
 	if ("error" in built) {
 		return {
@@ -1222,6 +1229,7 @@ async function resumeAsyncRun(input: {
 			controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 			childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 			globalConcurrencyLimit: input.deps.config.globalConcurrencyLimit,
+			acceptance: input.params.acceptance,
 		});
 		if (result.isError) return result;
 		const attachedId = result.details.asyncId ?? runId;
@@ -2005,6 +2013,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			toolBudget: data.toolBudget,
 			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+			acceptance: params.acceptance,
 		});
 	}
 
@@ -2044,6 +2053,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			toolBudget: data.toolBudget,
 			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+			acceptance: params.acceptance,
 		});
 	}
 
@@ -2170,6 +2180,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		toolBudget: data.toolBudget,
 		configToolBudget: data.configToolBudget,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+		acceptance: params.acceptance,
 	});
 
 	if (chainResult.requestedAsync) {
@@ -2225,6 +2236,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			toolBudget: data.toolBudget,
 			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+			acceptance: params.acceptance,
 		});
 	}
 
@@ -2300,6 +2312,7 @@ interface ForegroundParallelRunInput {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudgets: (ResolvedToolBudget | undefined)[];
+	acceptance?: AcceptanceInput;
 }
 
 function buildParallelModeError(message: string): AgentToolResult<Details> {
@@ -2478,7 +2491,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			preferredModelProvider: input.ctx.model?.provider,
 			modelScope: input.modelScope,
 			skills: effectiveSkills === false ? [] : effectiveSkills,
-			acceptance: task.acceptance,
+			acceptance: mergeAcceptanceInputs(input.acceptance, task.acceptance),
 			acceptanceContext: { mode: "parallel" },
 			timeoutMs: input.timeoutMs,
 			deadlineAt: input.deadlineAt,
@@ -2717,6 +2730,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
 				globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+				acceptance: params.acceptance,
 			});
 		}
 	}
@@ -2807,6 +2821,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			deadlineAt,
 			turnBudget: data.turnBudget,
 			toolBudgets,
+			acceptance: params.acceptance,
 		});
 		for (let i = 0; i < results.length; i++) {
 			const run = results[i]!;

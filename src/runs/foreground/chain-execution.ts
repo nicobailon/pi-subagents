@@ -60,6 +60,7 @@ import {
 	type ResolvedToolBudget,
 	type SingleResult,
 	type ToolBudgetConfig,
+	type AcceptanceInput,
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
@@ -70,9 +71,15 @@ import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, adaptLegacyAcceptance, aggregateAcceptanceReport, evaluateAcceptance, mergeAcceptanceContracts, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+
+function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+	if (child === undefined) return parent;
+	if (parent === undefined) return child;
+	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
+}
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -153,6 +160,7 @@ interface ParallelChainRunInput {
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
 	dynamic?: boolean;
+	acceptance?: AcceptanceInput;
 }
 
 function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details {
@@ -341,8 +349,8 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				modelScope: input.modelScope,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				structuredOutput: structuredRuntime,
-				acceptance: task.acceptance,
-				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined },
+				acceptance: mergeAcceptanceInputs(input.acceptance, task.acceptance),
+				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined && input.acceptance === undefined },
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
@@ -464,6 +472,7 @@ interface ChainExecutionParams {
 	configToolBudget?: ToolBudgetConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
+	acceptance?: AcceptanceInput;
 }
 
 interface ChainExecutionResult {
@@ -756,6 +765,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					toolBudget: params.toolBudget,
 					configToolBudget: params.configToolBudget,
 					globalSemaphore,
+					acceptance: mergeAcceptanceInputs(params.acceptance, step.acceptance),
 				});
 				globalTaskIndex += step.parallel.length;
 
@@ -895,7 +905,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						cwd: cwd ?? ctx.cwd,
 					});
 					dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-					const groupAcceptanceFailure = acceptanceFailureMessage(groupAcceptance);
+					const groupAcceptanceFailure = acceptanceBlocksRun(groupAcceptance) ? acceptanceFailureMessage(groupAcceptance) : undefined;
 					if (groupAcceptanceFailure) {
 						dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 						return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
@@ -977,6 +987,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				configToolBudget: params.configToolBudget,
 				globalSemaphore,
 				dynamic: true,
+				acceptance: params.acceptance,
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
 
@@ -1064,7 +1075,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				cwd: cwd ?? ctx.cwd,
 			});
 			dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-			const groupAcceptanceFailure = effectiveGroupAcceptance.explicit ? acceptanceFailureMessage(groupAcceptance) : undefined;
+			const groupAcceptanceFailure = acceptanceBlocksRun(groupAcceptance) ? acceptanceFailureMessage(groupAcceptance) : undefined;
 			if (groupAcceptanceFailure) {
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 				return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - dynamicParallelStep.parallel.length }));
@@ -1210,7 +1221,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				modelScope,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				structuredOutput: structuredRuntime,
-				acceptance: seqStep.acceptance,
+				acceptance: mergeAcceptanceInputs(params.acceptance, seqStep.acceptance),
 				acceptanceContext: { mode: "chain" },
 				timeoutMs: params.timeoutMs,
 				deadlineAt,

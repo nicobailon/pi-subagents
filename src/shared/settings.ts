@@ -115,6 +115,7 @@ export interface ParallelStep {
 	failFast?: boolean;
 	worktree?: boolean;
 	cwd?: string;
+	acceptance?: AcceptanceInput;
 }
 
 /** Union type for chain steps */

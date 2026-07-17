@@ -373,7 +373,22 @@ describe("buildChainExpressionSteps", () => {
 		);
 		assert.equal(built, null);
 		assert.equal(notifications.length, 1);
-		assert.match(notifications[0] ?? "", /supports auto, attested, or checked/);
+		assert.match(notifications[0] ?? "", /supports auto, attested, checked, none, or false/);
+	});
+
+	it("maps inline false and deprecated none to disabled acceptance", () => {
+		for (const value of ["none", "false"]) {
+			const notifications: string[] = [];
+			const built = buildChainExpressionSteps(
+				makeState(tempRoot) as never,
+				`scout[acceptance=${value}] "scan" -> reviewer "review"`,
+				makeCtx(notifications) as never,
+			);
+			assert.ok(built);
+			assert.equal(built?.chain[0]?.acceptance, false);
+			if (value === "none") assert.match(notifications[0] ?? "", /deprecated/i);
+			else assert.deepEqual(notifications, []);
+		}
 	});
 
 	it("loads an inline outputSchema path and rejects a missing one", () => {

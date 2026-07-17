@@ -189,6 +189,7 @@ export interface ChainConfig {
 	description: string;
 	source: AgentSource;
 	filePath: string;
+	acceptance?: AcceptanceInput;
 	steps: ChainStepConfig[];
 	extraFields?: Record<string, string>;
 }

@@ -26,7 +26,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { adaptLegacyAcceptance, mergeAcceptanceContracts, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import {
 	type AcceptanceInput,
 	type ArtifactConfig,
@@ -51,6 +51,12 @@ import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
+
+function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+	if (child === undefined) return parent;
+	if (parent === undefined) return child;
+	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
+}
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -222,6 +228,7 @@ export interface AsyncRunnerStepBuildParams {
 	validateOutputBindings?: boolean;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
+	acceptance?: AcceptanceInput;
 }
 
 export type AsyncRunnerStepBuildResult =
@@ -655,7 +662,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			waitToolEnabled: params.waitToolEnabled,
 			effectiveAcceptance: resolveEffectiveAcceptance({
-				explicit: s.acceptance,
+				explicit: mergeAcceptanceInputs(params.acceptance, s.acceptance),
 				agentName: s.agent,
 				acceptanceRole: a.acceptanceRole,
 				task,
@@ -663,7 +670,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				async: true,
 				dynamic: false,
 			}),
-			acceptanceInput: s.acceptance,
+			acceptanceInput: mergeAcceptanceInputs(params.acceptance, s.acceptance),
 			acceptanceRole: a.acceptanceRole,
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
 			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) } : {}),
@@ -707,7 +714,15 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 							}
 						}
 						const staticStep = nextFlatStep();
-						return buildSeqStep(t, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex });
+						return buildSeqStep(
+							{ ...t, acceptance: mergeAcceptanceInputs(s.acceptance, t.acceptance) },
+							staticStep.sessionFile,
+							behaviorCwd,
+							progressPrecreated,
+							parallelBehaviors[taskIndex],
+							staticStep.index,
+							{ stepIndex, taskIndex },
+						);
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
@@ -853,6 +868,7 @@ export function executeAsyncChain(
 		asyncDir,
 		toolBudget: params.toolBudget,
 		configToolBudget: params.configToolBudget,
+		acceptance: params.acceptance,
 	});
 	if ("error" in built) {
 		try {
@@ -1158,7 +1174,7 @@ export function executeAsyncSingle(
 		...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
-		...(resolvedAcceptance ? { acceptance: resolvedAcceptance } : {}),
+		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(params.turnBudget ? { initialTurnBudget: params.turnBudget } : {}),

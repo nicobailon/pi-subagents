@@ -191,7 +191,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
-	it("does not apply agent acceptance defaults to top-level parallel tasks", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("keeps omitted top-level parallel acceptance advisory-only", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "parallel response without explicit acceptance" });
 		const executor = makeExecutor([
 			makeAgent("echo", { defaultAcceptance: { level: "none", reason: "single launches only" } }),
@@ -207,10 +207,57 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details?.results?.[0]?.acceptance?.explicit, false);
-		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
+		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "none");
 	});
 
-	it("applies agent acceptance roles to inferred parallel acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("inherits top-level acceptance into parallel children and lets false clear it", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "verified child" });
+		mockPi.onCall({ output: "ungated child" });
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"parallel-composable-acceptance",
+			{
+				acceptance: { verify: [{ id: "runtime-pass", command: "node -e \"process.exit(0)\"" }] },
+				tasks: [
+					{ agent: "echo", task: "Verify this child" },
+					{ agent: "echo", task: "Do not gate this child", acceptance: false },
+				],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, JSON.stringify(result));
+		assert.equal(result.details?.results?.[0]?.acceptance?.status, "verified");
+		assert.equal(result.details?.results?.[1]?.acceptance?.status, "not-required");
+	});
+
+	it("preserves a rejected ledger without failing when inherited acceptance warns", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "child completed" });
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"parallel-warn-acceptance",
+			{
+				acceptance: {
+					verify: [{ id: "runtime-fail", command: "node -e \"process.exit(7)\"" }],
+					onFailure: "warn",
+				},
+				tasks: [{ agent: "echo", task: "Complete despite warning" }],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, JSON.stringify(result));
+		assert.equal(result.details?.results?.[0]?.exitCode, 0);
+		assert.equal(result.details?.results?.[0]?.acceptance?.status, "rejected");
+	});
+
+	it("keeps acceptance-role inference advisory when parallel acceptance is omitted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "exploration complete" });
 		const executor = makeExecutor([
 			makeAgent("worker", { acceptanceRole: "read-only" }),
@@ -224,7 +271,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "attested");
+		assert.equal(result.details?.results?.[0]?.acceptance?.effectiveAcceptance.level, "none");
 	});
 
 	it("top-level parallel output saves use per-task output paths", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -402,9 +449,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		const taskArg = args.at(-1) ?? "";
 		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
 
-Inspect
-
-## Acceptance Contract`));
+Inspect`));
 	});
 
 	it("top-level parallel defaultProgress uses isolated run storage", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

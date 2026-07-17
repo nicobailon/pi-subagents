@@ -344,7 +344,7 @@ describe("agent frontmatter launch defaults", () => {
 		assert.deepEqual(worker?.defaultAcceptance, { level: "none", reason: "lightweight lookup" });
 	});
 
-	it("parses scalar acceptance defaults and rejects invalid policies", () => {
+	it("parses scalar acceptance defaults including deprecated bare none", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-acceptance-defaults-"));
 		tempDirs.push(dir);
 		const filePath = path.join(dir, ".pi", "agents", "worker.md");
@@ -379,9 +379,9 @@ acceptance: none
 
 Do work
 `);
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' acceptance frontmatter level "none" requires a reason/,
+		assert.equal(
+			discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker")?.defaultAcceptance,
+			"none",
 		);
 	});
 

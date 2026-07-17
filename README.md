@@ -563,7 +563,7 @@ Append `[key=value,...]` to an agent name to override defaults. `/chain` applies
 | `cwd` | `cwd=packages/api` | Run the step in a subdirectory. |
 | `count` | `count=3` | Fan a group task into N copies (only inside a `( ... )` group). |
 | `outputSchema` | `outputSchema=schema.json` | Validate structured output against a JSON Schema file (path resolved against the session cwd, not an inline step `cwd`). |
-| `acceptance` | `acceptance=checked` | Inline acceptance level: `auto`, `attested`, or `checked`. Use the tool API or saved `.chain.json` for object contracts such as `none` or `verified`; `reviewed` is inferred-only. |
+| `acceptance` | `acceptance=checked` | Inline acceptance level: `auto`, `attested`, or `checked`; `false` disables acceptance and deprecated `none` does the same with a warning. Use the tool API or saved `.chain.json` for composable report/verify/review contracts; `reviewed` is inferred-only. |
 
 Set `output=false`, `reads=false`, or `skills=false` to disable that behavior explicitly. Do not use `output=false` for file-only returns; use `outputMode=file-only` with an `output` path.
 
@@ -715,7 +715,7 @@ defaultProgress: true
 async: true
 timeoutMs: 900000
 turnBudget: {"maxTurns":20,"graceTurns":2}
-acceptance: {"level":"none","reason":"lightweight lookup"}
+acceptance: false
 acceptanceRole: read-only
 completionGuard: false
 interactive: true
@@ -759,7 +759,7 @@ Important fields:
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
 | `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. An explicit `timeoutMs` or `maxRuntimeMs` wins. |
 | `turnBudget` | JSON object default such as `{"maxTurns":20,"graceTurns":2}` for single-agent launches. An explicit call value wins, followed by this agent default, then global `turnBudget` config. |
-| `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
+| `acceptance` | Acceptance default for single-agent launches. Use `false`, a legacy scalar such as `checked`, or a canonical inline/block YAML map with `report`, `verify`, `review`, and `onFailure`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
 | `interactive` | Parsed for compatibility but not enforced in v1. |
@@ -852,13 +852,13 @@ progress: true
 Create an implementation plan based on {outputs.context}
 ```
 
-Each `.chain.md` `## agent-name` section is a step. Config lines such as `phase`, `label`, `as`, `outputSchema`, `output`, `outputMode`, `reads`, `model`, `skills`, and `progress` go immediately after the header. A blank line separates config from task text. In saved `.chain.md` files, `outputSchema` is a path to a JSON Schema file; direct tool calls and `.chain.json` files can pass the schema object inline.
+Each `.chain.md` `## agent-name` section is a step. Config lines such as `phase`, `label`, `as`, `outputSchema`, `output`, `outputMode`, `reads`, `model`, `skills`, and `progress` go immediately after the header. A blank line separates config from task text. In saved `.chain.md` files, `outputSchema` is a path to a JSON Schema file; direct tool calls and `.chain.json` files can pass the schema object inline. `.chain.md` cannot encode acceptance contracts; use `.chain.json` when a saved chain needs root defaults or child acceptance overrides.
 
 For `output`, `reads`, `skills`, and `progress`, chain behavior is three-state: omitted inherits from the agent, a value overrides, and `false` disables.
 
 Use `phase` to group related work in status output, `label` for a readable step name, and `as` to store a successful step or parallel task result for later `{outputs.name}` references. Duplicate `as` names, invalid identifiers, and unknown output references fail before child execution.
 
-Dynamic fanout is available only through direct `subagent({ chain: [...] })` JSON or saved `.chain.json` files. It expands an array from a prior structured named output, runs one child template per item, and stores the ordered collection under `collect.as`. The source must be structured output; prose is never parsed. `expand.maxItems` is required, over-limit arrays fail, nested fanout and arbitrary expressions are not supported, and `.chain.md` has no dynamic syntax in this release.
+Dynamic fanout is available only through direct `subagent({ chain: [...] })` JSON or saved `.chain.json` files. It expands an array from a prior structured named output, runs one child template per item, and stores the ordered collection under `collect.as`. The source must be structured output; prose is never parsed. `expand.maxItems` is required, over-limit arrays fail, nested fanout and arbitrary expressions are not supported, and `.chain.md` has no dynamic syntax in this release. A `.chain.json` root `acceptance` is the default for every child; a step, static parallel task, or dynamic template override is merged by dimension, while child `false` disables acceptance for that child.
 
 ```json
 {
@@ -1012,9 +1012,9 @@ const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) =
 pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
 ```
 
-The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, skills, output behavior, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
+The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, skills, output behavior, acceptance, and artifact capture. The exported acceptance types mirror the tool API's canonical composable contract. Unknown fields, malformed contracts, and ambiguous canonical/legacy field mixing return `invalid_request` before execution.
 
-Responses distinguish completion, failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, explicit acceptance failure, invalid requests, and unavailable active context. Optional run, model, output, session, acceptance, usage, progress, and warning fields are omitted when unavailable. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
+Responses distinguish completion, failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, blocking acceptance failure, invalid requests, and unavailable active context. `onFailure: "warn"` returns `completed` even when the acceptance ledger is rejected. Acceptance deprecations are included in `warnings`; optional run, model, output, session, acceptance, usage, progress, and warning fields are omitted when unavailable. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
 
 Delegation requires an active extension context. Emit requests from a supported event callback or queued application step, not by recursively invoking the `subagent` tool inside another tool's `tool_call` hook. The caller selects a configured agent, but agent discovery and effective tools remain package-owned. A request cannot grant arbitrary tools, and tool restrictions are not an operating-system sandbox. The detached RPC remains async-only; this API is foreground-only.
 
@@ -1155,7 +1155,7 @@ Agent definitions are not loaded into context by default. Management actions let
   extensions: "",
   skills: "parallel-scout",
   thinking: "high",
-  acceptance: { level: "none", reason: "lightweight lookup" },
+  acceptance: false,
   acceptanceRole: "read-only",
   output: "context.md",
   reads: "shared-context.md",
@@ -1223,7 +1223,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Override inferred gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. `reviewed` is inferred-only; explicit requests fail preflight. `false` is a deprecated shorthand for disabling gates. |
+| `acceptance` | string/object/false | inferred/advisory | Canonical objects compose `report`, `verify`, `review`, and `onFailure`. `false` disables acceptance. Legacy `auto`, `attested`, `checked`, and `verified` remain accepted; bare `none` disables with a deprecation warning. `reviewed` is inferred-only; explicit requests fail preflight. |
 
 As a conservative orchestration policy, do not set `turnBudget` or a hard `toolBudget` on implementation workers, fix workers, reviewers with edit authority, or other mutation-capable children. A default tool budget blocks read/search tools rather than mutation tools, but neither assistant turns nor tool-call counts measure whether a delivery slice is buildable or safe to hand off. Hard count caps remain appropriate for explicitly read-only scouts, reviewers, and validators.
 
@@ -1521,22 +1521,31 @@ Async runs write:
 
 ## Acceptance Gates
 
-Every run resolves an effective acceptance policy. Callers may omit `acceptance` for the inferred default, or set it on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
+Every run resolves an effective acceptance policy. Omission and `"auto"` are advisory: they record recommendations but do not create blocking gates. Set `acceptance` on a single run, top-level parallel task, chain root/step, static parallel task, or dynamic fanout template.
 
 ```ts
 {
   agent: "worker",
   task: "Implement the fix",
   acceptance: {
-    level: "verified",
-    criteria: ["Patch the bug without widening scope"],
-    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+    report: {
+      criteria: ["Patch the bug without widening scope"],
+      evidence: ["changed-files", "commands-run", "residual-risks", "no-staged-files"]
+    },
+    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }],
+    review: false,
+    onFailure: "fail"
   }
 }
 ```
 
-Acceptance policies use the levels `auto`, `none`, `attested`, `checked`, `verified`, and `reviewed`. `acceptance: "auto"` is the default. Callers may explicitly request levels through `verified`; `reviewed` is reserved for inferred policy because the current execution path cannot supply an independent reviewer result. Explicit `reviewed` fails preflight instead of spawning a child that is guaranteed to be rejected. Read-only tasks infer lightweight attestation, normal writer tasks infer checked evidence, and async/risky/dynamic writer contexts infer a reviewed gate. Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks; explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access. The bare string `"none"` is rejected; use `{ level: "none", reason: "..." }` instead. `acceptance: false` is accepted only as a deprecated shorthand for disabling gates.
+The four canonical dimensions are independent. `report` requests structured child evidence, or `false` to skip it. `verify` runs bounded parent-configured commands; child claims do not count as verification. `review` configures an independent review gate, or `false` to skip it. `onFailure: "fail"` blocks the run when an explicit gate rejects; `"warn"` preserves a successful run while retaining the rejected ledger and warnings.
+
+Child acceptance overrides merge by dimension over a chain-root or parent default. A child field replaces that dimension; omitted dimensions inherit. Child `false` disables the whole contract. Explicit call values beat agent defaults, and task/step values beat parent/root values. Do not mix canonical-only fields (`report`, `onFailure`) with legacy-only fields (`level`, `criteria`, `evidence`, `stopRules`, `reason`) in one object; ambiguous or unknown fields fail validation.
+
+Legacy compatibility remains in protocol v1: `auto`, `attested`, `checked`, and `verified` adapt to canonical contracts. Bare `none` now disables acceptance but emits a deprecation warning; use `false`. Explicit `reviewed`, `{ level: "reviewed" }`, and `review.required: true` fail preflight because the current path cannot supply an independent reviewer result. Read-only, writer, and risky-task inference is advisory only. `acceptanceRole: "read-only" | "writer"` adjusts those recommendations without changing tools.
+
+Choose evidence for observable work. Mechanical cleanup may use `changed-files`, `commands-run`, `diff-summary`, and `residual-risks` without `tests-added` when no behavioral contract changed. Do not add deletion-proof tests merely to satisfy an evidence list.
 
 Acceptance provenance is stored separately from child prose:
 

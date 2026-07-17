@@ -47,13 +47,13 @@ function tick(): Promise<void> {
 }
 
 const acceptance: SubagentDelegationAcceptance = {
-	level: "verified",
-	criteria: [{ id: "criterion-1", must: "Verify the result", evidence: ["validation-output"], severity: "required" }],
-	evidence: ["commands-run", "validation-output"],
+	report: {
+		criteria: [{ id: "criterion-1", must: "Verify the result", evidence: ["validation-output"], severity: "required" }],
+		evidence: ["commands-run", "validation-output"],
+	},
 	verify: [{ id: "test", command: "npm test", timeoutMs: 1_000, cwd: "/repo", env: { CI: "true" }, allowFailure: false }],
 	review: { agent: "reviewer", focus: "correctness", required: false },
-	stopRules: ["Stop on verification failure"],
-	reason: "Explicit verification contract",
+	onFailure: "warn",
 };
 
 const request: SubagentDelegationRequest = {
@@ -103,8 +103,8 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, skill: [] }, /skill must/],
 			[{ ...request, output: "" }, /output must/],
 			[{ ...request, output: false, outputMode: "file-only" }, /outputMode.*output.*path/],
-			[{ ...request, acceptance: "none" }, /level "none" requires a reason/],
-			[{ ...request, acceptance: { level: "none" } }, /reason is required/],
+			[{ ...request, acceptance: { report: false, level: "checked" } }, /cannot mix legacy and canonical/],
+			[{ ...request, acceptance: { report: false, surprise: true } }, /surprise is not supported/],
 			[{ ...request, artifacts: "yes" }, /artifacts must be a boolean/],
 		] as const;
 		for (const [input, expected] of malformed) {
@@ -112,6 +112,11 @@ describe("public subagent delegation contract", () => {
 			assert.equal(parsed.ok, false);
 			if (!parsed.ok) assert.match(parsed.error, expected);
 		}
+	});
+
+	it("accepts false and deprecated bare none as disabled acceptance", () => {
+		assert.equal(parseSubagentDelegationRequest({ ...request, acceptance: false }).ok, true);
+		assert.equal(parseSubagentDelegationRequest({ ...request, acceptance: "none" }).ok, true);
 	});
 
 	it("runs one v1 request through the existing executor and returns structured metadata", async () => {
@@ -231,15 +236,21 @@ describe("public subagent delegation contract", () => {
 		bridge.dispose();
 	});
 
-	it("maps terminal executor outcomes without failing inferred acceptance", async () => {
+	it("maps terminal executor outcomes using the acceptance failure policy", async () => {
+		const rejected = (explicit: boolean, onFailure: "fail" | "warn", deprecationWarnings: string[] = []) => ({
+			status: "rejected" as const,
+			explicit,
+			effectiveAcceptance: { onFailure, deprecationWarnings },
+		});
 		const cases = [
 			[{ timedOut: true }, "timed_out"],
 			[{ interrupted: true }, "interrupted"],
 			[{ stopped: true }, "interrupted"],
 			[{ turnBudgetExceeded: true }, "turn_budget_exhausted"],
 			[{ toolBudgetBlocked: true }, "tool_budget_exhausted"],
-			[{ acceptance: { status: "rejected", explicit: true } }, "acceptance_failed"],
-			[{ acceptance: { status: "rejected", explicit: false } }, "completed"],
+			[{ acceptance: rejected(true, "fail") }, "acceptance_failed"],
+			[{ acceptance: rejected(true, "warn", ['Acceptance level "none" is deprecated; use acceptance: false.']) }, "completed"],
+			[{ acceptance: rejected(false, "fail") }, "completed"],
 			[{ exitCode: 1, error: "failed" }, "failed"],
 		] as const;
 		for (const [child, expectedStatus] of cases) {
@@ -262,7 +273,11 @@ describe("public subagent delegation contract", () => {
 			});
 			const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
 			events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: `case-${expectedStatus}-${Math.random()}` });
-			assert.equal((await responsePromise as SubagentDelegationResponse).status, expectedStatus);
+			const response = await responsePromise as SubagentDelegationResponse;
+			assert.equal(response.status, expectedStatus);
+			if ("acceptance" in child && child.acceptance?.effectiveAcceptance.deprecationWarnings.length) {
+				assert.deepEqual(response.warnings, child.acceptance.effectiveAcceptance.deprecationWarnings);
+			}
 			bridge.dispose();
 		}
 	});

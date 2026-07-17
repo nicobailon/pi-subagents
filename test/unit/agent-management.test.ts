@@ -238,7 +238,7 @@ Inspect
 		assert.match(content, /^acceptance: false$/m);
 	});
 
-	it("rejects invalid single-agent launch defaults", () => {
+	it("rejects malformed launch defaults and accepts deprecated bare none", () => {
 		const result = handleCreate(
 			{
 				config: {
@@ -265,8 +265,9 @@ Inspect
 			},
 			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
 		);
-		assert.equal(invalidAcceptance.isError, true);
-		assert.match(readText(invalidAcceptance), /config\.acceptance level "none" requires a reason/);
+		assert.equal(invalidAcceptance.isError, false);
+		const content = fs.readFileSync(path.join(tempDir, ".pi", "agents", "bad-acceptance-default.md"), "utf-8");
+		assert.match(content, /^acceptance: none$/m);
 	});
 
 	it("creates and updates agents with tool budgets", () => {

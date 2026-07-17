@@ -191,8 +191,9 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 	function readCallArgsForTask(taskText: string): string[] {
 		const args = readAllCallArgs().find((callArgs) => {
 			const prompt = callArgs.at(-1) ?? "";
-			return prompt.startsWith(`Task: ${taskText}\n`)
-				|| prompt.includes(`\n\nTask:\n${taskText}\n`);
+			return prompt === taskText
+				|| prompt.startsWith(`Task: ${taskText}`)
+				|| prompt.includes(`\n\nTask:\n${taskText}`);
 		});
 		assert.ok(args, `expected a recorded mock pi call for task '${taskText}'`);
 		return args;
@@ -310,7 +311,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.ok((args.at(-1) ?? "").startsWith("Task: \n\n## Acceptance Contract"));
+		assert.equal(args.at(-1), "Task: ");
 	});
 
 	it("does not treat top-level agent as single mode when tasks are present", async () => {
@@ -327,7 +328,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.ok((args.at(-1) ?? "").startsWith("Task: parallel task\n\n## Acceptance Contract"));
+		assert.equal(args.at(-1), "Task: parallel task");
 	});
 
 	it("uses agent defaultContext fork when launch context is omitted", async () => {
@@ -1823,7 +1824,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readAllCallArgs().find((callArgs) => (callArgs.at(-1) ?? "").startsWith(`Task: ${task}\n\n## Acceptance Contract`));
+		const args = readAllCallArgs().find((callArgs) => (callArgs.at(-1) ?? "") === `Task: ${task}`);
 		assert.ok(args, "expected a recorded mock pi call for this test task");
 		const modelIndex = args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);
