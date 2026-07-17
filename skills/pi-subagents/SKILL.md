@@ -354,7 +354,7 @@ Async does not mean parallel writes. Do not edit the same active worktree while 
 
 Do not end your turn immediately after launching an async child if you promised to keep working. Continue the local inspection, synthesis, or validation prep, then check the async run when its result is needed.
 
-In an interactive chat, normally return control when ready to yield and let Pi wake the session on completion; do not call `subagent_wait()` merely to wait. Call it when this request must run to completion in the current turn, when a skill cannot return before its background work finishes, or in a non-interactive run with no next turn. Never substitute sleep or status-polling loops.
+In an interactive chat, normally return control when ready to yield and let Pi wake the session on completion; do not call `subagent_wait()` merely to wait. Override that default and call it when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill cannot return before its background work finishes. Headless sessions auto-drain exact current-session work at `agent_end`; call `subagent_wait()` when this turn must receive results before it ends. Never substitute sleep or status-polling loops.
 
 `subagent_wait()` returns when the next initially active async run or registered provider item finishes or a subagent needs attention. Use `subagent_wait({ all: true })` for all work active at call time, `subagent_wait({ id: "..." })` for one async or remembered detached foreground run, and `subagent_wait({ timeoutMs })` to cap the block. If a foreground child detaches for supervisor coordination, reply first, then wait on its id; do not resume or launch a replacement while it remains detached. Headless sessions also auto-drain exact current-session work at `agent_end` as a final safeguard.
 
@@ -752,7 +752,7 @@ Launch every subagent asynchronously by default. Use `async: true` for scouts, r
 
 ### Use subagent_wait() to block until async runs finish
 
-In an interactive chat, return control and let Pi wake the session unless the current request must run to completion in this turn. Use `subagent_wait()` for that run-to-completion case, inside a skill that cannot return yet, or in a non-interactive invocation. It blocks until tracked work changes and keeps the turn alive for completion delivery.
+In an interactive chat, do not call `subagent_wait()` merely to wait after launching background work; return control to the user and Pi will wake the session on completion. Override that default when the current request is run-to-completion — for example, the user asked you to stay with the task and report results back this turn or a skill must finish in one turn. In a headless run, Pi auto-drains exact current-session work at `agent_end`; call `subagent_wait()` when this turn must receive results before it ends. In either case, `subagent_wait()` blocks the current turn until the next run completes or needs attention, keeps the turn alive for normal notification delivery, then returns.
 
 - `subagent_wait()` — return when the next initially active async run or registered provider item finishes, or a subagent needs attention.
 - `subagent_wait({ all: true })` — block until every async run and provider item active at call time finishes, or a subagent needs attention.
@@ -760,6 +760,8 @@ In an interactive chat, return control and let Pi wake the session unless the cu
 - `subagent_wait({ timeoutMs })` — cap the block; active work keeps running if it elapses.
 
 Providers are discovered through the versioned `pi-subagents/background-work` registry and must return stable item IDs with exact owning session IDs. Child agents receive no provider automatically: keep `subagent_wait` in the child `tools` allowlist and load provider extensions through `extensions` or `subagentOnlyExtensions`.
+
+For non-interactive fleet orchestration, `subagent_wait()` can keep N workers in flight: launch N, wait for the next completion, react to the result, launch a replacement if needed, then wait again. Use `subagent_wait({ all: true })` only when you intentionally want to drain the fleet to zero. If the turn ends first, headless `agent_end` auto-drain still waits for exact current-session work. In an interactive session, return to the user instead of holding the turn open just to await completion.
 
 If config or `PI_SUBAGENT_WAIT_TOOL_ENABLED` disables blocking behavior, direct `subagent_wait` calls return immediately. Headless `agent_end` auto-drain remains active as a lifecycle safeguard and surfaces provider, reconciliation, or timeout failures.
 

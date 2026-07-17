@@ -798,6 +798,7 @@ function appendStepToAsyncChain(input: {
 		currentModelProvider: input.ctx.model?.provider,
 		currentModel: input.ctx.model,
 		modelScope: discoveredForAppend.modelScope,
+		interactive: input.ctx.hasUI,
 	};
 	const built = buildAsyncRunnerSteps(resolved.id, {
 		chain: wrapChainTasksForFork(input.params.chain, contextPolicy),
@@ -1189,6 +1190,7 @@ async function resumeAsyncRun(input: {
 				currentModelProvider: input.ctx.model?.provider,
 				currentModel: input.ctx.model,
 				modelScope,
+				interactive: input.ctx.hasUI,
 			},
 			availableModels,
 			cwd: effectiveCwd,
@@ -1218,7 +1220,7 @@ async function resumeAsyncRun(input: {
 			result.details.asyncDir ? `Async dir: ${result.details.asyncDir}` : undefined,
 			`Status if needed: subagent({ action: "status", id: "${attachedId}" })`,
 		].filter((line): line is string => Boolean(line));
-		return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n")) }], details: result.details };
+		return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.ctx.hasUI) }], details: result.details };
 	}
 
 	const runId = randomUUID().slice(0, 8);
@@ -1239,6 +1241,7 @@ async function resumeAsyncRun(input: {
 			currentModelProvider: input.ctx.model?.provider,
 			currentModel: input.ctx.model,
 			modelScope,
+			interactive: input.ctx.hasUI,
 		},
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput ?? recoveryDescriptor?.maxOutput,
@@ -1289,7 +1292,7 @@ async function resumeAsyncRun(input: {
 		revivedTarget ? `Intercom target: ${revivedTarget} (if registered)` : undefined,
 		`Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
 	].filter((line): line is string => Boolean(line));
-	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n")) }], details: result.details };
+	return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.ctx.hasUI) }], details: result.details };
 }
 
 function resultSummaryForIntercom(result: SingleResult): string {
@@ -1933,6 +1936,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		currentModelProvider: ctx.model?.provider,
 		currentModel: ctx.model,
 		modelScope: data.modelScope,
+		interactive: ctx.hasUI,
 	};
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
@@ -2173,6 +2177,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			currentModelProvider: ctx.model?.provider,
 			currentModel: ctx.model,
 			modelScope: data.modelScope,
+			interactive: ctx.hasUI,
 		};
 		const rawAsyncChain = chainResult.requestedAsync.chain;
 		const asyncChain = wrapChainTasksForFork(rawAsyncChain, contextPolicy);
@@ -2654,6 +2659,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
 				modelScope: data.modelScope,
+				interactive: ctx.hasUI,
 			};
 			const parallelTasks = tasks.map((t, i) => {
 				const taskText = shouldForkAgent(contextPolicy, t.agent) ? wrapForkTask(taskTexts[i]!) : taskTexts[i]!;
@@ -2975,6 +2981,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
 				modelScope: data.modelScope,
+				interactive: ctx.hasUI,
 			};
 			return executeAsyncSingle(id, {
 				agent: params.agent!,

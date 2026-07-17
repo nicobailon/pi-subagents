@@ -1014,11 +1014,26 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		assert.match(singleResult.content[0]?.text ?? "", /Async: worker \[/);
 		assert.match(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
-		assert.match(singleResult.content[0]?.text ?? "", /call subagent_wait\(\)/);
-		assert.match(singleResult.content[0]?.text ?? "", /there is no next turn, so use subagent_wait\(\)/);
+		assert.match(singleResult.content[0]?.text ?? "", /call subagent_wait\(\)/i);
+		assert.match(singleResult.content[0]?.text ?? "", /non-interactive run: Pi auto-drains current-session background work at agent_end/);
 		assert.equal(startedEvent(singleId).task, wrappedTask.slice(0, 50));
 		assert.equal(startedEvent(singleId).goal, rawGoal.slice(0, 120));
 		await waitForAsyncResultFile(singleId, 30_000);
+
+		mockPi.onCall({ output: "interactive done" });
+		const interactiveId = `async-handoff-interactive-${Date.now().toString(36)}`;
+		const interactiveResult = executeAsyncSingle(interactiveId, {
+			agent: "worker",
+			task: "Interactive handoff",
+			agentConfig: makeAgent("worker"),
+			...commonParams,
+			ctx: { ...commonParams.ctx, interactive: true },
+		});
+		assert.match(interactiveResult.content[0]?.text ?? "", /interactive session/);
+		assert.match(interactiveResult.content[0]?.text ?? "", /return control to the user/);
+		assert.match(interactiveResult.content[0]?.text ?? "", /Do NOT call subagent_wait\(\) merely to wait/);
+		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /auto-drain/);
+		await waitForAsyncResultFile(interactiveId, 30_000);
 
 		mockPi.onCall({ output: "parallel one done" });
 		mockPi.onCall({ output: "parallel two done" });
@@ -1031,7 +1046,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 		assert.match(parallelResult.content[0]?.text ?? "", /Async parallel:/);
 		assert.match(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
-		assert.match(parallelResult.content[0]?.text ?? "", /call subagent_wait\(\)/);
+		assert.match(parallelResult.content[0]?.text ?? "", /call subagent_wait\(\)/i);
 		assert.equal(startedEvent(parallelId).goal, "Do one");
 		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);
 		const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as { agent?: string; mode?: string };

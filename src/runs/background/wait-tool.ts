@@ -9,7 +9,7 @@ export function registerWaitTool(pi: ExtensionAPI, state: SubagentState, enabled
 		label: "Subagent Wait",
 		description: `Block until background work owned by this session changes, then return.
 
-In an interactive chat, do not call this merely to wait: return control to the user and let Pi wake the session on completion. Call it when the current request must run to completion in this turn, when a skill cannot return before its work finishes, or in a non-interactive run where there is no next turn.
+In an interactive chat, do not call this merely to wait: return control to the user and let Pi wake the session on completion. Override that default and call it when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill cannot return before its work finishes. Headless runs auto-drain current-session work at agent_end; call this when the current turn must receive results before it ends.
 
 • { } — return when the first initially active async run or registered provider item finishes, or when a subagent needs attention.
 • { all: true } — wait for every async run and provider item that was active when the call began.
