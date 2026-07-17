@@ -122,6 +122,8 @@ function extractSkillPathsFromPackageRoot(packageRoot: string, source: SkillSour
 let cachedGlobalNpmRoot: string | null = null;
 
 function getGlobalNpmRoot(): string | null {
+	const offline = process.env.PI_OFFLINE?.toLowerCase();
+	if (offline === "1" || offline === "true" || offline === "yes") return null;
 	if (cachedGlobalNpmRoot !== null) return cachedGlobalNpmRoot;
 	try {
 		cachedGlobalNpmRoot = execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim();

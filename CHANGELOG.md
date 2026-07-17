@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Skipped optional global npm package discovery while Pi is offline, avoiding `npm root -g` subprocesses during agent and skill discovery. Thanks to Rafiq Rashid (@rrvsh) for #506.
 - Invalidated cached async status reads when a replacement changes file identity but reuses the same modification time, preventing steering and recovery from observing stale lifecycle state.
 - Moved Pi-owned `@earendil-works/pi-tui` and `typebox` imports to optional wildcard peer dependencies while retaining exact dev versions for local and CI tests. Thanks to Alexei Ledenev (@alexei-led) for #510.
 - Made steering pre-recovery acknowledgment and Windows async hard-kill regressions synchronize around their actual lifecycle boundaries instead of depending on CI scheduler or process-start timing.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -301,6 +302,59 @@ describe("skills filesystem fallback", () => {
 		assert.deepEqual(missing, []);
 		assert.equal(resolved.length, 1);
 		assert.equal(resolved[0]?.source, "project-package");
+	});
+
+	it("skips optional global npm discovery in offline mode", () => {
+		const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+		const binDir = path.join(tempDir, "bin");
+		const fakeHome = path.join(tempDir, "home");
+		const marker = path.join(tempDir, "npm-calls.txt");
+		fs.mkdirSync(binDir, { recursive: true });
+		fs.mkdirSync(fakeHome, { recursive: true });
+		fs.writeFileSync(
+			path.join(binDir, "npm"),
+			"#!/bin/sh\nprintf 'npm-root-called\\n' >> \"$PI_DISCOVERY_MARKER\"\nexit 1\n",
+			{ encoding: "utf-8", mode: 0o755 },
+		);
+		fs.writeFileSync(
+			path.join(binDir, "npm.cmd"),
+			"@echo off\r\n>>\"%PI_DISCOVERY_MARKER%\" echo npm-root-called\r\nexit /b 1\r\n",
+			"utf-8",
+		);
+
+		const script = `
+			import fs from "node:fs";
+			const [{ clearSkillCache, discoverAvailableSkills }, { discoverAgents }] = await Promise.all([
+				import("./src/agents/skills.ts"),
+				import("./src/agents/agents.ts"),
+			]);
+			discoverAvailableSkills(process.cwd());
+			discoverAgents(process.cwd(), "both");
+			if (fs.existsSync(process.env.PI_DISCOVERY_MARKER)) {
+				throw new Error("npm was invoked while PI_OFFLINE was enabled");
+			}
+			delete process.env.PI_OFFLINE;
+			clearSkillCache();
+			discoverAvailableSkills(process.cwd());
+			discoverAgents(process.cwd(), "both");
+		`;
+		execFileSync(
+			process.execPath,
+			["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{
+				cwd: projectRoot,
+				env: {
+					...process.env,
+					HOME: fakeHome,
+					USERPROFILE: fakeHome,
+					PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+					PI_DISCOVERY_MARKER: marker,
+					PI_OFFLINE: "1",
+				},
+				stdio: "pipe",
+			},
+		);
+		assert.deepEqual(fs.readFileSync(marker, "utf-8").trim().split(/\r?\n/), ["npm-root-called", "npm-root-called"]);
 	});
 
 	it("falls back to the runtime cwd when the execution cwd lacks the skill", () => {
