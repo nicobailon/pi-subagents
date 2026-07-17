@@ -542,6 +542,49 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("uses paused result identity instead of stale status placeholder positions", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-paused-identity-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const producerSession = path.join(root, "producer.jsonl");
+			const consumerSession = path.join(root, "consumer.jsonl");
+			fs.writeFileSync(producerSession, "", "utf-8");
+			fs.writeFileSync(consumerSession, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-paused-identity", "status.json"), {
+				runId: "run-paused-identity", mode: "chain", state: "paused", startedAt: 100, cwd: root,
+				steps: [
+					{ agent: "producer", status: "complete", sessionFile: producerSession },
+					{ agent: "expand:reviewer", status: "complete", sessionFile: producerSession, model: "placeholder-model", acceptanceInput: { verify: [{ id: "placeholder", command: "false" }] } },
+					{ agent: "consumer", status: "paused", sessionFile: consumerSession, model: "status-consumer-model", acceptanceInput: { verify: [{ id: "status-consumer", command: "true" }] } },
+				],
+			});
+			const resultAcceptance = { verify: [{ id: "result-consumer", command: "true" }], onFailure: "warn" };
+			writeJson(path.join(resultsDir, "run-paused-identity.json"), {
+				id: "run-paused-identity", mode: "chain", state: "paused", success: false, cwd: root,
+				results: [
+					{ agent: "producer", success: true, sessionFile: producerSession },
+					{ agent: "consumer", success: false, sessionFile: consumerSession, model: "result-consumer-model", acceptanceInput: resultAcceptance },
+				],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-paused-identity", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(target.kind, "revive");
+			assert.equal(target.agent, "consumer");
+			assert.equal(target.sessionFile, consumerSession);
+			assert.equal(target.model, "result-consumer-model");
+			assert.deepEqual(target.acceptance, resultAcceptance);
+
+			fs.rmSync(path.join(resultsDir, "run-paused-identity.json"));
+			const statusOnly = resolveAsyncResumeTarget({ id: "run-paused-identity", index: 2 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(statusOnly.agent, "consumer");
+			assert.equal(statusOnly.sessionFile, consumerSession);
+			assert.equal(statusOnly.model, "status-consumer-model");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("resolves a completed multi-child run when an index and per-child session file are available", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-multi-"));
 		try {
