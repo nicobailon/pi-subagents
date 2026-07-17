@@ -115,15 +115,25 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	async function readMockCallArgs(index: number): Promise<string[]> {
 		const deadline = Date.now() + 10_000;
 		let callFile: string | undefined;
-		while (!callFile) {
+		let parseError: SyntaxError | undefined;
+		while (Date.now() <= deadline) {
 			callFile = fs.readdirSync(mockPi.dir)
 				.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 				.sort()[index];
-			if (callFile || Date.now() > deadline) break;
+			if (callFile) {
+				try {
+					return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
+				} catch (error) {
+					if (!(error instanceof SyntaxError)) throw error;
+					parseError = error;
+				}
+			}
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
-		assert.ok(callFile, `expected mock pi call at index ${index}`);
-		return JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
+		if (callFile && parseError) {
+			throw new Error(`Mock Pi call record '${callFile}' remained incomplete after 10s.`, { cause: parseError });
+		}
+		assert.fail(`expected mock pi call at index ${index}`);
 	}
 
 	async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> {
@@ -332,7 +342,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("resume action sends a follow-up to a live async child when the target is registered", async () => {
+	it("resume action rejects a live async child without side effects", async () => {
 		const runId = `resume-live-${Date.now()}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
@@ -340,6 +350,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
+				sessionId: "session-123",
 				mode: "single",
 				state: "running",
 				pid: process.pid,
@@ -362,17 +373,49 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, undefined);
-			assert.match(result.content[0]?.text ?? "", /Interrupted live async child, then delivered follow-up/);
-			assert.deepEqual(kills, [
-				{ pid: process.pid, signal: 0 },
-				{ pid: process.pid, signal: process.platform === "win32" ? "SIGBREAK" : "SIGUSR2" },
-			]);
-			const payload = events.emitted.find((entry) => entry.channel === "subagent:result-intercom")?.payload as { to?: string; message?: string } | undefined;
-			assert.equal(payload?.to, `subagent-worker-${runId}-1`);
-			assert.match(payload?.message ?? "", /Can you clarify the last change\?/);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", new RegExp(`Async child '${runId}' index 0 is still running`));
+			assert.match(result.content[0]?.text ?? "", new RegExp(`subagent\\(\\{ action: "steer", id: "${runId}", index: 0, message: "\\.\\.\\." \\}\\)`));
+			assert.deepEqual(kills, []);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
+			assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("resume action rejects async runs from another or missing parent session", async () => {
+		for (const [suffix, sessionId] of [["other", "another-session"], ["missing", undefined]] as const) {
+			const runId = `resume-${suffix}-session-${Date.now()}`;
+			const asyncDir = path.join(ASYNC_DIR, runId);
+			try {
+				fs.mkdirSync(asyncDir, { recursive: true });
+				fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+					runId,
+					...(sessionId ? { sessionId } : {}),
+					mode: "single",
+					state: "running",
+					pid: process.pid,
+					startedAt: 100,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}, null, 2), "utf-8");
+				const { executor } = makeExecutor();
+
+				const result = await executor.execute(
+					`resume-${suffix}-session`,
+					{ action: "resume", id: runId, message: "Continue" },
+					new AbortController().signal,
+					undefined,
+					makeMinimalCtx(tempDir),
+				);
+
+				assert.equal(result.isError, true);
+				assert.match(result.content[0]?.text ?? "", /not found in the active session/);
+				assert.equal(mockPi.callCount(), 0);
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+			}
 		}
 	});
 
@@ -407,6 +450,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.writeFileSync(sourceSession, "", "utf-8");
 			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 				runId: sourceRunId,
+				sessionId: "session-123",
 				mode: "single",
 				state: "running",
 				pid: process.pid,
@@ -417,6 +461,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			}, null, 2), "utf-8");
 			fs.writeFileSync(sourceResultPath, JSON.stringify({
 				id: sourceRunId,
+				sessionId: "session-123",
 				agent: "worker",
 				mode: "single",
 				success: true,
@@ -472,6 +517,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.mkdirSync(RESULTS_DIR, { recursive: true });
 			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 				runId: sourceRunId,
+				sessionId: "session-123",
 				mode: "single",
 				state: "complete",
 				startedAt: 100,
@@ -481,6 +527,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			}, null, 2), "utf-8");
 			fs.writeFileSync(sourceResultPath, JSON.stringify({
 				id: sourceRunId,
+				sessionId: "session-123",
 				agent: "worker",
 				mode: "single",
 				success: true,
@@ -534,6 +581,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.writeFileSync(secondSession, "", "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
+				sessionId: "session-123",
 				mode: "parallel",
 				state: "complete",
 				startedAt: 100,
@@ -576,6 +624,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
+				sessionId: "session-123",
 				mode: "single",
 				state: "complete",
 				startedAt: 100,
@@ -625,7 +674,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-				runId, mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: tempDir,
+				runId, sessionId: "session-123", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: tempDir,
 				steps: [{ agent: "removed-worker", status: "paused", sessionFile }],
 			}, null, 2), "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
@@ -679,6 +728,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		fs.writeFileSync(sessionFile, "", "utf-8");
 		fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 			runId: sourceRunId,
+			sessionId: "session-123",
 			mode: "single",
 			state: "complete",
 			startedAt: 100,
@@ -1335,6 +1385,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: base,
+				sessionId: "session-123",
 				mode: "single",
 				state: "complete",
 				startedAt: 100,
@@ -1383,6 +1434,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				fs.mkdirSync(asyncDir, { recursive: true });
 				fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 					runId,
+					sessionId: "session-123",
 					mode: "single",
 					state: "complete",
 					startedAt: 100,
@@ -1430,6 +1482,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId: asyncId,
+				sessionId: "session-123",
 				mode: "single",
 				state: "complete",
 				startedAt: 100,

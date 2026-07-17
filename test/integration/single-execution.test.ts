@@ -1173,6 +1173,30 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.progress.currentToolStartedAt, undefined);
 	});
 
+	it("does not flag a delayed active tool as idle attention", async () => {
+		const updates: Array<{ details?: { progress?: ProgressSummary[] } }> = [];
+		const controlEvents: NonNullable<RunSyncResult["controlEvents"]> = [];
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash", { command: "sleep 2" })] },
+				{ delay: 2_000, jsonl: [events.toolEnd("bash"), events.toolResult("bash", "done")] },
+				{ jsonl: [events.assistantMessage("Done")] },
+			],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "delayed-tool-attention",
+			controlConfig: { enabled: true, needsAttentionAfterMs: 200, activeNoticeAfterMs: 999_999, notifyOn: ["needs_attention"] },
+			onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => updates.push(update),
+			onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => controlEvents.push(event),
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.progress.activityState, undefined);
+		assert.equal(controlEvents.some((event) => event.type === "needs_attention"), false);
+		assert.equal(updates.some((update) => update.details?.progress?.some((progress) => progress.currentTool === "bash")), true);
+	});
+
 	it("sets progress.status to failed on non-zero exit", async () => {
 		mockPi.onCall({ exitCode: 1 });
 		const agents = makeAgentConfigs(["fail"]);

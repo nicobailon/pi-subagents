@@ -175,7 +175,11 @@ export async function steerAsyncRun(input: {
 			if (lateAckRecorded) writeAtomicJson(path.join(asyncDir, "status.json"), paused);
 			let recoveryTarget;
 			try {
-				recoveryTarget = resolveAsyncResumeTarget({ id: status.runId }, { kill: input.kill });
+				recoveryTarget = resolveAsyncResumeTarget(
+					{ id: status.runId },
+					{ kill: input.kill },
+					{ sessionId: input.state.currentSessionId ?? undefined },
+				);
 			} catch (error) {
 				throw new Error(`Source run remains paused and cannot be revived safely: ${error instanceof Error ? error.message : String(error)}`);
 			}

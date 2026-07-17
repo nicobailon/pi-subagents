@@ -20,6 +20,7 @@ describe("subagent control attention state", () => {
 	it("marks a run as needing attention only after the idle threshold", () => {
 		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, now: 50 }), undefined);
 		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, now: 400 }), "needs_attention");
+		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, currentTool: "bash", now: 400 }), undefined);
 		assert.equal(deriveActivityState({ config, startedAt: 0, now: 400 }), "needs_attention");
 	});
 
@@ -162,8 +163,9 @@ describe("subagent control attention state", () => {
 
 		assert.match(message, /Subagent needs attention: worker/);
 		assert.match(message, /Hint: Inspect status first unless the run is clearly blocked/);
-		assert.match(message, /Live async nudges interrupt the child before sending the follow-up/);
-		assert.match(message, /Nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
+		assert.match(message, /steer for a top-level live async child, routed resume for a live nested child/);
+		assert.match(message, /Top-level live async nudge: subagent\(\{ action: "steer", id: "78f659a3", message: "What are you blocked on\?/);
+		assert.match(message, /Routed live nested nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
 		assert.match(message, /Direct intercom target: subagent-worker-78f659a3/);
 		assert.match(message, /Status: subagent\(\{ action: "status", id: "78f659a3" \}\)/);
 		assert.match(message, /Interrupt: subagent\(\{ action: "interrupt", id: "78f659a3" \}\)/);
@@ -188,7 +190,9 @@ describe("subagent control attention state", () => {
 
 		assert.match(message, /Subagent active but long-running: worker/);
 		assert.match(message, /Inspect status/);
-		assert.match(message, /Nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
+		assert.match(message, /steer for a top-level live async child, routed resume for a live nested child/);
+		assert.match(message, /Top-level live async nudge: subagent\(\{ action: "steer", id: "78f659a3", message: "What are you blocked on\?/);
+		assert.match(message, /Routed live nested nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
 		assert.match(message, /15 turns/);
 		assert.match(message, /160000 tokens/);
 		assert.match(message, /path src\/runs\/background\/async-status\.ts/);
@@ -221,7 +225,8 @@ describe("subagent control attention state", () => {
 		const message = formatControlIntercomMessage(event, "subagent-worker-78f659a3");
 
 		assert.match(message, /worker needs attention in run 78f659a3/);
-		assert.match(message, /Nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
+		assert.match(message, /Top-level live async nudge: subagent\(\{ action: "steer", id: "78f659a3", message: "What are you blocked on\?/);
+		assert.match(message, /Routed live nested nudge: subagent\(\{ action: "resume", id: "78f659a3", message: "What are you blocked on\?/);
 	});
 
 	it("dedupes notifications once per child target and attention state", () => {

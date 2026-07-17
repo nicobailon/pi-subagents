@@ -177,6 +177,7 @@ describe("subagent_wait tool", () => {
 			assert.equal(result.isError, undefined);
 			const text = textOf(result);
 			assert.match(text, /need attention/i, "should report the attention run");
+			assert.match(text, /steer a top-level live async child, resume a paused\/completed\/failed child, or interrupt explicitly/);
 			assert.match(text, /run-a/, "should name the attention run");
 			assert.ok(polls <= 2, `should break on attention promptly, polled ${polls}`);
 		} finally {

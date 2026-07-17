@@ -74,9 +74,10 @@ export function deriveActivityState(input: {
 	config: ResolvedControlConfig;
 	startedAt: number;
 	lastActivityAt?: number;
+	currentTool?: string;
 	now?: number;
 }): ActivityState | undefined {
-	if (!input.config.enabled) return undefined;
+	if (!input.config.enabled || input.currentTool) return undefined;
 	const now = input.now ?? Date.now();
 	const lastActivity = input.lastActivityAt ?? input.startedAt;
 	const ageMs = Math.max(0, now - lastActivity);
@@ -174,7 +175,8 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 	}
 
 	const nudgeMessage = "What are you blocked on? Reply with the smallest next step or ask for a decision.";
-	const nudgeCommand = `subagent({ action: "resume", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: "${nudgeMessage}" })`;
+	const steerCommand = `subagent({ action: "steer", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: "${nudgeMessage}" })`;
+	const nestedResumeCommand = `subagent({ action: "resume", id: "${runTarget}", message: "${nudgeMessage}" })`;
 	if (event.type === "active_long_running") {
 		const facts = formatLongRunningFacts(event);
 		return [
@@ -182,8 +184,9 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 			`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
 			`Signal: ${event.message}`,
 			facts ? `Facts: ${facts}` : undefined,
-			"Hint: Inspect status, then nudge if the work seems stuck. Live async nudges interrupt the child before sending the follow-up.",
-			`Nudge: ${nudgeCommand}`,
+			"Hint: Inspect status first. Use steer for a top-level live async child, routed resume for a live nested child, or resume to revive a paused/completed/failed child.",
+			`Top-level live async nudge: ${steerCommand}`,
+			`Routed live nested nudge: ${nestedResumeCommand}`,
 			childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
 			`Status: subagent({ action: "status", id: "${runTarget}" })`,
 			`Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
@@ -195,8 +198,9 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 		`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
 		`Signal: ${event.message}`,
 		event.recentFailureSummary ? `Recent failures: ${event.recentFailureSummary}` : undefined,
-		"Hint: Inspect status first unless the run is clearly blocked. Live async nudges interrupt the child before sending the follow-up.",
-		`Nudge: ${nudgeCommand}`,
+		"Hint: Inspect status first unless the run is clearly blocked. Use steer for a top-level live async child, routed resume for a live nested child, or resume to revive a paused/completed/failed child.",
+		`Top-level live async nudge: ${steerCommand}`,
+		`Routed live nested nudge: ${nestedResumeCommand}`,
 		childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
 		`Status: subagent({ action: "status", id: "${runTarget}" })`,
 		`Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,

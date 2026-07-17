@@ -1,15 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentState } from "../../shared/types.ts";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
-import { deliverInterruptRequest } from "./control-channel.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
-
-export const ASYNC_RESUME_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -27,6 +23,7 @@ export interface AsyncResumeDeps {
 
 export interface AsyncResumeOptions {
 	requireSessionFile?: boolean;
+	sessionId?: string;
 }
 
 export type AsyncResumeTarget = {
@@ -36,51 +33,12 @@ export type AsyncResumeTarget = {
 	state: AsyncStatus["state"];
 	agent: string;
 	index: number;
-	intercomTarget: string;
 	cwd?: string;
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 };
-
-type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-
-export function interruptLiveAsyncResumeTarget(input: {
-	target: AsyncResumeTarget & { kind: "live" };
-	state?: Pick<SubagentState, "asyncJobs">;
-	kill?: KillFn;
-	now?: () => number;
-	resultsDir?: string;
-}): { ok: true; asyncId: string } | { ok: false; message: string } {
-	const asyncId = input.target.runId;
-	if (!input.target.asyncDir) {
-		return { ok: false, message: `Async run ${asyncId} is live but does not have an async directory to interrupt.` };
-	}
-	const status = reconcileAsyncRun(input.target.asyncDir, { resultsDir: input.resultsDir, kill: input.kill, now: input.now }).status;
-	if (!status || status.state !== "running" || typeof status.pid !== "number") {
-		return { ok: false, message: `Async run ${asyncId} is live but no interrupt-capable runner pid was found.` };
-	}
-	try {
-		deliverInterruptRequest({
-			asyncDir: input.target.asyncDir,
-			pid: status.pid,
-			kill: input.kill,
-			signal: ASYNC_RESUME_INTERRUPT_SIGNAL,
-			now: input.now,
-			source: "async-resume",
-		});
-		const tracked = input.state?.asyncJobs.get(asyncId);
-		if (tracked) {
-			tracked.activityState = undefined;
-			tracked.updatedAt = input.now?.() ?? Date.now();
-		}
-		return { ok: true, asyncId };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { ok: false, message: `Failed to interrupt async run ${asyncId}: ${message}` };
-	}
-}
 
 interface AsyncResultFile {
 	id?: string;
@@ -90,6 +48,7 @@ interface AsyncResultFile {
 	state?: string;
 	success?: boolean;
 	cwd?: string;
+	sessionId?: string;
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
@@ -147,6 +106,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 		mode: validateOptionalString(data, "mode", resultPath),
 		state: validateOptionalString(data, "state", resultPath),
 		cwd: validateOptionalString(data, "cwd", resultPath),
+		sessionId: validateOptionalString(data, "sessionId", resultPath),
 		sessionFile: validateOptionalString(data, "sessionFile", resultPath),
 		model: validateOptionalString(data, "model", resultPath),
 		thinking: validateOptionalString(data, "thinking", resultPath),
@@ -405,6 +365,9 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir);
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
+	if (options.sessionId && ((status && status.sessionId !== options.sessionId) || (result && result.sessionId !== options.sessionId))) {
+		throw new Error(`Async run '${runId}' was not found in the active session.`);
+	}
 	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run.`);
 	const state = status?.state ?? (result ? resultState(result) : undefined);
 	if (!state) throw new Error(`Status file not found for async run '${runId}'.`);
@@ -429,7 +392,6 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					state,
 					agent: selectedStep.agent,
 					index: requestedIndex,
-					intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
 					cwd: status?.cwd ?? result?.cwd,
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
 					model: selectedStep.model,
@@ -454,7 +416,6 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				state,
 				agent: selected.step.agent,
 				index: selected.index,
-				intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
 				cwd: status?.cwd ?? result?.cwd,
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
 				model: selected.step.model,
@@ -488,7 +449,6 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		state,
 		agent,
 		index,
-		intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
 		cwd: status?.cwd ?? result?.cwd,
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),

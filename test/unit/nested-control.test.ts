@@ -301,6 +301,22 @@ describe("nested control routing", () => {
 		}
 	});
 
+	it("rejects stopped nested runs before attempting revival", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-stopped-resume-"));
+		try {
+			const route = createNestedRun("nested-stopped-resume", "stopped", { sessionFile: path.join(root, "missing-session.jsonl") });
+
+			const result = await createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
+				.execute("resume", { action: "resume", id: "nested-stopped-resume", message: "continue" }, new AbortController().signal, undefined, ctx(root));
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /was stopped and cannot be resumed/);
+			assert.doesNotMatch(text(result), /session file/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects terminal nested resume session files outside trusted roots", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-terminal-untrusted-"));
 		try {

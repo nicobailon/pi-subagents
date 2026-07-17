@@ -36,7 +36,6 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
-			assert.equal(target.intercomTarget, "subagent-worker-run-abc-1");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -280,7 +279,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("returns a live intercom target for a running child", () => {
+	it("returns live child metadata for a running child", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-live-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -296,9 +295,91 @@ describe("async resume lookup", () => {
 			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 
 			assert.equal(target.kind, "live");
-			assert.equal(target.intercomTarget, "subagent-scout-run-live-1");
 			assert.equal(target.model, "openai/gpt-4.1");
 			assert.equal(target.thinking, "off");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("enforces current-session ownership for status and result-only runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ownership-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			writeJson(path.join(asyncRoot, "owned", "status.json"), {
+				runId: "owned",
+				sessionId: "session-a",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			writeJson(path.join(asyncRoot, "sessionless", "status.json"), {
+				runId: "sessionless",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+			writeJson(path.join(resultsDir, "result-only.json"), {
+				id: "result-only",
+				sessionId: "session-a",
+				agent: "worker",
+				state: "complete",
+				success: true,
+			});
+			writeJson(path.join(asyncRoot, "mixed", "status.json"), {
+				runId: "mixed",
+				sessionId: "session-a",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			writeJson(path.join(resultsDir, "mixed.json"), {
+				id: "mixed",
+				agent: "worker",
+				state: "complete",
+				success: true,
+			});
+			writeJson(path.join(asyncRoot, "mixed-reverse", "status.json"), {
+				runId: "mixed-reverse",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			writeJson(path.join(resultsDir, "mixed-reverse.json"), {
+				id: "mixed-reverse",
+				sessionId: "session-a",
+				agent: "worker",
+				state: "complete",
+				success: true,
+			});
+
+			assert.equal(resolveAsyncResumeTarget({ id: "owned" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "session-a" }).kind, "live");
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "owned" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "session-b" }),
+				/not found in the active session/,
+			);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "sessionless" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "session-a" }),
+				/not found in the active session/,
+			);
+			assert.equal(resolveAsyncResumeTarget({ id: "result-only" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }).kind, "revive");
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "result-only" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-b" }),
+				/not found in the active session/,
+			);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "mixed" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }),
+				/not found in the active session/,
+			);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "mixed-reverse" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }),
+				/not found in the active session/,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -439,7 +520,6 @@ describe("async resume lookup", () => {
 			state: "complete",
 			agent: "worker",
 			index: 0,
-			intercomTarget: "subagent-worker-run-old-1",
 			sessionFile: "/tmp/session.jsonl",
 		}, "What changed?");
 

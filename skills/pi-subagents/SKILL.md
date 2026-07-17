@@ -380,16 +380,19 @@ const run = subagent({
 
 Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
-Use `resume` for follow-up work after a delegated run:
+Use `steer` for top-level live async guidance and `resume` after a delegated run pauses or finishes. Routed nested runs retain their existing non-destructive live follow-up path:
 
 ```typescript
+subagent({ action: "steer", id: "run-id", message: "Focus on the failing test." })
 subagent({ action: "resume", id: "run-id", message: "Follow up on this point." })
 subagent({ action: "resume", id: "run-id", index: 1, message: "Continue reviewer 2." })
 subagent({ action: "resume", id: "nested-run-id", message: "Continue this nested reviewer." })
 ```
 
 Resume behavior:
-- If an async child is still running and reachable, `resume` sends the follow-up to that live child over intercom.
+- `resume` revives paused, completed, or failed async/foreground children from persisted session files; stopped runs remain non-resumable, and it does not interrupt live top-level async children.
+- Use `steer` for acknowledged guidance to a live top-level async child.
+- A live nested run can still receive a non-destructive `resume` follow-up through its owner route.
 - If an async child has completed, `resume` revives it by starting a new async child from the persisted child session file.
 - Multi-child async runs require `index` unless only one running child is selectable.
 - Completed foreground single, parallel, and chain runs can also be revived by `index` while their run metadata remains in extension state.

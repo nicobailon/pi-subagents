@@ -3493,6 +3493,61 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	it("does not flag a delayed active tool as idle attention", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash", { command: "sleep 2" })] },
+				{ delay: 2_500, jsonl: [events.toolEnd("bash"), events.toolResult("bash", "done")] },
+				{ jsonl: [events.assistantMessage("Done")] },
+			],
+		});
+
+		const id = `async-delayed-tool-attention-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const eventsPath = path.join(asyncDir, "events.jsonl");
+		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Run the command",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			controlConfig: {
+				enabled: true,
+				needsAttentionAfterMs: 200,
+				activeNoticeAfterMs: 999_999,
+				failedToolAttemptsBeforeAttention: 3,
+				notifyOn: ["active_long_running", "needs_attention"],
+				notifyChannels: ["event", "async", "intercom"],
+			},
+		});
+
+		const deadline = Date.now() + 10_000;
+		let statusDuringTool: AsyncStatusPayload | undefined;
+		while (Date.now() < deadline && !fs.existsSync(resultPath)) {
+			if (fs.existsSync(asyncDir) && fs.existsSync(path.join(asyncDir, "status.json"))) {
+				const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+				const toolStartedAt = status.steps?.[0]?.currentToolStartedAt;
+				if (status.currentTool === "bash" && status.steps?.[0]?.currentTool === "bash" && toolStartedAt && Date.now() - toolStartedAt >= 1_500) {
+					statusDuringTool = status;
+					break;
+				}
+			}
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.ok(statusDuringTool, "expected status.json to expose the active tool");
+		assert.equal(statusDuringTool?.activityState, undefined);
+		assert.equal(statusDuringTool?.steps?.[0]?.activityState, undefined);
+		const eventText = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf-8") : "";
+		assert.doesNotMatch(eventText, /"type":"needs_attention"/);
+		await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+	});
+
 	it("background runs escalate repeated mutating tool failures", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
