@@ -11,6 +11,7 @@ import {
 	evaluateAcceptance,
 	formatAcceptancePrompt,
 	mergeAcceptanceContracts,
+	mergeAcceptanceInputs,
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
@@ -115,26 +116,35 @@ describe("acceptance gates", () => {
 		}
 	});
 
-	it("merges canonical contracts dimension by dimension with replace and clear semantics", () => {
+	it("merges raw acceptance inputs with inheritance, replacement, and clear semantics", () => {
 		const parent = {
 			report: { criteria: ["parent"], evidence: ["changed-files" as const] },
 			verify: [{ id: "parent", command: "parent" }],
 			review: { agent: "reviewer", required: false },
-			onFailure: "fail" as const,
+			onFailure: "warn" as const,
 		};
-		assert.deepEqual(mergeAcceptanceContracts(parent, { report: { criteria: ["child"] }, verify: [] }), {
+		assert.deepEqual(mergeAcceptanceInputs(parent, { report: { criteria: ["child"] }, verify: [] }), {
 			report: { criteria: ["child"] },
 			verify: [],
 			review: { agent: "reviewer", required: false },
-			onFailure: "fail",
+			onFailure: "warn",
 		});
-		assert.deepEqual(mergeAcceptanceContracts(parent, { report: false, review: false }), {
+		assert.deepEqual(mergeAcceptanceInputs(parent, { report: false, review: false }), {
 			report: false,
 			verify: parent.verify,
 			review: false,
-			onFailure: "fail",
+			onFailure: "warn",
 		});
-		assert.equal(mergeAcceptanceContracts(parent, false), false);
+		assert.deepEqual(mergeAcceptanceInputs(parent, "auto"), parent);
+		assert.deepEqual(mergeAcceptanceInputs(parent, { level: "auto" }), parent);
+		assert.equal(mergeAcceptanceInputs(parent, false), false);
+		assert.equal(mergeAcceptanceInputs(parent, "none"), "none");
+		assert.deepEqual(mergeAcceptanceInputs(parent, { level: "none", reason: "manual" }), { level: "none", reason: "manual" });
+
+		const legacyReplacement = mergeAcceptanceInputs(parent, "checked");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).onFailure, "fail");
+		assert.deepEqual(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).verify, []);
+		assert.deepEqual(mergeAcceptanceContracts(parent, { verify: [] }), { ...parent, verify: [] });
 	});
 
 	it("strictly validates canonical contracts and rejects legacy ambiguity", () => {
@@ -145,6 +155,10 @@ describe("acceptance gates", () => {
 		assert.match(validateAcceptanceInput({ onFailure: "fail", reason: "legacy" }).join("\n"), /mix legacy and canonical/i);
 		assert.match(validateAcceptanceInput({ onFailure: "maybe" }).join("\n"), /must be fail or warn/);
 		assert.match(validateAcceptanceInput({ review: { required: true } }).join("\n"), /independent reviewer result/i);
+		assert.match(validateAcceptanceInput({ review: {} }).join("\n"), /required must be false/i);
+		assert.match(validateAcceptanceInput({ review: { agent: "reviewer" } }).join("\n"), /required must be false/i);
+		assert.match(validateAcceptanceInput("verified").join("\n"), /verification-config.*verify command/i);
+		assert.match(validateAcceptanceInput({ level: "verified" }).join("\n"), /verification-config.*verify command/i);
 	});
 
 	it("keeps role and task inference advisory", () => {
@@ -618,6 +632,44 @@ describe("acceptance gates", () => {
 			assert.equal(failLedger.status, "rejected");
 			assert.equal(failLedger.childReport?.commandsRun?.[0]?.result, "passed");
 			assert.equal(failLedger.verifyRuns[0]?.status, "failed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("bounds verification output while streaming", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { verify: [{ id: "noisy", command: "node -e \"for(let i=0;i<50000;i++) process.stdout.write('0123456789')\"" }] },
+			});
+			const ledger = await evaluateAcceptance({ acceptance, output: "", cwd });
+			assert.equal(ledger.status, "verified");
+			assert.match(ledger.verifyRuns[0]?.stdout ?? "", /truncated/);
+			assert.ok((ledger.verifyRuns[0]?.stdout?.length ?? 0) < 13_000);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("terminates verification descendants on timeout", async () => {
+		const cwd = tempRepo();
+		try {
+			const heartbeat = path.join(cwd, "heartbeat.txt");
+			fs.writeFileSync(path.join(cwd, "descendant.cjs"), `const fs=require("node:fs"); setInterval(() => fs.appendFileSync(${JSON.stringify(heartbeat)}, "x"), 20);`, "utf-8");
+			fs.writeFileSync(path.join(cwd, "parent.cjs"), `require("node:child_process").spawn(process.execPath, ["descendant.cjs"], {stdio:"ignore"}); setInterval(() => {}, 1000);`, "utf-8");
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { verify: [{ id: "timeout", command: "node parent.cjs", timeoutMs: 150 }] },
+			});
+			const ledger = await evaluateAcceptance({ acceptance, output: "", cwd });
+			assert.equal(ledger.verifyRuns[0]?.status, "timed-out");
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			const firstSize = fs.existsSync(heartbeat) ? fs.statSync(heartbeat).size : 0;
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			const secondSize = fs.existsSync(heartbeat) ? fs.statSync(heartbeat).size : 0;
+			assert.equal(secondSize, firstSize);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

@@ -6,8 +6,8 @@ import {
 	type SubagentDelegationStatus,
 	type SubagentDelegationUpdate,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AcceptanceLedger, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
-import { acceptanceBlocksRun } from "../runs/shared/acceptance.ts";
+import type { AcceptanceInput, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import { acceptanceControlBlocksRun } from "../runs/shared/acceptance.ts";
 
 export interface PromptTemplateDelegationTask {
 	agent: string;
@@ -381,13 +381,6 @@ export function toSubagentDelegationUpdate(requestId: string, result: PromptTemp
 	};
 }
 
-function delegationAcceptanceBlocksRun(acceptance: PromptTemplateBridgeAcceptance): boolean {
-	// Current executors return a complete AcceptanceLedger. Keep v1 transport
-	// compatibility with older bridges that only supplied status and explicit.
-	if (!acceptance.effectiveAcceptance) return acceptance.status === "rejected" && acceptance.explicit;
-	return acceptanceBlocksRun(acceptance as AcceptanceLedger);
-}
-
 function resolveSubagentDelegationStatus(
 	result: PromptTemplateBridgeResult,
 	aborted: boolean,
@@ -398,7 +391,7 @@ function resolveSubagentDelegationStatus(
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (child.acceptance && delegationAcceptanceBlocksRun(child.acceptance)) return "acceptance_failed";
+	if (child.acceptance && acceptanceControlBlocksRun(child.acceptance)) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";

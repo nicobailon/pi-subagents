@@ -26,7 +26,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { adaptLegacyAcceptance, mergeAcceptanceContracts, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { mergeAcceptanceInputs, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import {
 	type AcceptanceInput,
 	type ArtifactConfig,
@@ -51,12 +51,6 @@ import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
-
-function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
-	if (child === undefined) return parent;
-	if (parent === undefined) return child;
-	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
-}
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();

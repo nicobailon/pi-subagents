@@ -71,15 +71,9 @@ import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, adaptLegacyAcceptance, aggregateAcceptanceReport, evaluateAcceptance, mergeAcceptanceContracts, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, mergeAcceptanceInputs, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-
-function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
-	if (child === undefined) return parent;
-	if (parent === undefined) return child;
-	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
-}
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];

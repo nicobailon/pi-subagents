@@ -147,7 +147,7 @@ export interface AdaptedAcceptance {
 }
 
 function isCanonicalObject(value: Record<string, unknown>): boolean {
-	return Object.keys(value).some((key) => CANONICAL_ONLY_KEYS.has(key));
+	return !Object.keys(value).some((key) => LEGACY_ONLY_KEYS.has(key));
 }
 
 export function mergeAcceptanceContracts(
@@ -163,6 +163,22 @@ export function mergeAcceptanceContracts(
 	if (Object.prototype.hasOwnProperty.call(child, "review")) merged.review = child.review;
 	if (Object.prototype.hasOwnProperty.call(child, "onFailure")) merged.onFailure = child.onFailure;
 	return merged;
+}
+
+/** Merge raw parent/child inputs before advisory inference and final resolution. */
+export function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+	if (child === undefined || child === "auto") return parent;
+	const childObject = typeof child === "object" && child !== null ? child as AcceptanceConfig & AcceptanceContract : undefined;
+	if (childObject?.level === "auto") return parent;
+	if (child === false || child === "none") return child;
+	if (childObject?.level === "none") return child;
+	if (typeof child === "string" || (childObject && !isCanonicalObject(childObject as Record<string, unknown>))) return child;
+	const childContract = adaptLegacyAcceptance(child).contract;
+	if (childContract === false) return child;
+	if (parent === undefined || parent === "auto") return child;
+	const parentObject = typeof parent === "object" && parent !== null ? parent as AcceptanceConfig & AcceptanceContract : undefined;
+	if (parentObject?.level === "auto") return child;
+	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, childContract);
 }
 
 export function adaptLegacyAcceptance(input: AcceptanceInput | undefined): AdaptedAcceptance {
@@ -235,6 +251,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (typeof input === "string") {
 		if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
 		else if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
+		else if (input === "verified") errors.push(`${pathLabel} verification-config requires at least one runtime verify command.`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -269,6 +286,9 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified, reviewed.`);
 	}
 	if (value.level === "reviewed") errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
+	if (value.level === "verified" && (!Array.isArray(value.verify) || value.verify.length === 0)) {
+		errors.push(`${pathLabel} verification-config requires at least one runtime verify command for level verified.`);
+	}
 	if (value.reason !== undefined && typeof value.reason !== "string") errors.push(`${pathLabel}.reason must be a string.`);
 	if (value.criteria !== undefined && !Array.isArray(value.criteria)) errors.push(`${pathLabel}.criteria must be an array.`);
 	if (Array.isArray(value.criteria)) {
@@ -355,8 +375,11 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 			}
 			if (review.agent !== undefined && typeof review.agent !== "string") errors.push(`${pathLabel}.review.agent must be a string.`);
 			if (review.focus !== undefined && typeof review.focus !== "string") errors.push(`${pathLabel}.review.focus must be a string.`);
-			if (review.required !== undefined && typeof review.required !== "boolean") errors.push(`${pathLabel}.review.required must be a boolean.`);
-			if (review.required === true) errors.push(`${pathLabel}.review ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
+			if (review.required !== undefined && typeof review.required !== "boolean") {
+				errors.push(`${pathLabel}.review.required must be a boolean.`);
+			} else if (review.required !== false) {
+				errors.push(`${pathLabel}.review.required must be false; this run cannot supply an independent reviewer result.`);
+			}
 		}
 	}
 	if (value.stopRules !== undefined && !Array.isArray(value.stopRules)) errors.push(`${pathLabel}.stopRules must be an array.`);
@@ -1014,10 +1037,19 @@ function runStructuralChecks(acceptance: ResolvedAcceptanceConfig, report: Accep
 	return checks;
 }
 
-function trimOutput(value: string): string | undefined {
+const VERIFY_OUTPUT_LIMIT_BYTES = 12_000;
+const VERIFY_OUTPUT_TRUNCATED = "\n...[truncated]";
+
+function appendBoundedOutput(current: string, chunk: Buffer): string {
+	if (Buffer.byteLength(current) >= VERIFY_OUTPUT_LIMIT_BYTES) return current;
+	const remaining = VERIFY_OUTPUT_LIMIT_BYTES - Buffer.byteLength(current);
+	return current + chunk.subarray(0, remaining).toString();
+}
+
+function trimOutput(value: string, truncated = false): string | undefined {
 	const trimmed = value.trim();
-	if (!trimmed) return undefined;
-	return trimmed.length > 12_000 ? `${trimmed.slice(0, 12_000)}\n...[truncated]` : trimmed;
+	if (!trimmed && !truncated) return undefined;
+	return `${trimmed}${truncated ? VERIFY_OUTPUT_TRUNCATED : ""}`;
 }
 
 function uniqueStrings(items: Array<string | undefined>): string[] {
@@ -1064,6 +1096,8 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		let stderr = "";
 		let timedOut = false;
 		let settled = false;
+		let stdoutTruncated = false;
+		let stderrTruncated = false;
 		let hardKill: NodeJS.Timeout | undefined;
 		const child = spawn(command.command, {
 			cwd,
@@ -1071,7 +1105,20 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 			shell: true,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
+			detached: process.platform !== "win32",
 		});
+		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
+			if (process.platform === "win32") {
+				if (child.pid) spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
+				return;
+			}
+			if (!child.pid) return;
+			try {
+				process.kill(-child.pid, signal);
+			} catch {
+				child.kill(signal);
+			}
+		};
 		const finish = (result: Omit<AcceptanceVerifyResult, "id" | "command" | "cwd" | "durationMs">) => {
 			if (settled) return;
 			settled = true;
@@ -1089,16 +1136,16 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		const abortVerification = () => {
 			if (settled || timedOut) return;
 			timedOut = true;
-			child.kill("SIGTERM");
+			killTree("SIGTERM");
 			hardKill = setTimeout(() => {
-				child.kill("SIGKILL");
+				killTree("SIGKILL");
 				finish({
 					exitCode: null,
 					status: "timed-out",
-					stdout: trimOutput(stdout),
-					stderr: trimOutput(stderr || options.abortMessage || "Acceptance verification timed out."),
+					stdout: trimOutput(stdout, stdoutTruncated),
+					stderr: trimOutput(stderr || options.abortMessage || "Acceptance verification timed out.", stderrTruncated),
 				});
-			}, 1000);
+			}, 100);
 			hardKill.unref?.();
 		};
 		const timeout = setTimeout(abortVerification, command.timeoutMs ?? 120_000);
@@ -1106,18 +1153,23 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		if (options.signal?.aborted) abortVerification();
 		else options.signal?.addEventListener("abort", abortVerification, { once: true });
 		child.stdout.on("data", (chunk: Buffer) => {
-			stdout += chunk.toString();
+			const before = Buffer.byteLength(stdout);
+			stdout = appendBoundedOutput(stdout, chunk);
+			stdoutTruncated ||= chunk.length > VERIFY_OUTPUT_LIMIT_BYTES - before;
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString();
+			const before = Buffer.byteLength(stderr);
+			stderr = appendBoundedOutput(stderr, chunk);
+			stderrTruncated ||= chunk.length > VERIFY_OUTPUT_LIMIT_BYTES - before;
 		});
 		child.on("close", (exitCode) => {
-			const passed = exitCode === 0 && !timedOut;
+			if (timedOut) return;
+			const passed = exitCode === 0;
 			finish({
 				exitCode,
-				status: timedOut ? "timed-out" : passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
-				stdout: trimOutput(stdout),
-				stderr: trimOutput(stderr || (timedOut ? options.abortMessage ?? "" : "")),
+				status: passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
+				stdout: trimOutput(stdout, stdoutTruncated),
+				stderr: trimOutput(stderr, stderrTruncated),
 			});
 		});
 		child.on("error", (error) => {
@@ -1227,10 +1279,20 @@ export function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfi
 	};
 }
 
+function rejectedAcceptanceBlocksRun(status: string, explicit: boolean, onFailure: "fail" | "warn"): boolean {
+	return status === "rejected" && explicit && onFailure === "fail";
+}
+
 export function acceptanceBlocksRun(ledger: AcceptanceLedger): boolean {
-	return ledger.status === "rejected"
-		&& ledger.explicit
-		&& ledger.effectiveAcceptance.onFailure === "fail";
+	return rejectedAcceptanceBlocksRun(ledger.status, ledger.explicit, ledger.effectiveAcceptance.onFailure);
+}
+
+export function acceptanceControlBlocksRun(acceptance: {
+	status: string;
+	explicit: boolean;
+	effectiveAcceptance?: { onFailure: "fail" | "warn" };
+}): boolean {
+	return rejectedAcceptanceBlocksRun(acceptance.status, acceptance.explicit, acceptance.effectiveAcceptance?.onFailure ?? "fail");
 }
 
 export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | undefined {

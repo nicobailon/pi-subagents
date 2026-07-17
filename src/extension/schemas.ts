@@ -140,7 +140,7 @@ const AcceptanceOverride = Type.Unsafe({
 			additionalProperties: false,
 		},
 	],
-	description: "Optional acceptance policy. Omitted or auto is advisory only; false disables. Canonical objects compose report, verify, review, and onFailure. Legacy levels remain accepted; none is deprecated in favor of false.",
+	description: "Optional acceptance policy. Omitted or auto inherits a parent contract, with advisory inference only at final resolution; false disables. Canonical child objects merge only present dimensions. Legacy levels replace the inherited contract; none disables with a warning, verified requires a runtime command, and review supports only required:false.",
 });
 
 const TurnBudgetOverride = Type.Object({

@@ -1000,6 +1000,9 @@ const INLINE_ACCEPTANCE_LEVELS = new Set(["auto", "attested", "checked", "none"]
 
 function validateInlineAcceptanceInput(value: string, agent: string, warn: (message: string) => void): AcceptanceInput {
 	if (value === "false") return false;
+	if (value === "verified" || value === "reviewed") {
+		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, checked, none, or false. Use the subagent tool API or a saved .chain.json file for composable verify/review contracts; reviewed is inferred-only.`);
+	}
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
 	if (errors.length > 0) throw new SlashParseError(errors[0]!);
 	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {

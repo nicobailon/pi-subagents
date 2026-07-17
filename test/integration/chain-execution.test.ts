@@ -93,7 +93,7 @@ interface ChainResultItem {
 	error?: string;
 	attemptedModels?: string[];
 	skills?: string[];
-	acceptance?: { status?: string; verifyRuns?: Array<{ status?: string }>; childReport?: unknown; runtimeChecks?: Array<{ status?: string; id?: string }> };
+	acceptance?: { status?: string; verifyRuns?: Array<{ status?: string }>; childReport?: unknown; runtimeChecks?: Array<{ status?: string; id?: string }>; effectiveAcceptance?: { reason?: string; deprecationWarnings: string[] } };
 }
 
 interface ChainExecutionResult {
@@ -405,6 +405,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 	it("merges top-level, static-parallel, and task acceptance by dimension", async () => {
 		mockPi.onCall({ output: acceptanceReport() });
 		mockPi.onCall({ output: "ungated" });
+		mockPi.onCall({ output: "legacy-none" });
 		const agents = [makeAgent("worker", { completionGuard: false })];
 
 		const result = await executeChain(
@@ -413,6 +414,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 					parallel: [
 						{ agent: "worker", task: "Implement fix", acceptance: { report: { criteria: ["Patch bug"] } } },
 						{ agent: "worker", task: "Skip gate", acceptance: false },
+						{ agent: "worker", task: "Skip with legacy warning", acceptance: { level: "none", reason: "manual" } },
 					],
 					acceptance: { onFailure: "warn" },
 				}],
@@ -426,6 +428,9 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.details.results[0]?.acceptance?.verifyRuns?.[0]?.status, "passed");
 		assert.ok(result.details.results[0]?.acceptance?.childReport);
 		assert.equal(result.details.results[1]?.acceptance?.status, "not-required");
+		assert.equal(result.details.results[2]?.acceptance?.status, "not-required");
+		assert.equal(result.details.results[2]?.acceptance?.effectiveAcceptance.reason, "manual");
+		assert.match(result.details.results[2]?.acceptance?.effectiveAcceptance.deprecationWarnings.join("\n") ?? "", /deprecated/);
 	});
 
 	it("runs explicit verified acceptance commands and does not trust child command claims as verification", async () => {

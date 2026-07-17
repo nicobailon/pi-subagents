@@ -38,7 +38,7 @@ import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsy
 import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { acceptanceBlocksRun, adaptLegacyAcceptance, mergeAcceptanceContracts, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, mergeAcceptanceInputs, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -117,11 +117,6 @@ import {
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure"]);
 
-function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
-	if (child === undefined) return parent;
-	if (parent === undefined) return child;
-	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
-}
 interface TaskParam {
 	agent: string;
 	task: string;
