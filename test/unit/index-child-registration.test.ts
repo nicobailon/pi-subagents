@@ -563,6 +563,10 @@ describe("subagent extension child mode", () => {
 			if (!create.isError) throw new Error("create should be blocked");
 			const text = create.content?.[0]?.text ?? "";
 			if (!text.includes("not available from child-safe subagent fanout mode")) throw new Error("unexpected create error: " + text);
+			const grant = await registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true });
+			if (!grant.isError) throw new Error("grant-spawn-budget should be blocked");
+			const grantText = grant.content?.[0]?.text ?? "";
+			if (!grantText.includes("root interactive parent session")) throw new Error("unexpected grant error: " + grantText);
 		`;
 
 		execFileSync(

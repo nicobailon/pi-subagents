@@ -240,6 +240,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(linesSchema.maximum, 500);
 		assert.match(String(linesSchema.description ?? ""), /transcript/i);
 
+		const additionalSchema = SubagentParams?.properties?.additional;
+		assert.ok(additionalSchema, "additional schema should exist");
+		assert.equal(additionalSchema.minimum, 1);
+		assert.match(String(additionalSchema.description ?? ""), /grant-spawn-budget/);
+		assert.match(String(additionalSchema.description ?? ""), /root interactive parent/i);
+
 		const controlSchema = SubagentParams?.properties?.control;
 		assert.ok(controlSchema, "control schema should exist");
 		assert.equal(controlSchema.properties?.needsAttentionAfterMs?.minimum, 1);

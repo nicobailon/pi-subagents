@@ -627,6 +627,24 @@ export interface SingleResult {
 	watchdog?: ChildWatchdogProgress;
 }
 
+export interface SpawnBudgetGrant {
+	sessionId: string;
+	amount: number;
+	grantedAt: number;
+	previousLimit: number;
+	limit: number;
+}
+
+export interface SpawnBudgetSnapshot {
+	used: number;
+	configuredLimit: number | null;
+	granted: number;
+	limit: number | null;
+	remaining: number | null;
+	grantRemaining: number | null;
+	grantHistory: SpawnBudgetGrant[];
+}
+
 export interface Details {
 	mode: SubagentRunMode | "management";
 	runId?: string;
@@ -664,6 +682,7 @@ export interface Details {
 	totalChildUsage?: Usage;
 	// Aggregated cost across all agents in the run
 	totalCost?: CostSummary;
+	spawnBudget?: SpawnBudgetSnapshot;
 }
 
 // ============================================================================
@@ -983,7 +1002,13 @@ export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
 	subagentInProgress?: boolean;
-	subagentSpawns?: { sessionId: string | null; count: number };
+	subagentSpawns?: {
+		sessionId: string | null;
+		count: number;
+		configuredLimit?: number | null;
+		granted?: number;
+		grantHistory?: SpawnBudgetGrant[];
+	};
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
@@ -1270,7 +1295,7 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "interrupt", "resume", "steer", "stop", "append-step", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "append-step", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

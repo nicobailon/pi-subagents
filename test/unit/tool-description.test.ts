@@ -58,6 +58,9 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /schedule-list/);
 		assert.match(description, /action: "eject"/);
 		assert.match(description, /action: "disable"/);
+		assert.match(description, /action: "grant-spawn-budget"/);
+		assert.match(description, /root interactive parent/i);
+		assert.match(description, /cumulative grants cannot exceed the original configured cap/i);
 		assert.match(description, /acceptanceRole affects inferred acceptance only/i);
 		assert.match(description, /Explicit task mutation\/no-edit intent wins/i);
 		assert.match(description, /omission preserves name heuristics/i);
@@ -100,6 +103,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /schedule-list/);
 		assert.match(description, /eject/);
 		assert.match(description, /disable/);
+		assert.match(description, /grant-spawn-budget/);
 		assert.match(description, /acceptanceRole.*affects inferred acceptance only/i);
 		assert.match(description, /Explicit task intent wins/i);
 		assert.match(description, /omission keeps name heuristics/i);

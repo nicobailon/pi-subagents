@@ -8,7 +8,7 @@ const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents or chains.
-• Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for list/get/models/create/update/delete/status/interrupt/stop/resume/append-step/doctor.
+• Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for list/get/models/create/update/delete/status/grant-spawn-budget/interrupt/stop/resume/append-step/doctor.
 • Async/background runs: launch with async:true only when work can proceed independently. Do not sleep or poll status just to wait. In an interactive session, normally return control and let Pi wake you; do not call subagent_wait merely to wait. Override that default and call subagent_wait when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill must finish in one turn. Headless sessions auto-drain current-session work at agent_end; use subagent_wait when this turn must receive results before it ends.
 • Child-safety boundary: ordinary child subagents are not orchestrators and must not run subagents. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Writing/review safety: keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers/validators for independent review, then have the parent synthesize and apply fixes as the sole writer unless an isolated worktree was intentionally requested.
@@ -50,6 +50,7 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "disable", agent: "reviewer", agentScope?: "user" | "project" } - hide any agent from runtime discovery via a reversible settings override (default scope: user)
 • { action: "enable", agent: "reviewer", agentScope?: "user" | "project" } - remove a disabled override and restore discovery
 • { action: "reset", agent: "reviewer", agentScope?: "user" | "project" } - delete the scope's custom agent file and/or settings override, restoring the bundled default
+• { action: "grant-spawn-budget", additional: 10 } - add bounded capacity from the root interactive parent after native user confirmation; grants are rejected while children are active and cumulative grants cannot exceed the original configured cap
 • Use chainName for chain operations; packaged chains also use dotted runtime names
 
 CONTROL:
@@ -84,7 +85,7 @@ EXECUTE:
 • If list shows proactive skill subagent suggestions, use a small fresh-context fanout only when the task is broad enough.
 
 MANAGE / CONTROL:
-• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
+• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
 • Agent acceptanceRole (read-only or writer) affects inferred acceptance only, never tools. Explicit task intent wins; omission keeps name heuristics. Update with false or an empty string to clear it.
 • Async control actions: status, interrupt, stop, resume, steer, append-step. Use stop with an id for current-session top-level async runs. Use status view:"fleet" for active-run overview, view:"transcript" to tail child output, steer for acknowledged top-level live async guidance, and resume for paused/completed/failed revival or a routed nested follow-up. Stopped runs are non-resumable. Steering delivery means Pi accepted the correlated user input, not model compliance; use index for a specific child.
 • Opt-in schedule actions: schedule, schedule-list, schedule-status, schedule-cancel. Schedule only explicit delayed runs the user asked for.

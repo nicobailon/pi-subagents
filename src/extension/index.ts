@@ -60,6 +60,7 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
 	WIDGET_KEY,
+	resolveMaxSubagentSpawnsPerSession,
 } from "../shared/types.ts";
 import {
 	clearPendingForegroundControlNotices,
@@ -240,7 +241,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		baseCwd: "",
 		currentSessionId: null,
 		subagentInProgress: false,
-		subagentSpawns: { sessionId: null, count: 0 },
+		subagentSpawns: {
+			sessionId: null,
+			count: 0,
+			configuredLimit: resolveMaxSubagentSpawnsPerSession(config.maxSubagentSpawnsPerSession) ?? null,
+			granted: 0,
+			grantHistory: [],
+		},
 		asyncJobs: new Map(),
 		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
@@ -543,7 +550,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const resetSessionState = (ctx: ExtensionContext) => {
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-		state.subagentSpawns = { sessionId: state.currentSessionId, count: 0 };
+		state.subagentSpawns = {
+			sessionId: state.currentSessionId,
+			count: 0,
+			configuredLimit: resolveMaxSubagentSpawnsPerSession(config.maxSubagentSpawnsPerSession) ?? null,
+			granted: 0,
+			grantHistory: [],
+		};
 		// Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
 		// Only set in the root session (the interactive UI session), not in
 		// child subagent processes — children inherit the parent's value

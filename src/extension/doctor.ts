@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
+import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
 import { diagnoseIntercomBridge, type IntercomBridgeDiagnostic } from "../intercom/intercom-bridge.ts";
 import { discoverAvailableSkills, type SkillSource } from "../agents/skills.ts";
 import {
@@ -162,6 +163,17 @@ function formatIntercomDiagnostic(diagnostic: IntercomBridgeDiagnostic, context:
 	return lines;
 }
 
+function formatSpawnBudgetSection(input: DoctorReportInput): string[] {
+	const snapshot = getSpawnBudgetSnapshot(input.state, input.config, input.currentSessionId ?? input.state.currentSessionId);
+	return [
+		`- usage: ${formatSpawnBudgetSummary(snapshot)}`,
+		`- recent grants: ${snapshot.grantHistory.length === 0
+			? "none"
+			: snapshot.grantHistory.map((grant) => `+${grant.amount} at ${new Date(grant.grantedAt).toISOString()} (${grant.previousLimit} → ${grant.limit})`).join("; ")}`,
+		"- reset boundary: a new parent session resets usage and grants; compaction does not",
+	];
+}
+
 function formatPermissionSystemSection(): string[] {
 	const lines: string[] = [];
 	const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
@@ -198,6 +210,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"",
 		"Discovery",
 		...formatDiscovery(input, deps),
+		"",
+		"Spawn budget",
+		...formatSpawnBudgetSection(input),
 		"",
 		"Permission system",
 		...formatPermissionSystemSection(),

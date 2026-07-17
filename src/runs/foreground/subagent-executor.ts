@@ -44,6 +44,7 @@ import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
+import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
@@ -107,7 +108,6 @@ import {
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	checkSubagentDepth,
-	resolveMaxSubagentSpawnsPerSession,
 	resolveTopLevelParallelConcurrency,
 	resolveTopLevelParallelMaxTasks,
 	resolveChildMaxSubagentDepth,
@@ -115,7 +115,7 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "watchdog.configure"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure"]);
 interface TaskParam {
 	agent: string;
 	task: string;
@@ -173,6 +173,7 @@ export interface SubagentParamsLike {
 	acceptance?: AcceptanceInput;
 	schedule?: string;
 	scheduleName?: string;
+	additional?: number;
 }
 
 interface ExecutorDeps {
@@ -278,23 +279,34 @@ function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps)
 	return [...new Set(roots)];
 }
 
-function reserveSubagentSpawns(input: { state: SubagentState; config: ExtensionConfig; sessionId: string | null; requested: number; mode: "single" | "parallel" | "chain" }): AgentToolResult<Details> | undefined {
-	if (input.requested <= 0) return undefined;
-	const maxSpawns = resolveMaxSubagentSpawnsPerSession(input.config.maxSubagentSpawnsPerSession);
-	if (maxSpawns === undefined) return undefined;
-	if (input.state.subagentSpawns?.sessionId !== input.sessionId) {
-		input.state.subagentSpawns = { sessionId: input.sessionId, count: 0 };
-	}
-	const used = input.state.subagentSpawns.count;
-	if (used + input.requested > maxSpawns) {
-		return {
-			content: [{ type: "text", text: `Subagent spawn limit reached for this session (${used}/${maxSpawns} used, ${input.requested} requested). Complete the work directly or start a new session.` }],
-			isError: true,
-			details: { mode: input.mode, results: [] },
-		};
-	}
-	input.state.subagentSpawns.count = used + input.requested;
-	return undefined;
+function spawnBudgetErrorResult(message: string, mode: "single" | "parallel" | "chain"): AgentToolResult<Details> {
+	return {
+		content: [{ type: "text", text: message }],
+		isError: true,
+		details: { mode, results: [] },
+	};
+}
+
+function withSpawnBudgetStatus(
+	result: AgentToolResult<Details>,
+	state: SubagentState,
+	config: ExtensionConfig,
+	sessionId: string | null,
+): AgentToolResult<Details> {
+	const spawnBudget = getSpawnBudgetSnapshot(state, config, sessionId);
+	return {
+		...result,
+		content: result.content.map((item, index) => index === 0 && item.type === "text"
+			? { ...item, text: `${formatSpawnBudget(spawnBudget)}\n${item.text}` }
+			: item),
+		details: { ...result.details, spawnBudget },
+	};
+}
+
+function hasActiveSubagentChildren(state: SubagentState): boolean {
+	if (state.subagentInProgress || state.foregroundControls.size > 0) return true;
+	const isActive = (status: string) => status === "queued" || status === "running";
+	return [...state.asyncJobs.values(), ...(state.fleetJobs?.values() ?? [])].some((job) => isActive(job.status));
 }
 
 function countRequestedSubagentSpawns(params: SubagentParamsLike, config: ExtensionConfig): number {
@@ -3269,6 +3281,70 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				return handleWatchdogToolAction(action, paramsWithResolvedCwd, ctx, deps.watchdog);
 			}
+			if (action === "grant-spawn-budget") {
+				if (deps.allowMutatingManagementActions === false || !ctx.hasUI) {
+					return {
+						content: [{ type: "text", text: "Action 'grant-spawn-budget' is available only from the root interactive parent session." }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				if (!deps.state.currentSessionId) {
+					return {
+						content: [{ type: "text", text: "Action 'grant-spawn-budget' requires an active parent session id." }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				if (hasActiveSubagentChildren(deps.state)) {
+					const spawnBudget = getSpawnBudgetSnapshot(deps.state, deps.config, deps.state.currentSessionId);
+					return {
+						content: [{ type: "text", text: "Spawn budget grants are rejected while current-session children are queued or running. Wait for them to settle, then retry the explicit grant." }],
+						isError: true,
+						details: { mode: "management", results: [], spawnBudget },
+					};
+				}
+				const sessionId = deps.state.currentSessionId;
+				const additional = paramsWithResolvedCwd.additional ?? Number.NaN;
+				const preview = preflightSpawnBudgetGrant(deps.state, deps.config, sessionId, additional);
+				if (preview.error) {
+					return {
+						content: [{ type: "text", text: preview.error }],
+						isError: true,
+						details: { mode: "management", results: [], spawnBudget: preview.snapshot },
+					};
+				}
+				const confirmed = await ctx.ui.confirm(
+					"Grant subagent spawn budget?",
+					`Add ${additional} launches to this logical session?\n\n${formatSpawnBudget(preview.snapshot)}\n\nUsage is not reset. Compaction keeps the same budget; a new parent session starts a fresh one.`,
+				);
+				if (!confirmed) {
+					return {
+						content: [{ type: "text", text: "Spawn budget grant canceled; no capacity was added." }],
+						details: { mode: "management", results: [], spawnBudget: preview.snapshot },
+					};
+				}
+				const currentBudget = getSpawnBudgetSnapshot(deps.state, deps.config, deps.state.currentSessionId);
+				if (
+					resolveCurrentSessionId(ctx.sessionManager) !== sessionId
+					|| hasActiveSubagentChildren(deps.state)
+					|| currentBudget.used !== preview.snapshot.used
+					|| currentBudget.granted !== preview.snapshot.granted
+				) {
+					return {
+						content: [{ type: "text", text: "Spawn budget grant was not applied because the session, budget, or active-child state changed while confirmation was open." }],
+						isError: true,
+						details: { mode: "management", results: [], spawnBudget: currentBudget },
+					};
+				}
+				const granted = grantSpawnBudget(deps.state, deps.config, sessionId, additional);
+				return {
+					content: [{ type: "text", text: granted.error ?? `Spawn budget grant applied: +${additional}. ${formatSpawnBudget(granted.snapshot)}` }],
+					...(granted.error ? { isError: true } : {}),
+					details: { mode: "management", results: [], spawnBudget: granted.snapshot },
+				};
+			}
 			if (action === "doctor") {
 				let currentSessionFile: string | null = null;
 				let currentSessionId = deps.state.currentSessionId;
@@ -3285,6 +3361,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				} catch (error) {
 					if (!sessionError) sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 				}
+				const spawnBudget = getSpawnBudgetSnapshot(deps.state, deps.config, currentSessionId);
 				return {
 					content: [{
 						type: "text",
@@ -3301,16 +3378,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							expandTilde: deps.expandTilde,
 						}),
 					}],
-					details: { mode: "management", results: [] },
+					details: { mode: "management", results: [], spawnBudget },
 				};
 			}
 			if (action === "status") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				const withBudget = (result: AgentToolResult<Details>) => withSpawnBudgetStatus(
+					result,
+					deps.state,
+					deps.config,
+					deps.state.currentSessionId,
+				);
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
 				if (paramsWithResolvedCwd.view === "fleet") {
-					return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots });
+					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots }));
 				}
 				if (targetRunId) {
 					try {
@@ -3319,29 +3402,29 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							const foreground = getForegroundControl(deps.state, resolved.id);
 							if (foreground) {
 								if (paramsWithResolvedCwd.view === "transcript") {
-									return {
+									return withBudget({
 										content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled." }],
 										details: { mode: "management", results: [] },
-									};
+									});
 								}
-								return foregroundStatusResult(foreground);
+								return withBudget(foregroundStatusResult(foreground));
 							}
 						}
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
-						return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+						return withBudget({ content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } });
 					}
 				} else {
 					const foreground = getForegroundControl(deps.state, undefined);
-					if (foreground && paramsWithResolvedCwd.view !== "transcript") return foregroundStatusResult(foreground);
+					if (foreground && paramsWithResolvedCwd.view !== "transcript") return withBudget(foregroundStatusResult(foreground));
 					if (foreground && paramsWithResolvedCwd.view === "transcript") {
-						return {
+						return withBudget({
 							content: [{ type: "text", text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript." }],
 							details: { mode: "management", results: [] },
-						};
+						});
 					}
 				}
-				return inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots });
+				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots }));
 			}
 			if (action === "resume") {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
@@ -3561,6 +3644,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		);
 		if (validationError) return validationError;
 
+		const foregroundMode: "single" | "parallel" | "chain" = hasChain ? "chain" : hasTasks ? "parallel" : "single";
+		const requestedSpawns = countRequestedSubagentSpawns(effectiveParams, deps.config);
+		const spawnPreflight = preflightSpawnBudget(
+			deps.state,
+			deps.config,
+			deps.state.currentSessionId,
+			requestedSpawns,
+		);
+		if (spawnPreflight.error) return spawnBudgetErrorResult(spawnPreflight.error, foregroundMode);
+
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
 		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string): void => {};
@@ -3658,15 +3751,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context))
 			: undefined;
 
-		const foregroundMode: "single" | "parallel" | "chain" = hasChain ? "chain" : hasTasks ? "parallel" : "single";
-		const spawnLimitError = reserveSubagentSpawns({
-			state: deps.state,
-			config: deps.config,
-			sessionId: deps.state.currentSessionId,
-			requested: countRequestedSubagentSpawns(effectiveParams, deps.config),
-			mode: foregroundMode,
-		});
-		if (spawnLimitError) return spawnLimitError;
+		const reservation = reserveSpawnBudget(
+			deps.state,
+			deps.config,
+			deps.state.currentSessionId,
+			requestedSpawns,
+		);
+		if (reservation.error) return spawnBudgetErrorResult(reservation.error, foregroundMode);
 
 		const execData: ExecutionContextData = {
 			params: effectiveParams,

@@ -25,7 +25,7 @@ import {
 	events,
 	tryImport,
 } from "../support/helpers.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
+import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
@@ -279,7 +279,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		agents = [makeAgent("echo")],
 		config: Record<string, unknown> = {},
 		asyncByDefault = false,
-		initialSpawnState?: { sessionId: string | null; count: number },
+		initialSpawnState?: NonNullable<SubagentState["subagentSpawns"]>,
+		allowMutatingManagementActions = true,
+		initialAsyncJobs: SubagentState["asyncJobs"] = new Map(),
 	) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -287,7 +289,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				baseCwd: tempDir,
 				currentSessionId: initialSpawnState?.sessionId ?? null,
 				...(initialSpawnState ? { subagentSpawns: initialSpawnState } : {}),
-				asyncJobs: new Map(),
+				asyncJobs: initialAsyncJobs,
 				foregroundControls: new Map(),
 				lastForegroundControlId: null,
 			},
@@ -297,6 +299,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
 			discoverAgents: () => ({ agents }),
+			allowMutatingManagementActions,
 		});
 	}
 
@@ -461,6 +464,185 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(second.isError, true);
 		assert.match(second.content[0]?.text ?? "", /Subagent spawn limit reached for this session \(1\/1 used, 1 requested\)/);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("reports structured spawn-budget usage through status", async () => {
+		const spawnState = { sessionId: "session-123", count: 3, configuredLimit: 4, granted: 1, grantHistory: [] };
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 4 }, false, spawnState);
+
+		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.match(status.content[0]?.text ?? "", /^Spawn budget: 3\/5 used, 2 remaining/);
+		assert.deepEqual(status.details?.spawnBudget, {
+			used: 3,
+			configuredLimit: 4,
+			granted: 1,
+			limit: 5,
+			remaining: 2,
+			grantRemaining: 3,
+			grantHistory: [],
+		});
+	});
+
+	it("preflights static chains before creating run artifacts", async () => {
+		const sessionDir = path.join(tempDir, "preflight-session");
+		const executor = makeExecutor(
+			[makeAgent("echo"), makeAgent("second")],
+			{ maxSubagentSpawnsPerSession: 1 },
+		);
+		const result = await executor.execute(
+			"chain-preflight",
+			{
+				chain: [
+					{ agent: "echo", task: "First" },
+					{ agent: "second", task: "Second" },
+				],
+				sessionDir,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /0\/1 used, 2 requested\).*1 remaining/);
+		assert.match(result.content[0]?.text ?? "", /no children were started/);
+		assert.equal(fs.existsSync(sessionDir), false);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("applies bounded root-interactive spawn-budget grants", async () => {
+		mockPi.onCall({ output: "continued after grant" });
+		const spawnState = { sessionId: "session-123", count: 1 };
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 }, false, spawnState);
+		const decisions = [false, true];
+		let confirmations = 0;
+		const interactiveCtx = {
+			...makeMinimalCtx(tempDir),
+			hasUI: true,
+			ui: { confirm: async () => { confirmations += 1; return decisions.shift() ?? false; } },
+		};
+
+		const canceled = await executor.execute(
+			"cancel-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+		const granted = await executor.execute(
+			"grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+		const run = await executor.execute(
+			"after-grant",
+			{ agent: "echo", task: "Continue" },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+		const exhausted = await executor.execute(
+			"grant-again",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			interactiveCtx,
+		);
+
+		assert.equal(canceled.isError, undefined);
+		assert.match(canceled.content[0]?.text ?? "", /grant canceled; no capacity was added/i);
+		assert.equal(granted.isError, undefined);
+		assert.match(granted.content[0]?.text ?? "", /grant applied: \+1/i);
+		assert.equal(confirmations, 2);
+		assert.equal(granted.details?.spawnBudget?.limit, 2);
+		assert.equal(run.isError, undefined);
+		assert.equal(spawnState.count, 2);
+		assert.equal(exhausted.isError, true);
+		assert.match(exhausted.content[0]?.text ?? "", /only 0 of the original configured limit remains grantable/);
+	});
+
+	it("rechecks spawn-budget state after confirmation", async () => {
+		const spawnState = { sessionId: "session-123", count: 0 };
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 2 }, false, spawnState);
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			hasUI: true,
+			ui: { confirm: async () => { spawnState.count = 1; return true; } },
+		};
+
+		const result = await executor.execute(
+			"grant-race",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /budget, or active-child state changed/);
+		assert.equal(result.details?.spawnBudget?.granted, 0);
+	});
+
+	it("rejects spawn-budget grants outside a settled root interactive session", async () => {
+		mockPi.onCall({ output: "still running", delay: 100 });
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 2 });
+		const headless = await executor.execute(
+			"headless-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const childSafe = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 2 }, false, undefined, false);
+		const child = await childSafe.execute(
+			"child-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), hasUI: true },
+		);
+		const asyncActive = makeExecutor(
+			[makeAgent("echo")],
+			{ maxSubagentSpawnsPerSession: 2 },
+			false,
+			undefined,
+			true,
+			new Map([["async-active", { asyncId: "async-active", asyncDir: tempDir, status: "running", sessionId: "session-123" }]]),
+		);
+		const detached = await asyncActive.execute(
+			"async-active-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), hasUI: true },
+		);
+		const running = executor.execute(
+			"running",
+			{ agent: "echo", task: "Long run" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const active = await executor.execute(
+			"active-grant",
+			{ action: "grant-spawn-budget", additional: 1 },
+			new AbortController().signal,
+			undefined,
+			{ ...makeMinimalCtx(tempDir), hasUI: true },
+		);
+		await running;
+
+		assert.equal(headless.isError, true);
+		assert.match(headless.content[0]?.text ?? "", /root interactive parent session/);
+		assert.equal(child.isError, true);
+		assert.match(child.content[0]?.text ?? "", /root interactive parent session/);
+		assert.equal(detached.isError, true);
+		assert.match(detached.content[0]?.text ?? "", /rejected while current-session children are queued or running/);
+		assert.equal(active.isError, true);
+		assert.match(active.content[0]?.text ?? "", /rejected while current-session children are queued or running/);
 	});
 
 	it("allows management actions while an execution call is in progress", async () => {
