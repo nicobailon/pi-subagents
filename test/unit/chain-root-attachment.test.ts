@@ -44,7 +44,18 @@ describe("async chain root attachment", () => {
 		writeJson(importedRoot.resultPath, {
 			state: "complete",
 			success: true,
-			results: [{ agent: "worker", output: "root output", success: true, sessionFile }],
+			results: [{
+				agent: "worker",
+				output: "root output",
+				success: true,
+				sessionFile,
+				diagnostic: {
+					classification: "extension-bootstrap-suspected",
+					retryable: false,
+					summary: "Extension bootstrap failed.",
+					evidence: "Failed to load extension \"C:\\extensions\\context-mode.js\"",
+				},
+			}],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -54,11 +65,18 @@ describe("async chain root attachment", () => {
 			output: result.output,
 			exitCode: result.exitCode,
 			sessionFile: result.sessionFile,
+			diagnostic: result.diagnostic,
 		}, {
 			agent: "worker",
 			output: "root output",
 			exitCode: 0,
 			sessionFile,
+			diagnostic: {
+				classification: "extension-bootstrap-suspected",
+				retryable: false,
+				summary: "Extension bootstrap failed.",
+				evidence: "Failed to load extension \"C:\\extensions\\context-mode.js\"",
+			},
 		});
 	});
 
@@ -118,7 +136,16 @@ describe("async chain root attachment", () => {
 			mode: "single",
 			state: "complete",
 			startedAt: 1,
-			steps: [{ agent: "worker", status: "complete" }],
+			steps: [{
+				agent: "worker",
+				status: "complete",
+				diagnostic: {
+					classification: "extension-bootstrap-suspected",
+					retryable: false,
+					summary: "Extension bootstrap failed.",
+					evidence: "Failed to load extension \"/extensions/context-mode.js\"",
+				},
+			}],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, {
@@ -128,6 +155,8 @@ describe("async chain root attachment", () => {
 
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /ended without a result file/);
+		assert.equal(result.diagnostic?.classification, "extension-bootstrap-suspected");
+		assert.match(result.diagnostic?.evidence ?? "", /context-mode\.js/);
 	});
 
 	it("stops waiting when the parent timeout aborts an attached root", async () => {

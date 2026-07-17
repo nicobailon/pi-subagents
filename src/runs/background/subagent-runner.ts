@@ -1032,6 +1032,7 @@ async function runSingleStep(
 				output: timedOut || stopped ? message : imported.output,
 				exitCode: timedOut || stopped ? 1 : imported.exitCode,
 				error: timedOut || stopped ? message : imported.error,
+				diagnostic: imported.diagnostic,
 				timedOut: timedOut ? true : undefined,
 				stopped: stopped ? true : undefined,
 				sessionFile: imported.sessionFile,

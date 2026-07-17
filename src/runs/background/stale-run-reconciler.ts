@@ -255,6 +255,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 				model: step.model,
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
+				diagnostic: step.diagnostic,
 				sessionFile: step.sessionFile,
 			})),
 			exitCode: 1,

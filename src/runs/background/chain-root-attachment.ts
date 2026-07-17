@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AcceptanceLedger, AsyncStatus, CostSummary, ModelAttempt } from "../../shared/types.ts";
+import type { AcceptanceLedger, AsyncStatus, CostSummary, ExtensionBootstrapDiagnostic, ModelAttempt } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 
 export interface ImportedAsyncRoot {
@@ -16,6 +16,7 @@ export interface ImportedAsyncRootResult {
 	success: boolean;
 	exitCode: number;
 	error?: string;
+	diagnostic?: ExtensionBootstrapDiagnostic;
 	sessionFile?: string;
 	intercomTarget?: string;
 	model?: string;
@@ -41,6 +42,7 @@ interface AsyncResultFile {
 		agent?: string;
 		output?: string;
 		error?: string;
+		diagnostic?: ExtensionBootstrapDiagnostic;
 		success?: boolean;
 		timedOut?: boolean;
 		stopped?: boolean;
@@ -106,6 +108,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		error: message,
 		...(timedOut ? { timedOut: true } : {}),
 		...(stopped ? { stopped: true } : {}),
+		...(step?.diagnostic ? { diagnostic: step.diagnostic } : {}),
 		...(step?.sessionFile ?? status.sessionFile ? { sessionFile: step?.sessionFile ?? status.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
@@ -127,6 +130,7 @@ function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, 
 		exitCode: 1,
 		error: message,
 		timedOut: true,
+		...(step?.diagnostic ? { diagnostic: step.diagnostic } : {}),
 		...(step?.sessionFile ?? status?.sessionFile ? { sessionFile: step?.sessionFile ?? status?.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
@@ -153,6 +157,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(error ? { error } : {}),
 		...(timedOut ? { timedOut: true } : {}),
 		...(stopped ? { stopped: true } : {}),
+		...(child?.diagnostic ?? step?.diagnostic ? { diagnostic: child?.diagnostic ?? step?.diagnostic } : {}),
 		...(child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile ? { sessionFile: child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile } : {}),
 		...(child?.intercomTarget ? { intercomTarget: child.intercomTarget } : {}),
 		...(child?.model ?? step?.model ? { model: child?.model ?? step?.model } : {}),

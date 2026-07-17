@@ -42,7 +42,17 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				steps: [{ agent: "scout", status: "running", startedAt: 1000 }],
+				steps: [{
+					agent: "scout",
+					status: "running",
+					startedAt: 1000,
+					diagnostic: {
+						classification: "extension-bootstrap-suspected",
+						retryable: false,
+						summary: "Extension bootstrap failed.",
+						evidence: "Failed to load extension \"C:\\extensions\\context-mode.js\"",
+					},
+				}],
 			});
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -65,6 +75,8 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(resultJson.state, "failed");
 			assert.equal(resultJson.exitCode, 1);
 			assert.match(resultJson.summary, /process 12345 exited or disappeared/);
+			assert.equal(resultJson.results[0].diagnostic.classification, "extension-bootstrap-suspected");
+			assert.match(resultJson.results[0].diagnostic.evidence, /context-mode\.js/);
 			assert.match(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /subagent\.run\.repaired_stale/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
