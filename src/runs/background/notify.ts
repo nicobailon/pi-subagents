@@ -54,6 +54,8 @@ interface SubagentResult {
 	taskIndex?: number;
 	totalTasks?: number;
 	sessionId?: string | null;
+	/** Session-tree leaf current when this detached result was launched. */
+	launchLeafId?: string;
 }
 
 interface NotifyTimerApi {
@@ -149,7 +151,8 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, details: Subagent
 
 function completionBatchKey(result: SubagentResult): string {
 	const sessionId = typeof result.sessionId === "string" ? result.sessionId.trim() : "";
-	if (sessionId) return `session:${sessionId}`;
+	const launchLeafId = typeof result.launchLeafId === "string" ? result.launchLeafId.trim() : "";
+	if (sessionId) return launchLeafId ? `session:${sessionId}:branch:${launchLeafId}` : `session:${sessionId}`;
 	const cwd = typeof result.cwd === "string" ? result.cwd.trim() : "";
 	return cwd ? `cwd:${cwd}` : "unknown";
 }
@@ -235,6 +238,14 @@ export default function registerSubagentNotify(
 
 		const details = buildCompletionDetails(result);
 		if (result.source === "foreground") {
+			sendCompletion(pi, [details]);
+			return;
+		}
+		if (result.launchLeafId !== undefined) {
+			// Do not add an avoidable batch delay after the watcher has matched this
+			// result to its launch branch. Pi's public sendMessage API cannot bind a
+			// queued notification to that branch, so a branch switch while Pi is busy
+			// remains a documented best-effort edge case.
 			sendCompletion(pi, [details]);
 			return;
 		}

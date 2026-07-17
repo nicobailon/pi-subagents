@@ -48,6 +48,7 @@ export interface AsyncRunSummary {
 	id: string;
 	asyncDir: string;
 	sessionId?: string;
+	launchLeafId?: string;
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	error?: string;
 	activityState?: ActivityState;
@@ -200,6 +201,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		id: status.runId || path.basename(asyncDir),
 		asyncDir,
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
+		...(status.launchLeafId !== undefined ? { launchLeafId: status.launchLeafId } : {}),
 		state: status.state,
 		...(status.error ? { error: status.error } : {}),
 		activityState,

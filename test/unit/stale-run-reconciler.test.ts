@@ -71,6 +71,39 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
+	it("retains launch leaf metadata when repairing a stale status", () => {
+		const root = tempRoot("pi-stale-run-launch-leaf-");
+		try {
+			const asyncDir = path.join(root, "run-launch-leaf");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				runId: "run-launch-leaf",
+				sessionId: "session-current",
+				launchLeafId: "branch-anchor",
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+
+			const repaired = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+			});
+
+			assert.equal(repaired.status?.launchLeafId, "branch-anchor");
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			const result = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-launch-leaf.json"), "utf-8"));
+			assert.equal(status.launchLeafId, "branch-anchor");
+			assert.equal(result.launchLeafId, "branch-anchor");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("includes runner stderr diagnostics when repairing a stale startup crash", () => {
 		const root = tempRoot("pi-stale-run-stderr-");
 		try {

@@ -126,6 +126,7 @@ interface SubagentRunConfig {
 	sessionDir?: string;
 	asyncDir: string;
 	sessionId?: string | null;
+	launchLeafId?: string;
 	piPackageRoot?: string;
 	piArgv1?: string;
 	worktreeSetupHook?: string;
@@ -1664,6 +1665,7 @@ async function runSubagent(
 		lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 		runId: id,
 		...(config.sessionId ? { sessionId: config.sessionId } : {}),
+		...(config.launchLeafId !== undefined ? { launchLeafId: config.launchLeafId } : {}),
 		mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
 		...(config.nestedRoute ? { isNested: true } : {}),
 		state: "running",
@@ -3662,6 +3664,7 @@ async function runSubagent(
 			cwd,
 			asyncDir,
 			sessionId: config.sessionId,
+			...(config.launchLeafId !== undefined ? { launchLeafId: config.launchLeafId } : {}),
 			sessionFile: effectiveSessionFile,
 			intercomTarget: config.controlIntercomTarget,
 			shareUrl,

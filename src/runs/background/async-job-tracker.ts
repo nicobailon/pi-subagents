@@ -82,6 +82,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			asyncDir: run.asyncDir,
 			status: run.state,
 			sessionId: run.sessionId,
+			...(run.launchLeafId !== undefined ? { launchLeafId: run.launchLeafId } : {}),
 			activityState: run.activityState,
 			lastActivityAt: run.lastActivityAt,
 			currentTool: run.currentTool,
@@ -292,6 +293,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							runId: job.asyncId,
 							pid: job.pid,
 							sessionId: job.sessionId,
+							...(job.launchLeafId !== undefined ? { launchLeafId: job.launchLeafId } : {}),
 							mode: job.mode,
 							agents: job.agents,
 							chainStepCount: job.chainStepCount,
@@ -306,6 +308,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.status = status.state;
 						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
 						job.sessionId = status.sessionId ?? job.sessionId;
+						if (status.launchLeafId !== undefined) job.launchLeafId = status.launchLeafId;
 						job.activityState = status.activityState;
 						job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
 						job.currentTool = status.currentTool;
@@ -400,6 +403,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			status: "queued",
 			pid: typeof info.pid === "number" ? info.pid : undefined,
 			...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
+			...(info.launchLeafId !== undefined ? { launchLeafId: info.launchLeafId } : {}),
 			mode: info.mode ?? (info.chain ? "chain" : "single"),
 			agents,
 			chainStepCount: info.chainStepCount,

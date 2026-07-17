@@ -34,6 +34,7 @@ type ResultWatcherTimers = {
 type ResultWatcherDeps = {
 	fs?: ResultWatcherFs;
 	timers?: ResultWatcherTimers;
+	isLaunchLeafOnCurrentBranch?: (launchLeafId: string) => boolean;
 };
 
 type ResultFileChild = {
@@ -60,6 +61,7 @@ type ResultFileData = {
 	results?: ResultFileChild[];
 	nestedChildren?: unknown;
 	sessionId?: string;
+	launchLeafId?: string;
 	cwd?: string;
 	sessionFile?: string;
 	asyncDir?: string;
@@ -108,14 +110,33 @@ export function createResultWatcher(
 } {
 	const fsApi = deps.fs ?? fs;
 	const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
+	const inFlightFiles = new Set<string>();
+	const acknowledgedIntercomCompletions = new Set<string>();
+
+	const isEligibleForCurrentSessionAndBranch = (data: ResultFileData): boolean => {
+		if (typeof data.sessionId !== "string" || data.sessionId !== state.currentSessionId) return false;
+		if (data.launchLeafId === undefined) return true;
+		if (typeof data.launchLeafId !== "string" || !data.launchLeafId || data.launchLeafId.trim() !== data.launchLeafId) return false;
+		return deps.isLaunchLeafOnCurrentBranch?.(data.launchLeafId) ?? false;
+	};
 
 	const handleResult = async (file: string) => {
+		if (inFlightFiles.has(file)) return;
+		inFlightFiles.add(file);
 		const resultPath = path.join(resultsDir, file);
-		if (!fsApi.existsSync(resultPath)) return;
+		if (!fsApi.existsSync(resultPath)) {
+			inFlightFiles.delete(file);
+			return;
+		}
 		try {
 			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
-			if (typeof data.sessionId !== "string" || data.sessionId !== state.currentSessionId) return;
+			// This gate keeps shared-tree sibling panes from consuming each other's
+			// detached results. Pi's public sendMessage API has no branch target, so
+			// a queued notification can still follow a later branch change after this
+			// handoff; that narrow active-turn case is intentionally best-effort.
+			if (!isEligibleForCurrentSessionAndBranch(data)) return;
 
+			const completionKey = buildCompletionKey(data, `result:${file}`);
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 			const hasExplicitNestedChildren = data.nestedChildren !== undefined;
 			let nestedChildren = compactNestedResultChildren(sanitizeNestedResultChildren(data.nestedChildren, resultPath, "nestedChildren"));
@@ -127,13 +148,6 @@ export function createResultWatcher(
 					return;
 				}
 			}
-			const now = Date.now();
-			const completionKey = buildCompletionKey(data, `result:${file}`);
-			if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
-				fsApi.unlinkSync(resultPath);
-				return;
-			}
-
 			const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
 			const resultChildren = hasResultChildren
 				? data.results!
@@ -174,7 +188,7 @@ export function createResultWatcher(
 			}), nestedChildren);
 
 			const intercomTarget = data.intercomTarget?.trim();
-			if (intercomTarget) {
+			if (intercomTarget && !acknowledgedIntercomCompletions.has(completionKey)) {
 				const mode = data.mode === "single" || data.mode === "parallel" || data.mode === "chain"
 					? data.mode
 					: resultChildren.length > 1 ? "chain" : "single";
@@ -188,9 +202,22 @@ export function createResultWatcher(
 					asyncDir: data.asyncDir,
 				});
 				const delivered = await deliverSubagentResultIntercomEvent(pi.events, payload);
-				if (!delivered) {
+				if (delivered) {
+					// A branch change can retain the artifact after an acknowledged
+					// handoff. Do not send that same intercom result again on retry.
+					acknowledgedIntercomCompletions.add(completionKey);
+				} else {
 					console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 				}
+			}
+
+			// Intercom delivery may await. Re-check before consuming the artifact so
+			// navigation during that handoff leaves it available for a later retry.
+			if (!isEligibleForCurrentSessionAndBranch(data)) return;
+			const now = Date.now();
+			if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
+				fsApi.unlinkSync(resultPath);
+				return;
 			}
 
 			pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
@@ -216,6 +243,8 @@ export function createResultWatcher(
 		} catch (error) {
 			if (isNotFoundError(error)) return;
 			console.error(`Failed to process subagent result file '${resultPath}':`, error);
+		} finally {
+			inFlightFiles.delete(file);
 		}
 	};
 
@@ -312,6 +341,8 @@ export function createResultWatcher(
 		}
 		state.watcherRestartTimer = null;
 		state.resultFileCoalescer.clear();
+		inFlightFiles.clear();
+		acknowledgedIntercomCompletions.clear();
 	};
 
 	return { startResultWatcher, primeExistingResults, stopResultWatcher };

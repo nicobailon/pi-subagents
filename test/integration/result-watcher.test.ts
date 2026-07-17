@@ -70,6 +70,127 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("routes matching-session results by their launch branch and retries after a branch switch", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-branch-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+					},
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-current";
+			let liveBranch = ["root", "sibling-b"];
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+				isLaunchLeafOnCurrentBranch: (launchLeafId) => liveBranch.includes(launchLeafId),
+			});
+			const writeResult = (name: string, launchLeafId?: unknown) => {
+				const resultPath = path.join(resultsDir, `${name}.json`);
+				fs.writeFileSync(resultPath, JSON.stringify({ id: name, sessionId: "session-current", ...(launchLeafId !== undefined ? { launchLeafId } : {}) }), "utf-8");
+				return resultPath;
+			};
+			const deliver = async () => {
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			};
+			try {
+				const siblingResult = writeResult("sibling", "sibling-a");
+				await deliver();
+				assert.equal(emitted.length, 0, "a same-session post-divergence sibling must not receive the result");
+				assert.equal(fs.existsSync(siblingResult), true, "ineligible sibling result must be retained");
+
+				liveBranch = ["root", "sibling-a"];
+				await deliver();
+				assert.equal(fs.existsSync(siblingResult), false, "the live branch switch should retry and consume the result");
+
+				liveBranch = ["root", "sibling-b"];
+				const ancestorResult = writeResult("ancestor", "root");
+				await deliver();
+				assert.equal(fs.existsSync(ancestorResult), false, "an anchor in common ancestry is visible from either descendant");
+
+				const legacyResult = writeResult("legacy");
+				await deliver();
+				assert.equal(fs.existsSync(legacyResult), false, "legacy matching-session results retain exact-session behavior");
+
+				const malformedResult = writeResult("malformed", " ");
+				await deliver();
+				assert.equal(fs.existsSync(malformedResult), true, "a malformed launch leaf fails closed without consuming the artifact");
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 3);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retains a branch-scoped result when navigation happens during intercom delivery", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-branch-race-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const listeners = new Map<string, Set<(data: unknown) => void>>();
+			let liveBranch = ["root", "anchor"];
+			let switchBranchOnce = true;
+			const pi = {
+				events: {
+					on(event: string, handler: (data: unknown) => void) {
+						const handlers = listeners.get(event) ?? new Set();
+						handlers.add(handler);
+						listeners.set(event, handlers);
+						return () => handlers.delete(handler);
+					},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+						for (const handler of listeners.get(event) ?? []) handler(data);
+						if (event !== "subagent:result-intercom") return;
+						if (switchBranchOnce) {
+							liveBranch = ["root", "sibling"];
+							switchBranchOnce = false;
+						}
+						const requestId = data && typeof data === "object" ? (data as { requestId?: unknown }).requestId : undefined;
+						if (typeof requestId === "string") {
+							setImmediate(() => pi.events.emit("subagent:result-intercom-delivery", { requestId, delivered: true }));
+						}
+					},
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+				isLaunchLeafOnCurrentBranch: (launchLeafId) => liveBranch.includes(launchLeafId),
+			});
+			const resultPath = path.join(resultsDir, "branch-race.json");
+			fs.writeFileSync(resultPath, JSON.stringify({
+				id: "branch-race",
+				sessionId: "session-current",
+				launchLeafId: "anchor",
+				intercomTarget: "owner",
+			}), "utf-8");
+			try {
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				assert.equal(fs.existsSync(resultPath), true, "navigation during the awaited handoff must retain the result");
+				assert.equal(emitted.some((entry) => entry.event === "subagent:async-complete"), false);
+
+				liveBranch = ["root", "anchor"];
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				assert.equal(fs.existsSync(resultPath), false, "returning to the launch branch should retry the retained result");
+				assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+				assert.equal(emitted.filter((entry) => entry.event === "subagent:result-intercom").length, 1, "an acknowledged intercom result must not be sent again on retry");
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("delivers result files only to the exact owning session when another watcher shares the same repo", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scope-"));
 		const createPi = () => {

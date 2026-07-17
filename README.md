@@ -1460,7 +1460,7 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 Controls smart batching of async-completion notifications. When several background subagents finish within a short window, their successful completions are held briefly and delivered as a single grouped message instead of separate notifications. A hard `maxWaitMs` cap (measured from the first completion in a group) guarantees nothing is held indefinitely, and late-finishing siblings that arrive within `stragglerWindowMs` of a group emit join a shorter straggler group governed by `stragglerDebounceMs` and `stragglerMaxWaitMs`.
 
-Failed and paused completions bypass batching and fire immediately, flushing any held successes first, so failure and needs-attention signals are never delayed. Set `enabled` to `false` to restore the original one-notification-per-completion behavior. Changes apply on the next session start.
+Failed and paused completions bypass batching and fire immediately, flushing any held successes first, so failure and needs-attention signals are never delayed. Results tied to a session-tree launch branch also bypass batching to minimize the gap between branch matching and notification. Set `enabled` to `false` to restore the original one-notification-per-completion behavior. Changes apply on the next session start.
 
 ## Files, logs, and observability
 
@@ -1483,7 +1483,7 @@ Metadata records timing, usage, exit code, final model, attempted models, fallba
 
 Session files are stored under a per-run session directory. With `context: "fork"`, each child starts with `--session <branched-session-file>` produced from the parent’s current leaf. That is a real session fork, not an injected summary.
 
-Async completions notify only the originating session. The result watcher emits `subagent:async-complete`, and the extension consumes that event to render completion notifications. Successful sibling completions are held briefly and delivered as a single grouped message when they finish within a short window (see `completionBatch`); failed and paused completions always fire immediately.
+Async completions notify only the originating session. Detached results also retain the session-tree leaf where they launched: a result remains available while a sibling branch is selected and is retried after returning to the launch branch. The result watcher emits `subagent:async-complete`, and the extension consumes that event to render completion notifications. Successful unanchored sibling completions are held briefly and delivered as a single grouped message when they finish within a short window (see `completionBatch`); branch-scoped, failed, and paused completions fire immediately. Pi's current notification API has no branch target, so the final delivery remains best-effort if Pi queues it while a user changes branches.
 
 Async runs write:
 

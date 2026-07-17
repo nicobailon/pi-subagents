@@ -226,6 +226,15 @@ interface ExecutionContextData {
 	parentSessionId: string | null;
 }
 
+function captureLaunchLeafId(sessionManager: ExtensionContext["sessionManager"]): string | undefined {
+	try {
+		const leafId = sessionManager.getBranch().at(-1)?.id;
+		return typeof leafId === "string" && leafId.trim() === leafId && leafId ? leafId : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
 	return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
 }
@@ -1201,6 +1210,7 @@ async function resumeAsyncRun(input: {
 				pi: input.deps.pi,
 				cwd: input.requestCwd,
 				currentSessionId: input.deps.state.currentSessionId,
+				launchLeafId: captureLaunchLeafId(input.ctx.sessionManager),
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				currentModelProvider: input.ctx.model?.provider,
 				currentModel: input.ctx.model,
@@ -1251,6 +1261,7 @@ async function resumeAsyncRun(input: {
 			pi: input.deps.pi,
 			cwd: input.requestCwd,
 			currentSessionId: input.deps.state.currentSessionId,
+			launchLeafId: captureLaunchLeafId(input.ctx.sessionManager),
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			currentModelProvider: input.ctx.model?.provider,
 			currentModel: input.ctx.model,
@@ -1945,6 +1956,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		pi: deps.pi,
 		cwd: ctx.cwd,
 		currentSessionId: deps.state.currentSessionId!,
+		launchLeafId: captureLaunchLeafId(ctx.sessionManager),
 		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 		currentModelProvider: ctx.model?.provider,
 		currentModel: ctx.model,
@@ -2185,6 +2197,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			pi: deps.pi,
 			cwd: ctx.cwd,
 			currentSessionId: deps.state.currentSessionId!,
+			launchLeafId: captureLaunchLeafId(ctx.sessionManager),
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 			currentModelProvider: ctx.model?.provider,
 			currentModel: ctx.model,
@@ -2666,6 +2679,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				pi: deps.pi,
 				cwd: ctx.cwd,
 				currentSessionId: deps.state.currentSessionId!,
+				launchLeafId: captureLaunchLeafId(ctx.sessionManager),
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,
@@ -2987,6 +3001,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				pi: deps.pi,
 				cwd: ctx.cwd,
 				currentSessionId: deps.state.currentSessionId!,
+				launchLeafId: captureLaunchLeafId(ctx.sessionManager),
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				currentModelProvider: ctx.model?.provider,
 				currentModel: ctx.model,

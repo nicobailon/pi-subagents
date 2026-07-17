@@ -105,6 +105,8 @@ interface AsyncExecutionContext {
 	pi: ExtensionAPI;
 	cwd: string;
 	currentSessionId: string;
+	/** Session-tree leaf current when this detached run was launched. */
+	launchLeafId?: string;
 	/** Parent session id used by permission-system ask forwarding. */
 	parentSessionId?: string;
 	currentModelProvider?: string;
@@ -889,6 +891,7 @@ export function executeAsyncChain(
 				sessionDir: sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined,
 				asyncDir,
 				sessionId: ctx.currentSessionId,
+				...(ctx.launchLeafId !== undefined ? { launchLeafId: ctx.launchLeafId } : {}),
 				piPackageRoot,
 				piArgv1: process.argv[1],
 				worktreeSetupHook,
@@ -997,6 +1000,7 @@ export function executeAsyncChain(
 			id,
 			pid: spawnResult.pid,
 			sessionId: ctx.currentSessionId,
+			...(ctx.launchLeafId !== undefined ? { launchLeafId: ctx.launchLeafId } : {}),
 			mode: resultMode,
 			agent: firstAgents[0],
 			agents: flatAgents,
@@ -1212,6 +1216,7 @@ export function executeAsyncSingle(
 				sessionDir: resolvedSessionDir,
 				asyncDir,
 				sessionId: ctx.currentSessionId,
+				...(ctx.launchLeafId !== undefined ? { launchLeafId: ctx.launchLeafId } : {}),
 				piPackageRoot,
 				piArgv1: process.argv[1],
 				worktreeSetupHook,
@@ -1287,6 +1292,7 @@ export function executeAsyncSingle(
 			id,
 			pid: spawnResult.pid,
 			sessionId: ctx.currentSessionId,
+			...(ctx.launchLeafId !== undefined ? { launchLeafId: ctx.launchLeafId } : {}),
 			mode: "single",
 			agent,
 			task: task?.slice(0, 50),

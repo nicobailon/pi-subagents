@@ -266,6 +266,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state,
 		RESULTS_DIR,
 		10 * 60 * 1000,
+		{
+			isLaunchLeafOnCurrentBranch(launchLeafId) {
+				try {
+					return state.lastUiContext?.sessionManager.getBranch().some((entry) => entry.id === launchLeafId) ?? false;
+				} catch {
+					return false;
+				}
+			},
+		},
 	);
 	startResultWatcher();
 	primeExistingResults();
@@ -567,6 +576,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		resetSessionState(ctx);
 		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
+	});
+
+	pi.on("session_tree", (_event, ctx) => {
+		state.lastUiContext = ctx;
+		primeExistingResults();
 	});
 
 	pi.on("session_shutdown", () => {

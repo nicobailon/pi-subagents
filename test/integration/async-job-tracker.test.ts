@@ -167,6 +167,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				mode: "chain",
 				state: "running",
 				sessionId: "session-restored",
+				launchLeafId: "branch-anchor",
 				startedAt: 1000,
 				lastUpdate: 2000,
 				currentStep: 1,
@@ -206,6 +207,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(job);
 			assert.equal(job.status, "running");
 			assert.equal(job.sessionId, "session-restored");
+			assert.equal(job.launchLeafId, "branch-anchor");
 			assert.deepEqual(job.agents, ["reviewer", "worker"]);
 			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [1, 2]);
 			assert.equal(job.stepsTotal, 2);
@@ -527,7 +529,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("repairs started jobs whose runner dies before writing status", async () => {
+	it("retains launch metadata when repairing started jobs whose runner dies before writing status", async () => {
 		const asyncRoot = createTempDir("pi-async-job-no-status-");
 		try {
 			const resultsDir = path.join(asyncRoot, "results");
@@ -548,11 +550,13 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				asyncDir: runDir,
 				pid: 12345,
 				sessionId: "session-current",
+				launchLeafId: "branch-anchor",
 				mode: "parallel",
 				agents: ["scout", "reviewer", "worker"],
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 			});
+			assert.equal(state.asyncJobs.get("run-no-status")?.launchLeafId, "branch-anchor");
 
 			await new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -561,6 +565,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const result = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-no-status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
 			assert.equal(status.sessionId, "session-current");
+			assert.equal(status.launchLeafId, "branch-anchor");
 			assert.equal(status.mode, "parallel");
 			assert.equal(status.currentStep, 0);
 			assert.equal(status.chainStepCount, 1);
@@ -572,6 +577,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			]);
 			assert.equal(result.success, false);
 			assert.equal(result.sessionId, "session-current");
+			assert.equal(result.launchLeafId, "branch-anchor");
 			assert.ok(ui.renderRequests > 0, "expected startup-crash repair cleanup to request a rerender");
 		} finally {
 			removeTempDir(asyncRoot);

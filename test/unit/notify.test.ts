@@ -292,6 +292,23 @@ describe("registerSubagentNotify", () => {
 		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
 	});
 
+	it("sends launch-branch completions immediately instead of holding them in a batch", () => {
+		const clock = createFakeClock();
+		const { events, sent } = createBatchingPi(clock);
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({
+			id: "anchored-1",
+			agent: "alpha",
+			summary: "alpha done",
+			launchLeafId: "branch-anchor",
+		}));
+
+		assert.equal(sent.length, 1);
+		assert.match((sent[0]!.message as { content: string }).content, /^Background task completed: \*\*alpha\*\*/);
+		clock.advance(1000);
+		assert.equal(sent.length, 1, "the branch-scoped completion must not be emitted again by a pending batch");
+	});
+
 	it("ignores successes from other sessions instead of grouping them", () => {
 		const clock = createFakeClock();
 		const { events, sent } = createBatchingPi(clock, "session-a");

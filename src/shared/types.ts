@@ -793,6 +793,7 @@ export interface AsyncStartedEvent {
 	asyncDir?: string;
 	pid?: number;
 	sessionId?: string;
+	launchLeafId?: string;
 	mode?: SubagentRunMode;
 	agent?: string;
 	agents?: string[];
@@ -814,6 +815,7 @@ export interface AsyncStatus {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
 	sessionId?: string;
+	launchLeafId?: string;
 	mode: SubagentRunMode;
 	isNested?: boolean;
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
@@ -910,6 +912,7 @@ export interface AsyncJobState {
 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	pid?: number;
 	sessionId?: string;
+	launchLeafId?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;

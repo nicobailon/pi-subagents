@@ -211,6 +211,79 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("retries retained branch-scoped results after session-tree navigation", () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-tree-"));
+		try {
+			const script = String.raw`
+				import * as fs from "node:fs";
+				import * as path from "node:path";
+				import registerSubagentExtension from "./index.ts";
+				import { RESULTS_DIR } from "./src/shared/types.ts";
+				const eventHandlers = new Map();
+				const lifecycleHandlers = new Map();
+				const emitted = [];
+				const events = {
+					on(channel, handler) {
+						const handlers = eventHandlers.get(channel) ?? [];
+						handlers.push(handler);
+						eventHandlers.set(channel, handlers);
+						return () => eventHandlers.set(channel, (eventHandlers.get(channel) ?? []).filter((candidate) => candidate !== handler));
+					},
+					emit(channel, data) {
+						emitted.push({ channel, data });
+						for (const handler of eventHandlers.get(channel) ?? []) handler(data);
+					},
+				};
+				const fakePi = new Proxy({
+					events,
+					on(channel, handler) {
+						const handlers = lifecycleHandlers.get(channel) ?? [];
+						handlers.push(handler);
+						lifecycleHandlers.set(channel, handlers);
+					},
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const fire = async (channel, event, ctx) => {
+					for (const handler of lifecycleHandlers.get(channel) ?? []) await handler(event, ctx);
+				};
+				const makeCtx = (branch) => ({
+					cwd: process.cwd(), hasUI: true,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager: {
+						getSessionId() { return "session-tree"; }, getSessionFile() { return null; }, getEntries() { return []; },
+						getBranch() { return branch.map((id) => ({ id })); },
+					},
+					modelRegistry: { getAvailable() { return []; } },
+				});
+				const startCtx = makeCtx(["root", "sibling"]);
+				const treeCtx = makeCtx(["root", "anchor"]);
+				registerSubagentExtension(fakePi);
+				const resultPath = path.join(RESULTS_DIR, "branch-result.json");
+				fs.writeFileSync(resultPath, JSON.stringify({ id: "branch-result", sessionId: "session-tree", launchLeafId: "anchor", agent: "worker", success: true, summary: "done" }), "utf-8");
+				await fire("session_start", {}, startCtx);
+				await new Promise((resolve) => setTimeout(resolve, 120));
+				if (emitted.some((entry) => entry.channel === "subagent:async-complete")) throw new Error("sibling branch received retained result");
+				if (!fs.existsSync(resultPath)) throw new Error("ineligible result was consumed");
+				await fire("session_tree", {}, treeCtx);
+				const deadline = Date.now() + 1000;
+				while (!emitted.some((entry) => entry.channel === "subagent:async-complete")) {
+					if (Date.now() > deadline) throw new Error("session_tree did not retry retained result");
+					await new Promise((resolve) => setTimeout(resolve, 10));
+				}
+				if (fs.existsSync(resultPath)) throw new Error("eligible result was not consumed");
+				await fire("session_shutdown", {}, treeCtx);
+			`;
+			const env = parentToolEnv();
+			env.TMPDIR = tmpDir;
+			env.TMP = tmpDir;
+			env.TEMP = tmpDir;
+			execFileSync(process.execPath, ["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

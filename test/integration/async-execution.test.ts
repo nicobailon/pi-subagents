@@ -32,6 +32,7 @@ interface AsyncResultPayload {
 	state?: string;
 	exitCode?: number;
 	sessionId?: string;
+	launchLeafId?: string;
 	mode?: string;
 	summary?: string;
 	error?: string;
@@ -51,6 +52,7 @@ interface AsyncResultPayload {
 interface AsyncStatusPayload {
 	lifecycleArtifactVersion?: number;
 	sessionId?: string;
+	launchLeafId?: string;
 	activityState?: string;
 	currentTool?: string;
 	currentPath?: string;
@@ -369,7 +371,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "worker",
 			task: "Exercise child protocol",
 			agentConfig: makeAgent("worker", { completionGuard: false }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1", launchLeafId: "launch-leaf" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
 			sessionRoot: path.join(tempDir, "sessions"),
@@ -390,8 +392,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-protocol-utf8-${Date.now().toString(36)}`;
 		launchProtocolTest(id);
 		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
+		assert.equal(status.launchLeafId, "launch-leaf");
+		assert.equal(payload.launchLeafId, "launch-leaf");
 	});
 
 	it("background fails with protocol_output_limit for an oversized stdout line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

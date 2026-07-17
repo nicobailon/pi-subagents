@@ -14,6 +14,7 @@ interface StartedRunMetadata {
 	runId: string;
 	pid?: number;
 	sessionId?: string;
+	launchLeafId?: string;
 	mode?: SubagentRunMode;
 	agents?: string[];
 	chainStepCount?: number;
@@ -193,6 +194,7 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 	return {
 		runId: startedRun.runId || path.basename(asyncDir),
 		...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
+		...(startedRun.launchLeafId !== undefined ? { launchLeafId: startedRun.launchLeafId } : {}),
 		mode: startedRun.mode ?? "single",
 		state: "running",
 		pid: startedRun.pid,
@@ -262,6 +264,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			durationMs: Math.max(0, now - status.startedAt),
 			asyncDir,
 			sessionId: status.sessionId,
+			...(status.launchLeafId !== undefined ? { launchLeafId: status.launchLeafId } : {}),
 			sessionFile: status.sessionFile,
 		},
 	};
