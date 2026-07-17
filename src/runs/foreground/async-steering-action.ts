@@ -20,6 +20,8 @@ export async function steerAsyncRun(input: {
 	signal?: AbortSignal;
 	ackTimeoutMs?: number;
 	recoveryTimeoutMs?: number;
+	onRequestQueued?: (requestPath: string) => void;
+	onBeforeRecoveryClaim?: (requestId: string, committedAt: number) => void;
 	onRecoveryCommitted?: (requestId: string, committedAt: number) => void;
 	recover?: (limits: { timeoutMs?: number; absoluteDeadlineAt?: number; turnBudget?: TurnBudgetConfig; toolBudget?: ToolBudgetConfig }) => Promise<AgentToolResult<Details>>;
 }): Promise<AgentToolResult<Details>> {
@@ -86,8 +88,9 @@ export async function steerAsyncRun(input: {
 		};
 	}
 	const requestId = randomUUID();
+	let requestPath: string;
 	try {
-		requestAsyncSteer(asyncDir, {
+		requestPath = requestAsyncSteer(asyncDir, {
 			message: input.message,
 			...(effectiveTargetIndex !== undefined ? { targetIndex: effectiveTargetIndex } : { targetIndexes }),
 			source: "steer-action",
@@ -100,6 +103,7 @@ export async function steerAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+	input.onRequestQueued?.(requestPath);
 	const tracked = input.state.asyncJobs.get(status.runId);
 	if (tracked) tracked.updatedAt = Date.now();
 	const targets = targetIndexes.map((index) => ({ index, state: status.steps?.[index]?.status === "pending" ? "scheduled" as const : "pending" as const }));
@@ -132,6 +136,7 @@ export async function steerAsyncRun(input: {
 			const latestResult = latest?.steering ? actionResultFromSteeringStatus(latest.steering, status.runId, requestId) : undefined;
 			if (latestResult?.state === "delivered") return { content: [{ type: "text", text: `Steering delivered for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: latestResult } };
 			const committedAt = Date.now();
+			input.onBeforeRecoveryClaim?.(requestId, committedAt);
 			const { claimPath, markerPath } = claimSteeringRecovery(asyncDir, { requestId, sourceRunId: status.runId, committedAt });
 			input.onRecoveryCommitted?.(requestId, committedAt);
 			const preCommitStatus = readStatus(asyncDir);
