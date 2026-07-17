@@ -130,11 +130,35 @@ describe("compact human message formatting", () => {
 		assert.doesNotMatch(expanded, /subagent\s*\(|intercom target|internal-worker-channel|action: "(?:status|interrupt)"/i);
 	});
 
+	it("prefers complete structured control fields over lossy legacy summaries", () => {
+		const details = {
+			label: "Implement API",
+			role: "worker",
+			logicalStep: 2,
+			totalSteps: 4,
+			event: controlEvent({
+				message: "First observed line.\nSecond observed line.",
+				recentFailureSummary: "First failure line.\nSecond failure line.",
+			}),
+		};
+		const legacyContent = [
+			"Signal: Truncated legacy observation",
+			"Recent failures: Truncated legacy failure",
+		].join("\n");
+
+		const expanded = formatHumanControlNotice(details, true, "Ctrl+O", legacyContent);
+
+		assert.match(expanded, /Observed: First observed line\.\nSecond observed line\./);
+		assert.match(expanded, /Recent failures: First failure line\.\nSecond failure line\./);
+		assert.doesNotMatch(expanded, /Truncated legacy/);
+	});
+
 	it("renders supervisor requests compactly and expands the complete question and interview", () => {
 		const details = supervisorDetails({
 			reason: "interview_request",
 			interview: {
 				title: "Compatibility choice",
+				action: "choose release strategy",
 				questions: [{ id: "status", choices: [404, 410] }],
 			},
 		});
@@ -148,7 +172,7 @@ describe("compact human message formatting", () => {
 		assert.doesNotMatch(collapsed, /compatibility contract|Compatibility choice|Choices/);
 		assert.match(expanded, /Reply required/);
 		assert.match(expanded, /Should the API return 404 or 410\?\nThe compatibility contract is ambiguous\./);
-		assert.match(expanded, /Structured interview:\nTitle: Compatibility choice/);
+		assert.match(expanded, /Structured interview:\nTitle: Compatibility choice\nAction: choose release strategy/);
 		assert.match(expanded, /Questions:\n  - Id: status\n    Choices:\n      - 404\n      - 410/);
 	});
 
