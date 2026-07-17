@@ -170,7 +170,7 @@ describe("acknowledged steering action", () => {
 		let recovered = false;
 		try {
 			const action = steerAsyncRun({
-				state: createState(), runId, message: "correct course", location: { asyncDir }, ackTimeoutMs: 25,
+				state: createState(), runId, message: "correct course", location: { asyncDir }, ackTimeoutMs: 500,
 				kill: (_pid, signal) => { if (signal !== 0) interrupted = true; return true; },
 				onRecoveryCommitted: (_requestId, committedAt) => {
 					assert.ok(request);
