@@ -439,6 +439,7 @@ Skip this section until you want exact syntax.
 | `/parallel agent1 "task1" -> agent2 "task2"` | Run agents in parallel |
 | `/run-chain <chainName> -- <task>` | Launch a saved `.chain.md` or `.chain.json` workflow |
 | `/subagent-cost` | Show parent plus child subagent token usage and cost for this session |
+| `/subagents [agent] [model\|thinking\|prompt\|details]` | Interactively inspect or edit an agent's model, thinking level, or system prompt |
 | `/subagents-doctor` | Show read-only setup diagnostics |
 | `/subagents-models [agent]` | Show the runtime-loaded builtin model mapping, optionally filtered to one builtin |
 | `/subagents-watchdog [status|on|off|recommend-model|model ...|session model ...|check]` | Show or configure the opt-in watchdog; use a strong complementary model such as Opus 4.8 high or GPT 5.5 high |
@@ -449,6 +450,8 @@ Skip this section until you want exact syntax.
 | `/subagents-check-profile <name>` | Check a saved profile against the current registry and live model probes |
 
 Commands validate agent names locally, support tab completion, and send results back into the conversation.
+
+`/subagents` opens a compact administration flow for builtin, package, user, and project agents. Model choices refresh Pi's model registry first, thinking choices are filtered to levels declared by the selected model, and prompt editing uses a blocking `$VISUAL`/`$EDITOR` command (with MarkEdit as the macOS fallback). Full metadata is opt-in through `details`. Edits are persisted to the field-owning layer: explicit custom-agent frontmatter remains in the agent file, while settings/profile-managed fields remain in `settings.subagents.agentOverrides`. Package-owned fields and definitions loaded through `PI_SUBAGENT_EXTRA_AGENT_DIRS` stay read-only; settings can still supply model or thinking fields omitted by a package definition.
 
 ### Profiles and provider model catalogs
 

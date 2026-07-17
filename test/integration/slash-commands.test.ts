@@ -142,10 +142,16 @@ function createCommandContext(
 		custom: (...args: unknown[]) => Promise<unknown>;
 		notify: (message: string, type?: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
+		select: (title: string, choices: string[]) => Promise<string | undefined>;
 		setStatus: (key: string, text: string | undefined) => void;
 		setToolsExpanded: (expanded: boolean) => void;
 		sessionManager: unknown;
-		modelRegistry: { getAvailable: () => Array<{ provider: string; id: string }>; find?: (provider: string, id: string) => unknown; hasConfiguredAuth?: (model: unknown) => boolean };
+		modelRegistry: {
+			refresh?: () => void;
+			getAvailable: () => Array<{ provider: string; id: string; reasoning?: boolean; thinkingLevelMap?: Record<string, string | null> }>;
+			find?: (provider: string, id: string) => unknown;
+			hasConfiguredAuth?: (model: unknown) => boolean;
+		};
 		model: { provider: string; id: string };
 		thinkingLevel: string;
 	}> = {},
@@ -156,6 +162,7 @@ function createCommandContext(
 		ui: {
 			notify: overrides.notify ?? ((_message: string) => {}),
 			confirm: overrides.confirm ?? (async () => false),
+			select: overrides.select ?? (async () => undefined),
 			setStatus: overrides.setStatus ?? ((_key: string, _text: string | undefined) => {}),
 			setToolsExpanded: overrides.setToolsExpanded ?? ((_expanded: boolean) => {}),
 			onTerminalInput: () => () => {},
@@ -1500,6 +1507,526 @@ describe("subagent profiles slash commands", { skip: !available ? "slash-command
 		});
 	});
 });
+
+describe("subagents admin slash command", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
+	beforeEach(() => {
+		clearSlashSnapshots?.();
+	});
+
+	function registerAdmin(sent: unknown[]) {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const pi = {
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		};
+		registerSlashCommands!(pi, createState(process.cwd()));
+		return commands;
+	}
+
+	it("registers /subagents", async () => {
+		await withIsolatedHome(async () => {
+			const commands = registerAdmin([]);
+			assert.equal(commands.has("subagents"), true);
+		});
+	});
+
+	it("treats agent and scope selector cancellation as a silent no-op", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-cancel-", async (root) => {
+				const sent: unknown[] = [];
+				const notifications: string[] = [];
+				const commands = registerAdmin(sent);
+
+				await commands.get("subagents")!.handler("", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					select: async () => undefined,
+					notify: (message) => notifications.push(message),
+				}));
+
+				await commands.get("subagents")!.handler("worker model", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					modelRegistry: { getAvailable: () => [{ provider: "test", id: "new-model", reasoning: true }] },
+					select: async (title) => title.startsWith("Select model") ? "test/new-model" : undefined,
+					notify: (message) => notifications.push(message),
+				}));
+
+				assert.deepEqual(sent, []);
+				assert.deepEqual(notifications, []);
+				assert.equal(fs.existsSync(path.join(root, ".pi", "settings.json")), false);
+			});
+		});
+	});
+
+	it("reports duplicate names as ambiguous without UI", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-ambiguous-", async (root) => {
+				fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "---\nname: worker\ndescription: Project worker\n---\n\nWork.\n", "utf-8");
+				const sent: unknown[] = [];
+				const commands = registerAdmin(sent);
+				await commands.get("subagents")!.handler("worker", createCommandContext({ cwd: root }));
+				assert.equal(sent.length, 1);
+				const content = (sent[0] as { content?: string }).content ?? "";
+				assert.match(content, /Subagent 'worker' is ambiguous/);
+				assert.match(content, /project:/);
+				assert.match(content, /builtin:/);
+			});
+		});
+	});
+
+	it("keeps same-source duplicate agents distinct in interactive pickers", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-same-source-", async (root) => {
+				const localPath = path.join(process.env.PI_CODING_AGENT_DIR!, "agents", "duplicate-admin-agent.md");
+				const extraDir = path.join(root, "extra-agents");
+				const extraPath = path.join(extraDir, "duplicate-admin-agent.md");
+				fs.mkdirSync(path.dirname(localPath), { recursive: true });
+				fs.mkdirSync(extraDir, { recursive: true });
+				const frontmatter = "---\nname: duplicate-admin-agent\ndescription: Duplicate agent\nmodel: test/model\n---\n\n";
+				fs.writeFileSync(localPath, `${frontmatter}Local prompt.\n`, "utf-8");
+				fs.writeFileSync(extraPath, `${frontmatter}Extra prompt.\n`, "utf-8");
+				const previousExtraDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+				process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = extraDir;
+				try {
+					const sent: unknown[] = [];
+					const commands = registerAdmin(sent);
+					await commands.get("subagents")!.handler("duplicate-admin-agent details", createCommandContext({
+						cwd: root,
+						hasUI: true,
+						select: async (_title, choices) => {
+							assert.equal(choices.length, 2);
+							assert.ok(choices.some((choice) => choice.includes(localPath)));
+							assert.ok(choices.some((choice) => choice.includes(extraPath)));
+							return choices.find((choice) => choice.includes(localPath));
+						},
+					}));
+					const content = (sent[0] as { content?: string }).content ?? "";
+					assert.ok(content.split("\n").includes(`Path: ${localPath}`));
+				} finally {
+					if (previousExtraDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+					else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraDirs;
+				}
+			});
+		});
+	});
+
+	it("updates a project agent model without dumping metadata first", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-model-", async (root) => {
+			const agentPath = path.join(root, ".pi", "agents", "worker.md");
+			fs.writeFileSync(agentPath, `---\nname: worker\ndescription: Test worker\nmodel: anthropic/claude-sonnet-4-6\n---\n\nDo work.\n`, "utf-8");
+			const sent: unknown[] = [];
+			const commands = registerAdmin(sent);
+			let refreshes = 0;
+			await commands.get("subagents")!.handler("worker model", createCommandContext({
+				cwd: root,
+				hasUI: true,
+				modelRegistry: {
+					refresh: () => { refreshes++; },
+					getAvailable: () => [{ provider: "bluebox-azure-openai", id: "gpt-5_6-sol", reasoning: true }],
+				},
+				select: async (_title, choices) => {
+					const projectAgent = choices.find((choice) => choice.startsWith("worker [project]"));
+					if (projectAgent) return projectAgent;
+					assert.ok(choices.includes("bluebox-azure-openai/gpt-5_6-sol"));
+					return "bluebox-azure-openai/gpt-5_6-sol";
+				},
+			}));
+
+			assert.equal(refreshes, 1);
+			assert.match(fs.readFileSync(agentPath, "utf-8"), /^model: bluebox-azure-openai\/gpt-5_6-sol$/m);
+			assert.equal(sent.length, 1, "only the compact confirmation should enter the conversation");
+			assert.match((sent[0] as { content?: string }).content ?? "", /Updated 'worker' model/);
+			});
+		});
+	});
+
+	it("updates a profile-managed user agent through settings instead of pinning frontmatter", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-profile-", async (root) => {
+				const userAgentDir = path.join(process.env.HOME!, ".pi", "agent", "agents");
+				fs.mkdirSync(userAgentDir, { recursive: true });
+				const agentPath = path.join(userAgentDir, "worker.md");
+				fs.writeFileSync(agentPath, `---\nname: worker\ndescription: Profile worker\n---\n\nDo work.\n`, "utf-8");
+				const settingsPath = path.join(process.env.HOME!, ".pi", "agent", "settings.json");
+				fs.writeFileSync(settingsPath, JSON.stringify({
+					subagents: { disableBuiltins: true, agentOverrides: { worker: { model: "anthropic/claude-opus-4-8" } } },
+				}, null, 2));
+
+				const sent: unknown[] = [];
+				const commands = registerAdmin(sent);
+				await commands.get("subagents")!.handler("worker model", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					modelRegistry: { getAvailable: () => [{ provider: "bluebox-azure-openai", id: "gpt-5_6-luna", reasoning: true }] },
+					select: async (_title, choices) =>
+						choices.find((choice) => choice.startsWith("worker [user]"))
+						?? "bluebox-azure-openai/gpt-5_6-luna",
+				}));
+
+				assert.doesNotMatch(fs.readFileSync(agentPath, "utf-8"), /^model:/m);
+				const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+				assert.equal(settings.subagents.disableBuiltins, true);
+				assert.equal(settings.subagents.agentOverrides.worker.model, "bluebox-azure-openai/gpt-5_6-luna");
+			});
+		});
+	});
+
+	it("does not snapshot global disableThinking into an unrelated builtin override", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-global-thinking-", async (root) => {
+				const settingsPath = path.join(process.env.PI_CODING_AGENT_DIR!, "settings.json");
+				fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+				fs.writeFileSync(settingsPath, JSON.stringify({ subagents: { disableThinking: true } }, null, 2), "utf-8");
+				const commands = registerAdmin([]);
+				await commands.get("subagents")!.handler("worker model", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					modelRegistry: { getAvailable: () => [{ provider: "test", id: "new-model", reasoning: true }] },
+					select: async () => "test/new-model",
+				}));
+
+				assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")).subagents, {
+					disableThinking: true,
+					agentOverrides: { worker: { model: "test/new-model" } },
+				});
+			});
+		});
+	});
+
+	it("offers and saves max thinking only when model metadata declares it", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-thinking-", async (root) => {
+			const settingsPath = path.join(process.env.PI_CODING_AGENT_DIR!, "settings.json");
+			fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+			fs.writeFileSync(settingsPath, JSON.stringify({
+				subagents: { agentOverrides: { worker: { model: "anthropic/claude-opus-4-8", thinking: "high" } } },
+			}, null, 2));
+			const agentPath = path.join(root, ".pi", "agents", "worker.md");
+			fs.writeFileSync(agentPath, `---\nname: worker\ndescription: Test worker\nmodel: bluebox-azure-openai/gpt-5_6-sol\n---\n\nDo work.\n`, "utf-8");
+			const commands = registerAdmin([]);
+			await commands.get("subagents")!.handler("worker thinking", createCommandContext({
+				cwd: root,
+				hasUI: true,
+				modelRegistry: {
+					getAvailable: () => [{
+						provider: "bluebox-azure-openai",
+						id: "gpt-5_6-sol",
+						reasoning: true,
+						thinkingLevelMap: { minimal: null, xhigh: "xhigh", max: "max" },
+					}],
+				},
+				select: async (_title, choices) => {
+					const projectAgent = choices.find((choice) => choice.startsWith("worker [project]"));
+					if (projectAgent) return projectAgent;
+					assert.ok(choices.includes("max"));
+					assert.equal(choices.includes("minimal"), false);
+					return "max";
+				},
+			}));
+				assert.match(fs.readFileSync(agentPath, "utf-8"), /^thinking: max$/m);
+				assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")).subagents.agentOverrides.worker, {
+					model: "anthropic/claude-opus-4-8",
+					thinking: "high",
+				});
+			});
+		});
+	});
+
+	it("uses the inherited session model's thinking capabilities and warns on refresh failure", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-inherited-thinking-", async (root) => {
+				fs.writeFileSync(path.join(root, ".pi", "agents", "auditor.md"), "---\nname: auditor\ndescription: Audit things\n---\n\nAudit.\n", "utf-8");
+				const notifications: Array<{ message: string; type?: string }> = [];
+				const commands = registerAdmin([]);
+				await commands.get("subagents")!.handler("auditor thinking", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					model: { provider: "test", id: "plain-model" },
+					modelRegistry: {
+						refresh: () => { throw new Error("invalid models.json"); },
+						getAvailable: () => [{ provider: "test", id: "plain-model", reasoning: false }],
+					},
+					select: async (title, choices) => {
+						assert.match(title, /Session model: test\/plain-model/);
+						assert.deepEqual(choices, ["Default / inherit session thinking", "off"]);
+						return undefined;
+					},
+					notify: (message, type) => notifications.push({ message, type }),
+				}));
+
+				assert.equal(notifications.length, 1);
+				assert.equal(notifications[0]?.type, "warning");
+				assert.match(notifications[0]?.message ?? "", /using the last loaded choices.*invalid models\.json/);
+			});
+		});
+	});
+
+	it("does not pin inherited settings when editing a project-owned field", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-cross-scope-", async (root) => {
+				const agentPath = path.join(root, ".pi", "agents", "worker.md");
+				fs.writeFileSync(agentPath, "---\nname: worker\ndescription: Test worker\n---\n\nDo work.\n", "utf-8");
+				const settingsPath = path.join(process.env.HOME!, ".pi", "agent", "settings.json");
+				fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+				fs.writeFileSync(settingsPath, JSON.stringify({
+					subagents: { agentOverrides: { worker: { thinking: "high" } } },
+				}, null, 2));
+
+				const commands = registerAdmin([]);
+				await commands.get("subagents")!.handler("worker model", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					modelRegistry: { getAvailable: () => [{ provider: "bluebox-azure-openai", id: "gpt-5_6-sol", reasoning: true }] },
+					select: async (_title, choices) => {
+						const projectAgent = choices.find((choice) => choice.startsWith("worker [project]"));
+						if (projectAgent) return projectAgent;
+						assert.ok(choices.includes("bluebox-azure-openai/gpt-5_6-sol"));
+						return "bluebox-azure-openai/gpt-5_6-sol";
+					},
+				}));
+
+				const updated = fs.readFileSync(agentPath, "utf-8");
+				assert.match(updated, /^model: bluebox-azure-openai\/gpt-5_6-sol$/m);
+				assert.doesNotMatch(updated, /^thinking:/m);
+				assert.doesNotMatch(updated, /^systemPromptMode:/m);
+				assert.doesNotMatch(updated, /^inheritProjectContext:/m);
+				assert.equal(JSON.parse(fs.readFileSync(settingsPath, "utf-8")).subagents.agentOverrides.worker.thinking, "high");
+			});
+		});
+	});
+
+	it("does not write definitions from PI_SUBAGENT_EXTRA_AGENT_DIRS", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-extra-", async (root) => {
+				const extraDir = path.join(root, "extra-agents");
+				const agentPath = path.join(extraDir, "worker.md");
+				fs.mkdirSync(extraDir, { recursive: true });
+				const original = "---\nname: worker\ndescription: Read-only worker\nmodel: anthropic/claude-sonnet-4-6\n---\n\nDo work.\n";
+				fs.writeFileSync(agentPath, original, "utf-8");
+				const previousExtraDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+				process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = extraDir;
+				try {
+					const commands = registerAdmin([]);
+					await commands.get("subagents")!.handler("worker model", createCommandContext({
+						cwd: root,
+						hasUI: true,
+						modelRegistry: { getAvailable: () => [{ provider: "bluebox-azure-openai", id: "gpt-5_6-sol", reasoning: true }] },
+						select: async (_title, choices) =>
+							choices.find((choice) => choice.startsWith("worker [user]"))
+							?? "bluebox-azure-openai/gpt-5_6-sol",
+					}));
+					assert.equal(fs.readFileSync(agentPath, "utf-8"), original);
+				} finally {
+					if (previousExtraDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+					else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraDirs;
+				}
+			});
+		});
+	});
+
+	it("respects package-owned fields and uses settings only for unset package fields", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-package-", async (root) => {
+				const packageRoot = path.join(root, ".pi", "npm", "node_modules", "admin-package");
+				const agentPath = path.join(packageRoot, "agents", "package-admin-agent.md");
+				fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+				fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({
+					name: "admin-package",
+					"pi-subagents": { agents: ["./agents"] },
+				}), "utf-8");
+				const original = "---\nname: package-admin-agent\ndescription: Package agent\nmodel: test/original\n---\n\nPackage prompt.\n";
+				fs.writeFileSync(agentPath, original, "utf-8");
+				const settingsPath = path.join(root, ".pi", "settings.json");
+				fs.writeFileSync(settingsPath, JSON.stringify({
+					subagents: { agentOverrides: { "package-admin-agent": { thinking: "low" } } },
+				}, null, 2), "utf-8");
+
+				const sent: unknown[] = [];
+				const commands = registerAdmin(sent);
+				await commands.get("subagents")!.handler("package-admin-agent model", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					modelRegistry: { getAvailable: () => [{ provider: "test", id: "replacement", reasoning: true }] },
+					select: async () => "test/replacement",
+				}));
+				await commands.get("subagents")!.handler("package-admin-agent prompt", createCommandContext({
+					cwd: root,
+					hasUI: true,
+				}));
+
+				assert.equal(fs.readFileSync(agentPath, "utf-8"), original);
+				assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")).subagents.agentOverrides, {
+					"package-admin-agent": { thinking: "low" },
+				});
+				assert.match((sent[0] as { content?: string }).content ?? "", /model.*read-only package definition/);
+				assert.match((sent[1] as { content?: string }).content ?? "", /systemPrompt.*read-only package definition/);
+
+				const configurablePath = path.join(packageRoot, "agents", "configurable-package-agent.md");
+				const configurable = "---\nname: configurable-package-agent\ndescription: Configurable package agent\n---\n\nPackage prompt.\n";
+				fs.writeFileSync(configurablePath, configurable, "utf-8");
+				await commands.get("subagents")!.handler("configurable-package-agent model", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					modelRegistry: { getAvailable: () => [{ provider: "test", id: "replacement", reasoning: true }] },
+					select: async (title) => title.startsWith("Select model") ? "test/replacement" : "project",
+				}));
+				assert.equal(fs.readFileSync(configurablePath, "utf-8"), configurable);
+				assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")).subagents.agentOverrides, {
+					"package-admin-agent": { thinking: "low" },
+					"configurable-package-agent": { model: "test/replacement" },
+				});
+			});
+		});
+	});
+
+	it("round-trips a system prompt through a quoted external editor command", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-prompt-", async (root) => {
+			const agentPath = path.join(root, ".pi", "agents", "worker.md");
+			fs.writeFileSync(agentPath, `---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n`, "utf-8");
+			const editorDir = path.join(root, "editor fixtures");
+			const editorPath = path.join(editorDir, "edit prompt.cjs");
+			fs.mkdirSync(editorDir, { recursive: true });
+			fs.writeFileSync(editorPath, `const fs = require("node:fs");\nfs.appendFileSync(process.argv[2], "\\nEdited by test.");\n`);
+			const previousEditor = process.env.EDITOR;
+			const previousVisual = process.env.VISUAL;
+			process.env.EDITOR = `"${process.execPath}" "${editorPath}"`;
+			delete process.env.VISUAL;
+			try {
+				const commands = registerAdmin([]);
+				await commands.get("subagents")!.handler("worker prompt", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+				}));
+				assert.match(fs.readFileSync(agentPath, "utf-8"), /Original prompt\.\nEdited by test\./);
+			} finally {
+				if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
+				if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
+			}
+			});
+		});
+	});
+
+	it("launches a quoted Windows .cmd editor", { skip: process.platform !== "win32" }, async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-cmd-editor-", async (root) => {
+				const agentPath = path.join(root, ".pi", "agents", "worker.md");
+				fs.writeFileSync(agentPath, "---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n", "utf-8");
+				const editorDir = path.join(root, "editor fixtures");
+				const editorPath = path.join(editorDir, "edit prompt.cmd");
+				fs.mkdirSync(editorDir, { recursive: true });
+				fs.writeFileSync(editorPath, "@echo off\r\n>>\"%~1\" echo(\r\n>>\"%~1\" echo Edited by cmd.\r\n", "utf-8");
+				const previousEditor = process.env.EDITOR;
+				const previousVisual = process.env.VISUAL;
+				process.env.EDITOR = `"${editorPath}"`;
+				delete process.env.VISUAL;
+				try {
+					const commands = registerAdmin([]);
+					await commands.get("subagents")!.handler("worker prompt", createCommandContext({
+						cwd: root,
+						hasUI: true,
+						select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+					}));
+					assert.match(fs.readFileSync(agentPath, "utf-8"), /Original prompt\.\r?\nEdited by cmd\./);
+				} finally {
+					if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
+					if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
+				}
+			});
+		});
+	});
+
+	it("resolves a bare Windows .bat editor and preserves editor arguments", { skip: process.platform !== "win32" }, async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-bare-editor-", async (root) => {
+				const agentPath = path.join(root, ".pi", "agents", "worker.md");
+				fs.writeFileSync(agentPath, "---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n", "utf-8");
+				const editorDir = path.join(root, "editor-bin");
+				fs.mkdirSync(editorDir, { recursive: true });
+				fs.writeFileSync(path.join(editorDir, "bare-editor.bat"), [
+					"@echo off",
+					"if not \"%~1\"==\"--append\" exit /b 9",
+					">>\"%~2\" echo(",
+					">>\"%~2\" echo Edited by bare bat.",
+					"",
+				].join("\r\n"), "utf-8");
+				const previousEditor = process.env.EDITOR;
+				const previousVisual = process.env.VISUAL;
+				const previousPath = process.env.PATH;
+				const previousPathExt = process.env.PATHEXT;
+				process.env.EDITOR = "bare-editor --append";
+				delete process.env.VISUAL;
+				process.env.PATH = `${editorDir}${path.delimiter}${previousPath ?? ""}`;
+				process.env.PATHEXT = previousPathExt || ".COM;.EXE;.BAT;.CMD";
+				try {
+					const commands = registerAdmin([]);
+					await commands.get("subagents")!.handler("worker prompt", createCommandContext({
+						cwd: root,
+						hasUI: true,
+						select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+					}));
+					assert.match(fs.readFileSync(agentPath, "utf-8"), /Original prompt\.\r?\nEdited by bare bat\./);
+				} finally {
+					if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
+					if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
+					if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+					if (previousPathExt === undefined) delete process.env.PATHEXT; else process.env.PATHEXT = previousPathExt;
+				}
+			});
+		});
+	});
+
+	it("reports a nonzero external editor exit without rewriting the agent", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-editor-failure-", async (root) => {
+				const agentPath = path.join(root, ".pi", "agents", "worker.md");
+				const original = `---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n`;
+				fs.writeFileSync(agentPath, original, "utf-8");
+				const editorPath = path.join(root, "failed-editor.cjs");
+				fs.writeFileSync(editorPath, "process.exitCode = 7;\n", "utf-8");
+				const previousEditor = process.env.EDITOR;
+				const previousVisual = process.env.VISUAL;
+				process.env.EDITOR = `${process.execPath} ${editorPath}`;
+				delete process.env.VISUAL;
+				try {
+					const sent: unknown[] = [];
+					const commands = registerAdmin(sent);
+					await commands.get("subagents")!.handler("worker prompt", createCommandContext({
+						cwd: root,
+						hasUI: true,
+						select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+					}));
+					assert.equal(fs.readFileSync(agentPath, "utf-8"), original);
+					assert.match((sent.at(-1) as { content?: string }).content ?? "", /Failed to update 'worker'.*exited with code 7/);
+				} finally {
+					if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
+					if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
+				}
+			});
+		});
+	});
+
+	it("shows metadata for a named subagent without requiring UI", async () => {
+		await withIsolatedHome(async () => {
+			await withTempProject("pi-subagents-admin-metadata-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "auditor.md"), `---\nname: auditor\ndescription: Audit things\nthinking: false\n---\n\nAudit.\n`, "utf-8");
+			const sent: unknown[] = [];
+			const commands = registerAdmin(sent);
+			await commands.get("subagents")!.handler("auditor", createCommandContext({ cwd: root }));
+			assert.equal(sent.length, 1);
+			const content = (sent[0] as { content?: string }).content ?? "";
+			assert.match(content, /Agent: auditor \(project\)/);
+			assert.match(content, /^Thinking: off$/m);
+			});
+		});
+	});
+});
+
 
 describe("subagents-doctor slash command", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
 	beforeEach(() => {

@@ -201,7 +201,7 @@ function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPa
 	return missing.length ? `Warning: skills not found: ${missing.join(", ")}.` : undefined;
 }
 
-function editableAgentConfig(agent: AgentConfig): AgentConfig {
+export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const base = agent.override?.base;
 	if (!base) return { ...agent };
 
@@ -236,7 +236,7 @@ function readAgentFrontmatterFields(filePath: string): Set<string> {
 	}
 }
 
-function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string, unknown>): Set<string> {
+export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<string, unknown>): Set<string> {
 	const fields = readAgentFrontmatterFields(agent.filePath);
 	const changed = (...names: string[]) => {
 		for (const name of names) fields.delete(name);

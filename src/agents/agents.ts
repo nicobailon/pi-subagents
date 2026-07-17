@@ -891,7 +891,7 @@ function applyBuiltinOverrides(
 	});
 }
 
-function customAgentHasFrontmatterField(agent: AgentConfig, ...fields: string[]): boolean {
+export function agentHasFrontmatterField(agent: AgentConfig, ...fields: string[]): boolean {
 	const frontmatterFields = agentFrontmatterFields.get(agent);
 	return frontmatterFields ? fields.some((field) => frontmatterFields.has(field)) : false;
 }
@@ -914,7 +914,7 @@ function applyCustomAgentOverride(
 		frontmatterFields: string[],
 		value: AgentConfig[K],
 	): void => {
-		if (customAgentHasFrontmatterField(agent, ...frontmatterFields)) return;
+		if (agentHasFrontmatterField(agent, ...frontmatterFields)) return;
 		mutable()[field] = value;
 		anyFilled = true;
 	};
@@ -954,7 +954,7 @@ function applyCustomAgentOverride(
 	if (override.skills !== undefined) {
 		fill("skills", ["skill", "skills"], override.skills === false ? undefined : [...override.skills]);
 	}
-	if (override.tools !== undefined && !customAgentHasFrontmatterField(agent, "tools")) {
+	if (override.tools !== undefined && !agentHasFrontmatterField(agent, "tools")) {
 		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
 		const target = mutable();
 		target.tools = tools;
@@ -977,6 +977,8 @@ function applyCustomAgentOverride(
 
 	if (!anyFilled || !next) return agent;
 	next.override = { ...meta, base: cloneOverrideBase(agent) };
+	const frontmatterFields = agentFrontmatterFields.get(agent);
+	if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 	return next;
 }
 

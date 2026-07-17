@@ -24,6 +24,7 @@ import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
+import { openSubagentsAdmin } from "./subagents-admin.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
 import {
 	applySlashUpdate,
@@ -1154,6 +1155,13 @@ export function registerSlashCommands(
 			fleetOpen = false;
 		}
 	};
+
+	pi.registerCommand("subagents", {
+		description: "Administer subagents: inspect metadata and update models, thinking, or prompts",
+		handler: async (args, ctx) => {
+			await openSubagentsAdmin(pi, ctx, args);
+		},
+	});
 
 	pi.registerCommand("run", {
 		description: "Run a subagent directly: /run agent[output=file] [task] [--bg] [--fork]",
