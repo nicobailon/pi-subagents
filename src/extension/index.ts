@@ -120,30 +120,6 @@ function isSlashResultRunning(result: { details?: Details }): boolean {
 		|| false;
 }
 
-// Drives the inline running-indicator braille animation for foreground subagent
-// results. Foreground runs receive progress only on child events, so the glyph
-// (derived from progress fields) would freeze between events. While a result is
-// running we tick a frame counter + invalidate() every 80ms so renderSubagentResult
-// can blend the frame into runningGlyph and produce a smooth spinner.
-function subagentResultIsRunning(result: { details?: Details }): boolean {
-	return result.details?.progress?.some((entry) => entry.status === "running")
-		|| result.details?.results.some((entry) => entry.progress?.status === "running")
-		|| false;
-}
-
-function ensureSubagentResultAnimation(context: { state: Record<string, unknown>; invalidate?: () => void }): void {
-	const state = context.state as { subagentResultAnimationTimer?: ReturnType<typeof setInterval>; frame?: number };
-	if (state.subagentResultAnimationTimer) return;
-	if (typeof context.invalidate !== "function") return;
-	if (state.frame === undefined) state.frame = 0;
-	state.subagentResultAnimationTimer = setInterval(() => {
-		state.frame = ((state.frame ?? 0) + 1) % 10;
-		try {
-			context.invalidate();
-		} catch {}
-	}, 80);
-}
-
 function isSlashResultError(result: { details?: Details }): boolean {
 	return result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false;
 }
@@ -466,13 +442,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 
 		renderResult(result, options, theme, context) {
-			if (subagentResultIsRunning(result)) {
-				ensureSubagentResultAnimation(context);
-			} else {
-				clearLegacyResultAnimationTimer(context);
-			}
-			const frame = (context.state as { frame?: number } | undefined)?.frame ?? 0;
-			return renderSubagentResult(result, options, theme, frame);
+			clearLegacyResultAnimationTimer(context);
+			return renderSubagentResult(result, options, theme);
 		},
 
 	};

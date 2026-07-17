@@ -115,6 +115,57 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("does not animate foreground results on a timer", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			let registeredTool;
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			if (!registeredTool) throw new Error("tool not registered");
+			let invalidations = 0;
+			let legacyTicks = 0;
+			const context = {
+				state: { subagentResultAnimationTimer: setInterval(() => { legacyTicks += 1; }, 10) },
+				invalidate() { invalidations += 1; },
+			};
+			registeredTool.renderResult({
+				content: [{ type: "text", text: "running" }],
+				details: {
+					mode: "single",
+					results: [{
+						agent: "worker", task: "quiet", exitCode: 0, messages: [],
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+						progress: { status: "running", index: 0, agent: "worker", toolCount: 0, tokens: 0, durationMs: 0 },
+					}],
+				},
+			}, { expanded: false }, { fg(_name, text) { return text; }, bold(text) { return text; } }, context);
+			await new Promise((resolve) => setTimeout(resolve, 120));
+			if (context.state.subagentResultAnimationTimer) clearInterval(context.state.subagentResultAnimationTimer);
+			if (context.state.subagentResultAnimationTimer !== undefined) throw new Error("legacy timer was not cleared");
+			if (legacyTicks !== 0) throw new Error("legacy timer ticked " + legacyTicks + " times");
+			if (invalidations !== 0) throw new Error("foreground result invalidated " + invalidations + " times");
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-transform-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("registers only subagent_wait and honors waitTool disabled config", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
 		try {
