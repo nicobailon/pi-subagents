@@ -136,6 +136,7 @@ function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 		outputName: task.outputName,
 		structured: task.structured,
 		status: "pending",
+		...(task.acceptanceInput !== undefined ? { acceptanceInput: task.acceptanceInput } : {}),
 		...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
 		skills: task.skills,
 		model: task.model,
@@ -156,6 +157,7 @@ function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
 			outputName: step.collect.as,
 			structured: Boolean(step.collect.outputSchema),
 			status: "pending",
+			...(step.acceptanceInput !== undefined ? { acceptanceInput: step.acceptanceInput } : {}),
 			recentTools: [],
 			recentOutput: [],
 		}];

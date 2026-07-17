@@ -1081,25 +1081,22 @@ export function aggregateAcceptanceReport(input: {
 	const blockers = input.results.filter((result) => result.exitCode !== 0 || (result.acceptance ? acceptanceBlocksRun(result.acceptance) : false));
 	const successfulChildren = input.results.length > 0 && blockers.length === 0;
 	const requiredCriteria = input.criteria.filter((criterion) => criterion.severity !== "recommended");
+	const childEvidence = input.results.map((result, index) =>
+		`Child ${index + 1} (${result.agent}): acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
+	);
+	const aggregateNotes = uniqueStrings([input.notes, ...childEvidence]).join("\n");
 	return {
-		criteriaSatisfied: [
-			...requiredCriteria.map((criterion, index) => ({
-				id: normalizedToken(criterion.id),
-				status: successfulChildren ? "satisfied" as const : "not-satisfied" as const,
-				evidence: successfulChildren
-					? index === 0
-						? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.`
-						: "Collected child acceptance evidence for aggregate review."
-					: index === 0
-						? "Dynamic fanout produced no accepted child evidence."
-						: "Dynamic fanout produced no aggregate review evidence.",
-			})),
-			...input.results.map((result, index) => ({
-				id: `child-${index + 1}`,
-				status: result.exitCode === 0 && !(result.acceptance && acceptanceBlocksRun(result.acceptance)) ? "satisfied" as const : "not-satisfied" as const,
-				evidence: `${result.agent}: acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
-			})),
-		],
+		criteriaSatisfied: requiredCriteria.map((criterion, index) => ({
+			id: normalizedToken(criterion.id),
+			status: successfulChildren ? "satisfied" as const : "not-satisfied" as const,
+			evidence: successfulChildren
+				? index === 0
+					? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.`
+					: "Collected child acceptance evidence for aggregate review."
+				: index === 0
+					? "Dynamic fanout produced no accepted child evidence."
+					: "Dynamic fanout produced no aggregate review evidence.",
+		})),
 		changedFiles: uniqueStrings(childReports.flatMap((report) => report.changedFiles ?? [])),
 		testsAddedOrUpdated: uniqueStrings(childReports.flatMap((report) => report.testsAddedOrUpdated ?? [])),
 		commandsRun: childReports.flatMap((report) => report.commandsRun ?? []),
@@ -1110,8 +1107,8 @@ export function aggregateAcceptanceReport(input: {
 		]),
 		noStagedFiles: childReports.length > 0 && childReports.every((report) => report.noStagedFiles === true),
 		reviewFindings: uniqueStrings(childReports.flatMap((report) => report.reviewFindings ?? [])),
-		manualNotes: input.notes ?? `Aggregated acceptance evidence from ${input.results.length} dynamic fanout child run(s).`,
-		notes: input.notes,
+		manualNotes: aggregateNotes || `Aggregated acceptance evidence from ${input.results.length} dynamic fanout child run(s).`,
+		notes: aggregateNotes || input.notes,
 	};
 }
 

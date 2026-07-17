@@ -784,7 +784,7 @@ describe("acceptance gates", () => {
 			const acceptance = resolveEffectiveAcceptance({
 				agentName: "worker",
 				explicit: { report: { criteria: [
-					{ id: "Build Ready", must: "Build is ready" },
+					{ id: "child-1", must: "Build is ready" },
 					{ id: "Tests_Ready", must: "Tests are ready" },
 					{ id: "Docs Ready", must: "Docs are ready" },
 					{ id: "Optional_Note", must: "Optional note exists", severity: "recommended" },
@@ -810,8 +810,8 @@ describe("acceptance gates", () => {
 					},
 				}],
 			});
-			assert.deepEqual(aggregate.criteriaSatisfied?.slice(0, 3).map((criterion) => criterion.id), ["build-ready", "tests-ready", "docs-ready"]);
-			assert.ok(aggregate.criteriaSatisfied?.slice(0, 3).every((criterion) => criterion.status === "satisfied"));
+			assert.deepEqual(aggregate.criteriaSatisfied?.map((criterion) => criterion.id), ["child-1", "tests-ready", "docs-ready"]);
+			assert.ok(aggregate.criteriaSatisfied?.every((criterion) => criterion.status === "satisfied"));
 			assert.deepEqual(aggregate.changedFiles, ["src/file.ts"]);
 			assert.deepEqual(aggregate.validationOutput, ["tests passed"]);
 

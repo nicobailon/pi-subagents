@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -38,6 +38,7 @@ export type AsyncResumeTarget = {
 	model?: string;
 	thinking?: string;
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
+	acceptance?: AcceptanceInput;
 };
 
 interface AsyncResultFile {
@@ -52,7 +53,7 @@ interface AsyncResultFile {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
-	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string }>;
+	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; acceptanceInput?: AcceptanceInput }>;
 }
 
 export interface AsyncRunLocation {
@@ -94,7 +95,9 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const thinking = validateOptionalString(child, "thinking", resultPath, `results[${index}].thinking`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionFile, intercomTarget, model, thinking, ...(typeof success === "boolean" ? { success } : {}) };
+			const acceptanceErrors = validateAcceptanceInput(child.acceptanceInput, `results[${index}].acceptanceInput`);
+			if (acceptanceErrors.length > 0) throw new Error(`Invalid async result file '${resultPath}': ${acceptanceErrors.join(" ")}`);
+			return { agent, sessionFile, intercomTarget, model, thinking, ...(typeof success === "boolean" ? { success } : {}), ...(child.acceptanceInput !== undefined ? { acceptanceInput: child.acceptanceInput as AcceptanceInput } : {}) };
 		});
 	}
 	const success = data.success;
@@ -246,6 +249,8 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 			if (stepRecord.sessionFile !== undefined && typeof stepRecord.sessionFile !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
 			if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
 			if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
+			const acceptanceErrors = validateAcceptanceInput(stepRecord.acceptanceInput, `steps[${index}].acceptanceInput`);
+			if (acceptanceErrors.length > 0) throw new Error(`Invalid async status '${source}': ${acceptanceErrors.join(" ")}`);
 		});
 	}
 }
@@ -441,6 +446,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
 	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
+	const acceptance = statusSteps[index]?.acceptanceInput ?? resultSteps[index]?.acceptanceInput;
 
 	return {
 		kind: "revive",
@@ -453,6 +459,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	};
 }

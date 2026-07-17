@@ -589,29 +589,83 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				lastUpdate: 200,
 				cwd: tempDir,
 				steps: [
-					{ agent: "a", status: "complete", sessionFile: firstSession },
-					{ agent: "b", status: "complete", sessionFile: secondSession, model: "anthropic/claude-sonnet-4", thinking: "high" },
+					{ agent: "a", status: "complete", sessionFile: firstSession, acceptanceInput: false },
+					{
+						agent: "b",
+						status: "complete",
+						sessionFile: secondSession,
+						model: "anthropic/claude-sonnet-4",
+						thinking: "high",
+						acceptanceInput: { verify: [{ id: "parallel-source", command: "node -e \"process.exit(0)\"" }], onFailure: "warn" },
+					},
 				],
 			}, null, 2), "utf-8");
 			const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
 			const result = await executor.execute(
 				"resume-revive-multi",
-				{ action: "resume", id: runId, index: 1, message: "What did b find?" },
+				{ action: "resume", id: runId, index: 1, message: "What did b find?", acceptance: { review: false } },
 				new AbortController().signal,
 				undefined,
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, undefined);
+			assert.equal(result.isError, undefined, result.content[0]?.text);
 			assert.match(result.content[0]?.text ?? "", /Revived async subagent from/);
 			assert.match(result.content[0]?.text ?? "", /Agent: b/);
 			assert.match(result.content[0]?.text ?? "", new RegExp(secondSession.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 			const args = await readMockCallArgs(0);
 			assert.equal(args[args.indexOf("--session") + 1], secondSession);
 			assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4:high");
+			const revivedDir = result.details?.asyncDir;
+			assert.ok(revivedDir);
+			const descriptor = JSON.parse(fs.readFileSync(path.join(revivedDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: unknown };
+			assert.deepEqual(descriptor.acceptance, {
+				verify: [{ id: "parallel-source", command: "node -e \"process.exit(0)\"" }],
+				review: false,
+				onFailure: "warn",
+			});
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("inherits disabled acceptance when reviving a completed async chain child from result metadata", async () => {
+		mockPi.onCall({ output: "revived chain child" });
+		const runId = `resume-revive-chain-${Date.now()}`;
+		const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+		const sessionFile = path.join(tempDir, "chain-child.jsonl");
+		try {
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(resultPath, JSON.stringify({
+				id: runId,
+				runId,
+				sessionId: "session-123",
+				mode: "chain",
+				state: "complete",
+				cwd: tempDir,
+				results: [{ agent: "worker", success: true, sessionFile, acceptanceInput: false }],
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor();
+
+			const revived = await executor.execute(
+				"resume-revive-chain",
+				{ action: "resume", id: runId, message: "Continue without acceptance" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(revived.isError, undefined, revived.content[0]?.text);
+			const revivedDir = revived.details?.asyncDir;
+			const revivedId = revived.details?.asyncId;
+			assert.ok(revivedDir);
+			assert.ok(revivedId);
+			const descriptor = JSON.parse(fs.readFileSync(path.join(revivedDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: unknown };
+			assert.equal(descriptor.acceptance, false);
+			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
+		} finally {
+			fs.rmSync(resultPath, { force: true });
 		}
 	});
 

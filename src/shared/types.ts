@@ -929,6 +929,8 @@ export interface AsyncStatus {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		/** Raw effective input retained for lossless async revival. */
+		acceptanceInput?: AcceptanceInput;
 		watchdog?: ChildWatchdogProgress;
 	}>;
 	sessionDir?: string;

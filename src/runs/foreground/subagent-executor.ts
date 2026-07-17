@@ -1261,7 +1261,9 @@ async function resumeAsyncRun(input: {
 	}
 
 	const runId = randomUUID().slice(0, 8);
-	const recoveredAcceptance = recoveryDescriptor?.acceptance ?? ("acceptance" in target ? target.acceptance : undefined);
+	const recoveredAcceptance = recoveryDescriptor && "acceptance" in recoveryDescriptor
+		? recoveryDescriptor.acceptance
+		: "acceptance" in target ? target.acceptance : undefined;
 	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
