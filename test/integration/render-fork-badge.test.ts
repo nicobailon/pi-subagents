@@ -29,6 +29,20 @@ const theme = {
 
 const emptyUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 
+function nestedChild(id: string, state: "running" | "complete" | "failed" = "running") {
+	return {
+		id,
+		parentRunId: "root",
+		parentStepIndex: 0,
+		depth: 1,
+		path: [{ runId: "root", stepIndex: 0, agent: "owner" }],
+		state,
+		agent: id,
+		lastUpdate: 1_700_000_002_000,
+		...(state === "running" ? { currentTool: "bash" } : {}),
+	};
+}
+
 function firstGrapheme(text: string): string {
 	return Array.from(text.trimStart())[0] ?? "";
 }
@@ -50,6 +64,76 @@ function withTerminalWidth<T>(columns: number, fn: () => T): T {
 }
 
 describe("renderSubagentResult fork indicator", () => {
+	it("renders result-owned nested children for foreground single, parallel, and chain runs", () => {
+		const cases = [
+			{
+				mode: "single" as const,
+				results: [{ agent: "single", task: "run", exitCode: 0, messages: [], usage: emptyUsage, children: [nestedChild("single-child")] }],
+			},
+			{
+				mode: "parallel" as const,
+				totalSteps: 2,
+				results: [
+					{ agent: "parallel-a", task: "run", exitCode: 0, messages: [], usage: emptyUsage, progress: { status: "running", index: 0, agent: "parallel-a", toolCount: 0, tokens: 0, durationMs: 0 }, children: [nestedChild("parallel-child-a")] },
+					{ agent: "parallel-b", task: "run", exitCode: 0, messages: [], usage: emptyUsage, progress: { status: "running", index: 1, agent: "parallel-b", toolCount: 0, tokens: 0, durationMs: 0 }, children: [nestedChild("parallel-child-b")] },
+				],
+			},
+			{
+				mode: "chain" as const,
+				chainAgents: ["chain-a", "chain-b"],
+				results: [
+					{ agent: "chain-a", task: "run", exitCode: 0, messages: [], usage: emptyUsage, progress: { status: "running", index: 0, agent: "chain-a", toolCount: 0, tokens: 0, durationMs: 0 }, children: [nestedChild("chain-child-a")] },
+					{ agent: "chain-b", task: "run", exitCode: 0, messages: [], usage: emptyUsage, progress: { status: "running", index: 1, agent: "chain-b", toolCount: 0, tokens: 0, durationMs: 0 }, children: [nestedChild("chain-child-b")] },
+				],
+			},
+		];
+
+		for (const details of cases) {
+			const widget = renderSubagentResult!({ content: [{ type: "text", text: "running" }], details }, { expanded: true }, theme);
+			const text = widget.render(160).join("\n");
+			for (const result of details.results) {
+				assert.match(text, new RegExp(`${result.children[0].id} · running`));
+			}
+		}
+	});
+
+	it("renders result-owned nested children for terminal foreground results", () => {
+		const widget = renderSubagentResult!({
+			content: [{ type: "text", text: "failed" }],
+			details: {
+				mode: "parallel",
+				totalSteps: 1,
+				results: [{
+					agent: "owner",
+					task: "run",
+					exitCode: 1,
+					error: "failed",
+					messages: [],
+					usage: emptyUsage,
+					children: [nestedChild("terminal-child", "failed")],
+				}],
+			},
+		}, { expanded: true }, theme);
+
+		assert.match(widget.render(160).join("\n"), /terminal-child · failed/);
+
+		const compact = renderSubagentResult!({
+			content: [{ type: "text", text: "done" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "owner",
+					task: "run",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					children: [nestedChild("compact-terminal-child", "complete")],
+				}],
+			},
+		}, { expanded: false }, theme).render(160).join("\n");
+		assert.match(compact, /↳ \[\d{2}:\d{2}:\d{2}\] \+1 nested run \(1 complete\)/);
+		assert.doesNotMatch(compact, /compact-terminal-child · complete/);
+	});
 	it("shows [fork] when details are empty but context is fork", () => {
 		const widget = renderSubagentResult!({
 			content: [{ type: "text", text: "Async: reviewer [abc123]" }],
@@ -58,6 +142,37 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const text = widget.render(120).join("\n");
 		assert.match(text, /\[fork\]/);
+	});
+
+	it("shows nested foreground children with timestamps on running single results", () => {
+		const widget = renderSubagentResult!({
+			content: [{ type: "text", text: "running" }],
+			details: {
+				mode: "single",
+				results: [{
+					agent: "execute",
+					task: "run plan",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					progress: { status: "running", index: 0, agent: "execute", toolCount: 1, tokens: 10, durationMs: 1_000, lastActivityAt: 1_700_000_001_000 },
+					children: [{
+						id: "impl-1",
+						parentRunId: "root",
+						parentStepIndex: 0,
+						depth: 1,
+						path: [{ runId: "root", stepIndex: 0, agent: "execute" }],
+						state: "running",
+						agent: "implement",
+						lastUpdate: 1_700_000_002_000,
+						currentTool: "bash",
+					}],
+				}],
+			},
+		}, { expanded: false }, theme);
+
+		const text = widget.render(120).join("\n");
+		assert.match(text, /↳ \[\d{2}:\d{2}:\d{2}\] \+1 nested run \(1 running\)/);
 	});
 
 	it("shows [fork] on single-result header", () => {
