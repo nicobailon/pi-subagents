@@ -684,7 +684,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("hard-kills async children that ignore timeout SIGTERM", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ delay: 60_000, ignoreSigterm: true, output: "too late" });
 		const id = `async-timeout-hard-kill-${Date.now().toString(36)}`;
-		const timeoutMs = 1_500;
+		const timeoutMs = process.platform === "win32" ? 5_000 : 1_500;
 		const startedAt = Date.now();
 		executeAsyncSingle(id, {
 			agent: "stubborn",
@@ -705,7 +705,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		});
 
 		await waitForMockPiCall(mockPi, 0, 10_000);
-		const resultPath = await waitForAsyncResultFile(id, 8_000);
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
@@ -715,7 +715,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.error, `Subagent timed out after ${timeoutMs}ms.`);
 		assert.equal(status.timedOut, true);
 		assert.equal(status.steps?.[0]?.timedOut, true);
-		assert.ok(elapsedMs < 7_000, `timeout result should settle after hard kill, elapsed ${elapsedMs}ms`);
+		assert.ok(elapsedMs < timeoutMs + 4_000, `timeout result should settle after hard kill, elapsed ${elapsedMs}ms`);
 		assert.equal(mockPi.callCount(), 1);
 	});
 
