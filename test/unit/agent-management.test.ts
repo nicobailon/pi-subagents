@@ -57,6 +57,67 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("gets only the effective agent detail and respects explicit scope", () => {
+		const projectAgentsDir = path.join(tempDir, ".pi", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		const packageDir = path.join(tempDir, ".pi", "npm", "node_modules", "test-agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
+		fs.mkdirSync(path.join(packageDir, "chains"), { recursive: true });
+		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Project worker override\n---\n\nProject worker.\n");
+		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker override\n---\n\nUser worker.\n");
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"], chains: ["chains"] } }));
+		fs.writeFileSync(path.join(packageDir, "agents", "worker.md"), "---\nname: worker\ndescription: Package worker override\n---\n\nPackage worker.\n");
+		fs.writeFileSync(path.join(packageDir, "chains", "package-flow.chain.json"), JSON.stringify({
+			name: "package-flow",
+			description: "Package flow",
+			chain: [{ agent: "worker", task: "Package task" }],
+		}), "utf-8");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const effective = readText(handleManagementAction("get", { agent: "worker" }, ctx));
+		assert.match(effective, /Agent: worker \(project\)/);
+		assert.match(effective, /Description: Project worker override/);
+		assert.doesNotMatch(effective, /User worker override|Package worker override|Implementation agent for normal tasks/);
+
+		const userScoped = readText(handleManagementAction("get", { agent: "worker", agentScope: "user" }, ctx));
+		assert.match(userScoped, /Agent: worker \(user\)/);
+		assert.match(userScoped, /Description: User worker override/);
+		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
+
+		const userChainsDir = path.join(tempDir, "agent-home", "chains");
+		const projectChainsDir = path.join(tempDir, ".pi", "chains");
+		fs.mkdirSync(userChainsDir, { recursive: true });
+		fs.mkdirSync(projectChainsDir, { recursive: true });
+		fs.writeFileSync(path.join(userChainsDir, "shared-flow.chain.json"), JSON.stringify({
+			name: "shared-flow",
+			description: "User shared flow",
+			chain: [{ agent: "worker", task: "User flow" }],
+		}), "utf-8");
+		fs.writeFileSync(path.join(projectChainsDir, "shared-flow.chain.json"), JSON.stringify({
+			name: "shared-flow",
+			description: "Project shared flow",
+			chain: [{ agent: "worker", task: "Project flow" }],
+		}), "utf-8");
+
+		const userChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "user" }, ctx));
+		assert.match(userChain, /Chain: shared-flow \(user\)/);
+		assert.match(userChain, /Description: User shared flow/);
+		assert.doesNotMatch(userChain, /Project shared flow|Project flow/);
+
+		const projectChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "project" }, ctx));
+		assert.match(projectChain, /Chain: shared-flow \(project\)/);
+		assert.match(projectChain, /Description: Project shared flow/);
+		assert.doesNotMatch(projectChain, /User shared flow|User flow/);
+
+		for (const agentScope of ["user", "project"] as const) {
+			const packageChain = readText(handleManagementAction("get", { chainName: "package-flow", agentScope }, ctx));
+			assert.match(packageChain, /Chain: package-flow \(package\)/);
+			assert.match(packageChain, /Description: Package flow/);
+		}
+	});
+
 	it("surfaces JSON parse errors for update config strings", () => {
 		const result = handleUpdate(
 			{ agent: "reviewer", config: '{"description":' },

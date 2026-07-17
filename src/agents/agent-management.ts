@@ -122,7 +122,7 @@ function findChains(name: string, cwd: string, scope: AgentScope = "both"): Chai
 	const raw = name.trim();
 	const sanitized = sanitizeName(raw);
 	return discoverAgentsAll(cwd).chains
-		.filter((c) => (scope === "both" || c.source === scope) && (c.name === raw || c.name === sanitized))
+		.filter((c) => (scope === "both" || c.source === "package" || c.source === scope) && (c.name === raw || c.name === sanitized))
 		.sort((a, b) => a.source.localeCompare(b.source));
 }
 
@@ -748,11 +748,17 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 
 function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	if (!params.agent && !params.chainName) return result("Specify 'agent' or 'chainName' for get.", true);
+	const scope = normalizeListScope(params.agentScope);
+	if (!scope) return result("agentScope must be 'user', 'project', or 'both' for get.", true);
 	const hasBoth = Boolean(params.agent && params.chainName);
 	const blocks: string[] = [];
 	let anyFound = false;
 	if (params.agent) {
-		const matches = findAgents(params.agent, ctx.cwd, "both");
+		const raw = params.agent.trim();
+		const sanitized = sanitizeName(raw);
+		const d = discoverAgentsAll(ctx.cwd);
+		const matches = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package)
+			.filter((agent) => agent.name === raw || agent.name === sanitized);
 		if (!matches.length) {
 			const msg = `Agent '${params.agent}' not found. Available: ${availableNames(ctx.cwd, "agent").join(", ") || "none"}.`;
 			if (!hasBoth) return result(msg, true);
@@ -763,7 +769,7 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolR
 		}
 	}
 	if (params.chainName) {
-		const matches = findChains(params.chainName, ctx.cwd, "both");
+		const matches = findChains(params.chainName, ctx.cwd, scope);
 		if (!matches.length) {
 			const msg = `Chain '${params.chainName}' not found. Available: ${availableNames(ctx.cwd, "chain").join(", ") || "none"}.`;
 			if (!hasBoth) return result(msg, true);
