@@ -113,14 +113,14 @@ export function formatHumanControlNotice(
 
 	const legacy = extractLegacyControlContent(legacyContent);
 	const lines = [heading, `${details.label} [${details.role}] · ${location}`];
-	const observed = legacy.observed ?? substantiveText(event.message);
+	const observed = substantiveText(event.message) ?? legacy.observed;
 	if (observed) lines.push(`Observed: ${observed}`);
 	if (event.currentTool) {
 		const toolDuration = event.currentToolDurationMs !== undefined ? ` for ${durationLabel(event.currentToolDurationMs)}` : "";
 		lines.push(`Current activity: ${event.currentTool}${toolDuration}`);
 	}
 	if (event.currentPath) lines.push(`Working in: ${event.currentPath}`);
-	const recentFailures = legacy.recentFailures ?? substantiveText(event.recentFailureSummary);
+	const recentFailures = substantiveText(event.recentFailureSummary) ?? legacy.recentFailures;
 	if (recentFailures) lines.push(`Recent failures: ${recentFailures}`);
 	const facts = [
 		event.turns !== undefined ? `${event.turns} turns` : undefined,
@@ -270,7 +270,6 @@ function formatStructuredValue(value: unknown, indent = ""): string[] {
 		});
 	}
 	const record = value as Record<string, unknown>;
-	if (hasInternalCommand(record)) return [];
 	return Object.entries(record).flatMap(([key, entry]) => {
 		if (entry === null || entry === undefined || key === "childTarget") return [];
 		if (typeof entry !== "object") {
