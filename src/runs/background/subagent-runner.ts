@@ -10,6 +10,7 @@ import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/ar
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
+	type AcceptanceInput,
 	type ActivityState,
 	type ArtifactConfig,
 	type ArtifactPaths,
@@ -178,6 +179,7 @@ interface StepResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	acceptanceInput?: AcceptanceInput;
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 }
 
@@ -1442,7 +1444,7 @@ function markParallelGroupSetupFailure(input: {
 		input.statusPayload.steps[flatTaskIndex].endedAt = input.failedAt;
 		input.statusPayload.steps[flatTaskIndex].durationMs = 0;
 		input.statusPayload.steps[flatTaskIndex].exitCode = 1;
-		input.results.push({ agent: input.group.parallel[taskIndex].agent, output: input.setupError, success: false, exitCode: 1, sessionFile: input.group.parallel[taskIndex].sessionFile });
+		input.results.push({ agent: input.group.parallel[taskIndex].agent, output: input.setupError, success: false, exitCode: 1, sessionFile: input.group.parallel[taskIndex].sessionFile, acceptanceInput: input.group.parallel[taskIndex].acceptanceInput });
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
@@ -2626,7 +2628,7 @@ async function runSubagent(
 				statusPayload.lastUpdate = now;
 				markDynamicGraphGroup(stepIndex, "failed", message);
 				writeStatusPayload();
-				results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1 });
+				results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1, acceptanceInput: step.acceptanceInput });
 				break;
 			}
 
@@ -2692,7 +2694,7 @@ async function runSubagent(
 					markDynamicGraphGroup(stepIndex, groupStopped ? "stopped" : "failed", errorMessage, effectiveGroupAcceptance);
 					statusPayload.lastUpdate = Date.now();
 					writeStatusPayload();
-					results.push({ agent: step.parallel.agent, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance });
+					results.push({ agent: step.parallel.agent, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance, acceptanceInput: step.acceptanceInput });
 					break;
 				}
 				flatIndex++;
@@ -2907,7 +2909,7 @@ async function runSubagent(
 			}, globalSemaphore);
 
 			flatIndex += dynamicSteps.length;
-			for (const pr of parallelResults) {
+			for (const [resultIndex, pr] of parallelResults.entries()) {
 				results.push({
 					agent: pr.agent,
 					output: pr.output,
@@ -2937,6 +2939,7 @@ async function runSubagent(
 					structuredOutputPath: pr.structuredOutputPath,
 					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 					acceptance: pr.acceptance,
+					acceptanceInput: dynamicSteps[resultIndex]!.acceptanceInput,
 					watchdog: pr.watchdog,
 				});
 			}
@@ -2983,13 +2986,14 @@ async function runSubagent(
 							stopped: groupStopped ? true : undefined,
 							structuredOutput: collection,
 							acceptance: effectiveGroupAcceptance,
+							acceptanceInput: step.acceptanceInput,
 						});
 						statusPayload.error = groupError;
 						statusPayload.stopped = groupStopped ? true : statusPayload.stopped;
 					}
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
-					results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection });
+					results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection, acceptanceInput: step.acceptanceInput });
 					statusPayload.error = message;
 					markDynamicGraphGroup(stepIndex, "failed", message);
 				}
@@ -3253,7 +3257,7 @@ async function runSubagent(
 				statusPayload.lastUpdate = Date.now();
 				writeStatusPayload();
 
-				for (const pr of parallelResults) {
+				for (const [resultIndex, pr] of parallelResults.entries()) {
 					results.push({
 						agent: pr.agent,
 						output: pr.output,
@@ -3283,6 +3287,7 @@ async function runSubagent(
 						structuredOutputPath: pr.structuredOutputPath,
 						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 						acceptance: pr.acceptance,
+						acceptanceInput: group.parallel[resultIndex]!.acceptanceInput,
 						watchdog: pr.watchdog,
 					});
 				}
@@ -3402,6 +3407,7 @@ async function runSubagent(
 				structuredOutputPath: singleResult.structuredOutputPath,
 				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
 				acceptance: singleResult.acceptance,
+				acceptanceInput: seqStep.acceptanceInput,
 				watchdog: singleResult.watchdog,
 				interrupted: singleResult.interrupted,
 				timedOut: timedOut || singleResult.timedOut ? true : undefined,
@@ -3669,7 +3675,7 @@ async function runSubagent(
 			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
 			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
 			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : {}),
-			results: results.map((r, index) => ({
+			results: results.map((r) => ({
 				agent: r.agent,
 				output: r.output,
 				error: r.error,
@@ -3698,7 +3704,7 @@ async function runSubagent(
 				structuredOutputPath: r.structuredOutputPath,
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,
-				acceptanceInput: statusPayload.steps[index]?.acceptanceInput,
+				acceptanceInput: r.acceptanceInput,
 				watchdog: r.watchdog,
 			})),
 			outputs,

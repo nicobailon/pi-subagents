@@ -305,7 +305,6 @@ export function adaptLegacyAcceptance(input: EffectiveAcceptanceInput | undefine
 				...(report ? { report } : {}),
 				...(value.verify !== undefined ? { verify: value.verify } : {}),
 				...(value.review !== undefined ? { review: value.review } : {}),
-				onFailure: "fail",
 			},
 			stopRules: value.stopRules ?? [],
 			reason: value.reason,
@@ -606,7 +605,10 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
 			"Completion is not accepted from prose alone. End with a structured acceptance report.",
 			"",
 			"Criteria:",
-			...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`) : ["- Return the requested result."]),
+			...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => {
+				const evidence = criterion.evidence.length > 0 ? ` [evidence: ${criterion.evidence.join(", ")}]` : "";
+				return `- ${criterion.id}: ${criterion.must}${evidence}`;
+			}) : ["- Return the requested result."]),
 			"",
 			`Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
 		);
@@ -1123,21 +1125,35 @@ function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
 		: { id: "no-staged-files", status: "failed", message: `Staged files present: ${staged.join(", ")}` };
 }
 
+function evidenceRuntimeCheck(id: string, label: string, report: AcceptanceReport, kind: AcceptanceEvidenceKind): AcceptanceRuntimeCheck {
+	const status = reportEvidenceStatus(report, kind);
+	return {
+		id,
+		status,
+		message: status === "passed"
+			? `${label} evidence present.`
+			: status === "not-applicable"
+				? `${label} evidence explicitly reported as not applicable.`
+				: `${label} evidence missing from child report.`,
+	};
+}
+
 function runStructuralChecks(acceptance: ResolvedAcceptanceConfig, report: AcceptanceReport, cwd: string): AcceptanceRuntimeCheck[] {
 	const checks: AcceptanceRuntimeCheck[] = [];
+	const globalEvidence = new Set(acceptance.evidence);
 	for (const kind of acceptance.evidence) {
-		const status = reportEvidenceStatus(report, kind);
-		checks.push({
-			id: `evidence:${kind}`,
-			status,
-			message: status === "passed"
-				? `${kind} evidence present.`
-				: status === "not-applicable"
-					? `${kind} evidence explicitly reported as not applicable.`
-					: `${kind} evidence missing from child report.`,
-		});
+		checks.push(evidenceRuntimeCheck(`evidence:${kind}`, kind, report, kind));
 	}
-	if (acceptance.evidence.includes("no-staged-files")) checks.push(checkNoStagedFiles(cwd));
+	if (globalEvidence.has("no-staged-files")) checks.push(checkNoStagedFiles(cwd));
+	for (const criterion of acceptance.criteria) {
+		if (criterion.severity === "recommended") continue;
+		for (const kind of criterion.evidence) {
+			if (globalEvidence.has(kind)) continue;
+			const id = `criterion:${criterion.id}:evidence:${kind}`;
+			checks.push(evidenceRuntimeCheck(id, `${criterion.id} ${kind}`, report, kind));
+			if (kind === "no-staged-files") checks.push({ ...checkNoStagedFiles(cwd), id: `${id}:workspace` });
+		}
+	}
 	return checks;
 }
 

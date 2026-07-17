@@ -294,6 +294,30 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			assert.match(result.error ?? "", /reported as not-satisfied/);
 		});
 
+		it("rejects a satisfied criterion when its local evidence kind is missing", async () => {
+			mockPi.onCall({ output: [
+				"```acceptance-report",
+				JSON.stringify({
+					criteriaSatisfied: [{ id: "local-proof", status: "satisfied", evidence: "claimed" }],
+					residualRisks: [],
+				}),
+				"```",
+			].join("\n") });
+
+			const result = await runSync!(tempDir, [makeAgent("worker", { completionGuard: false })], "worker", "Report the local proof.", {
+				runId: "acceptance-local-evidence",
+				acceptance: { report: {
+					criteria: [{ id: "local-proof", must: "Prove the behavior", evidence: ["commands-run", "residual-risks"] }],
+					evidence: ["residual-risks"],
+				} },
+			});
+
+			assert.equal(result.exitCode, 1);
+			assert.equal(result.acceptance?.status, "rejected");
+			assert.equal(result.acceptance?.runtimeChecks?.find((check) => check.id === "criterion:local-proof:evidence:commands-run")?.status, "failed");
+			assert.equal(result.acceptance?.runtimeChecks?.filter((check) => check.id === "evidence:residual-risks").length, 1);
+		});
+
 		it("rejects a malformed child-written file report instead of accepting the text report", async () => {
 			const outputPath = path.join(tempDir, "report.md");
 			const malformedReport = "```acceptance-report\n{ not json";

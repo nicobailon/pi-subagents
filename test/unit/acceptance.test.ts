@@ -163,6 +163,15 @@ describe("acceptance gates", () => {
 		assert.deepEqual(replacedLegacyMetadata.stopRules, ["Child rule"]);
 		assert.equal(replacedLegacyMetadata.reason, "child reason");
 
+		const levelLessLegacyChild = mergeAcceptanceInputs(
+			{ report: false, onFailure: "warn" },
+			{ criteria: ["Child criterion"], evidence: ["manual-notes"], stopRules: ["Child stop rule"] },
+		);
+		const levelLessLegacyResolved = resolveEffectiveAcceptance({ agentName: "worker", explicit: levelLessLegacyChild });
+		assert.equal(levelLessLegacyResolved.onFailure, "warn");
+		assert.deepEqual(levelLessLegacyResolved.stopRules, ["Child stop rule"]);
+		assert.deepEqual(levelLessLegacyResolved.evidence, ["manual-notes"]);
+
 		const legacyReplacement = mergeAcceptanceInputs(parent, "checked");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).onFailure, "fail");
 		assert.deepEqual(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).verify, []);
@@ -286,6 +295,36 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /commandsRun\[\]\.result.*passed, failed, not-run/);
 		assert.match(prompt, /manualNotes.*optional strings.*empty string.*does not satisfy.*manual-notes/);
 		assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
+	});
+
+	it("prompts for and enforces required criterion-local evidence without duplicating global checks", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { report: {
+					criteria: [{ id: "local-proof", must: "Prove the local behavior", evidence: ["commands-run", "residual-risks"] }],
+					evidence: ["residual-risks"],
+				} },
+			});
+			const prompt = formatAcceptancePrompt(acceptance);
+			assert.match(prompt, /local-proof: Prove the local behavior \[evidence: commands-run, residual-risks\]/);
+
+			const ledger = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					criteriaSatisfied: [{ id: "local-proof", status: "satisfied", evidence: "claimed" }],
+					commandsRun: undefined,
+				}),
+				cwd,
+			});
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.runtimeChecks.filter((check) => check.id === "evidence:residual-risks").length, 1);
+			assert.equal(ledger.runtimeChecks.some((check) => check.id === "criterion:local-proof:evidence:residual-risks"), false);
+			assert.equal(ledger.runtimeChecks.find((check) => check.id === "criterion:local-proof:evidence:commands-run")?.status, "failed");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 
 	it("includes every required resolved criterion in report examples", () => {

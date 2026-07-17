@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
@@ -45,7 +46,7 @@ interface AsyncResultPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; acceptanceInput?: unknown; acceptance?: { status?: string; effectiveAcceptance?: { level?: string; reason?: string; stopRules?: string[]; deprecationWarnings?: string[] }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
+	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; sessionFile?: string; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; acceptanceInput?: unknown; acceptance?: { status?: string; effectiveAcceptance?: { level?: string; onFailure?: string; reason?: string; stopRules?: string[]; deprecationWarnings?: string[] }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 }
@@ -1182,6 +1183,32 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(payload.results[0]?.acceptanceInput, { level: "none", reason: "manual acceptance" });
 	});
 
+	it("inherits parent warn when an async level-less legacy child adds report metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: [
+			"done",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "manual proof" }],
+				manualNotes: "manual proof",
+			}),
+			"```",
+		].join("\n") });
+		const id = `async-parent-warn-child-legacy-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "worker", task: "Report proof", acceptance: { criteria: ["Child proof"], evidence: ["manual-notes"], stopRules: ["Stop on mismatch"] } }],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-parent-warn-child-legacy" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: { onFailure: "warn" },
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.onFailure, "warn");
+		assert.deepEqual(payload.results[0]?.acceptance?.effectiveAcceptance?.stopRules, ["Stop on mismatch"]);
+	});
+
 	it("preserves legacy root metadata when an async canonical child clears verification", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: [
 			"implemented",
@@ -1682,6 +1709,46 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.deepEqual(finalStatus.steps?.map((step) => step.agent), ["producer", "reviewer", "reviewer", "consumer"]);
 		assert.deepEqual(finalStatus.parallelGroups, [{ start: 1, count: 2, stepIndex: 1 }]);
+	});
+
+	it("keeps a consumer acceptance contract aligned after empty dynamic fanout for result-only revival", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Produce no targets", output: "targets", structuredOutput: { items: [] } });
+		mockPi.onCall({ matchArgIncludes: "Consume empty reviews", output: "consumer result" });
+		const id = `async-empty-dynamic-acceptance-${Date.now().toString(36)}`;
+		const consumerSessionFile = path.join(tempDir, "consumer-session.jsonl");
+		fs.writeFileSync(consumerSessionFile, "", "utf-8");
+		const consumerAcceptance = {
+			verify: [{ id: "consumer-contract", command: "node -e \"process.exit(0)\"" }],
+			onFailure: "warn" as const,
+		};
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce no targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, maxItems: 4, onEmpty: "skip" },
+					parallel: { agent: "reviewer", task: "Review {item}" },
+					collect: { as: "reviews" },
+				},
+				{ agent: "consumer", task: "Consume empty reviews: {outputs.reviews}", acceptance: consumerAcceptance },
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer"), makeAgent("consumer")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-empty-dynamic-acceptance" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			sessionFilesByFlatIndex: [undefined, undefined, undefined, undefined, undefined, consumerSessionFile],
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[1]?.agent, "consumer");
+		assert.deepEqual(payload.results[1]?.acceptanceInput, consumerAcceptance);
+		assert.ok(payload.results[1]?.sessionFile);
+		fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
+		const revived = resolveAsyncResumeTarget({ id, index: 1 }, { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR });
+		assert.equal(revived.agent, "consumer");
+		assert.deepEqual(revived.acceptance, consumerAcceptance);
 	});
 
 	it("async chains expand dynamic fanout and persist collected output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
