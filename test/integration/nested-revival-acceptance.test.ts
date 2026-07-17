@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { mergeAcceptanceInputs, type EffectiveAcceptanceInput } from "../../src/runs/shared/acceptance.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, type AcceptanceInput, type SubagentState } from "../../src/shared/types.ts";
 import { createMockPi, createTempDir, makeAgent, makeMinimalCtx, removeTempDir, type MockPi } from "../support/helpers.ts";
@@ -70,11 +71,11 @@ describe("nested revival acceptance propagation", () => {
 	});
 
 	async function reviveNested(options: {
-		acceptanceInput?: AcceptanceInput;
-		resultAcceptanceInput?: AcceptanceInput;
-		descriptorAcceptance?: AcceptanceInput;
+		acceptanceInput?: unknown;
+		resultAcceptanceInput?: unknown;
+		descriptorAcceptance?: EffectiveAcceptanceInput;
 		resumeAcceptance?: AcceptanceInput;
-	}): Promise<AcceptanceInput | undefined> {
+	}): Promise<EffectiveAcceptanceInput | undefined> {
 		const rootRunId = `nested-root-${Date.now().toString(36)}`;
 		const nestedRunId = `nested-child-${Math.random().toString(16).slice(2, 10)}`;
 		const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId, nestedRunId);
@@ -178,13 +179,41 @@ describe("nested revival acceptance propagation", () => {
 		assert.equal((result as { isError?: boolean }).isError, undefined, result.content[0]?.type === "text" ? result.content[0].text : undefined);
 		assert.ok(result.details.asyncDir);
 		cleanupPaths.push(result.details.asyncDir, path.join(RESULTS_DIR, `${result.details.asyncId}.json`), path.join(ASYNC_DIR, result.details.asyncId ?? ""));
-		const descriptor = JSON.parse(fs.readFileSync(path.join(result.details.asyncDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: AcceptanceInput };
+		const descriptor = JSON.parse(fs.readFileSync(path.join(result.details.asyncDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: EffectiveAcceptanceInput };
 		return descriptor.acceptance;
 	}
 
 	it("inherits the original raw contract from nested result step metadata", async () => {
 		const acceptance: AcceptanceInput = { verify: [{ id: "nested-result", command: "node -e \"process.exit(0)\"" }], onFailure: "warn" };
 		assert.deepEqual(await reviveNested({ resultAcceptanceInput: acceptance }), acceptance);
+	});
+
+	it("revives persisted root legacy metadata and merges a nested canonical override", async () => {
+		const persisted = mergeAcceptanceInputs(
+			{ level: "checked", stopRules: ["Stop on nested mismatch"], reason: "root legacy policy" },
+			{ verify: [] },
+		);
+		const revived = await reviveNested({
+			acceptanceInput: persisted,
+			resumeAcceptance: { review: false, onFailure: "warn" },
+		});
+		assert.ok(revived && typeof revived === "object" && "kind" in revived);
+		assert.deepEqual(revived, {
+			kind: "merged-acceptance",
+			adapted: {
+				contract: {
+					report: {
+						evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
+					},
+					verify: [],
+					review: false,
+					onFailure: "warn",
+				},
+				stopRules: ["Stop on nested mismatch"],
+				reason: "root legacy policy",
+				deprecationWarnings: [],
+			},
+		});
 	});
 
 	it("merges a canonical partial override into nested status acceptance metadata", async () => {
@@ -196,6 +225,29 @@ describe("nested revival acceptance propagation", () => {
 			verify: [{ id: "status", command: "node -e \"process.exit(0)\"" }],
 			review: false,
 			onFailure: "warn",
+		});
+	});
+
+	it("falls back from malformed nested internal metadata to valid legacy result metadata", async () => {
+		assert.deepEqual(await reviveNested({
+			acceptanceInput: {
+				kind: "merged-acceptance",
+				adapted: { contract: { verify: [] }, stopRules: [7], deprecationWarnings: [] },
+			},
+			resultAcceptanceInput: { level: "checked", stopRules: ["Result fallback rule"], reason: "legacy fallback" },
+			resumeAcceptance: { verify: [] },
+		}), {
+			kind: "merged-acceptance",
+			adapted: {
+				contract: {
+					report: { evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"] },
+					verify: [],
+					onFailure: "fail",
+				},
+				stopRules: ["Result fallback rule"],
+				reason: "legacy fallback",
+				deprecationWarnings: [],
+			},
 		});
 	});
 

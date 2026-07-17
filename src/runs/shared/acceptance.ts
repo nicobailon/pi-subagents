@@ -37,6 +37,7 @@ const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify
 const LEGACY_ONLY_KEYS = new Set(["level", "criteria", "evidence", "stopRules", "reason"]);
 const CANONICAL_ONLY_KEYS = new Set(["report", "onFailure"]);
 const ACCEPTANCE_REPORT_KEYS = new Set(["criteria", "evidence"]);
+const ACCEPTANCE_CONTRACT_KEYS = new Set(["report", "verify", "review", "onFailure"]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
@@ -155,8 +156,67 @@ export interface MergedAcceptanceInput extends AcceptanceContract {
 
 export type EffectiveAcceptanceInput = AcceptanceInput | MergedAcceptanceInput;
 
+const MERGED_ACCEPTANCE_KEYS = new Set(["kind", "adapted"]);
+const ADAPTED_ACCEPTANCE_KEYS = new Set(["contract", "stopRules", "reason", "deprecationWarnings"]);
+
+function mergedAcceptanceContractErrors(input: unknown, pathLabel: string): string[] {
+	if (input === false) return [];
+	if (!input || typeof input !== "object" || Array.isArray(input)) return [`${pathLabel} must be false or a canonical acceptance contract.`];
+	const contract = input as Record<string, unknown>;
+	const errors = Object.keys(contract)
+		.filter((key) => !ACCEPTANCE_CONTRACT_KEYS.has(key))
+		.map((key) => `${pathLabel}.${key} is not supported in a canonical acceptance contract.`);
+	const review = contract.review;
+	const validationInput = review && typeof review === "object" && !Array.isArray(review)
+		&& (review as Record<string, unknown>).required === true
+		? { ...contract, review: { ...(review as Record<string, unknown>), required: false } }
+		: contract;
+	errors.push(...validateAcceptanceInput(validationInput, pathLabel));
+	return errors;
+}
+
+/** Validate acceptance metadata read from trusted execution artifacts. */
+export function validatePersistedAcceptanceInput(input: unknown, pathLabel = "acceptance"): string[] {
+	if (!input || typeof input !== "object" || Array.isArray(input) || (input as Record<string, unknown>).kind !== MERGED_ACCEPTANCE_KIND) {
+		return validateAcceptanceInput(input, pathLabel);
+	}
+	const errors: string[] = [];
+	const merged = input as Record<string, unknown>;
+	for (const key of Object.keys(merged)) {
+		if (!MERGED_ACCEPTANCE_KEYS.has(key)) errors.push(`${pathLabel}.${key} is not supported in persisted merged acceptance metadata.`);
+	}
+	if (!merged.adapted || typeof merged.adapted !== "object" || Array.isArray(merged.adapted)) {
+		errors.push(`${pathLabel}.adapted must be an object.`);
+		return errors;
+	}
+	const adapted = merged.adapted as Record<string, unknown>;
+	for (const key of Object.keys(adapted)) {
+		if (!ADAPTED_ACCEPTANCE_KEYS.has(key)) errors.push(`${pathLabel}.adapted.${key} is not supported.`);
+	}
+	if (!Object.prototype.hasOwnProperty.call(adapted, "contract")) errors.push(`${pathLabel}.adapted.contract is required.`);
+	else errors.push(...mergedAcceptanceContractErrors(adapted.contract, `${pathLabel}.adapted.contract`));
+	if (!Array.isArray(adapted.stopRules)) errors.push(`${pathLabel}.adapted.stopRules must be an array.`);
+	else for (const [index, rule] of adapted.stopRules.entries()) {
+		if (typeof rule !== "string") errors.push(`${pathLabel}.adapted.stopRules[${index}] must be a string.`);
+	}
+	if (adapted.reason !== undefined && typeof adapted.reason !== "string") errors.push(`${pathLabel}.adapted.reason must be a string.`);
+	if (!Array.isArray(adapted.deprecationWarnings)) errors.push(`${pathLabel}.adapted.deprecationWarnings must be an array.`);
+	else for (const [index, warning] of adapted.deprecationWarnings.entries()) {
+		if (typeof warning !== "string") errors.push(`${pathLabel}.adapted.deprecationWarnings[${index}] must be a string.`);
+	}
+	return errors;
+}
+
+export function isPersistedMergedAcceptanceInput(input: unknown): input is MergedAcceptanceInput {
+	return typeof input === "object"
+		&& input !== null
+		&& !Array.isArray(input)
+		&& (input as Record<string, unknown>).kind === MERGED_ACCEPTANCE_KIND
+		&& validatePersistedAcceptanceInput(input).length === 0;
+}
+
 function isMergedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is MergedAcceptanceInput {
-	return typeof input === "object" && input !== null && "kind" in input && input.kind === MERGED_ACCEPTANCE_KIND;
+	return isPersistedMergedAcceptanceInput(input);
 }
 
 function isCanonicalObject(value: Record<string, unknown>): boolean {

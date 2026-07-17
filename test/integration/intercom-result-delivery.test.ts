@@ -596,7 +596,19 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 						sessionFile: secondSession,
 						model: "anthropic/claude-sonnet-4",
 						thinking: "high",
-						acceptanceInput: { verify: [{ id: "parallel-source", command: "node -e \"process.exit(0)\"" }], onFailure: "warn" },
+						acceptanceInput: {
+							kind: "merged-acceptance",
+							adapted: {
+								contract: {
+									report: { evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"] },
+									verify: [],
+									onFailure: "fail",
+								},
+								stopRules: ["Stop on async mismatch"],
+								reason: "root legacy policy",
+								deprecationWarnings: [],
+							},
+						},
 					},
 				],
 			}, null, 2), "utf-8");
@@ -621,9 +633,18 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.ok(revivedDir);
 			const descriptor = JSON.parse(fs.readFileSync(path.join(revivedDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: unknown };
 			assert.deepEqual(descriptor.acceptance, {
-				verify: [{ id: "parallel-source", command: "node -e \"process.exit(0)\"" }],
-				review: false,
-				onFailure: "warn",
+				kind: "merged-acceptance",
+				adapted: {
+					contract: {
+						report: { evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"] },
+						verify: [],
+						review: false,
+						onFailure: "fail",
+					},
+					stopRules: ["Stop on async mismatch"],
+					reason: "root legacy policy",
+					deprecationWarnings: [],
+				},
 			});
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });

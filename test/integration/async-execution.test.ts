@@ -1212,6 +1212,19 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.acceptance?.status, "checked");
 		assert.deepEqual(payload.results[0]?.acceptance?.effectiveAcceptance?.stopRules, ["Stop on mismatch"]);
 		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.reason, "root policy");
+		assert.deepEqual(payload.results[0]?.acceptanceInput, {
+			kind: "merged-acceptance",
+			adapted: {
+				contract: {
+					report: { evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"] },
+					verify: [],
+					onFailure: "fail",
+				},
+				stopRules: ["Stop on mismatch"],
+				reason: "root policy",
+				deprecationWarnings: [],
+			},
+		});
 	});
 
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

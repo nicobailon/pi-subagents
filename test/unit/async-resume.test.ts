@@ -439,6 +439,73 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("revives indexed persisted merged acceptance and falls back from tampered status metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "child.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			const merged = {
+				kind: "merged-acceptance",
+				adapted: {
+					contract: { report: { criteria: ["root criterion"] }, verify: [], onFailure: "fail" },
+					stopRules: ["Stop on mismatch"],
+					reason: "root policy",
+					deprecationWarnings: [],
+				},
+			};
+			writeJson(path.join(asyncRoot, "run-acceptance", "status.json"), {
+				runId: "run-acceptance", mode: "parallel", state: "complete", startedAt: 100, cwd: root,
+				steps: [
+					{ agent: "a", status: "complete", sessionFile },
+					{ agent: "b", status: "complete", sessionFile, acceptanceInput: merged },
+				],
+			});
+			assert.deepEqual(
+				resolveAsyncResumeTarget({ id: "run-acceptance", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir }).acceptance,
+				merged,
+			);
+			writeJson(path.join(asyncRoot, "run-acceptance", "status.json"), {
+				runId: "run-acceptance", mode: "chain", state: "complete", startedAt: 100, cwd: root,
+				steps: [
+					{ agent: "a", status: "complete", sessionFile },
+					{ agent: "b", status: "complete", sessionFile, acceptanceInput: merged },
+				],
+			});
+			assert.deepEqual(
+				resolveAsyncResumeTarget({ id: "run-acceptance", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir }).acceptance,
+				merged,
+			);
+
+			writeJson(path.join(asyncRoot, "run-acceptance", "status.json"), {
+				runId: "run-acceptance", mode: "parallel", state: "complete", startedAt: 100, cwd: root,
+				steps: [
+					{ agent: "a", status: "complete", sessionFile },
+					{ agent: "b", status: "complete", sessionFile, acceptanceInput: { ...merged, adapted: { ...merged.adapted, stopRules: [7] } } },
+				],
+			});
+			writeJson(path.join(resultsDir, "run-acceptance.json"), {
+				id: "run-acceptance", mode: "parallel", state: "complete", success: true, cwd: root,
+				results: [
+					{ agent: "a", success: true, sessionFile },
+					{ agent: "b", success: true, sessionFile, acceptanceInput: { verify: [] } },
+				],
+			});
+			assert.deepEqual(
+				resolveAsyncResumeTarget({ id: "run-acceptance", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir }).acceptance,
+				{ verify: [] },
+			);
+			fs.rmSync(path.join(resultsDir, "run-acceptance.json"));
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-acceptance", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/steps\[1\]\.acceptanceInput\.adapted\.stopRules\[0\] must be a string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("resolves a completed multi-child run when an index and per-child session file are available", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-multi-"));
 		try {

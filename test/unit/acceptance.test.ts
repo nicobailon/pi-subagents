@@ -15,8 +15,10 @@ import {
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
+	isPersistedMergedAcceptanceInput,
 	validateAcceptanceInput,
 	validateExecutionAcceptance,
+	validatePersistedAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
 import { extractChildWrittenOutput } from "../../src/runs/shared/single-output.ts";
 
@@ -165,6 +167,35 @@ describe("acceptance gates", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).onFailure, "fail");
 		assert.deepEqual(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).verify, []);
 		assert.deepEqual(mergeAcceptanceContracts(parent, { verify: [] }), { ...parent, verify: [] });
+	});
+
+	it("validates trusted persisted merged contracts without admitting them through the public API", () => {
+		const merged = mergeAcceptanceInputs(
+			{ level: "checked", stopRules: ["Stop on mismatch"], reason: "root policy" },
+			{ verify: [] },
+		);
+		assert.ok(merged && typeof merged === "object" && "kind" in merged);
+		assert.match(validateAcceptanceInput(merged).join("\n"), /kind is not supported/);
+		assert.deepEqual(validatePersistedAcceptanceInput(merged), []);
+		assert.equal(isPersistedMergedAcceptanceInput(merged), true);
+		const resolved = resolveEffectiveAcceptance({ agentName: "worker", explicit: merged });
+		assert.equal(resolved.level, "checked");
+		assert.deepEqual(resolved.stopRules, ["Stop on mismatch"]);
+		assert.equal(resolved.reason, "root policy");
+		assert.deepEqual(resolved.verify, []);
+
+		for (const malformed of [
+			{ kind: "merged-acceptance" },
+			{ kind: "merged-acceptance", adapted: { contract: {}, stopRules: [], deprecationWarnings: [], surprise: true } },
+			{ kind: "merged-acceptance", adapted: { contract: { report: { criteria: [7] } }, stopRules: [], deprecationWarnings: [] } },
+			{ kind: "merged-acceptance", adapted: { contract: { criteria: ["legacy is not canonical"] }, stopRules: [], deprecationWarnings: [] } },
+			{ kind: "merged-acceptance", adapted: { contract: {}, stopRules: [7], deprecationWarnings: [] } },
+			{ kind: "merged-acceptance", adapted: { contract: {}, stopRules: [], reason: 7, deprecationWarnings: [] } },
+		]) {
+			assert.notDeepEqual(validatePersistedAcceptanceInput(malformed), [], JSON.stringify(malformed));
+			assert.equal(isPersistedMergedAcceptanceInput(malformed), false, JSON.stringify(malformed));
+		}
+		assert.deepEqual(validatePersistedAcceptanceInput({ level: "checked", stopRules: ["legacy"] }), []);
 	});
 
 	it("strictly validates canonical contracts and rejects legacy ambiguity", () => {
