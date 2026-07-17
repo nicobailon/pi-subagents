@@ -11,6 +11,13 @@ const oldPiScopePattern = /@mariozechner\/pi-/;
 const piPackageJsonSubpathPattern = /@earendil-works\/pi-[^"']+\/package\.json/;
 const cjsPiPackageResolutionPattern = /require(?:\.resolve)?\(\s*["']@earendil-works\/pi-/;
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const hostPeerPackages = [
+	"@earendil-works/pi-agent-core",
+	"@earendil-works/pi-ai",
+	"@earendil-works/pi-coding-agent",
+	"@earendil-works/pi-tui",
+	"typebox",
+] as const;
 
 function collectTsFiles(dir: string): string[] {
 	const files: string[] = [];
@@ -53,6 +60,7 @@ test("direct @earendil-works runtime imports are declared for CI installs", () =
 	const declared = new Set([
 		...Object.keys(packageJson.dependencies ?? {}),
 		...Object.keys(packageJson.devDependencies ?? {}),
+		...Object.keys(packageJson.peerDependencies ?? {}),
 	]);
 	const imported = new Set<string>();
 
@@ -74,6 +82,16 @@ test("direct dependency declarations are exact version pins", () => {
 		for (const [name, version] of Object.entries<string>(packageJson[section] ?? {})) {
 			assert.match(version, exactVersionPattern, `${section}.${name} should use an exact version`);
 		}
+	}
+});
+
+test("host-owned packages are optional wildcard peers, not production dependencies", () => {
+	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
+
+	for (const name of hostPeerPackages) {
+		assert.equal(packageJson.peerDependencies?.[name], "*", `${name} should be a wildcard peer`);
+		assert.equal(packageJson.dependencies?.[name], undefined, `${name} should not be a production dependency`);
+		assert.deepEqual(packageJson.peerDependenciesMeta?.[name], { optional: true }, `${name} should be an optional peer`);
 	}
 });
 

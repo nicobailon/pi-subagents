@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Moved Pi-owned `@earendil-works/pi-tui` and `typebox` imports to optional wildcard peer dependencies while retaining exact dev versions for local and CI tests. Thanks to Alexei Ledenev (@alexei-led) for #510.
 - Made steering pre-recovery acknowledgment and Windows async hard-kill regressions synchronize around their actual lifecycle boundaries instead of depending on CI scheduler or process-start timing.
 - Added YAML folded block scalar support for agent and chain frontmatter descriptions, preserving quoted indicators, more-indented content, and blank-line separators. Thanks to Luis Cinco (@tekniko24) for #488.
 - Accepted simple-scalar newline block lists in agent frontmatter for tools, reads, skills, skill paths, fallback models, and extensions while preserving comma-separated syntax. Thanks to klopket (@klopket) for #507.
