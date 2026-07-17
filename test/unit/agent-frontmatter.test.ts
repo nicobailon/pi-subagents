@@ -153,6 +153,80 @@ body`);
 	}));
 });
 
+describe("agent simple-scalar list frontmatter", () => {
+	it("discovers newline block lists for all list fields and routes MCP tools", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-block-list-frontmatter-"));
+		tempDirs.push(dir);
+		writeAgent(path.join(dir, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Worker
+tools:
+  - read-only
+  - mcp:github/search_repositories
+defaultReads:
+  - input-one.md
+  - input-two.md
+skill:
+  - review-checklist
+  - safe-bash
+skillPath:
+  - ./private-skills
+  - ../shared-skills
+fallbackModels:
+  - openai/gpt-5-mini
+  - anthropic/claude-sonnet-4
+extensions:
+  - ./extension-one.ts
+  - ./extension-two.ts
+subagentOnlyExtensions:
+  - ./child-only.ts
+  - ./child-helper.ts
+---
+
+Do work
+`);
+
+		const worker = discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker");
+		assert.deepEqual(worker?.tools, ["read-only"]);
+		assert.deepEqual(worker?.mcpDirectTools, ["github/search_repositories"]);
+		assert.deepEqual(worker?.defaultReads, ["input-one.md", "input-two.md"]);
+		assert.deepEqual(worker?.skills, ["review-checklist", "safe-bash"]);
+		assert.deepEqual(worker?.skillPath, ["./private-skills", "../shared-skills"]);
+		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.deepEqual(worker?.extensions, ["./extension-one.ts", "./extension-two.ts"]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
+	});
+
+	it("preserves comma-separated syntax across all list fields", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-comma-list-frontmatter-"));
+		tempDirs.push(dir);
+		writeAgent(path.join(dir, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Worker
+tools: read-only, mcp:github/search_repositories
+defaultReads: input-one.md, input-two.md
+skills: review-checklist, safe-bash
+skillPath: ./private-skills, ../shared-skills
+fallbackModels: openai/gpt-5-mini, anthropic/claude-sonnet-4
+extensions: ./extension-one.ts, ./extension-two.ts
+subagentOnlyExtensions: ./child-only.ts, ./child-helper.ts
+---
+
+Do work
+`);
+
+		const worker = discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker");
+		assert.deepEqual(worker?.tools, ["read-only"]);
+		assert.deepEqual(worker?.mcpDirectTools, ["github/search_repositories"]);
+		assert.deepEqual(worker?.defaultReads, ["input-one.md", "input-two.md"]);
+		assert.deepEqual(worker?.skills, ["review-checklist", "safe-bash"]);
+		assert.deepEqual(worker?.skillPath, ["./private-skills", "../shared-skills"]);
+		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
+		assert.deepEqual(worker?.extensions, ["./extension-one.ts", "./extension-two.ts"]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
+	});
+});
+
 describe("agent permission frontmatter", () => {
 	it("preserves nested permission YAML blocks through discovery and serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-permission-frontmatter-"));

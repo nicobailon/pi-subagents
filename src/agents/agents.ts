@@ -13,7 +13,7 @@ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
-import { parseFrontmatter } from "./frontmatter.ts";
+import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
@@ -1230,41 +1230,13 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		const packageName = parsedPackage.packageName;
 		const runtimeName = buildRuntimeName(localName, packageName);
 
-		const rawTools = frontmatter.tools
-			?.split(",")
-			.map((t) => t.trim())
-			.filter(Boolean);
-
-		const mcpDirectTools: string[] = [];
-		const tools: string[] = [];
-		if (rawTools) {
-			for (const tool of rawTools) {
-				if (tool.startsWith("mcp:")) {
-					mcpDirectTools.push(tool.slice(4));
-				} else {
-					tools.push(tool);
-				}
-			}
-		}
-
-		const defaultReads = frontmatter.defaultReads
-			?.split(",")
-			.map((f) => f.trim())
-			.filter(Boolean);
-
+		const rawTools = parseFrontmatterList(frontmatter.tools);
+		const { tools = [], mcpDirectTools = [] } = splitToolList(rawTools);
+		const defaultReads = parseFrontmatterList(frontmatter.defaultReads);
 		const skillStr = frontmatter.skill || frontmatter.skills;
-		const skills = skillStr
-			?.split(",")
-			.map((s) => s.trim())
-			.filter(Boolean);
-		const skillPath = frontmatter.skillPath
-			?.split(",")
-			.map((entry) => entry.trim())
-			.filter(Boolean);
-		const fallbackModels = frontmatter.fallbackModels
-			?.split(",")
-			.map((model) => model.trim())
-			.filter(Boolean);
+		const skills = parseFrontmatterList(skillStr);
+		const skillPath = parseFrontmatterList(frontmatter.skillPath);
+		const fallbackModels = parseFrontmatterList(frontmatter.fallbackModels);
 		const systemPromptMode = frontmatter.systemPromptMode === "replace"
 			? "replace"
 			: frontmatter.systemPromptMode === "append"
@@ -1313,20 +1285,8 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			else throw new Error(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
 		}
 
-		let extensions: string[] | undefined;
-		if (frontmatter.extensions !== undefined) {
-			extensions = frontmatter.extensions
-				.split(",")
-				.map((e) => e.trim())
-				.filter(Boolean);
-		}
-		let subagentOnlyExtensions: string[] | undefined;
-		if (frontmatter.subagentOnlyExtensions !== undefined) {
-			subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
-				.split(",")
-				.map((e) => e.trim())
-				.filter(Boolean);
-		}
+		const extensions = parseFrontmatterList(frontmatter.extensions);
+		const subagentOnlyExtensions = parseFrontmatterList(frontmatter.subagentOnlyExtensions);
 
 		const extraFields: Record<string, string> = {};
 		for (const [key, value] of Object.entries(frontmatter)) {

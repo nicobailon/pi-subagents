@@ -40,6 +40,23 @@ function foldBlock(block: string): string {
 }
 
 /**
+ * Normalize a simple-scalar frontmatter list from comma-separated or block-list syntax.
+ * Only the standard `- item` marker is removed; ordinary hyphenated values stay intact.
+ */
+export function parseFrontmatterList(raw: string | undefined): string[] | undefined {
+	if (raw === undefined) return undefined;
+	return raw
+		.split("\n")
+		.flatMap((line) => {
+			const value = line.trim();
+			const listItem = value.match(/^-\s+(.+)$/);
+			return (listItem?.[1] ?? value).split(",");
+		})
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
+/**
  * Parse YAML frontmatter from agent/chain files.
  * Handles both flat (key: value) and nested block (key: \n  sub: val) values.
  * Block values are stored as single strings with embedded newlines.
