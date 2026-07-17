@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { writePrivateAtomicJson } from "../../src/shared/atomic-json.ts";
+import { writeAtomicJson, writePrivateAtomicJson } from "../../src/shared/atomic-json.ts";
 import { closeSteerInbox, interruptRequestPath, steerRequestsDir, writeSteerAck, type SteerRequest } from "../../src/runs/background/control-channel.ts";
 import { steerAsyncRun } from "../../src/runs/foreground/async-steering-action.ts";
 import { createSteeringStatus, recordSteeringRequest, updateSteeringTarget } from "../../src/runs/background/steering.ts";
@@ -30,7 +30,7 @@ function createState(): SubagentState {
 
 function writeStatus(asyncDir: string, status: AsyncStatus): void {
 	fs.mkdirSync(asyncDir, { recursive: true });
-	fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status, null, 2), "utf-8");
+	writeAtomicJson(path.join(asyncDir, "status.json"), status);
 }
 
 function runningStatus(runId: string, mode: AsyncStatus["mode"] = "single", count = 1): AsyncStatus {

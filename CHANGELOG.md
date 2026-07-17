@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Invalidated cached async status reads when a replacement changes file identity but reuses the same modification time, preventing steering and recovery from observing stale lifecycle state.
 - Moved Pi-owned `@earendil-works/pi-tui` and `typebox` imports to optional wildcard peer dependencies while retaining exact dev versions for local and CI tests. Thanks to Alexei Ledenev (@alexei-led) for #510.
 - Made steering pre-recovery acknowledgment and Windows async hard-kill regressions synchronize around their actual lifecycle boundaries instead of depending on CI scheduler or process-start timing.
 - Added YAML folded block scalar support for agent and chain frontmatter descriptions, preserving quoted indicators, more-indented content, and blank-line separators. Thanks to Luis Cinco (@tekniko24) for #488.

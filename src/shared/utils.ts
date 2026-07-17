@@ -88,7 +88,7 @@ export function getAgentDir(): string {
 	return configured || path.join(os.homedir(), getConfigDirName(), "agent");
 }
 
-const statusCache = new Map<string, { mtime: number; status: AsyncStatus }>();
+const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
 
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -123,7 +123,13 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	}
 
 	const cached = statusCache.get(statusPath);
-	if (cached && cached.mtime === stat.mtimeMs) {
+	if (
+		cached
+		&& cached.mtime === stat.mtimeMs
+		&& cached.ctime === stat.ctimeMs
+		&& cached.size === stat.size
+		&& cached.ino === stat.ino
+	) {
 		return cached.status;
 	}
 
@@ -146,7 +152,13 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		});
 	}
 
-	statusCache.set(statusPath, { mtime: stat.mtimeMs, status });
+	statusCache.set(statusPath, {
+		mtime: stat.mtimeMs,
+		ctime: stat.ctimeMs,
+		size: stat.size,
+		ino: stat.ino,
+		status,
+	});
 	if (statusCache.size > 50) {
 		const firstKey = statusCache.keys().next().value;
 		if (firstKey) statusCache.delete(firstKey);
