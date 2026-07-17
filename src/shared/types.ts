@@ -638,6 +638,8 @@ export interface SingleResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	/** Raw effective input retained for lossless foreground revival. */
+	acceptanceInput?: AcceptanceInput;
 	transcriptPath?: string;
 	transcriptError?: string;
 	children?: NestedRunSummary[];
@@ -1002,6 +1004,7 @@ export interface ForegroundResumeChild {
 	transcriptError?: string;
 	detachedReason?: string;
 	acceptance?: AcceptanceLedger;
+	acceptanceInput?: AcceptanceInput;
 	updatedAt?: number;
 }
 

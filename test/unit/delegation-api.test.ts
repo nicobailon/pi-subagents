@@ -121,6 +121,19 @@ describe("public subagent delegation contract", () => {
 		assert.equal(parseSubagentDelegationRequest({ ...request, acceptance: "none" }).ok, true);
 	});
 
+	it("accepts level-optional legacy acceptance without canonical mixing", () => {
+		const legacyAcceptance = {
+			criteria: [{ id: "legacy", must: "Keep delegation parity", evidence: ["manual-notes"] }],
+			evidence: ["manual-notes"],
+			verify: [{ id: "node", command: "node --version" }],
+			review: false,
+			stopRules: ["Stop on mismatch"],
+			reason: "provider legacy",
+		} as const;
+		assert.equal(parseSubagentDelegationRequest({ ...request, acceptance: legacyAcceptance }).ok, true);
+		assert.equal(parseSubagentDelegationRequest({ ...request, acceptance: { ...legacyAcceptance, report: false } }).ok, false);
+	});
+
 	it("runs one v1 request through the existing executor and returns structured metadata", async () => {
 		const events = new FakeEvents();
 		let executeCalls = 0;

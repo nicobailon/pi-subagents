@@ -893,6 +893,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						acceptance: effectiveGroupAcceptance,
 						output: "",
 						report: aggregateAcceptanceReport({
+							criteria: effectiveGroupAcceptance.criteria,
 							results: [],
 							notes: "Dynamic fanout produced 0 results.",
 						}),
@@ -1063,6 +1064,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				acceptance: effectiveGroupAcceptance,
 				output: "",
 				report: aggregateAcceptanceReport({
+					criteria: effectiveGroupAcceptance.criteria,
 					results: parallelResults,
 					notes: `Dynamic fanout collected ${collected.length} result(s) into ${step.collect.as}.`,
 				}),

@@ -2660,6 +2660,7 @@ async function runSubagent(
 						acceptance: effectiveDynamicGroupAcceptance,
 						output: "",
 						report: aggregateAcceptanceReport({
+							criteria: effectiveDynamicGroupAcceptance.criteria,
 							results: [],
 							notes: "Dynamic fanout produced 0 results.",
 						}),
@@ -2952,6 +2953,7 @@ async function runSubagent(
 							acceptance: effectiveDynamicGroupAcceptance,
 							output: "",
 							report: aggregateAcceptanceReport({
+								criteria: effectiveDynamicGroupAcceptance.criteria,
 								results: parallelResults,
 								notes: `Dynamic fanout collected ${collection.length} result(s) into ${step.collect.as}.`,
 							}),

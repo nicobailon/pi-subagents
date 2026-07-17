@@ -381,6 +381,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.transcriptError ? { transcriptError: result.transcriptError } : {}),
 				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
 				...(result.acceptance ? { acceptance: result.acceptance } : {}),
+				...(result.acceptanceInput !== undefined ? { acceptanceInput: result.acceptanceInput } : {}),
 			};
 			const recovered = previous?.children[index];
 			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
@@ -419,6 +420,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.transcriptError ? { transcriptError: input.result.transcriptError } : {}),
 		...(input.result.detachedReason ? { detachedReason: input.result.detachedReason } : {}),
 		...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+		...(input.result.acceptanceInput !== undefined ? { acceptanceInput: input.result.acceptanceInput } : {}),
 	};
 	trimRememberedForegroundRuns(state);
 	const output = getSingleResultOutput(input.result).trim();
@@ -445,6 +447,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 }
 
 function recoveredForegroundAcceptance(child: ForegroundResumeChild): AcceptanceInput | undefined {
+	if (child.acceptanceInput !== undefined) return child.acceptanceInput;
 	const ledger = child.acceptance;
 	if (!ledger?.explicit) return undefined;
 	const acceptance = ledger.effectiveAcceptance;

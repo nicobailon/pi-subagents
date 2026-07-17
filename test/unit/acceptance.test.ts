@@ -149,6 +149,14 @@ describe("acceptance gates", () => {
 
 	it("strictly validates canonical contracts and rejects legacy ambiguity", () => {
 		assert.deepEqual(validateAcceptanceInput({ report: {} }), []);
+		assert.deepEqual(validateAcceptanceInput({
+			criteria: [{ id: "legacy-contract", must: "Preserve the provider contract", evidence: ["manual-notes"] }],
+			evidence: ["manual-notes"],
+			verify: [{ id: "runtime", command: "node --version" }],
+			review: false,
+			stopRules: ["Stop on contract mismatch"],
+			reason: "provider-compatible legacy object",
+		}), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "auto" }), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "none" }), []);
 		for (const level of ["auto", "none"] as const) {
@@ -770,6 +778,50 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("aggregates every required resolved criterion with normalized IDs and child evidence", async () => {
+		const cwd = tempRepo();
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { report: { criteria: [
+					{ id: "Build Ready", must: "Build is ready" },
+					{ id: "Tests_Ready", must: "Tests are ready" },
+					{ id: "Docs Ready", must: "Docs are ready" },
+					{ id: "Optional_Note", must: "Optional note exists", severity: "recommended" },
+				] } },
+			});
+			const childReport = reportData({
+				criteriaSatisfied: [{ id: "child", status: "satisfied", evidence: "child proof" }],
+			});
+			const aggregate = aggregateAcceptanceReport({
+				criteria: acceptance.criteria,
+				results: [{
+					agent: "worker",
+					exitCode: 0,
+					acceptance: {
+						status: "checked",
+						explicit: true,
+						effectiveAcceptance: acceptance,
+						inferredReason: [],
+						criteria: acceptance.criteria,
+						childReport,
+						runtimeChecks: [],
+						verifyRuns: [],
+					},
+				}],
+			});
+			assert.deepEqual(aggregate.criteriaSatisfied?.slice(0, 3).map((criterion) => criterion.id), ["build-ready", "tests-ready", "docs-ready"]);
+			assert.ok(aggregate.criteriaSatisfied?.slice(0, 3).every((criterion) => criterion.status === "satisfied"));
+			assert.deepEqual(aggregate.changedFiles, ["src/file.ts"]);
+			assert.deepEqual(aggregate.validationOutput, ["tests passed"]);
+
+			const ledger = await evaluateAcceptance({ acceptance, output: "", report: aggregate, cwd });
+			assert.equal(ledger.status, "checked");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("zero-child aggregate reports do not fabricate required evidence", async () => {
 		const cwd = tempRepo();
 		try {
@@ -781,7 +833,7 @@ describe("acceptance gates", () => {
 			const ledger = await evaluateAcceptance({
 				acceptance,
 				output: "",
-				report: aggregateAcceptanceReport({ results: [] }),
+				report: aggregateAcceptanceReport({ criteria: acceptance.criteria, results: [] }),
 				cwd,
 			});
 

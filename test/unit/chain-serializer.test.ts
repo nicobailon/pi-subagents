@@ -225,6 +225,30 @@ Review the diff
 		assert.deepEqual(serialized.acceptance, rootAcceptance);
 	});
 
+	it("round-trips level-optional legacy acceptance without canonical mixing", () => {
+		const legacyAcceptance = {
+			criteria: [{ id: "legacy", must: "Keep saved-chain parity", evidence: ["manual-notes"] }],
+			evidence: ["manual-notes"],
+			verify: [{ id: "node", command: "node --version" }],
+			review: false,
+			stopRules: ["Stop on mismatch"],
+			reason: "provider legacy",
+		};
+		const parsed = parseJsonChain(JSON.stringify({
+			name: "legacy-acceptance",
+			description: "Legacy provider acceptance",
+			acceptance: legacyAcceptance,
+			chain: [{ agent: "worker", task: "Fix" }],
+		}), "project", "/tmp/legacy-acceptance.chain.json");
+
+		assert.deepEqual(parsed.acceptance, legacyAcceptance);
+		assert.deepEqual((JSON.parse(serializeJsonChain(parsed)) as { acceptance?: unknown }).acceptance, legacyAcceptance);
+		assert.throws(
+			() => parseJsonChain(JSON.stringify({ name: "mixed", description: "Mixed", acceptance: { ...legacyAcceptance, report: false }, chain: [{ agent: "worker" }] }), "project", "/tmp/mixed.chain.json"),
+			/cannot mix legacy and canonical acceptance fields/,
+		);
+	});
+
 	it("does not leak string root acceptance into extra fields on round-trip", () => {
 		const parsed = parseJsonChain(JSON.stringify({
 			name: "string-acceptance",

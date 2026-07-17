@@ -296,7 +296,7 @@ describe("registered subagent tool prepareArguments", { skip: !schemasAvailable 
 			],
 			{ cwd: projectRoot, env: parentToolEnv(), encoding: "utf-8", stdio: "pipe" },
 		);
-		return JSON.parse(output) as { error?: string; ok: boolean };
+		return JSON.parse(output) as { ok: true } | { error: string; ok: false };
 	}
 
 	it("throws a friendly chain error before schema validation when a step has a disallowed property", () => {
@@ -311,6 +311,18 @@ describe("registered subagent tool prepareArguments", { skip: !schemasAvailable 
 	it("passes valid chain arguments through unchanged", () => {
 		const result = runPrepare({ chain: [{ agent: "worker", task: "do X" }] });
 		assert.equal(result.ok, true);
+	});
+
+	it("accepts runtime-supported level-optional legacy acceptance", () => {
+		const acceptance = {
+			criteria: [{ id: "legacy", must: "Keep tool parity", evidence: ["manual-notes"] }],
+			evidence: ["manual-notes"],
+			verify: [{ id: "node", command: "node --version" }],
+			review: false,
+			stopRules: ["Stop on mismatch"],
+			reason: "provider legacy",
+		};
+		assert.equal(runPrepare({ agent: "worker", task: "do X", acceptance }).ok, true);
 	});
 
 	it("preserves static parallel extra properties accepted by the registered schema", () => {

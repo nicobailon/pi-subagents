@@ -17,7 +17,6 @@ import type {
 	AcceptanceVerifyResult,
 	ResolvedAcceptanceConfig,
 	ResolvedAcceptanceGate,
-	SingleResult,
 	SubagentRunMode,
 } from "../../shared/types.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
@@ -1069,16 +1068,32 @@ function uniqueStrings(items: Array<string | undefined>): string[] {
 }
 
 export function aggregateAcceptanceReport(input: {
-	results: Array<Pick<SingleResult, "agent" | "acceptance" | "error" | "exitCode">>;
+	criteria: ResolvedAcceptanceGate[];
+	results: Array<{
+		agent: string;
+		acceptance?: AcceptanceLedger;
+		error?: string;
+		exitCode: number | null;
+	}>;
 	notes?: string;
 }): AcceptanceReport {
 	const childReports = input.results.map((result) => result.acceptance?.childReport).filter((report): report is AcceptanceReport => Boolean(report));
 	const blockers = input.results.filter((result) => result.exitCode !== 0 || (result.acceptance ? acceptanceBlocksRun(result.acceptance) : false));
 	const successfulChildren = input.results.length > 0 && blockers.length === 0;
+	const requiredCriteria = input.criteria.filter((criterion) => criterion.severity !== "recommended");
 	return {
 		criteriaSatisfied: [
-			{ id: "criterion-1", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.` : "Dynamic fanout produced no accepted child evidence." },
-			{ id: "criterion-2", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? "Collected child acceptance evidence for aggregate review." : "Dynamic fanout produced no aggregate review evidence." },
+			...requiredCriteria.map((criterion, index) => ({
+				id: normalizedToken(criterion.id),
+				status: successfulChildren ? "satisfied" as const : "not-satisfied" as const,
+				evidence: successfulChildren
+					? index === 0
+						? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.`
+						: "Collected child acceptance evidence for aggregate review."
+					: index === 0
+						? "Dynamic fanout produced no accepted child evidence."
+						: "Dynamic fanout produced no aggregate review evidence.",
+			})),
 			...input.results.map((result, index) => ({
 				id: `child-${index + 1}`,
 				status: result.exitCode === 0 && !(result.acceptance && acceptanceBlocksRun(result.acceptance)) ? "satisfied" as const : "not-satisfied" as const,

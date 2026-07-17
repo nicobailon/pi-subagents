@@ -731,6 +731,30 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["verified", "verified"]);
 	});
 
+	it("uses every custom required criterion ID for foreground dynamic aggregate acceptance", async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
+		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
+		const criteria = [
+			{ id: "aggregate-ready", must: "Every child completed" },
+			{ id: "evidence-collected", must: "Child evidence was collected" },
+			{ id: "scope-preserved", must: "The aggregate stayed scoped" },
+		];
+		const result = await executeChain(makeChainParams([
+			{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+			{
+				expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
+				parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: false },
+				collect: { as: "reviews" },
+				acceptance: { report: { criteria } },
+				concurrency: 1,
+			},
+		], [makeAgent("scout"), makeAgent("reviewer")]));
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.equal(result.details.workflowGraph?.nodes[1]?.acceptanceStatus, "checked");
+	});
+
 	it("keeps omitted dynamic child and aggregate acceptance advisory-only", async () => {
 		mockPi.onCall({
 			output: "targets",

@@ -820,7 +820,6 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.ok(revived.details?.asyncDir);
 		const descriptor = JSON.parse(fs.readFileSync(path.join(revived.details.asyncDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: unknown };
 		assert.deepEqual(descriptor.acceptance, {
-			report: false,
 			verify: [{ id: "parent", command: "node -e \"process.exit(0)\"" }],
 			review: false,
 			onFailure: "warn",
@@ -831,6 +830,60 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
+	});
+
+	it("preserves the original legacy acceptance input when reviving remembered foreground state", async () => {
+		const legacyAcceptance = {
+			level: "checked",
+			criteria: [{ id: "legacy-resume", must: "Preserve the original acceptance input", evidence: ["manual-notes"] }],
+			evidence: ["manual-notes"],
+			verify: [{ id: "node", command: "node -e \"process.exit(0)\"" }],
+			review: false,
+			stopRules: ["Stop if the remembered contract changes"],
+			reason: "legacy resume provenance",
+		};
+		mockPi.onCall({ output: [
+			"original foreground answer",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "legacy-resume", status: "satisfied", evidence: "original contract retained" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "node -e", result: "passed", summary: "passed" }],
+				validationOutput: ["passed"],
+				residualRisks: [],
+				noStagedFiles: true,
+				manualNotes: "legacy provenance retained",
+			}),
+			"```",
+		].join("\n") });
+		mockPi.onCall({ output: "revived foreground answer" });
+		const { executor } = makeExecutor({ bridgeMode: "off" });
+
+		const original = await executor.execute(
+			"foreground-legacy-resume-original",
+			{ agent: "worker", task: "Original task", acceptance: legacyAcceptance },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(original.isError, undefined, original.content[0]?.text);
+		const runId = original.details?.runId;
+		assert.ok(runId);
+
+		const revived = await executor.execute(
+			"foreground-legacy-resume",
+			{ action: "resume", id: runId, message: "Continue with the same contract" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(revived.isError, undefined);
+		assert.ok(revived.details?.asyncDir);
+		const descriptor = JSON.parse(fs.readFileSync(path.join(revived.details.asyncDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: unknown };
+		assert.deepEqual(descriptor.acceptance, legacyAcceptance);
+		assert.ok(revived.details.asyncId);
+		await waitForFile(path.join(RESULTS_DIR, `${revived.details.asyncId}.json`));
 	});
 
 	it("applies the same exclusive lease to remembered foreground revival", async () => {

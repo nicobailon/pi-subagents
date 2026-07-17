@@ -137,7 +137,6 @@ const AcceptanceOverride = Type.Unsafe({
 				stopRules: { type: "array", items: { type: "string" } },
 				reason: { type: "string" },
 			},
-			required: ["level"],
 			additionalProperties: false,
 		},
 		{

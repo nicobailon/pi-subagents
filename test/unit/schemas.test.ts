@@ -417,7 +417,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(anyOfBranches(configSchema).some((branch) => branch.type === "object" && branch.additionalProperties === true), true);
 		assert.equal(hasAnyOfType(configSchema, "string"), true);
 
-		const acceptanceSchema = SubagentParams?.properties?.acceptance;
+		const acceptanceSchema = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.acceptance;
 		assert.ok(acceptanceSchema, "acceptance schema should exist");
 		assert.equal(acceptanceSchema.type, undefined);
 		assert.equal(hasAnyOfType(acceptanceSchema, "string"), true);
@@ -425,7 +425,14 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const acceptanceStringBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "string");
 		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "none", "attested", "checked", "verified", "reviewed"]);
 		const acceptanceObjectBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "object");
-		assert.equal(acceptanceObjectBranches.length, 4, "acceptance should separate canonical, active legacy, auto, and none objects");
+		assert.equal(acceptanceObjectBranches.length, 4, "acceptance should separate canonical, level-optional legacy, auto, and none objects");
+		const levelOptionalLegacy = acceptanceObjectBranches.find((branch) => {
+			const properties = branch.properties as Record<string, unknown> | undefined;
+			return properties?.criteria !== undefined && !(branch.required as string[] | undefined)?.includes("level");
+		});
+		assert.ok(levelOptionalLegacy, "acceptance should expose the runtime-supported level-optional legacy object");
+		assert.equal((levelOptionalLegacy.properties as Record<string, unknown>).report, undefined);
+		assert.equal((levelOptionalLegacy.properties as Record<string, unknown>).onFailure, undefined);
 		assert.ok(acceptanceObjectBranches.every((branch) => branch.additionalProperties === false));
 
 		const chainItem = SubagentParams?.properties?.chain?.items;
@@ -513,6 +520,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ agent: "worker", task: "Fix", acceptance: { level: "auto" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
+			{ agent: "worker", task: "Fix", acceptance: { criteria: [{ id: "legacy", must: "Keep parity" }], evidence: ["manual-notes"], verify: [{ id: "node", command: "node --version" }], review: false, stopRules: ["Stop on mismatch"], reason: "provider legacy" } },
 			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },
 			{ chain: [{ agent: "worker", acceptance: { level: "checked" } }] },
 			{ chain: [{ parallel: [{ agent: "worker", acceptance: { level: "verified", verify: [{ id: "unit", command: "npm test" }] } }] }] },
@@ -531,6 +539,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const invalidValues = [
 			{ skill: 123 },
 			{ agent: "worker", task: "Fix", acceptance: { report: {}, criteria: ["ambiguous"] } },
+			{ agent: "worker", task: "Fix", acceptance: { criteria: ["legacy"], onFailure: "warn" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "auto", verify: [] } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "none", review: false } },
 			{ agent: "worker", task: "Fix", acceptance: { report: { surprise: true } } },
