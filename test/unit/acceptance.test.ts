@@ -149,6 +149,23 @@ describe("acceptance gates", () => {
 
 	it("strictly validates canonical contracts and rejects legacy ambiguity", () => {
 		assert.deepEqual(validateAcceptanceInput({ report: {} }), []);
+		assert.deepEqual(validateAcceptanceInput({ level: "auto" }), []);
+		assert.deepEqual(validateAcceptanceInput({ level: "none" }), []);
+		for (const level of ["auto", "none"] as const) {
+			for (const dimensions of [
+				{ criteria: ["discarded"] },
+				{ evidence: ["commands-run"] },
+				{ verify: [] },
+				{ review: false },
+				{ stopRules: ["discarded"] },
+			]) {
+				assert.match(validateAcceptanceInput({ level, ...dimensions }).join("\n"), /cannot combine.*contract dimensions/i);
+			}
+		}
+		const objectAuto = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement", explicit: { level: "auto" } });
+		const stringAuto = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement", explicit: "auto" });
+		assert.equal(objectAuto.explicit, stringAuto.explicit);
+		assert.deepEqual(objectAuto.recommendations, stringAuto.recommendations);
 		assert.match(validateAcceptanceInput({ report: { surprise: true } }).join("\n"), /acceptance\.report\.surprise is not supported/);
 		assert.match(validateAcceptanceInput({ report: { criteria: [{ id: "x", must: "one" }, { id: "X", must: "two" }] } }).join("\n"), /duplicates normalized criterion id/);
 		assert.match(validateAcceptanceInput({ report: {}, criteria: ["legacy"] }).join("\n"), /mix legacy and canonical/i);
@@ -159,6 +176,13 @@ describe("acceptance gates", () => {
 		assert.match(validateAcceptanceInput({ review: { agent: "reviewer" } }).join("\n"), /required must be false/i);
 		assert.match(validateAcceptanceInput("verified").join("\n"), /verification-config.*verify command/i);
 		assert.match(validateAcceptanceInput({ level: "verified" }).join("\n"), /verification-config.*verify command/i);
+	});
+
+	it("marks an absent optional-only review as not required", async () => {
+		const acceptance = resolveEffectiveAcceptance({ agentName: "reviewer", explicit: { review: { required: false } } });
+		const ledger = await evaluateAcceptance({ acceptance, output: "review was not run", cwd: tempRepo() });
+		assert.equal(ledger.status, "not-required");
+		assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
 	});
 
 	it("keeps role and task inference advisory", () => {

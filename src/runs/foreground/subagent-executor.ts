@@ -87,6 +87,7 @@ import {
 	type ControlEvent,
 	type Details,
 	type ExtensionConfig,
+	type ForegroundResumeChild,
 	type IntercomEventBus,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
@@ -443,7 +444,24 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string } | undefined {
+function recoveredForegroundAcceptance(child: ForegroundResumeChild): AcceptanceInput | undefined {
+	const ledger = child.acceptance;
+	if (!ledger?.explicit) return undefined;
+	const acceptance = ledger.effectiveAcceptance;
+	if (acceptance.level === "none") {
+		return acceptance.deprecationWarnings.length > 0
+			? { level: "none", ...(acceptance.reason ? { reason: acceptance.reason } : {}) }
+			: false;
+	}
+	return {
+		report: acceptance.report,
+		verify: acceptance.verify,
+		review: acceptance.review,
+		onFailure: acceptance.onFailure,
+	};
+}
+
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; acceptance?: AcceptanceInput } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId);
@@ -462,7 +480,8 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (path.extname(child.sessionFile) !== ".jsonl") throw new Error(`Foreground run '${run.runId}' child ${index} session file must be a .jsonl file: ${child.sessionFile}`);
 	const sessionFile = path.resolve(child.sessionFile);
 	if (!fs.existsSync(sessionFile)) throw new Error(`Foreground run '${run.runId}' child ${index} session file does not exist: ${child.sessionFile}`);
-	return { runId: run.runId, mode: run.mode, state: "complete", agent: child.agent, index, cwd: run.cwd, sessionFile };
+	const acceptance = recoveredForegroundAcceptance(child);
+	return { runId: run.runId, mode: run.mode, state: "complete", agent: child.agent, index, cwd: run.cwd, sessionFile, ...(acceptance !== undefined ? { acceptance } : {}) };
 }
 
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
@@ -1239,6 +1258,8 @@ async function resumeAsyncRun(input: {
 	}
 
 	const runId = randomUUID().slice(0, 8);
+	const recoveredAcceptance = recoveryDescriptor?.acceptance ?? ("acceptance" in target ? target.acceptance : undefined);
+	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
 	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd);
@@ -1287,7 +1308,7 @@ async function resumeAsyncRun(input: {
 		output: recoveryDescriptor?.outputPath,
 		outputMode: recoveryDescriptor?.outputMode,
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
-		...(recoveryDescriptor?.acceptance !== undefined && input.params.acceptance === undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),

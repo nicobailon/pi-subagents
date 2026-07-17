@@ -265,6 +265,13 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	const hasCanonicalField = Object.keys(value).some((key) => CANONICAL_ONLY_KEYS.has(key));
 	const hasLegacyField = Object.keys(value).some((key) => LEGACY_ONLY_KEYS.has(key));
 	if (hasCanonicalField && hasLegacyField) errors.push(`${pathLabel} cannot mix legacy and canonical acceptance fields.`);
+	if (value.level === "auto" || value.level === "none") {
+		const allowedKeys = value.level === "none" ? new Set(["level", "reason"]) : new Set(["level"]);
+		const discardedDimensions = Object.keys(value).filter((key) => !allowedKeys.has(key));
+		if (discardedDimensions.length > 0) {
+			errors.push(`${pathLabel}.level '${value.level}' cannot combine with contract dimensions: ${discardedDimensions.join(", ")}.`);
+		}
+	}
 	if (value.report !== undefined && value.report !== false) {
 		if (!value.report || typeof value.report !== "object" || Array.isArray(value.report)) {
 			errors.push(`${pathLabel}.report must be false or an object.`);
@@ -476,13 +483,18 @@ export function resolveEffectiveAcceptance(input: {
 			: report !== false
 				? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
 				: "none";
-	const explicit = input.explicit !== undefined && input.explicit !== "auto";
+	const explicitObject = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit)
+		? input.explicit as Record<string, unknown>
+		: undefined;
+	const explicitObjectAuto = explicitObject?.level === "auto"
+		&& Object.keys(explicitObject).every((key) => key === "level");
+	const explicit = input.explicit !== undefined && input.explicit !== "auto" && !explicitObjectAuto;
 	return {
 		level,
 		explicit,
 		report,
 		onFailure: contract === false ? "warn" : contract.onFailure ?? "fail",
-		recommendations: input.explicit === undefined || input.explicit === "auto" ? advisory.recommendations : [],
+		recommendations: explicit ? [] : advisory.recommendations,
 		deprecationWarnings: adapted.deprecationWarnings,
 		inferredReason: advisory.inferredReason,
 		criteria,
@@ -1262,6 +1274,7 @@ export async function evaluateAcceptance(input: {
 	else if (acceptance.review !== false && ledger.reviewResult?.status === "no-blockers") ledger.status = "reviewed";
 	else if (acceptance.verify.length > 0) ledger.status = "verified";
 	else if (acceptance.report !== false) ledger.status = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
+	else if (acceptance.review !== false && acceptance.review.required === false && !input.reviewResult) ledger.status = "not-required";
 	return ledger;
 }
 

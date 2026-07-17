@@ -425,7 +425,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const acceptanceStringBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "string");
 		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "none", "attested", "checked", "verified", "reviewed"]);
 		const acceptanceObjectBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "object");
-		assert.equal(acceptanceObjectBranches.length, 2, "acceptance should support strict canonical and legacy objects");
+		assert.equal(acceptanceObjectBranches.length, 4, "acceptance should separate canonical, active legacy, auto, and none objects");
 		assert.ok(acceptanceObjectBranches.every((branch) => branch.additionalProperties === false));
 
 		const chainItem = SubagentParams?.properties?.chain?.items;
@@ -510,6 +510,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ agent: "worker", task: "Fix", acceptance: "reviewed" },
 			{ agent: "worker", task: "Fix", acceptance: { report: { evidence: ["commands-run"] }, onFailure: "warn" } },
 			{ agent: "worker", task: "Fix", acceptance: { verify: [{ id: "unit", command: "npm test" }] } },
+			{ agent: "worker", task: "Fix", acceptance: { level: "auto" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
 			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },
@@ -530,6 +531,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const invalidValues = [
 			{ skill: 123 },
 			{ agent: "worker", task: "Fix", acceptance: { report: {}, criteria: ["ambiguous"] } },
+			{ agent: "worker", task: "Fix", acceptance: { level: "auto", verify: [] } },
+			{ agent: "worker", task: "Fix", acceptance: { level: "none", review: false } },
 			{ agent: "worker", task: "Fix", acceptance: { report: { surprise: true } } },
 			{ skill: [123] },
 			{ output: 123 },

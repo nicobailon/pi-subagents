@@ -225,14 +225,29 @@ Review the diff
 		assert.deepEqual(serialized.acceptance, rootAcceptance);
 	});
 
+	it("does not leak string root acceptance into extra fields on round-trip", () => {
+		const parsed = parseJsonChain(JSON.stringify({
+			name: "string-acceptance",
+			description: "String acceptance",
+			acceptance: "checked",
+			chain: [{ agent: "worker", task: "Fix" }],
+		}), "project", "/tmp/string-acceptance.chain.json");
+
+		assert.equal(parsed.acceptance, "checked");
+		assert.equal(parsed.extraFields?.acceptance, undefined);
+		assert.equal((JSON.parse(serializeJsonChain(parsed)) as { acceptance?: unknown }).acceptance, "checked");
+	});
+
 	it("validates acceptance at the JSON chain root and every child surface", () => {
 		for (const input of [
 			{ acceptance: { report: false, level: "checked" }, chain: [{ agent: "worker" }] },
+			{ acceptance: { level: "auto", verify: [] }, chain: [{ agent: "worker" }] },
+			{ acceptance: false, chain: [{ agent: "worker", acceptance: { level: "none", review: false } }] },
 			{ acceptance: false, chain: [{ agent: "worker", acceptance: { report: false, level: "checked" } }] },
 		]) {
 			assert.throws(
 				() => parseJsonChain(JSON.stringify({ name: "bad-acceptance", description: "Bad acceptance", ...input }), "project", "/tmp/bad-acceptance.chain.json"),
-				/cannot mix legacy and canonical acceptance fields/,
+				/cannot (?:mix legacy and canonical acceptance fields|combine.*contract dimensions)/,
 			);
 		}
 	});

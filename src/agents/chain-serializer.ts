@@ -211,7 +211,7 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 	if (parsedPackage.error) throw new Error(parsedPackage.error);
 	const extraFields: Record<string, string> = {};
 	for (const [key, value] of Object.entries(input)) {
-		if (key === "name" || key === "package" || key === "description" || key === "chain") continue;
+		if (key === "name" || key === "package" || key === "description" || key === "acceptance" || key === "chain") continue;
 		if (typeof value === "string") extraFields[key] = value;
 	}
 	return {

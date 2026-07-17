@@ -105,6 +105,8 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, output: false, outputMode: "file-only" }, /outputMode.*output.*path/],
 			[{ ...request, acceptance: { report: false, level: "checked" } }, /cannot mix legacy and canonical/],
 			[{ ...request, acceptance: { report: false, surprise: true } }, /surprise is not supported/],
+			[{ ...request, acceptance: { level: "auto", verify: [] } }, /cannot combine.*contract dimensions/i],
+			[{ ...request, acceptance: { level: "none", review: false } }, /cannot combine.*contract dimensions/i],
 			[{ ...request, artifacts: "yes" }, /artifacts must be a boolean/],
 		] as const;
 		for (const [input, expected] of malformed) {
