@@ -2094,6 +2094,63 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.finalOutput ?? "", /final wrapped output/);
 	});
 
+	it("defers a foreground hard turn limit through active tool work and aborts at the next assistant boundary", async () => {
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [
+						mockAssistantMessage("starting required tool work", "tool_use"),
+						events.toolStart("bash", { command: "node build.mjs" }),
+					],
+				},
+				{
+					delay: 500,
+					jsonl: [
+						events.toolResult("bash", "build completed"),
+						events.toolEnd("bash"),
+						mockAssistantMessage("safe assistant boundary reached", "stop"),
+					],
+				},
+			],
+		});
+		const agents = makeAgentConfigs(["worker"]);
+		const snapshots: Array<{
+			turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number };
+			turnBudgetExceeded?: boolean;
+			error?: string;
+			currentTool?: string;
+			status?: string;
+		}> = [];
+
+		const result = await runSync(tempDir, agents, "worker", "Finish active tool work before enforcing the hard limit.", {
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			runId: "foreground-turn-budget-deferred",
+			onUpdate(update: { details?: { results?: Array<{ turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number }; turnBudgetExceeded?: boolean; error?: string }>; progress?: Array<{ currentTool?: string; status?: string }> } }) {
+				const current = update.details?.results?.[0];
+				const progress = update.details?.progress?.[0];
+				snapshots.push({
+					turnBudget: current?.turnBudget,
+					turnBudgetExceeded: current?.turnBudgetExceeded,
+					error: current?.error,
+					currentTool: progress?.currentTool,
+					status: progress?.status,
+				});
+			},
+		});
+
+		const duringTool = snapshots.find((snapshot) => snapshot.turnBudget?.outcome === "termination-deferred" && snapshot.currentTool === "bash");
+		assert.ok(duringTool, "expected a running snapshot with deferred termination and the active tool");
+		assert.equal(duringTool.turnBudget?.terminationDeferredAtTurn, 1);
+		assert.equal(duringTool.turnBudgetExceeded, undefined);
+		assert.equal(duringTool.error, undefined);
+		assert.equal(duringTool.status, "running");
+		assert.equal(result.turnBudgetExceeded, true);
+		assert.equal(result.turnBudget?.outcome, "exceeded");
+		assert.equal(result.turnBudget?.turnCount, 2);
+		assert.match(result.finalOutput ?? "", /safe assistant boundary reached/);
+		assert.ok(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")));
+	});
+
 	it("does not run acceptance verification after a foreground timeout", async () => {
 		const markerPath = path.join(tempDir, "verify-ran.txt");
 		const report = [

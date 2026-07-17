@@ -202,7 +202,7 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 	const maxTurns = clampNumber(raw.maxTurns);
 	const graceTurns = clampNumber(raw.graceTurns);
 	const turnCount = clampNumber(raw.turnCount);
-	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded" ? raw.outcome : undefined;
+	const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "termination-deferred" || raw.outcome === "exceeded" ? raw.outcome : undefined;
 	if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome) return undefined;
 	return {
 		maxTurns,
@@ -210,6 +210,7 @@ function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 		turnCount,
 		outcome,
 		...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) } : {}),
+		...(clampNumber(raw.terminationDeferredAtTurn) !== undefined ? { terminationDeferredAtTurn: clampNumber(raw.terminationDeferredAtTurn) } : {}),
 		...(clampNumber(raw.exceededAtTurn) !== undefined ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) } : {}),
 	};
 }

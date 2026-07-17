@@ -96,7 +96,7 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts
 import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
-import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
+import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
@@ -312,11 +312,13 @@ function appendRecentStepOutput(step: RunnerStatusStep, lines: string[]): void {
 	}
 }
 
-function isTerminalAssistantStop(message: Message): boolean {
-	const stopReason = (message as { stopReason?: string }).stopReason;
-	const hasToolCall = Array.isArray(message.content)
+function assistantStartsToolCall(message: Message): boolean {
+	return Array.isArray(message.content)
 		&& message.content.some((part) => (part as { type?: string }).type === "toolCall");
-	return stopReason === "stop" && !hasToolCall;
+}
+
+function isTerminalAssistantStop(message: Message): boolean {
+	return (message as { stopReason?: string }).stopReason === "stop" && !assistantStartsToolCall(message);
 }
 
 function resetStepLiveDetail(step: RunnerStatusStep): void {
@@ -769,7 +771,7 @@ function runPiStreaming(
 				stopped,
 				turnBudget,
 				turnBudgetExceeded,
-				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
+				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined,
 				observedMutationAttempt,
 				watchdog: childWatchdogState,
 			});
@@ -794,7 +796,7 @@ function runPiStreaming(
 			const stderr = stderrTail.text();
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
+			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
 		});
 	});
 }
@@ -1178,11 +1180,15 @@ async function runSingleStep(
 			if (turnCount > 0 && turnCount < ctx.turnBudget.maxTurns) {
 				turnBudget = { ...ctx.turnBudget, outcome: "within-budget", turnCount };
 			} else if (turnCount >= ctx.turnBudget.maxTurns) {
-				turnBudget = turnBudgetState(
+				const decision = turnBudgetDecision(
 					ctx.turnBudget,
 					turnCount,
-					shouldAbortForTurnBudget(ctx.turnBudget, turnCount, lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false),
+					lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false,
+					lastAssistantMessage ? assistantStartsToolCall(lastAssistantMessage) : false,
 				);
+				turnBudget = decision === "defer"
+					? turnBudgetDeferredState(ctx.turnBudget, turnCount)
+					: turnBudgetState(ctx.turnBudget, turnCount, decision === "abort");
 			}
 		}
 		const toolAvailabilityError = run.exitCode === 0 && !run.error
@@ -1278,6 +1284,9 @@ async function runSingleStep(
 		outputForSummary = ctx.stopMessage ?? "Subagent stopped by user.";
 	} else if (!finalResult?.timedOut && !finalResult?.stopped && finalResult?.turnBudgetExceeded && turnBudget) {
 		outputForSummary = formatTurnBudgetOutput(turnBudgetExceededMessage(turnBudget, turnBudget.turnCount), outputForSummary);
+	} else if (!finalResult?.timedOut && !finalResult?.stopped && turnBudget?.outcome === "termination-deferred") {
+		const note = turnBudgetDeferredNote(turnBudget, turnBudget.terminationDeferredAtTurn ?? turnBudget.turnCount);
+		outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
 	} else if (!finalResult?.timedOut && !finalResult?.stopped && turnBudget?.outcome === "wrap-up-requested") {
 		const note = turnBudgetSoftNote(turnBudget, turnBudget.wrapUpRequestedAtTurn ?? turnBudget.turnCount);
 		outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
@@ -1380,7 +1389,7 @@ async function runSingleStep(
 		stopped: stoppedAfterAcceptance ? true : finalResult?.stopped,
 		turnBudget,
 		turnBudgetExceeded: turnBudgetExceeded || undefined,
-		wrapUpRequested: finalResult?.wrapUpRequested || turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
+		wrapUpRequested: finalResult?.wrapUpRequested || turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined,
 		toolBudget,
 		toolBudgetBlocked: toolBudgetBlocked || undefined,
 		completionGuardTriggered: completionGuardTriggeredFinal,
@@ -2174,7 +2183,13 @@ async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
-	const updateStepTurnBudget = (flatIndex: number, turnCount: number, now: number, terminalAssistantStop: boolean): void => {
+	const updateStepTurnBudget = (
+		flatIndex: number,
+		turnCount: number,
+		now: number,
+		terminalAssistantStop: boolean,
+		toolWorkActiveOrStarting: boolean,
+	): void => {
 		const budget = config.turnBudget;
 		const step = statusPayload.steps[flatIndex];
 		if (!budget || !step || timedOut || stopped || turnBudgetExceeded || step.turnBudgetExceeded) return;
@@ -2184,15 +2199,35 @@ async function runSubagent(
 			statusPayload.turnBudget = state;
 			return;
 		}
-		const state = turnBudgetState(budget, turnCount, false);
-		step.turnBudget = state;
-		statusPayload.turnBudget = state;
 		if (!step.wrapUpRequested) {
 			step.wrapUpRequested = true;
 			statusPayload.wrapUpRequested = true;
 			appendRecentStepOutput(step, [turnBudgetSoftNote(budget, turnCount)]);
 		}
-		if (!shouldAbortForTurnBudget(budget, turnCount, terminalAssistantStop)) return;
+		const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting);
+		if (decision === "defer") {
+			const firstDeferredTurn = step.turnBudget?.terminationDeferredAtTurn;
+			const deferredState = turnBudgetDeferredState(budget, turnCount, firstDeferredTurn);
+			step.turnBudget = deferredState;
+			statusPayload.turnBudget = deferredState;
+			if (firstDeferredTurn === undefined) {
+				appendJsonl(eventsPath, JSON.stringify({
+					type: "subagent.step.turn_budget_deferred",
+					ts: now,
+					runId: id,
+					stepIndex: flatIndex,
+					agent: step.agent,
+					turnCount,
+					maxTurns: budget.maxTurns,
+					graceTurns: budget.graceTurns,
+				}));
+			}
+			return;
+		}
+		const state = turnBudgetState(budget, turnCount, false);
+		step.turnBudget = state;
+		statusPayload.turnBudget = state;
+		if (decision !== "abort") return;
 		const exceededState = turnBudgetState(budget, turnCount, true);
 		const message = turnBudgetExceededMessage(budget, turnCount);
 		step.turnBudget = exceededState;
@@ -2318,7 +2353,13 @@ async function runSubagent(
 				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output };
 			}
 			statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
-			updateStepTurnBudget(flatIndex, step.turnCount, now, isTerminalAssistantStop(event.message));
+			updateStepTurnBudget(
+				flatIndex,
+				step.turnCount,
+				now,
+				isTerminalAssistantStop(event.message),
+				assistantStartsToolCall(event.message) || Boolean(step.currentTool),
+			);
 		}
 		syncTopLevelCurrentTool();
 		step.lastActivityAt = now;

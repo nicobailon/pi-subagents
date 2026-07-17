@@ -45,6 +45,10 @@ export function turnBudgetExceededMessage(budget: ResolvedTurnBudget, turnCount:
 	return `Subagent exceeded turn budget after ${turnCount} assistant turn${turnCount === 1 ? "" : "s"} (soft limit ${budget.maxTurns} + grace ${budget.graceTurns}).`;
 }
 
+export function turnBudgetDeferredNote(budget: ResolvedTurnBudget, turnCount: number): string {
+	return `Turn-budget termination was deferred at ${turnCount} assistant turn${turnCount === 1 ? "" : "s"} (soft limit ${budget.maxTurns} + grace ${budget.graceTurns}) because the assistant started tool work. The run ended before another safe assistant boundary; output may be partial.`;
+}
+
 export function formatTurnBudgetOutput(message: string, output: string): string {
 	return output.trim()
 		? `${message}\n\nPartial output before turn-budget abort:\n${output}`
@@ -65,9 +69,29 @@ export function turnBudgetState(budget: ResolvedTurnBudget, turnCount: number, e
 	};
 }
 
-export function shouldAbortForTurnBudget(budget: ResolvedTurnBudget, turnCount: number, terminalAssistantStop: boolean): boolean {
+export function turnBudgetDeferredState(
+	budget: ResolvedTurnBudget,
+	turnCount: number,
+	terminationDeferredAtTurn = turnCount,
+): TurnBudgetState {
+	return {
+		...budget,
+		turnCount,
+		outcome: "termination-deferred",
+		wrapUpRequestedAtTurn: budget.maxTurns,
+		terminationDeferredAtTurn,
+	};
+}
+
+export function turnBudgetDecision(
+	budget: ResolvedTurnBudget,
+	turnCount: number,
+	terminalAssistantStop: boolean,
+	toolWorkActiveOrStarting: boolean,
+): "continue" | "defer" | "abort" {
 	const hardLimit = budget.maxTurns + budget.graceTurns;
-	if (turnCount < hardLimit) return false;
-	if (turnCount > hardLimit) return true;
-	return !terminalAssistantStop;
+	if (turnCount < hardLimit) return "continue";
+	if (toolWorkActiveOrStarting) return "defer";
+	if (turnCount === hardLimit && terminalAssistantStop) return "continue";
+	return "abort";
 }

@@ -107,6 +107,33 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("renders deferred turn-budget termination distinctly from a soft wrap-up request", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-turn-budget-deferred-"));
+		try {
+			createAsyncDir(root, "run-deferred", {
+				runId: "run-deferred",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1_000,
+				lastUpdate: Date.now(),
+				wrapUpRequested: true,
+				turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
+				steps: [{
+					agent: "worker",
+					status: "running",
+					wrapUpRequested: true,
+					turnBudget: { maxTurns: 2, graceTurns: 1, turnCount: 3, outcome: "termination-deferred", wrapUpRequestedAtTurn: 2, terminationDeferredAtTurn: 3 },
+				}],
+			});
+
+			const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
+			assert.match(text, /turn-budget termination deferred 3\/2\+1/);
+			assert.doesNotMatch(text, /wrap-up requested/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("does not infer attention state when the runner has not persisted one", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-no-derived-attention-"));
 		try {

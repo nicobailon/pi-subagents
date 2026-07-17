@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
+import { deliverInterruptRequest, deliverStopRequest } from "../../src/runs/background/control-channel.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
@@ -38,12 +38,13 @@ interface AsyncResultPayload {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
-	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number };
+	stopped?: boolean;
+	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number };
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
+	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 }
@@ -51,6 +52,7 @@ interface AsyncResultPayload {
 interface AsyncStatusPayload {
 	lifecycleArtifactVersion?: number;
 	sessionId?: string;
+	pid?: number;
 	activityState?: string;
 	currentTool?: string;
 	currentPath?: string;
@@ -59,7 +61,8 @@ interface AsyncStatusPayload {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
-	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number };
+	stopped?: boolean;
+	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number };
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
 	totalTokens?: { total: number };
@@ -82,7 +85,7 @@ interface AsyncStatusPayload {
 		tokens?: { total: number };
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 		acceptance?: { status?: string };
-		turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number };
+		turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number };
 		turnBudgetExceeded?: boolean;
 		wrapUpRequested?: boolean;
 	}>;
@@ -267,6 +270,24 @@ async function waitForAsyncResultFile(id: string, timeoutMs = 15_000): Promise<s
 		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 	return resultPath;
+}
+
+async function waitForDeferredTurnBudget(id: string, timeoutMs = 10_000): Promise<AsyncStatusPayload> {
+	const statusPath = path.join(ASYNC_DIR, id, "status.json");
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() <= deadline) {
+		if (fs.existsSync(statusPath)) {
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+			if (status.state === "running"
+				&& status.turnBudget?.outcome === "termination-deferred"
+				&& status.steps?.[0]?.turnBudget?.outcome === "termination-deferred"
+				&& status.steps[0].currentTool === "bash") {
+				return status;
+			}
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	assert.fail(`Timed out waiting for deferred turn-budget status: ${statusPath}`);
 }
 
 async function waitForMockPiCall(mockPi: MockPi, index: number, timeoutMs = 30_000): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
@@ -781,11 +802,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.turnBudget?.turnCount, 2);
 	});
 
-	it("async turn budget hard-aborts a non-terminal final grace turn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("async turn budget hard-aborts beyond the final grace turn at a safe assistant boundary", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [
 				mockAssistantMessage("working before wrap-up", "tool_use"),
-				mockAssistantMessage("still starting more tool work", "tool_use"),
+				mockAssistantMessage("starting final grace tool work", "tool_use"),
+				mockAssistantMessage("safe assistant boundary after tool work", "stop"),
 			],
 		});
 		const id = `async-turn-budget-hard-${Date.now().toString(36)}`;
@@ -809,15 +831,149 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.turnBudgetExceeded, true);
 		assert.equal(payload.wrapUpRequested, true);
 		assert.equal(payload.turnBudget?.outcome, "exceeded");
-		assert.equal(payload.turnBudget?.turnCount, 2);
-		assert.equal(payload.turnBudget?.exceededAtTurn, 2);
+		assert.equal(payload.turnBudget?.turnCount, 3);
+		assert.equal(payload.turnBudget?.exceededAtTurn, 3);
 		assert.equal(payload.results[0]?.turnBudgetExceeded, true);
 		assert.match(payload.results[0]?.output ?? "", /Partial output before turn-budget abort:/);
-		assert.match(payload.results[0]?.output ?? "", /still starting more tool work/);
+		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary after tool work/);
 		assert.equal(status.state, "failed");
 		assert.equal(status.turnBudgetExceeded, true);
 		assert.equal(status.steps?.[0]?.turnBudgetExceeded, true);
 		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
+	});
+
+	it("defers an async hard turn limit through active tool work and aborts at the next assistant boundary", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [
+						mockAssistantMessage("starting required tool work", "tool_use"),
+						events.toolStart("bash", { command: "node build.mjs" }),
+					],
+				},
+				{
+					delay: 750,
+					jsonl: [
+						events.toolResult("bash", "build completed"),
+						events.toolEnd("bash"),
+						mockAssistantMessage("safe assistant boundary reached", "stop"),
+					],
+				},
+			],
+		});
+		const id = `async-turn-budget-deferred-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Finish active tool work before enforcing the hard limit.",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+		});
+
+		const pending = await waitForDeferredTurnBudget(id);
+		assert.equal(pending.error, undefined);
+		assert.equal(pending.turnBudgetExceeded, undefined);
+		assert.equal(pending.turnBudget?.terminationDeferredAtTurn, 1);
+		assert.equal(pending.steps?.[0]?.status, "running");
+		assert.equal(pending.steps?.[0]?.turnBudgetExceeded, undefined);
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.state, "failed");
+		assert.equal(payload.turnBudgetExceeded, true);
+		assert.equal(payload.turnBudget?.outcome, "exceeded");
+		assert.equal(payload.turnBudget?.turnCount, 2);
+		assert.equal(payload.results[0]?.turnBudgetExceeded, true);
+		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary reached/);
+		assert.equal(status.state, "failed");
+		assert.equal(status.turnBudgetExceeded, true);
+		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
+	});
+
+	it("lets elapsed timeout preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [
+						mockAssistantMessage("starting long tool work", "tool_use"),
+						events.toolStart("bash", { command: "node build.mjs" }),
+					],
+				},
+				{ delay: 5_000, jsonl: [events.toolEnd("bash")] },
+			],
+		});
+		const id = `async-turn-budget-timeout-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Timeout while hard termination is deferred.",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			timeoutMs: 1_000,
+		});
+
+		await waitForDeferredTurnBudget(id);
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.state, "failed");
+		assert.equal(payload.timedOut, true);
+		assert.equal(payload.turnBudgetExceeded, undefined);
+		assert.match(payload.error ?? payload.summary ?? "", /timed out after 1000ms/);
+		assert.equal(payload.results[0]?.timedOut, true);
+		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
+		assert.equal(status.timedOut, true);
+		assert.equal(status.turnBudgetExceeded, undefined);
+		assert.equal(status.steps?.[0]?.timedOut, true);
+	});
+
+	it("lets explicit stop preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [
+						mockAssistantMessage("starting long tool work", "tool_use"),
+						events.toolStart("bash", { command: "node build.mjs" }),
+					],
+				},
+				{ delay: 5_000, jsonl: [events.toolEnd("bash")] },
+			],
+		});
+		const id = `async-turn-budget-stop-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Stop while hard termination is deferred.",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+		});
+
+		const pending = await waitForDeferredTurnBudget(id);
+		const asyncDir = path.join(ASYNC_DIR, id);
+		deliverStopRequest({ asyncDir, pid: pending.pid, source: "test" });
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.state, "stopped");
+		assert.equal(payload.stopped, true);
+		assert.equal(payload.turnBudgetExceeded, undefined);
+		assert.match(payload.error ?? payload.summary ?? "", /stopped by user/i);
+		assert.equal(payload.results[0]?.stopped, true);
+		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
+		assert.equal(status.state, "stopped");
+		assert.equal(status.stopped, true);
+		assert.equal(status.turnBudgetExceeded, undefined);
+		assert.equal(status.steps?.[0]?.status, "stopped");
 	});
 
 	it("async launch messages tell the parent not to sleep-poll", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

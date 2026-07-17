@@ -71,7 +71,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
-import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
+import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
@@ -580,7 +580,7 @@ async function runSingleAttempt(
 			turnBudgetHardKillTimer.unref?.();
 		};
 
-		const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean) => {
+		const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean, toolWorkActiveOrStarting: boolean) => {
 			const budget = options.turnBudget;
 			if (!budget || result.timedOut || result.turnBudgetExceeded) return;
 			if (turnCount < budget.maxTurns) {
@@ -592,10 +592,17 @@ async function runSingleAttempt(
 				result.wrapUpRequested = true;
 				appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
 			}
-			result.turnBudget = turnBudgetState(budget, turnCount, false);
-			if (shouldAbortForTurnBudget(budget, turnCount, terminalAssistantStop)) {
-				requestTurnBudgetAbort(turnCount);
+			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting);
+			if (decision === "defer") {
+				result.turnBudget = turnBudgetDeferredState(
+					budget,
+					turnCount,
+					result.turnBudget?.terminationDeferredAtTurn,
+				);
+				return;
 			}
+			result.turnBudget = turnBudgetState(budget, turnCount, false);
+			if (decision === "abort") requestTurnBudgetAbort(turnCount);
 		};
 
 		const updateActivityState = (now: number): boolean => {
@@ -730,7 +737,7 @@ async function runSingleAttempt(
 					const hasToolCall = Array.isArray(evt.message.content)
 						&& evt.message.content.some((part) => (part as { type?: string }).type === "toolCall");
 					const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-					updateTurnBudget(result.usage.turns, terminalAssistantStop);
+					updateTurnBudget(result.usage.turns, terminalAssistantStop, hasToolCall || Boolean(progress.currentTool));
 					const u = evt.message.usage;
 					if (u) {
 						result.usage.input += u.input || 0;
@@ -1072,6 +1079,9 @@ async function runSingleAttempt(
 			: timeoutMessage;
 	} else if (result.turnBudgetExceeded && result.turnBudget) {
 		fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
+	} else if (result.turnBudget?.outcome === "termination-deferred") {
+		const note = turnBudgetDeferredNote(result.turnBudget, result.turnBudget.terminationDeferredAtTurn ?? result.turnBudget.turnCount);
+		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
 	} else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
 		const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
 		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;

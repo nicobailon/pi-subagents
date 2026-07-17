@@ -7,7 +7,8 @@ import {
 	formatTurnBudgetOutput,
 	initialTurnBudgetState,
 	resolveTurnBudgetConfig,
-	shouldAbortForTurnBudget,
+	turnBudgetDecision,
+	turnBudgetDeferredState,
 	turnBudgetExceededMessage,
 	turnBudgetSoftNote,
 	turnBudgetState,
@@ -176,22 +177,38 @@ describe("turn-budget module", () => {
 		});
 	});
 
-	describe("shouldAbortForTurnBudget", () => {
-		it("allows a terminal assistant response on the final grace turn", () => {
-			assert.equal(shouldAbortForTurnBudget(budget({ maxTurns: 3, graceTurns: 1 }), 4, true), false);
+	describe("turnBudgetDecision", () => {
+		it("continues below the hard limit and for a terminal response on the final grace turn", () => {
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 3, false, false), "continue");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, false), "continue");
 		});
 
-		it("aborts a non-terminal assistant response on the final grace turn", () => {
-			assert.equal(shouldAbortForTurnBudget(budget({ maxTurns: 3, graceTurns: 1 }), 4, false), true);
+		it("defers termination when the hard-limit assistant response starts tool work", () => {
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, true), "defer");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, false, true), "defer");
 		});
 
-		it("aborts turns beyond the grace window even if the message is terminal", () => {
-			assert.equal(shouldAbortForTurnBudget(budget({ maxTurns: 3, graceTurns: 1 }), 5, true), true);
+		it("aborts at the next safe assistant boundary", () => {
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, false), "abort");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, false), "abort");
 		});
 
 		it("allows a terminal response at the soft limit when grace turns are zero", () => {
-			assert.equal(shouldAbortForTurnBudget(budget({ maxTurns: 2, graceTurns: 0 }), 2, true), false);
-			assert.equal(shouldAbortForTurnBudget(budget({ maxTurns: 2, graceTurns: 0 }), 2, false), true);
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 2, graceTurns: 0 }), 2, true, false), "continue");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 2, graceTurns: 0 }), 2, false, false), "abort");
+		});
+	});
+
+	describe("turnBudgetDeferredState", () => {
+		it("records the exact turn where hard termination became pending", () => {
+			assert.deepEqual(turnBudgetDeferredState(budget({ maxTurns: 2, graceTurns: 0 }), 2), {
+				maxTurns: 2,
+				graceTurns: 0,
+				turnCount: 2,
+				outcome: "termination-deferred",
+				wrapUpRequestedAtTurn: 2,
+				terminationDeferredAtTurn: 2,
+			});
 		});
 	});
 

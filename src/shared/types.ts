@@ -123,12 +123,13 @@ export interface ToolBudgetState extends ResolvedToolBudget {
 	blockedTool?: string;
 }
 
-export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
+export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "termination-deferred" | "exceeded";
 
 export interface TurnBudgetState extends ResolvedTurnBudget {
 	outcome: TurnBudgetOutcome;
 	turnCount: number;
 	wrapUpRequestedAtTurn?: number;
+	terminationDeferredAtTurn?: number;
 	exceededAtTurn?: number;
 }
 
