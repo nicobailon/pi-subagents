@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Updated Pi development packages and real-session SDK coverage to 0.80.10, removing known dependency audit findings. Thanks to dmg (@dmg-egg) for #520.
 - `subagent({ action: "get" })` now honors `agentScope` for agent and chain details. Thanks to Kyle (@kylegl) for #519.
 - Removed timer-driven foreground spinner redraws that repeatedly rendered the full Pi TUI and could survive session shutdown; running indicators now advance only with real progress updates.
 - Exposed cumulative spawn-budget usage in status and doctor output, preflighted declared static work before partial launch, and added bounded root-interactive additive grants without changing unlimited or compaction semantics. Thanks to Mati Gummá (@matigumma) for #495.
