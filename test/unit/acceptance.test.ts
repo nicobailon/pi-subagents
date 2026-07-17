@@ -322,6 +322,17 @@ describe("acceptance gates", () => {
 			assert.equal(ledger.runtimeChecks.filter((check) => check.id === "evidence:residual-risks").length, 1);
 			assert.equal(ledger.runtimeChecks.some((check) => check.id === "criterion:local-proof:evidence:residual-risks"), false);
 			assert.equal(ledger.runtimeChecks.find((check) => check.id === "criterion:local-proof:evidence:commands-run")?.status, "failed");
+
+			const unsatisfied = await evaluateAcceptance({
+				acceptance,
+				output: report({
+					criteriaSatisfied: [{ id: "local-proof", status: "not-satisfied", evidence: "missing proof" }],
+					commandsRun: undefined,
+				}),
+				cwd,
+			});
+			assert.equal(unsatisfied.status, "rejected");
+			assert.equal(unsatisfied.runtimeChecks.some((check) => check.id === "criterion:local-proof:evidence:commands-run"), false);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

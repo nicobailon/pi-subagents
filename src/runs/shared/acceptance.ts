@@ -1141,12 +1141,16 @@ function evidenceRuntimeCheck(id: string, label: string, report: AcceptanceRepor
 function runStructuralChecks(acceptance: ResolvedAcceptanceConfig, report: AcceptanceReport, cwd: string): AcceptanceRuntimeCheck[] {
 	const checks: AcceptanceRuntimeCheck[] = [];
 	const globalEvidence = new Set(acceptance.evidence);
+	const criterionReports = new Map((report.criteriaSatisfied ?? [])
+		.filter((item) => item.id)
+		.map((item) => [normalizedToken(item.id!), item]));
 	for (const kind of acceptance.evidence) {
 		checks.push(evidenceRuntimeCheck(`evidence:${kind}`, kind, report, kind));
 	}
 	if (globalEvidence.has("no-staged-files")) checks.push(checkNoStagedFiles(cwd));
 	for (const criterion of acceptance.criteria) {
 		if (criterion.severity === "recommended") continue;
+		if (criterionReports.get(normalizedToken(criterion.id))?.status !== "satisfied") continue;
 		for (const kind of criterion.evidence) {
 			if (globalEvidence.has(kind)) continue;
 			const id = `criterion:${criterion.id}:evidence:${kind}`;

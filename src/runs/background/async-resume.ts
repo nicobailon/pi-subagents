@@ -376,7 +376,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 
 	const statusSteps = status?.steps ?? [];
 	const resultSteps = result?.results ?? [];
-	const stepCount = statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
+	const terminalResultBacked = (state === "complete" || state === "failed") && resultSteps.length > 0;
+	const stepCount = terminalResultBacked
+		? resultSteps.length
+		: statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
 	const requestedIndex = params.index;
 	if (requestedIndex !== undefined && !Number.isInteger(requestedIndex)) throw new Error(`Async run '${runId}' index must be an integer.`);
 	const terminalStepStatuses = new Set(["complete", "completed", "failed", "paused"]);
@@ -432,19 +435,37 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const index = requestedIndex ?? 0;
 	if (!Number.isInteger(index)) throw new Error(`Async run '${runId}' index must be an integer.`);
 	if (index < 0 || index >= stepCount) throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${index} is out of range.`);
-	const agent = statusSteps[index]?.agent ?? resultSteps[index]?.agent ?? result?.agent;
+	const resultStep = terminalResultBacked ? resultSteps[index] : undefined;
+	let matchedStatusStep: NonNullable<AsyncStatus["steps"]>[number] | undefined;
+	let matchedStatusIndex: number | undefined;
+	if (resultStep) {
+		const sessionMatches = resultStep.sessionFile
+			? statusSteps.map((step, statusIndex) => ({ step, statusIndex })).filter(({ step }) => step.sessionFile === resultStep.sessionFile)
+			: [];
+		const agentMatches = resultStep.agent
+			? statusSteps.map((step, statusIndex) => ({ step, statusIndex })).filter(({ step }) => step.agent === resultStep.agent)
+			: [];
+		const match = sessionMatches.length === 1 ? sessionMatches[0] : agentMatches.length === 1 ? agentMatches[0] : undefined;
+		matchedStatusStep = match?.step;
+		matchedStatusIndex = match?.statusIndex;
+	}
+	const statusStep = terminalResultBacked ? matchedStatusStep : statusSteps[index];
+	const fallbackResultStep = terminalResultBacked ? undefined : resultSteps[index];
+	const agent = resultStep?.agent ?? statusStep?.agent ?? fallbackResultStep?.agent ?? result?.agent;
 	if (!agent) throw new Error(`Could not determine child agent for async run '${runId}'.`);
 	if (recoveryDescriptor && recoveryDescriptor.agent !== agent) throw new Error(`Async run '${runId}' has a recovery descriptor for '${recoveryDescriptor.agent}', not '${agent}'.`);
-	const sessionFile = statusSteps[index]?.sessionFile
-		?? resultSteps[index]?.sessionFile
-		?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
+	const sessionFile = resultStep?.sessionFile
+		?? statusStep?.sessionFile
+		?? fallbackResultStep?.sessionFile
+		?? (stepCount === 1 ? result?.sessionFile ?? status?.sessionFile : undefined);
 	if (!sessionFile && requireSessionFile) throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
 	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
-	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
-	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
+	const stepModel = resultStep?.model ?? statusStep?.model ?? fallbackResultStep?.model ?? (stepCount === 1 ? result?.model : undefined);
+	const stepThinking = resultStep?.thinking ?? statusStep?.thinking ?? fallbackResultStep?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
+	const statusAcceptanceIndex = terminalResultBacked ? matchedStatusIndex : index;
 	const acceptanceCandidates = [
-		{ value: statusSteps[index]?.acceptanceInput, source: `Invalid async status '${location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json"}'`, pathLabel: `steps[${index}].acceptanceInput` },
-		{ value: resultSteps[index]?.acceptanceInput, source: `Invalid async result file '${location.resultPath ?? "result.json"}'`, pathLabel: `results[${index}].acceptanceInput` },
+		{ value: resultStep?.acceptanceInput ?? fallbackResultStep?.acceptanceInput, source: `Invalid async result file '${location.resultPath ?? "result.json"}'`, pathLabel: `results[${index}].acceptanceInput` },
+		{ value: statusStep?.acceptanceInput, source: `Invalid async status '${location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json"}'`, pathLabel: `steps[${statusAcceptanceIndex ?? index}].acceptanceInput` },
 	];
 	let acceptance: EffectiveAcceptanceInput | undefined;
 	let acceptanceError: Error | undefined;

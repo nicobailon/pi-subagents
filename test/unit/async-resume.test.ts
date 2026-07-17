@@ -506,6 +506,42 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("uses terminal result identity instead of stale status placeholder positions", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-terminal-identity-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const producerSession = path.join(root, "producer.jsonl");
+			const consumerSession = path.join(root, "consumer.jsonl");
+			fs.writeFileSync(producerSession, "", "utf-8");
+			fs.writeFileSync(consumerSession, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-terminal-identity", "status.json"), {
+				runId: "run-terminal-identity", mode: "chain", state: "complete", startedAt: 100, cwd: root,
+				steps: [
+					{ agent: "producer", status: "complete", sessionFile: producerSession, acceptanceInput: false },
+					{ agent: "expand:reviewer", status: "complete", acceptanceInput: { verify: [{ id: "placeholder", command: "false" }] } },
+					{ agent: "consumer", status: "complete", sessionFile: consumerSession, model: "result-fallback-model", acceptanceInput: { verify: [{ id: "status-consumer", command: "true" }] } },
+				],
+			});
+			const resultAcceptance = { verify: [{ id: "result-consumer", command: "true" }], onFailure: "warn" };
+			writeJson(path.join(resultsDir, "run-terminal-identity.json"), {
+				id: "run-terminal-identity", mode: "chain", state: "complete", success: true, cwd: root,
+				results: [
+					{ agent: "producer", success: true, sessionFile: producerSession, acceptanceInput: false },
+					{ agent: "consumer", success: true, sessionFile: consumerSession, acceptanceInput: resultAcceptance },
+				],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-terminal-identity", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(target.agent, "consumer");
+			assert.equal(target.sessionFile, consumerSession);
+			assert.equal(target.model, "result-fallback-model");
+			assert.deepEqual(target.acceptance, resultAcceptance);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("resolves a completed multi-child run when an index and per-child session file are available", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-multi-"));
 		try {
