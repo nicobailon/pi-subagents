@@ -65,13 +65,82 @@ const JsonSchemaObject = Type.Unsafe({
 	description: "JSON Schema object for strict structured output. Non-object roots are rejected.",
 });
 
+const acceptanceEvidenceKinds = [
+	"changed-files", "tests-added", "commands-run", "validation-output", "residual-risks",
+	"no-staged-files", "diff-summary", "review-findings", "manual-notes",
+];
+const acceptanceEvidence = { type: "string", enum: acceptanceEvidenceKinds };
+const acceptanceGate = {
+	type: "object",
+	properties: {
+		id: { type: "string", minLength: 1 },
+		must: { type: "string", minLength: 1 },
+		evidence: { type: "array", items: acceptanceEvidence },
+		severity: { type: "string", enum: ["required", "recommended"] },
+	},
+	required: ["id", "must"],
+	additionalProperties: false,
+};
+const acceptanceCriteria = { type: "array", items: { anyOf: [{ type: "string" }, acceptanceGate] } };
+const acceptanceVerify = {
+	type: "array",
+	items: {
+		type: "object",
+		properties: {
+			id: { type: "string", minLength: 1 },
+			command: { type: "string", minLength: 1 },
+			timeoutMs: { type: "integer", minimum: 1 },
+			cwd: { type: "string" },
+			env: { type: "object", additionalProperties: { type: "string" } },
+			allowFailure: { type: "boolean" },
+		},
+		required: ["id", "command"],
+		additionalProperties: false,
+	},
+};
+const acceptanceReview = {
+	anyOf: [
+		{ type: "boolean", enum: [false] },
+		{
+			type: "object",
+			properties: { agent: { type: "string" }, focus: { type: "string" }, required: { type: "boolean", enum: [false] } },
+			additionalProperties: false,
+		},
+	],
+};
+const sharedAcceptanceProperties = { verify: acceptanceVerify, review: acceptanceReview };
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
-		{ type: "string", enum: ["auto", "attested", "checked", "verified", "reviewed"] },
+		{ type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
 		{ type: "boolean", enum: [false] },
-		{ type: "object", additionalProperties: true },
+		{
+			type: "object",
+			properties: {
+				...sharedAcceptanceProperties,
+				report: {
+					anyOf: [
+						{ type: "boolean", enum: [false] },
+						{ type: "object", properties: { criteria: acceptanceCriteria, evidence: { type: "array", items: acceptanceEvidence } }, additionalProperties: false },
+					],
+				},
+				onFailure: { type: "string", enum: ["fail", "warn"] },
+			},
+			additionalProperties: false,
+		},
+		{
+			type: "object",
+			properties: {
+				...sharedAcceptanceProperties,
+				level: { type: "string", enum: ["auto", "none", "attested", "checked", "verified", "reviewed"] },
+				criteria: acceptanceCriteria,
+				evidence: { type: "array", items: acceptanceEvidence },
+				stopRules: { type: "array", items: { type: "string" } },
+				reason: { type: "string" },
+			},
+			additionalProperties: false,
+		},
 	],
-	description: "Optional acceptance policy. Omitted means auto-inferred; verified requires configured runtime commands. Reviewed is inferred-only because explicit runs cannot supply an independent reviewer result. Bare \"none\" requires { level: \"none\", reason: \"...\" }, while false is deprecated.",
+	description: "Optional acceptance policy. Omitted or auto is advisory only; false disables. Canonical objects compose report, verify, review, and onFailure. Legacy levels remain accepted; none is deprecated in favor of false.",
 });
 
 const TurnBudgetOverride = Type.Object({
