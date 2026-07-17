@@ -145,6 +145,20 @@ export interface AdaptedAcceptance {
 	deprecationWarnings: string[];
 }
 
+const MERGED_ACCEPTANCE_KIND = "merged-acceptance";
+
+/** Internal, serializable representation used after parent/child contract merging. */
+export interface MergedAcceptanceInput extends AcceptanceContract {
+	kind: typeof MERGED_ACCEPTANCE_KIND;
+	adapted: AdaptedAcceptance;
+}
+
+export type EffectiveAcceptanceInput = AcceptanceInput | MergedAcceptanceInput;
+
+function isMergedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is MergedAcceptanceInput {
+	return typeof input === "object" && input !== null && "kind" in input && input.kind === MERGED_ACCEPTANCE_KIND;
+}
+
 function isCanonicalObject(value: Record<string, unknown>): boolean {
 	return !Object.keys(value).some((key) => LEGACY_ONLY_KEYS.has(key));
 }
@@ -164,23 +178,40 @@ export function mergeAcceptanceContracts(
 	return merged;
 }
 
+function mergeAdaptedAcceptance(parent: AdaptedAcceptance, child: AdaptedAcceptance, childInput: AcceptanceConfig & AcceptanceContract): AdaptedAcceptance {
+	const childHasStopRules = Object.prototype.hasOwnProperty.call(childInput, "stopRules");
+	const childHasReason = Object.prototype.hasOwnProperty.call(childInput, "reason");
+	return {
+		contract: mergeAcceptanceContracts(parent.contract, child.contract) ?? false,
+		stopRules: childHasStopRules ? child.stopRules : parent.stopRules,
+		...(childHasReason ? { reason: child.reason } : parent.reason !== undefined ? { reason: parent.reason } : {}),
+		deprecationWarnings: unique([...parent.deprecationWarnings, ...child.deprecationWarnings]),
+	};
+}
+
 /** Merge raw parent/child inputs before advisory inference and final resolution. */
-export function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+export function mergeAcceptanceInputs(parent: EffectiveAcceptanceInput | undefined, child: EffectiveAcceptanceInput | undefined): EffectiveAcceptanceInput | undefined {
 	if (child === undefined || child === "auto") return parent;
+	if (isMergedAcceptanceInput(child)) return child;
 	const childObject = typeof child === "object" && child !== null ? child as AcceptanceConfig & AcceptanceContract : undefined;
 	if (childObject?.level === "auto") return parent;
 	if (child === false || child === "none") return child;
 	if (childObject?.level === "none") return child;
-	if (typeof child === "string" || (childObject && !isCanonicalObject(childObject as Record<string, unknown>))) return child;
-	const childContract = adaptLegacyAcceptance(child).contract;
-	if (childContract === false) return child;
+	if (typeof child === "string" || childObject?.level !== undefined) return child;
+	const childAdapted = adaptLegacyAcceptance(child);
+	if (childAdapted.contract === false) return child;
 	if (parent === undefined || parent === "auto") return child;
-	const parentObject = typeof parent === "object" && parent !== null ? parent as AcceptanceConfig & AcceptanceContract : undefined;
+	const parentObject = !isMergedAcceptanceInput(parent) && typeof parent === "object" && parent !== null
+		? parent as AcceptanceConfig & AcceptanceContract
+		: undefined;
 	if (parentObject?.level === "auto") return child;
-	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, childContract);
+	const merged = mergeAdaptedAcceptance(adaptLegacyAcceptance(parent), childAdapted, childObject ?? {});
+	if (merged.stopRules.length === 0 && merged.reason === undefined && merged.deprecationWarnings.length === 0) return merged.contract;
+	return { kind: MERGED_ACCEPTANCE_KIND, adapted: merged };
 }
 
-export function adaptLegacyAcceptance(input: AcceptanceInput | undefined): AdaptedAcceptance {
+export function adaptLegacyAcceptance(input: EffectiveAcceptanceInput | undefined): AdaptedAcceptance {
+	if (isMergedAcceptanceInput(input)) return input.adapted;
 	if (input === undefined || input === "auto") return { contract: false, stopRules: [], deprecationWarnings: [] };
 	if (input === false) return { contract: false, stopRules: [], deprecationWarnings: [] };
 	if (input === "none") {
@@ -457,7 +488,7 @@ export function inferAcceptanceRecommendations(input: {
 }
 
 export function resolveEffectiveAcceptance(input: {
-	explicit?: AcceptanceInput;
+	explicit?: EffectiveAcceptanceInput;
 	agentName: string;
 	acceptanceRole?: AcceptanceRole;
 	task?: string;
@@ -482,7 +513,7 @@ export function resolveEffectiveAcceptance(input: {
 			: report !== false
 				? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
 				: "none";
-	const explicitObject = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit)
+	const explicitObject = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit)
 		? input.explicit as Record<string, unknown>
 		: undefined;
 	const explicitObjectAuto = explicitObject?.level === "auto"

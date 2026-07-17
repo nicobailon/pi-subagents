@@ -93,7 +93,7 @@ interface ChainResultItem {
 	error?: string;
 	attemptedModels?: string[];
 	skills?: string[];
-	acceptance?: { status?: string; verifyRuns?: Array<{ status?: string }>; childReport?: unknown; runtimeChecks?: Array<{ status?: string; id?: string }>; effectiveAcceptance?: { reason?: string; deprecationWarnings: string[] } };
+	acceptance?: { status?: string; verifyRuns?: Array<{ status?: string }>; childReport?: unknown; runtimeChecks?: Array<{ status?: string; id?: string }>; effectiveAcceptance?: { reason?: string; stopRules?: string[]; deprecationWarnings: string[] } };
 }
 
 interface ChainExecutionResult {
@@ -431,6 +431,25 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.details.results[2]?.acceptance?.status, "not-required");
 		assert.equal(result.details.results[2]?.acceptance?.effectiveAcceptance.reason, "manual");
 		assert.match(result.details.results[2]?.acceptance?.effectiveAcceptance.deprecationWarnings.join("\n") ?? "", /deprecated/);
+	});
+
+	it("preserves legacy root metadata when a canonical child clears verification", async () => {
+		mockPi.onCall({ output: acceptanceReport() });
+		const agents = [makeAgent("worker", { completionGuard: false })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "worker", task: "Implement fix", acceptance: { verify: [] } }],
+				agents,
+				{ acceptance: { level: "checked", stopRules: ["Stop on mismatch"], reason: "root policy" } },
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
+		assert.deepEqual(result.details.results[0]?.acceptance?.verifyRuns, []);
+		assert.deepEqual(result.details.results[0]?.acceptance?.effectiveAcceptance?.stopRules, ["Stop on mismatch"]);
+		assert.equal(result.details.results[0]?.acceptance?.effectiveAcceptance?.reason, "root policy");
 	});
 
 	it("runs explicit verified acceptance commands and does not trust child command claims as verification", async () => {

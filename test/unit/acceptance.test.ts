@@ -141,6 +141,26 @@ describe("acceptance gates", () => {
 		assert.equal(mergeAcceptanceInputs(parent, "none"), "none");
 		assert.deepEqual(mergeAcceptanceInputs(parent, { level: "none", reason: "manual" }), { level: "none", reason: "manual" });
 
+		const inheritedLegacyMetadata = mergeAcceptanceInputs(
+			{ level: "checked", stopRules: ["Stop on mismatch"], reason: "root policy" },
+			{ verify: [] },
+		);
+		const inheritedLegacyResolved = resolveEffectiveAcceptance({ agentName: "worker", explicit: inheritedLegacyMetadata });
+		assert.deepEqual(inheritedLegacyResolved.verify, []);
+		assert.deepEqual(inheritedLegacyResolved.stopRules, ["Stop on mismatch"]);
+		assert.equal(inheritedLegacyResolved.reason, "root policy");
+		assert.match(formatAcceptancePrompt(inheritedLegacyResolved), /Stop on mismatch/);
+
+		const replacedLegacyMetadata = resolveEffectiveAcceptance({
+			agentName: "worker",
+			explicit: mergeAcceptanceInputs(
+				{ level: "checked", stopRules: ["Parent rule"], reason: "parent reason" },
+				{ criteria: ["Child contract"], stopRules: ["Child rule"], reason: "child reason" },
+			),
+		});
+		assert.deepEqual(replacedLegacyMetadata.stopRules, ["Child rule"]);
+		assert.equal(replacedLegacyMetadata.reason, "child reason");
+
 		const legacyReplacement = mergeAcceptanceInputs(parent, "checked");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).onFailure, "fail");
 		assert.deepEqual(resolveEffectiveAcceptance({ agentName: "worker", explicit: legacyReplacement }).verify, []);
