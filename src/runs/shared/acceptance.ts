@@ -1,6 +1,8 @@
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type {
 	AcceptanceConfig,
 	AcceptanceContract,
@@ -1142,10 +1144,39 @@ function runStructuralChecks(acceptance: ResolvedAcceptanceConfig, report: Accep
 const VERIFY_OUTPUT_LIMIT_BYTES = 12_000;
 const VERIFY_OUTPUT_TRUNCATED = "\n...[truncated]";
 
-function appendBoundedOutput(current: string, chunk: Buffer): string {
-	if (Buffer.byteLength(current) >= VERIFY_OUTPUT_LIMIT_BYTES) return current;
-	const remaining = VERIFY_OUTPUT_LIMIT_BYTES - Buffer.byteLength(current);
-	return current + chunk.subarray(0, remaining).toString();
+interface BoundedVerifyOutput {
+	chunks: Buffer[];
+	bytes: number;
+	truncated: boolean;
+}
+
+function createBoundedVerifyOutput(): BoundedVerifyOutput {
+	return { chunks: [], bytes: 0, truncated: false };
+}
+
+function appendBoundedOutput(output: BoundedVerifyOutput, chunk: Buffer): void {
+	assert(output.bytes >= 0);
+	assert(output.bytes <= VERIFY_OUTPUT_LIMIT_BYTES);
+	const remaining = VERIFY_OUTPUT_LIMIT_BYTES - output.bytes;
+	const keptBytes = Math.min(remaining, chunk.length);
+	if (keptBytes > 0) {
+		output.chunks.push(Buffer.from(chunk.subarray(0, keptBytes)));
+		output.bytes += keptBytes;
+	}
+	output.truncated ||= keptBytes < chunk.length;
+	assert(output.bytes <= VERIFY_OUTPUT_LIMIT_BYTES);
+}
+
+function decodeBoundedOutput(output: BoundedVerifyOutput): string {
+	assert(output.bytes >= 0);
+	assert(output.bytes <= VERIFY_OUTPUT_LIMIT_BYTES);
+	const bytes = Buffer.concat(output.chunks, output.bytes);
+	assert(bytes.length === output.bytes);
+	if (!output.truncated) return bytes.toString("utf-8");
+
+	// Do not flush the decoder: an incomplete code point at the byte cap stays
+	// buffered instead of becoming a replacement character in ledger output.
+	return new StringDecoder("utf-8").write(bytes);
 }
 
 function trimOutput(value: string, truncated = false): string | undefined {
@@ -1207,12 +1238,10 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
 		const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
-		let stdout = "";
-		let stderr = "";
+		const stdout = createBoundedVerifyOutput();
+		const stderr = createBoundedVerifyOutput();
 		let timedOut = false;
 		let settled = false;
-		let stdoutTruncated = false;
-		let stderrTruncated = false;
 		let hardKill: NodeJS.Timeout | undefined;
 		const child = spawn(command.command, {
 			cwd,
@@ -1254,11 +1283,12 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 			killTree("SIGTERM");
 			hardKill = setTimeout(() => {
 				killTree("SIGKILL");
+				const decodedStderr = decodeBoundedOutput(stderr);
 				finish({
 					exitCode: null,
 					status: "timed-out",
-					stdout: trimOutput(stdout, stdoutTruncated),
-					stderr: trimOutput(stderr || options.abortMessage || "Acceptance verification timed out.", stderrTruncated),
+					stdout: trimOutput(decodeBoundedOutput(stdout), stdout.truncated),
+					stderr: trimOutput(decodedStderr || options.abortMessage || "Acceptance verification timed out.", stderr.truncated),
 				});
 			}, 100);
 			hardKill.unref?.();
@@ -1267,31 +1297,23 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		timeout.unref?.();
 		if (options.signal?.aborted) abortVerification();
 		else options.signal?.addEventListener("abort", abortVerification, { once: true });
-		child.stdout.on("data", (chunk: Buffer) => {
-			const before = Buffer.byteLength(stdout);
-			stdout = appendBoundedOutput(stdout, chunk);
-			stdoutTruncated ||= chunk.length > VERIFY_OUTPUT_LIMIT_BYTES - before;
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			const before = Buffer.byteLength(stderr);
-			stderr = appendBoundedOutput(stderr, chunk);
-			stderrTruncated ||= chunk.length > VERIFY_OUTPUT_LIMIT_BYTES - before;
-		});
+		child.stdout.on("data", (chunk: Buffer) => appendBoundedOutput(stdout, chunk));
+		child.stderr.on("data", (chunk: Buffer) => appendBoundedOutput(stderr, chunk));
 		child.on("close", (exitCode) => {
 			if (timedOut) return;
 			const passed = exitCode === 0;
 			finish({
 				exitCode,
 				status: passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
-				stdout: trimOutput(stdout, stdoutTruncated),
-				stderr: trimOutput(stderr, stderrTruncated),
+				stdout: trimOutput(decodeBoundedOutput(stdout), stdout.truncated),
+				stderr: trimOutput(decodeBoundedOutput(stderr), stderr.truncated),
 			});
 		});
 		child.on("error", (error) => {
 			finish({
 				exitCode: timedOut ? null : 1,
 				status: timedOut ? "timed-out" : command.allowFailure ? "allowed-failure" : "failed",
-				stderr: timedOut ? trimOutput(stderr || options.abortMessage || "Acceptance verification timed out.") : error instanceof Error ? error.message : String(error),
+				stderr: timedOut ? trimOutput(decodeBoundedOutput(stderr) || options.abortMessage || "Acceptance verification timed out.", stderr.truncated) : error instanceof Error ? error.message : String(error),
 			});
 		});
 	});

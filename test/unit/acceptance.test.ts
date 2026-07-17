@@ -736,6 +736,31 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("does not decode partial UTF-8 code points at verification output caps", async () => {
+		const cwd = tempRepo();
+		try {
+			fs.writeFileSync(path.join(cwd, "utf8-boundary.cjs"), [
+				`process.stdout.write("a".repeat(11999) + "€");`,
+				`process.stderr.write("b".repeat(11998) + "😀");`,
+			].join("\n"), "utf-8");
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { verify: [{ id: "utf8-boundary", command: "node utf8-boundary.cjs" }] },
+			});
+			const ledger = await evaluateAcceptance({ acceptance, output: "", cwd });
+			const run = ledger.verifyRuns[0];
+
+			assert.equal(ledger.status, "verified");
+			assert.equal(run?.stdout, `${"a".repeat(11999)}\n...[truncated]`);
+			assert.equal(run?.stderr, `${"b".repeat(11998)}\n...[truncated]`);
+			assert.doesNotMatch(`${run?.stdout}${run?.stderr}`, /\uFFFD/);
+			assert.ok(Buffer.byteLength(run?.stdout ?? "") <= 12_000 + Buffer.byteLength("\n...[truncated]"));
+			assert.ok(Buffer.byteLength(run?.stderr ?? "") <= 12_000 + Buffer.byteLength("\n...[truncated]"));
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("terminates verification descendants on timeout", async () => {
 		const cwd = tempRepo();
 		try {
