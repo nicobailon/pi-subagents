@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { deliverInterruptRequest, deliverStopRequest } from "../../src/runs/background/control-channel.ts";
+import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
@@ -896,7 +896,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
 	});
 
-	it("lets elapsed timeout preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("lets timeout delivery preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
 				{
@@ -918,17 +918,19 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 			turnBudget: { maxTurns: 1, graceTurns: 0 },
-			timeoutMs: 1_000,
+			timeoutMs: 30_000,
 		});
 
-		await waitForDeferredTurnBudget(id);
+		const pending = await waitForDeferredTurnBudget(id);
+		const asyncDir = path.join(ASYNC_DIR, id);
+		deliverTimeoutRequest({ asyncDir, pid: pending.pid, source: "test" });
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.timedOut, true);
 		assert.equal(payload.turnBudgetExceeded, undefined);
-		assert.match(payload.error ?? payload.summary ?? "", /timed out after 1000ms/);
+		assert.match(payload.error ?? payload.summary ?? "", /timed out after 30000ms/);
 		assert.equal(payload.results[0]?.timedOut, true);
 		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
 		assert.equal(status.timedOut, true);
