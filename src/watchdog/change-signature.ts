@@ -45,6 +45,15 @@ function hashPath(root: string, relPath: string): unknown {
 		return { path: normalized, state: "symlink", target: fs.readlinkSync(fullPath) };
 	}
 	if (stat.isDirectory()) {
+		if (fs.existsSync(path.join(fullPath, ".git"))) {
+			const changes = computeWatchdogRepoChangeSignature(fullPath);
+			return {
+				path: normalized,
+				state: "git-worktree",
+				head: git(fullPath, ["rev-parse", "HEAD"])?.trim(),
+				changes: changes ? { key: changes.key, changedPaths: changes.changedPaths } : undefined,
+			};
+		}
 		const entries = fs.readdirSync(fullPath)
 			.map((entry) => normalizeRelPath(path.posix.join(normalized, entry)))
 			.filter((entry) => !ignoredRelPath(entry))

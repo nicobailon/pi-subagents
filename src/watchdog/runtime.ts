@@ -79,6 +79,7 @@ interface MainWatchdogRuntimeOptions {
 	displayWarning?: (warning: WatchdogWarningDetails) => void;
 	reviewChangesOnly?: boolean;
 	lspDiagnostics?: WatchdogLspDiagnosticsFunction;
+	repoChangeSignature?: typeof computeWatchdogRepoChangeSignature;
 }
 
 type ContextLike = Pick<ExtensionContext, "cwd">;
@@ -113,6 +114,7 @@ export class MainWatchdogRuntime {
 	private readonly displayWarning: ((warning: WatchdogWarningDetails) => void) | undefined;
 	private readonly reviewChangesOnly: boolean;
 	private readonly lspDiagnostics: WatchdogLspDiagnosticsFunction;
+	private readonly repoChangeSignature: typeof computeWatchdogRepoChangeSignature;
 	private readonly lspLedger = new WatchdogLspDiagnosticsLedger();
 	private configResult: WatchdogSettingsResult;
 	private sessionOverrideEnabled: boolean | undefined;
@@ -155,6 +157,7 @@ export class MainWatchdogRuntime {
 		this.displayWarning = options.displayWarning;
 		this.reviewChangesOnly = options.reviewChangesOnly === true;
 		this.lspDiagnostics = options.lspDiagnostics ?? collectWatchdogLspDiagnostics;
+		this.repoChangeSignature = options.repoChangeSignature ?? computeWatchdogRepoChangeSignature;
 		this.configResult = this.resolveConfig(this.cwd);
 		this.guardMaxWarnings = this.configResult.config.maxWarnings;
 		this.guard = new WatchdogEmissionGuard({ maxWarnings: this.guardMaxWarnings });
@@ -166,9 +169,8 @@ export class MainWatchdogRuntime {
 		this.cwd = ctx.cwd;
 		this.sessionOverrideEnabled = undefined;
 		this.sessionModelOverride = undefined;
-		this.reset("session_start", { clearReviewInputSignature: true, resetChangeSignature: true, clearLspLedger: true });
 		this.refreshConfig(ctx.cwd);
-		this.resetRepoChangeBaseline();
+		this.reset("session_start", { clearReviewInputSignature: true, resetChangeSignature: true, clearLspLedger: true });
 	}
 
 	refreshConfig(cwd = this.cwd): WatchdogSettingsResult {
@@ -532,7 +534,7 @@ export class MainWatchdogRuntime {
 	}
 
 	private currentRepoChangeSignature(cwd = this.cwd): WatchdogRepoChangeSignature | undefined {
-		return this.reviewChangesOnly ? computeWatchdogRepoChangeSignature(cwd) : undefined;
+		return this.reviewChangesOnly && this.isEnabled() ? this.repoChangeSignature(cwd) : undefined;
 	}
 
 	private resetRepoChangeBaseline(options: { cwd?: string; reviewed?: boolean } = {}): void {

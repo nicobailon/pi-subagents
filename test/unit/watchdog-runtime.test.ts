@@ -72,6 +72,46 @@ function createRepo(): string {
 }
 
 describe("main watchdog runtime", () => {
+	it("does not inspect the repository until the watchdog is enabled", () => {
+		let enabled = false;
+		let signatureCalls = 0;
+		const runtime = new MainWatchdogRuntime({
+			cwd: "/tmp/project",
+			resolveConfig: () => configResult(enabled ? enabledConfig() : cloneConfig()),
+			reviewChangesOnly: true,
+			repoChangeSignature: () => {
+				signatureCalls++;
+				return { root: "/tmp/project", key: "signature", changedPaths: [] };
+			},
+		});
+
+		assert.equal(signatureCalls, 0);
+		runtime.handleBeforeAgentStart({ prompt: "disabled" }, { cwd: "/tmp/project" });
+		assert.equal(signatureCalls, 0);
+
+		enabled = true;
+		runtime.handleBeforeAgentStart({ prompt: "enabled" }, { cwd: "/tmp/project" });
+		assert.equal(signatureCalls, 1);
+	});
+
+	it("does not use stale enabled config to inspect a newly bound default-off session", () => {
+		let signatureCalls = 0;
+		const runtime = new MainWatchdogRuntime({
+			cwd: "/tmp/enabled",
+			resolveConfig: (cwd) => configResult(cwd === "/tmp/enabled" ? enabledConfig() : cloneConfig()),
+			reviewChangesOnly: true,
+			repoChangeSignature: (cwd) => {
+				signatureCalls++;
+				return { root: cwd, key: cwd, changedPaths: [] };
+			},
+		});
+
+		assert.equal(signatureCalls, 1);
+		runtime.bindSession({ cwd: "/tmp/default-off" });
+		assert.equal(signatureCalls, 1);
+		assert.equal(runtime.getSnapshot().enabled, false);
+	});
+
 	it("stays default-off and contains invalid config at the watchdog boundary", () => {
 		let reviewCalls = 0;
 		const runtime = new MainWatchdogRuntime({
