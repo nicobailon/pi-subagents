@@ -532,7 +532,7 @@ export class MainWatchdogRuntime {
 	}
 
 	private currentRepoChangeSignature(cwd = this.cwd): WatchdogRepoChangeSignature | undefined {
-		return this.reviewChangesOnly ? computeWatchdogRepoChangeSignature(cwd) : undefined;
+		return this.reviewChangesOnly && this.isEnabled() ? computeWatchdogRepoChangeSignature(cwd) : undefined;
 	}
 
 	private resetRepoChangeBaseline(options: { cwd?: string; reviewed?: boolean } = {}): void {
