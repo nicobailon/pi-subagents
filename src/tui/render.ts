@@ -1471,6 +1471,14 @@ export function renderSubagentResult(
 		const contextPrefix = d?.context === "fork" ? `${theme.fg("warning", "[fork]")} ` : "";
 		const width = getTermWidth() - 4;
 		if (!text.includes("\n")) return new Text(truncLine(`${contextPrefix}${text}`, width), 0, 0);
+		if (d && !options.expanded && !result.isError) {
+			const lines = text.split(/\r?\n/);
+			const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
+			const c = new Container();
+			c.addChild(new Text(truncLine(`${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("accent", `  Press ${liveDetailKeyText()} for full output`), width), 0, 0));
+			return c;
+		}
 		const c = new Container();
 		const wrapped = wrapPlainText(`${contextPrefix}${text}`, width);
 		for (const line of wrapped) c.addChild(new Text(line, 0, 0));

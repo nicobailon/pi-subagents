@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Collapsed multiline management/status output behind a first-line preview and the configured expand-key hint. Thanks to Nikolay Panov (@niksite) for #523.
+
 ## [0.35.0] - 2026-07-17
 
 ### Fixed
