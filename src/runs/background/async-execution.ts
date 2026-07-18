@@ -152,6 +152,7 @@ interface AsyncChainParams {
 	configToolBudget?: ResolvedToolBudget;
 	/** Global cap on simultaneously-running subagent tasks within the async run. */
 	globalConcurrencyLimit?: number;
+	defaultTimeoutMs?: number;
 }
 
 interface AsyncSingleParams {
@@ -189,6 +190,7 @@ interface AsyncSingleParams {
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
+	defaultTimeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
@@ -863,7 +865,7 @@ export function executeAsyncChain(
 		return formatAsyncStartError(resultMode, built.error);
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
-	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
+	const deadlineAt = undefined;
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	let childTargetIndex = 0;
 	const childIntercomTargets = childIntercomTarget ? steps.flatMap((step) => {
@@ -912,6 +914,7 @@ export function executeAsyncChain(
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				globalConcurrencyLimit: params.globalConcurrencyLimit,
+			defaultTimeoutMs: params.defaultTimeoutMs,
 				workflowGraph,
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
@@ -1119,7 +1122,7 @@ export function executeAsyncSingle(
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const deadlineAt = params.absoluteDeadlineAt;
 	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
 		? deadlineAt - Date.now()
 		: params.timeoutMs;
@@ -1228,6 +1231,7 @@ export function executeAsyncSingle(
 				controlConfig,
 				timeoutMs,
 				deadlineAt,
+				defaultTimeoutMs: params.defaultTimeoutMs,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
 				controlIntercomTarget,

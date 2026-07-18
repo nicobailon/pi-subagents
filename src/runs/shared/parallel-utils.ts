@@ -133,6 +133,7 @@ export async function mapConcurrent<T, R>(
 	limit: number,
 	fn: (item: T, i: number) => Promise<R>,
 	globalSemaphore?: Semaphore,
+	abortSignal?: AbortSignal,
 ): Promise<R[]> {
 	const safeLimit = Math.max(1, Math.floor(limit) || 1);
 	const results: R[] = new Array(items.length);
@@ -140,6 +141,7 @@ export async function mapConcurrent<T, R>(
 
 	async function worker(_workerIndex: number): Promise<void> {
 		while (next < items.length) {
+			if (abortSignal?.aborted) break;
 			const i = next++;
 			if (globalSemaphore) {
 				await globalSemaphore.acquire();

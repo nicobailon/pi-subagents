@@ -1222,6 +1222,7 @@ async function resumeAsyncRun(input: {
 			controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 			childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 			globalConcurrencyLimit: input.deps.config.globalConcurrencyLimit,
+			defaultTimeoutMs: input.deps.config.defaultTimeoutMs,
 		});
 		if (result.isError) return result;
 		const attachedId = result.details.asyncId ?? runId;
@@ -2005,6 +2006,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			toolBudget: data.toolBudget,
 			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+			defaultTimeoutMs: deps.config.defaultTimeoutMs,
 		});
 	}
 
@@ -2044,6 +2046,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			toolBudget: data.toolBudget,
 			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+			defaultTimeoutMs: deps.config.defaultTimeoutMs,
 		});
 	}
 
@@ -2170,6 +2173,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		toolBudget: data.toolBudget,
 		configToolBudget: data.configToolBudget,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+		defaultTimeoutMs: deps.config.defaultTimeoutMs,
 	});
 
 	if (chainResult.requestedAsync) {
@@ -2225,6 +2229,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			toolBudget: data.toolBudget,
 			configToolBudget: data.configToolBudget,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+			defaultTimeoutMs: deps.config.defaultTimeoutMs,
 		});
 	}
 
@@ -2717,6 +2722,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
 				globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+				defaultTimeoutMs: deps.config.defaultTimeoutMs,
 			});
 		}
 	}

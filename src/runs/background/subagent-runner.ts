@@ -111,6 +111,9 @@ import {
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
 
+/** Default timeout for runs without an explicit timeoutMs. 30 minutes. */
+const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+
 interface SubagentRunConfig {
 	id: string;
 	steps: RunnerStep[];
@@ -144,6 +147,8 @@ interface SubagentRunConfig {
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	revivalLease?: SessionLeaseRequest;
+	/** Default timeout in ms applied when no explicit timeoutMs is set. 0 disables. */
+	defaultTimeoutMs?: number;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
 }
@@ -1591,10 +1596,16 @@ async function runSubagent(
 	let timedOut = false;
 	let stopped = false;
 	let turnBudgetExceeded = false;
-	const timeoutMessage = config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
+	const effectiveTimeoutMs = config.timeoutMs !== undefined
+		? config.timeoutMs
+		: (config.defaultTimeoutMs !== undefined && config.defaultTimeoutMs > 0)
+			? config.defaultTimeoutMs
+			: (config.defaultTimeoutMs === 0 ? undefined : DEFAULT_RUN_TIMEOUT_MS);
+	const timeoutMessage = effectiveTimeoutMs !== undefined ? `Subagent timed out after ${effectiveTimeoutMs}ms.` : undefined;
 	const stopMessage = "Subagent stopped by user.";
 	const timeoutAbortController = new AbortController();
 	const stopAbortController = new AbortController();
+	const childTimeoutTimers = new Map<number, NodeJS.Timeout>();
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 	let latestSessionFile: string | undefined;
 
@@ -1680,8 +1691,8 @@ async function runSubagent(
 		lastActivityAt: overallStartTime,
 		startedAt: overallStartTime,
 		lastUpdate: overallStartTime,
-		...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
-		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+		...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
+		...(effectiveDeadlineAt !== undefined ? { deadlineAt: effectiveDeadlineAt } : {}),
 		...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
 		...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
 		pid: process.pid,
@@ -1764,13 +1775,34 @@ async function runSubagent(
 		activeChildInterrupts.set(flatIndex, interrupt);
 		if (interrupted) interrupt();
 	};
+	const resetChildInactivityTimer = (flatIndex: number): void => {
+		if (effectiveTimeoutMs === undefined) return;
+		const existing = childTimeoutTimers.get(flatIndex);
+		if (existing) clearTimeout(existing);
+		const timer = setTimeout(() => {
+			childTimeoutTimers.delete(flatIndex);
+			const fn = activeChildTimeouts.get(flatIndex);
+			if (fn) fn();
+		}, effectiveTimeoutMs);
+		timer.unref?.();
+		childTimeoutTimers.set(flatIndex, timer);
+	};
 	const registerStepTimeout = (flatIndex: number, interrupt: (() => void) | undefined): void => {
 		if (!interrupt) {
 			activeChildTimeouts.delete(flatIndex);
+			const timer = childTimeoutTimers.get(flatIndex);
+			if (timer) {
+				clearTimeout(timer);
+				childTimeoutTimers.delete(flatIndex);
+			}
 			return;
 		}
 		activeChildTimeouts.set(flatIndex, interrupt);
-		if (timedOut) interrupt();
+		if (timedOut) {
+			interrupt();
+		} else if (effectiveTimeoutMs !== undefined) {
+			resetChildInactivityTimer(flatIndex);
+		}
 	};
 	const registerStepStop = (flatIndex: number, stop: (() => void) | undefined): void => {
 		if (!stop) {
@@ -2363,6 +2395,7 @@ async function runSubagent(
 		}
 		syncTopLevelCurrentTool();
 		step.lastActivityAt = now;
+		resetChildInactivityTimer(flatIndex);
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
@@ -2520,8 +2553,8 @@ async function runSubagent(
 			type: "subagent.run.timed_out",
 			ts: now,
 			runId: id,
-			timeoutMs: config.timeoutMs,
-			deadlineAt: config.deadlineAt,
+			timeoutMs: effectiveTimeoutMs,
+			deadlineAt: effectiveDeadlineAt,
 			message,
 		}));
 		timeoutAbortController.abort();
@@ -2566,8 +2599,9 @@ async function runSubagent(
 		},
 		onSteerAck: consumeSteerAck,
 	});
-	if (config.deadlineAt !== undefined) {
-		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
+	const effectiveDeadlineAt = config.deadlineAt !== undefined ? config.deadlineAt : undefined;
+	if (effectiveDeadlineAt !== undefined) {
+		const remainingMs = Math.max(0, effectiveDeadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
 		timeoutTimer.unref?.();
 	}
@@ -2897,7 +2931,7 @@ async function runSubagent(
 				}));
 				if (singleResult.exitCode !== 0 && failFast) aborted = true;
 				return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
-			}, globalSemaphore);
+			}, globalSemaphore, timeoutAbortController.signal);
 
 			flatIndex += dynamicSteps.length;
 			for (const pr of parallelResults) {
@@ -3223,6 +3257,7 @@ async function runSubagent(
 						return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: timeoutMessage ?? "Subagent timed out.", error: timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 					},
 					globalSemaphore,
+					timeoutAbortController.signal,
 				);
 
 				flatIndex += group.parallel.length;
@@ -3567,6 +3602,8 @@ async function runSubagent(
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
 	}
+	for (const timer of childTimeoutTimers.values()) clearTimeout(timer);
+	childTimeoutTimers.clear();
 	statusPayload.state = stopped ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state);
 	disposeControlInbox();
@@ -3653,8 +3690,8 @@ async function runSubagent(
 			success: !stopped && !timedOut && !turnBudgetExceeded && !interrupted && results.every((r) => r.success),
 			state: stopped ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
 			summary: stopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
-			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
-			...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+			...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
+			...(effectiveDeadlineAt !== undefined ? { deadlineAt: effectiveDeadlineAt } : {}),
 			...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
 			...(statusPayload.turnBudgetExceeded ? { turnBudgetExceeded: true } : {}),
 			...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),

@@ -1189,6 +1189,8 @@ export interface ExtensionConfig {
 	maxSubagentDepth?: number;
 	/** Optional cumulative session cap. Unset or 0 means unlimited. */
 	maxSubagentSpawnsPerSession?: number;
+	/** Default timeout in ms for runs without an explicit timeoutMs. Defaults to 30 minutes. 0 disables. */
+	defaultTimeoutMs?: number;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
