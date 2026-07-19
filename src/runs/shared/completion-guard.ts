@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import { isMutatingBashCommand } from "./long-running-guard.ts";
+import { isMutatingTool } from "./long-running-guard.ts";
 import { expectsImplementationMutation } from "./task-intent.ts";
 
 export { expectsImplementationMutation };
@@ -15,6 +15,12 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 	"intercom",
 	"contact_supervisor",
 ]);
+
+// Cursor native edit/write often land as thinking traces (inactive_trace /
+// transcript_trace) rather than toolCall parts when native tool replay is off
+// or the tool is inactive in context. Match pi-cursor-sdk display labels.
+const CURSOR_FILE_MUTATION_THINKING =
+	/(?:^|\n)\s*Cursor (?:edit|write)\s*:/i;
 
 interface CompletionMutationGuardInput {
 	agent: string;
@@ -39,13 +45,12 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 	for (const message of messages) {
 		if (message.role !== "assistant") continue;
 		for (const part of message.content) {
+			if (part.type === "thinking" && CURSOR_FILE_MUTATION_THINKING.test(part.thinking)) return true;
 			if (part.type !== "toolCall") continue;
-			if (part.name === "edit" || part.name === "write") return true;
-			if (part.name !== "bash") continue;
 			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
 				? part.arguments as Record<string, unknown>
 				: {};
-			if (typeof args.command === "string" && isMutatingBashCommand(args.command)) return true;
+			if (isMutatingTool(part.name, args)) return true;
 		}
 	}
 	return false;

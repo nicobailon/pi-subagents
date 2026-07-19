@@ -103,6 +103,10 @@ export function isMutatingBashCommand(command: string): boolean {
 export function isMutatingTool(toolName: string | undefined, args: Record<string, unknown> | undefined): boolean {
 	if (!toolName) return false;
 	if (toolName === "edit" || toolName === "write") return true;
+	if (toolName === "cursor") {
+		const activityTitle = typeof args?.activityTitle === "string" ? args.activityTitle : "";
+		return /^Cursor (?:edit|write)\b/i.test(activityTitle);
+	}
 	if (toolName !== "bash") return false;
 	const command = typeof args?.command === "string" ? args.command : "";
 	if (!command.trim()) return false;
