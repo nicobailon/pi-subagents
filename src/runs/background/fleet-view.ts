@@ -16,6 +16,7 @@ import {
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
+import { contextModeLabel, summarizeContextModes } from "../shared/context-mode.ts";
 import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 
 const DEFAULT_TRANSCRIPT_LINES = 80;
@@ -277,15 +278,17 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 		const activity = formatActivityFacts(run);
 		const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
 		const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
-		lines.push(`- ${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${progress}${pending} | ${cwd}`);
+		const runContext = contextModeLabel(run.context);
+		lines.push(`- ${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode}${runContext ? ` ${runContext}` : ""} | ${progress}${pending} | ${cwd}`);
 		lines.push(`  status: subagent({ action: "status", id: "${run.id}" })`);
 		lines.push(`  transcript: subagent({ action: "status", id: "${run.id}", view: "transcript" })`);
 		for (const step of run.steps) {
 			const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+			const stepContext = contextModeLabel(step.context);
 			const phase = step.phase ? `[${step.phase}] ` : "";
 			const stepActivity = formatActivityFacts(step);
 			const modelThinking = formatModelThinking(step.model, step.thinking);
-			const parts = [`${step.index}. ${phase}${display}`, step.status, stepActivity, modelThinking].filter(Boolean);
+			const parts = [`${step.index}. ${phase}${display}${stepContext ? ` ${stepContext}` : ""}`, step.status, stepActivity, modelThinking].filter(Boolean);
 			lines.push(`  ${parts.join(" | ")}`);
 			const output = path.join(run.asyncDir, `output-${step.index}.log`);
 			if (fs.existsSync(output)) lines.push(`    output: ${shortenPath(output)}`);
@@ -385,8 +388,9 @@ function selectTranscriptStep(status: AsyncStatus, options: TranscriptOptions): 
 function stepStateLine(mode: SubagentRunMode, index: number | undefined, step: AsyncJobStep | undefined): string | undefined {
 	if (index === undefined || !step) return undefined;
 	const modelThinking = formatModelThinking(step.model, step.thinking);
+	const context = contextModeLabel(step.context);
 	const parts = [
-		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})`,
+		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})${context ? ` ${context}` : ""}`,
 		step.status,
 		formatActivityFacts(step),
 		modelThinking,
@@ -428,10 +432,11 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 	const sessionFile = selected.index !== undefined ? selected.step?.sessionFile : status.sessionFile;
 	const eventsPath = path.join(asyncDir, "events.jsonl");
 
+	const context = contextModeLabel(status.context ?? summarizeContextModes((status.steps ?? []).map((step) => step.context)));
 	const lines = [
 		`Run: ${status.runId}`,
 		`State: ${status.state}`,
-		`Mode: ${status.mode}`,
+		`Mode: ${status.mode}${context ? ` ${context}` : ""}`,
 		stepStateLine(status.mode, selected.index, selected.step),
 		selected.hint,
 	].filter((line): line is string => Boolean(line));

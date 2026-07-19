@@ -150,6 +150,7 @@ interface SubagentRunConfig {
 
 interface StepResult {
 	agent: string;
+	context?: "fresh" | "fork";
 	output: string;
 	error?: string;
 	protocolError?: ProtocolOutputLimit;
@@ -1371,6 +1372,7 @@ async function runSingleStep(
 
 	return {
 		agent: step.agent,
+		context: step.context,
 		output: outputForSummary,
 		exitCode: effectiveFinalExitCode,
 		error: effectiveFinalError,
@@ -1440,7 +1442,7 @@ function markParallelGroupSetupFailure(input: {
 		input.statusPayload.steps[flatTaskIndex].endedAt = input.failedAt;
 		input.statusPayload.steps[flatTaskIndex].durationMs = 0;
 		input.statusPayload.steps[flatTaskIndex].exitCode = 1;
-		input.results.push({ agent: input.group.parallel[taskIndex].agent, output: input.setupError, success: false, exitCode: 1, sessionFile: input.group.parallel[taskIndex].sessionFile });
+		input.results.push({ agent: input.group.parallel[taskIndex].agent, context: input.group.parallel[taskIndex].context, output: input.setupError, success: false, exitCode: 1, sessionFile: input.group.parallel[taskIndex].sessionFile });
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
@@ -1612,6 +1614,7 @@ async function runSubagent(
 				const transcriptPath = resolveAsyncStepTranscriptPath({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: taskFlatIndex, flatStepCount: initialFlatStepCount });
 				initialStatusSteps.push({
 					agent: task.agent,
+					...(task.context ? { context: task.context } : {}),
 					phase: task.phase,
 					label: task.label,
 					outputName: task.outputName,
@@ -1633,6 +1636,7 @@ async function runSubagent(
 			parallelGroups.push({ start: flatStepCount, count: 1, stepIndex });
 			initialStatusSteps.push({
 				agent: `expand:${step.parallel.agent}`,
+				...(step.parallel.context ? { context: step.parallel.context } : {}),
 				phase: step.phase ?? step.parallel.phase,
 				label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`,
 				outputName: step.collect.as,
@@ -1648,6 +1652,7 @@ async function runSubagent(
 			const transcriptPath = resolveAsyncStepTranscriptPath({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: stepFlatIndex, flatStepCount: initialFlatStepCount });
 			initialStatusSteps.push({
 				agent: step.agent,
+				...(step.context ? { context: step.context } : {}),
 				phase: step.phase,
 				label: step.label,
 				outputName: step.outputName,
@@ -1896,21 +1901,24 @@ async function runSubagent(
 			}
 		}
 	};
-	const pausedStepResult = (agent: string): SingleStepResult => ({
+	const pausedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => ({
 		agent,
+		context,
 		output: "Paused after interrupt. Waiting for explicit next action.",
 		exitCode: 0,
 		interrupted: true,
 	});
-	const timedOutStepResult = (agent: string): SingleStepResult => ({
+	const timedOutStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => ({
 		agent,
+		context,
 		output: timeoutMessage ?? "Subagent timed out.",
 		error: timeoutMessage ?? "Subagent timed out.",
 		exitCode: 1,
 		timedOut: true,
 	});
-	const stoppedStepResult = (agent: string): SingleStepResult => ({
+	const stoppedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => ({
 		agent,
+		context,
 		output: stopMessage,
 		error: stopMessage,
 		exitCode: 1,
@@ -2621,7 +2629,7 @@ async function runSubagent(
 				statusPayload.lastUpdate = now;
 				markDynamicGraphGroup(stepIndex, "failed", message);
 				writeStatusPayload();
-				results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1 });
+				results.push({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 });
 				break;
 			}
 
@@ -2686,7 +2694,7 @@ async function runSubagent(
 					markDynamicGraphGroup(stepIndex, groupStopped ? "stopped" : "failed", errorMessage, effectiveGroupAcceptance);
 					statusPayload.lastUpdate = Date.now();
 					writeStatusPayload();
-					results.push({ agent: step.parallel.agent, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance });
+					results.push({ agent: step.parallel.agent, context: step.parallel.context, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance });
 					break;
 				}
 				flatIndex++;
@@ -2735,6 +2743,7 @@ async function runSubagent(
 				const transcriptPath = resolveAsyncStepTranscriptPath({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: groupStartFlatIndex + itemIndex, flatStepCount: dynamicFlatStepCount });
 				return {
 					agent: task.agent,
+					...(task.context ? { context: task.context } : {}),
 					phase: task.phase ?? step.phase,
 					label: task.label,
 					outputName: undefined,
@@ -2798,9 +2807,9 @@ async function runSubagent(
 			let aborted = false;
 			const parallelResults = await mapConcurrent(dynamicSteps, concurrency, async (task, taskIdx) => {
 				const fi = groupStartFlatIndex + taskIdx;
-				if (timedOut) return timedOutStepResult(task.agent);
-				if (stopped) return stoppedStepResult(task.agent);
-				if (interrupted) return pausedStepResult(task.agent);
+				if (timedOut) return timedOutStepResult(task.agent, task.context);
+				if (stopped) return stoppedStepResult(task.agent, task.context);
+				if (interrupted) return pausedStepResult(task.agent, task.context);
 				if (aborted && failFast) {
 					const skippedAt = Date.now();
 					statusPayload.steps[fi].status = "failed";
@@ -2811,7 +2820,7 @@ async function runSubagent(
 					statusPayload.steps[fi].exitCode = -1;
 					statusPayload.lastUpdate = skippedAt;
 					writeStatusPayload();
-					return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
+					return { agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
 				}
 				const taskStartTime = Date.now();
 				statusPayload.currentStep = fi;
@@ -2903,6 +2912,7 @@ async function runSubagent(
 			for (const pr of parallelResults) {
 				results.push({
 					agent: pr.agent,
+					context: pr.context,
 					output: pr.output,
 					error: pr.error,
 					protocolError: pr.protocolError,
@@ -2981,7 +2991,7 @@ async function runSubagent(
 					}
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
-					results.push({ agent: step.parallel.agent, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection });
+					results.push({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection });
 					statusPayload.error = message;
 					markDynamicGraphGroup(stepIndex, "failed", message);
 				}
@@ -3085,9 +3095,9 @@ async function runSubagent(
 					concurrency,
 					async (task, taskIdx) => {
 						const fi = groupStartFlatIndex + taskIdx;
-						if (timedOut) return timedOutStepResult(task.agent);
-						if (stopped) return stoppedStepResult(task.agent);
-						if (interrupted) return pausedStepResult(task.agent);
+						if (timedOut) return timedOutStepResult(task.agent, task.context);
+						if (stopped) return stoppedStepResult(task.agent, task.context);
+						if (interrupted) return pausedStepResult(task.agent, task.context);
 						if (aborted && failFast) {
 							const skippedAt = Date.now();
 							statusPayload.steps[fi].status = "failed";
@@ -3102,7 +3112,7 @@ async function runSubagent(
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: -1, durationMs: 0,
 							}));
-							return { agent: task.agent, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
+							return { agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true };
 						}
 
 						const taskStartTime = Date.now();
@@ -3248,6 +3258,7 @@ async function runSubagent(
 				for (const pr of parallelResults) {
 					results.push({
 						agent: pr.agent,
+						context: pr.context,
 						output: pr.output,
 						error: pr.error,
 						protocolError: pr.protocolError,
@@ -3376,6 +3387,7 @@ async function runSubagent(
 			const childStopped = singleResult.stopped === true;
 			results.push({
 				agent: singleResult.agent,
+				context: singleResult.context,
 				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
 				protocolError: singleResult.protocolError,
@@ -3663,6 +3675,7 @@ async function runSubagent(
 			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : {}),
 			results: results.map((r) => ({
 				agent: r.agent,
+				context: r.context,
 				output: r.output,
 				error: r.error,
 				protocolError: r.protocolError,

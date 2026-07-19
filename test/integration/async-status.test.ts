@@ -53,6 +53,33 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("formats async run and step context labels", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-context-"));
+		try {
+			createAsyncDir(root, "run-context", {
+				runId: "run-context",
+				mode: "parallel",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{ agent: "scout", context: "fresh", status: "running" },
+					{ agent: "worker", context: "fork", status: "running" },
+				],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["running"] });
+			assert.equal(runs[0]?.context, "mixed");
+			assert.deepEqual(runs[0]?.steps.map((step) => step.context), ["fresh", "fork"]);
+			const text = formatAsyncRunList(runs);
+			assert.match(text, /run-context \| running .* \| parallel \[mixed\]/);
+			assert.match(text, /1\. scout \[fresh\] \| running/);
+			assert.match(text, /2\. worker \[fork\] \| running/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("formats model thinking in step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-model-thinking-"));
 		try {

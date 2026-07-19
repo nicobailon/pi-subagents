@@ -3,6 +3,8 @@ export interface RunnerSubagentStep {
 	parentSessionId?: string;
 	agent: string;
 	task: string;
+	/** Resolved launch context for this child. */
+	context?: "fresh" | "fork";
 	importAsyncRoot?: {
 		runId: string;
 		asyncDir: string;

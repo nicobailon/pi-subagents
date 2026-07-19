@@ -73,6 +73,7 @@ import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelSt
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import type { ContextMode } from "../shared/context-mode.ts";
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -111,6 +112,7 @@ interface ParallelChainRunInput {
 	sessionFileForIndex?: (idx?: number) => string | undefined;
 	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
 	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
+	contextForAgent?: (agentName: string) => ContextMode;
 	shareEnabled: boolean;
 	artifactConfig: ArtifactConfig;
 	artifactsDir: string;
@@ -313,6 +315,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				: undefined;
 			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				context: input.contextForAgent?.(task.agent),
 				cwd: taskCwd,
 				signal: input.signal,
 				interruptSignal: interruptController.signal,
@@ -425,6 +428,7 @@ interface ChainExecutionParams {
 	sessionFileForIndex?: (idx?: number) => string | undefined;
 	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
 	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
+	contextForAgent?: (agentName: string) => ContextMode;
 	artifactsDir: string;
 	artifactConfig: ArtifactConfig;
 	includeProgress?: boolean;
@@ -728,6 +732,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					sessionFileForIndex,
 					sessionFileForTask,
 					thinkingOverrideForTask,
+					contextForAgent: params.contextForAgent,
 					shareEnabled,
 					artifactConfig,
 					artifactsDir,
@@ -949,6 +954,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				sessionFileForIndex,
 				sessionFileForTask,
 				thinkingOverrideForTask,
+				contextForAgent: params.contextForAgent,
 				shareEnabled,
 				artifactConfig,
 				artifactsDir,
@@ -1182,6 +1188,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			});
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+				context: params.contextForAgent?.(seqStep.agent),
 				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
 				signal,
 				interruptSignal: interruptController.signal,

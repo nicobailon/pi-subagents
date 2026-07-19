@@ -585,6 +585,8 @@ export interface ProtocolOutputLimit {
 export interface SingleResult {
 	agent: string;
 	task: string;
+	/** Resolved launch context for this child. */
+	context?: "fresh" | "fork";
 	exitCode: number;
 	detached?: boolean;
 	detachedReason?: string;
@@ -648,7 +650,8 @@ export interface SpawnBudgetSnapshot {
 export interface Details {
 	mode: SubagentRunMode | "management";
 	runId?: string;
-	context?: "fresh" | "fork";
+	/** Run-level context summary. "mixed" when children resolved to different modes. */
+	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
@@ -867,6 +870,8 @@ export interface AsyncStatus {
 	workflowGraph?: WorkflowGraphSnapshot;
 	steps?: Array<{
 		agent: string;
+		/** Resolved launch context for this child step. */
+		context?: "fresh" | "fork";
 		phase?: string;
 		label?: string;
 		outputName?: string;
@@ -939,6 +944,8 @@ export interface AsyncJobState {
 	toolCount?: number;
 	steering?: SteeringStatus;
 	mode?: SubagentRunMode;
+	/** Run-level context summary derived from step contexts. */
+	context?: "fresh" | "fork" | "mixed";
 	agents?: string[];
 	currentStep?: number;
 	chainStepCount?: number;
@@ -972,6 +979,7 @@ export interface AsyncJobState {
 export interface ForegroundResumeChild {
 	agent: string;
 	index: number;
+	context?: "fresh" | "fork";
 	sessionFile?: string;
 	status: SubagentResultStatus;
 	exitCode?: number;
@@ -1088,6 +1096,8 @@ export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom
 export interface RunSyncOptions {
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
+	/** Resolved launch context for this child. */
+	context?: "fresh" | "fork";
 	cwd?: string;
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;

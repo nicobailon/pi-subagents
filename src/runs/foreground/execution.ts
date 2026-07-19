@@ -90,6 +90,12 @@ function emptyUsage(): Usage {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
 
+function withRunContext<T extends SingleResult>(result: T, context: RunSyncOptions["context"]): T {
+	if (!context) return result;
+	result.context = context;
+	return result;
+}
+
 function sumUsage(target: Usage, source: Usage): void {
 	target.input += source.input;
 	target.output += source.output;
@@ -240,7 +246,7 @@ async function runSingleAttempt(
 		waitToolEnabled: options.waitToolEnabled,
 	});
 
-	const result: SingleResult = {
+	const result: SingleResult = withRunContext({
 		agent: agent.name,
 		task: shared.originalTask ?? task,
 		exitCode: 0,
@@ -253,7 +259,7 @@ async function runSingleAttempt(
 		skillsWarning: shared.skillsWarning,
 		...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
-	};
+	}, options.context);
 	const startTime = Date.now();
 	if (options.structuredOutput) {
 		try {
@@ -1156,18 +1162,18 @@ export async function runSync(
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
-		return {
+		return withRunContext({
 			agent: agentName,
 			task,
 			exitCode: 1,
 			messages: [],
 			usage: emptyUsage(),
 			error: `Unknown agent: ${agentName}`,
-		};
+		}, options.context);
 	}
 	const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
 	if (outputModeValidationError) {
-		return {
+		return withRunContext({
 			agent: agentName,
 			task,
 			exitCode: 1,
@@ -1175,7 +1181,7 @@ export async function runSync(
 			usage: emptyUsage(),
 			outputMode: options.outputMode,
 			error: outputModeValidationError,
-		};
+		}, options.context);
 	}
 
 	const shareEnabled = options.share === true;
@@ -1202,14 +1208,14 @@ export async function runSync(
 		agent.filePath ? path.dirname(agent.filePath) : skillCwd,
 	);
 	if (skillNames.some((skill) => skill.trim() === "pi-subagents") && missingSkills.includes("pi-subagents")) {
-		return {
+		return withRunContext({
 			agent: agentName,
 			task,
 			exitCode: 1,
 			messages: [],
 			usage: emptyUsage(),
 			error: "Skills not found: pi-subagents",
-		};
+		}, options.context);
 	}
 	let systemPrompt = agent.systemPrompt?.trim() || "";
 	if (resolvedSkills.length > 0) {
@@ -1366,14 +1372,14 @@ export async function runSync(
 		attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[i + 1]));
 	}
 
-	const result = lastResult ?? {
+	const result = withRunContext(lastResult ?? {
 		agent: agentName,
 		task,
 		exitCode: 1,
 		messages: [],
 		usage: emptyUsage(),
 		error: "Subagent did not produce a result.",
-	} satisfies SingleResult;
+	} satisfies SingleResult, options.context);
 
 	result.usage = aggregateUsage;
 	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;

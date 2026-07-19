@@ -8,7 +8,7 @@ type RenderSubagentResult = (
 		isError?: boolean;
 		details?: {
 			mode: "single" | "parallel" | "chain" | "management";
-			context?: "fresh" | "fork";
+			context?: "fresh" | "fork" | "mixed";
 			results: unknown[];
 		};
 	},
@@ -251,24 +251,61 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /↳ \[\d{2}:\d{2}:\d{2}\] \+1 nested run \(1 running\)/);
 	});
 
-	it("shows [fork] on single-result header", () => {
-		const widget = renderSubagentResult!({
+	it("shows [fresh] and [fork] on single-result headers", () => {
+		for (const context of ["fresh", "fork"] as const) {
+			const widget = renderSubagentResult!({
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "single",
+					context,
+					results: [{
+						agent: "reviewer",
+						task: "review",
+						context,
+						exitCode: 0,
+						messages: [],
+						usage: emptyUsage,
+					}],
+				},
+			}, { expanded: false }, theme);
+
+			const text = widget.render(120).join("\n");
+			assert.match(text, new RegExp(`\\[${context}\\]`));
+		}
+	});
+
+	it("shows [mixed] on mixed runs and per-child context badges", () => {
+		const compact = renderSubagentResult!({
 			content: [{ type: "text", text: "done" }],
 			details: {
-				mode: "single",
-				context: "fork",
-				results: [{
-					agent: "reviewer",
-					task: "review",
-					exitCode: 0,
-					messages: [],
-					usage: emptyUsage,
-				}],
+				mode: "parallel",
+				context: "mixed",
+				results: [
+					{ agent: "scout", task: "scan", context: "fresh", exitCode: 0, messages: [], usage: emptyUsage },
+					{ agent: "worker", task: "fix", context: "fork", exitCode: 0, messages: [], usage: emptyUsage },
+				],
 			},
-		}, { expanded: false }, theme);
+		}, { expanded: false }, theme).render(160).join("\n");
 
-		const text = widget.render(120).join("\n");
-		assert.match(text, /\[fork\]/);
+		assert.match(compact, /parallel \[mixed\]/);
+		assert.match(compact, /scout \[fresh\]/);
+		assert.match(compact, /worker \[fork\]/);
+
+		const expanded = renderSubagentResult!({
+			content: [{ type: "text", text: "done" }],
+			details: {
+				mode: "parallel",
+				context: "mixed",
+				results: [
+					{ agent: "scout", task: "scan", context: "fresh", exitCode: 0, messages: [], usage: emptyUsage },
+					{ agent: "worker", task: "fix", context: "fork", exitCode: 0, messages: [], usage: emptyUsage },
+				],
+			},
+		}, { expanded: true }, theme).render(160).join("\n");
+
+		assert.match(expanded, /parallel \[mixed\]/);
+		assert.match(expanded, /scout \[fresh\]/);
+		assert.match(expanded, /worker \[fork\]/);
 	});
 
 	it("uses compacted tool-call summaries when messages were stripped", () => {

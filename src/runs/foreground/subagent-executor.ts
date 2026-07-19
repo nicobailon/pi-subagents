@@ -49,6 +49,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
+import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
 	buildSubagentResultIntercomPayload,
@@ -365,6 +366,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 			const child = {
 				agent: result.agent,
 				index,
+				...(result.context ? { context: result.context } : {}),
 				status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
 				updatedAt,
 				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
@@ -401,6 +403,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...child,
 		agent: input.result.agent,
 		index: input.index,
+		...(input.result.context ? { context: input.result.context } : {}),
 		status: input.result.acceptance?.status === "rejected"
 			? "failed"
 			: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
@@ -824,6 +827,7 @@ function appendStepToAsyncChain(input: {
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		waitToolEnabled: input.deps.waitToolEnabled,
+		contextForAgent: contextPolicy.contextForAgent,
 		asyncDir: resolved.location.asyncDir,
 		validateOutputBindings: false,
 	});
@@ -1531,7 +1535,8 @@ function getRequestedModeLabel(params: SubagentParamsLike): Details["mode"] {
 
 interface AgentDefaultContextPolicy {
 	params: SubagentParamsLike;
-	contextForAgent(agentName: string): "fresh" | "fork";
+	contextForAgent(agentName: string): ContextMode;
+	contextSummary?: ContextSummary;
 	usesFork: boolean;
 }
 
@@ -1540,12 +1545,15 @@ function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: Ag
 		return resolveExplicitContextPolicy(params);
 	}
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
-	const contextForAgent = (agentName: string): "fresh" | "fork" =>
+	const contextForAgent = (agentName: string): ContextMode =>
 		byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
-	const usesFork = collectRequestedAgentNames(params).some((name) => contextForAgent(name) === "fork");
+	const requestedAgentNames = collectRequestedAgentNames(params);
+	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => contextForAgent(name)));
+	const usesFork = contextSummary === "fork" || contextSummary === "mixed";
 	return {
-		params: usesFork ? { ...params, context: "fork" } : params,
+		params,
 		contextForAgent,
+		contextSummary,
 		usesFork,
 	};
 }
@@ -1555,6 +1563,7 @@ function resolveExplicitContextPolicy(params: SubagentParamsLike): AgentDefaultC
 	return {
 		params,
 		contextForAgent: () => context,
+		contextSummary: context,
 		usesFork: context === "fork",
 	};
 }
@@ -1571,8 +1580,12 @@ function shouldForkAgent(contextPolicy: AgentDefaultContextPolicy, agentName: st
 	return contextPolicy.contextForAgent(agentName) === "fork";
 }
 
+function summarizeResultContext(details: Details, fallback: ContextSummary | undefined): ContextSummary | undefined {
+	return summarizeContextModes(details.results.map((result) => result.context)) ?? fallback;
+}
+
 function buildRequestedModeError(params: SubagentParamsLike, message: string): AgentToolResult<Details> {
-	return withForkContext(
+	return withResolvedContext(
 		{
 			content: [{ type: "text", text: message }],
 			isError: true,
@@ -1688,16 +1701,18 @@ function normalizeRepeatedParallelCounts(params: SubagentParamsLike): { params?:
 	return { params };
 }
 
-function withForkContext(
+function withResolvedContext(
 	result: AgentToolResult<Details>,
-	context: SubagentParamsLike["context"],
+	fallback: ContextSummary | undefined,
 ): AgentToolResult<Details> {
-	if (context !== "fork" || !result.details) return result;
+	if (!result.details) return result;
+	const context = summarizeResultContext(result.details, fallback);
+	if (!context) return result;
 	return {
 		...result,
 		details: {
 			...result.details,
-			context: "fork",
+			context,
 		},
 	};
 }
@@ -1715,15 +1730,15 @@ function withForkThinkingNotes(
 	return { ...result, content: [...result.content, { type: "text", text: note }] };
 }
 
-function toExecutionErrorResult(params: SubagentParamsLike, error: unknown): AgentToolResult<Details> {
+function toExecutionErrorResult(params: SubagentParamsLike, error: unknown, contextSummary?: ContextSummary): AgentToolResult<Details> {
 	const message = error instanceof Error ? error.message : String(error);
-	return withForkContext(
+	return withResolvedContext(
 		{
 			content: [{ type: "text", text: message }],
 			isError: true,
 			details: { mode: getRequestedModeLabel(params), results: [] },
 		},
-		params.context,
+		contextSummary,
 	);
 }
 
@@ -1991,6 +2006,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			chainSkills: [],
 			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index, task.model)),
 			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, task.model)),
+			contextForAgent: contextPolicy.contextForAgent,
 			maxSubagentDepth: currentMaxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
 			worktreeSetupHook: deps.config.worktreeSetupHook,
@@ -2029,6 +2045,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			chainSkills,
 			sessionFilesByFlatIndex: collectChainSessionFiles(chain, sessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems),
 			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(chain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
+			contextForAgent: contextPolicy.contextForAgent,
 			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: currentMaxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
@@ -2077,6 +2094,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			shareEnabled,
 			sessionRoot,
 			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
+			context: contextPolicy.contextForAgent(params.agent!),
 			skills,
 			output: effectiveOutput,
 			outputMode: effectiveOutputMode,
@@ -2145,6 +2163,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		sessionFileForIndex,
 		sessionFileForTask,
 		thinkingOverrideForTask,
+		contextForAgent: contextPolicy.contextForAgent,
 		artifactsDir,
 		artifactConfig,
 		includeProgress: params.includeProgress,
@@ -2210,6 +2229,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			chainSkills: chainResult.requestedAsync.chainSkills,
 			sessionFilesByFlatIndex: collectChainSessionFiles(asyncChain, sessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems),
 			thinkingOverridesByFlatIndex: collectChainThinkingOverrides(asyncChain, thinkingOverrideForTask, deps.config.chain?.dynamicFanout?.maxItems),
+			contextForAgent: contextPolicy.contextForAgent,
 			dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: currentMaxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
@@ -2286,6 +2306,7 @@ interface ForegroundParallelRunInput {
 	behaviors: Array<ReturnType<typeof resolveStepBehavior>>;
 	firstProgressIndex: number;
 	controlConfig: ResolvedControlConfig;
+	contextPolicy: AgentDefaultContextPolicy;
 	onControlEvent?: (event: ControlEvent) => void;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
@@ -2449,6 +2470,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		}
 		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			context: input.contextPolicy.contextForAgent(task.agent),
 			cwd: taskCwd,
 			signal: input.signal,
 			interruptSignal: interruptController.signal,
@@ -2706,6 +2728,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				chainSkills: [],
 				sessionFilesByFlatIndex: tasks.map((task, index) => sessionFileForTask(task.agent, index, modelOverrides[index])),
 				thinkingOverridesByFlatIndex: tasks.map((task, index) => thinkingOverrideForTask(task.agent, index, modelOverrides[index])),
+				contextForAgent: contextPolicy.contextForAgent,
 				maxSubagentDepth: currentMaxSubagentDepth,
 				waitToolEnabled: deps.waitToolEnabled,
 				worktreeSetupHook: deps.config.worktreeSetupHook,
@@ -2791,6 +2814,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			behaviors,
 			firstProgressIndex: parallelProgressPrecreated ? -1 : firstProgressIndex,
 			controlConfig,
+			contextPolicy,
 			onControlEvent,
 			childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(runId, agent, index) : undefined,
 			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
@@ -2924,7 +2948,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		};
 	}
 	const effectiveToolBudget = resolveEffectiveToolBudget({ runBudget: data.toolBudget, agentBudget: agentConfig.toolBudget, configBudget: data.configToolBudget });
-	if (effectiveToolBudget.error) return toExecutionErrorResult(params, new Error(effectiveToolBudget.error));
+	if (effectiveToolBudget.error) return toExecutionErrorResult(params, new Error(effectiveToolBudget.error), data.contextPolicy.contextSummary);
 
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
@@ -3009,6 +3033,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				shareEnabled,
 				sessionRoot,
 				sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
+				context: contextPolicy.contextForAgent(params.agent!),
 				skills: skillOverride === false ? [] : skillOverride,
 				output: effectiveOutput,
 				outputMode: effectiveOutputMode,
@@ -3086,6 +3111,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
 		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+		context: data.contextPolicy.contextForAgent(params.agent!),
 		cwd: effectiveCwd,
 		signal,
 		interruptSignal: interruptController.signal,
@@ -3615,7 +3641,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
-			context: effectiveParams.context,
+			context: effectiveParams.context ?? (contextPolicy.usesFork ? "fork" : undefined),
 			orchestratorTarget: sessionName,
 		});
 		const agents = intercomBridge.active
@@ -3688,7 +3714,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			forkSessionFileForIndex = forkContextResolver.sessionFileForIndex;
 			forkThinkingOverrideForIndex = forkContextResolver.thinkingOverrideForIndex;
 		} catch (error) {
-			return toExecutionErrorResult(effectiveParams, error);
+			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
@@ -3717,6 +3743,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return toExecutionErrorResult(
 				effectiveParams,
 				new Error(`Failed to create session directory '${sessionRoot}': ${message}`),
+				contextPolicy.contextSummary,
 			);
 		}
 		const sessionDirForIndex = (idx?: number) =>
@@ -3742,13 +3769,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, forkSessionFileForTask, deps.config.chain?.dynamicFanout?.maxItems);
 			}
 		} catch (error) {
-			return toExecutionErrorResult(effectiveParams, error);
+			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
 		const chainBindingsError = validateExecutionChainBindings(effectiveParams, deps.config.chain?.dynamicFanout?.maxItems);
-		if (chainBindingsError) return chainBindingsError;
+		if (chainBindingsError) return withResolvedContext(chainBindingsError, contextPolicy.contextSummary);
 
 		const onUpdateWithContext = onUpdate
-			? (r: AgentToolResult<Details>) => onUpdate(withForkContext(r, effectiveParams.context))
+			? (r: AgentToolResult<Details>) => onUpdate(withResolvedContext(r, contextPolicy.contextSummary))
 			: undefined;
 
 		const reservation = reserveSpawnBudget(
@@ -3870,7 +3897,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let nestedForegroundStarted = false;
 		try {
 			const asyncResult = runAsyncPath(execData, deps);
-			if (asyncResult) return withForkContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), effectiveParams.context);
+			if (asyncResult) return withResolvedContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), contextPolicy.contextSummary);
 			if (foregroundControl) {
 				writeNestedForegroundEvent("subagent.nested.started");
 				nestedForegroundStarted = true;
@@ -3878,20 +3905,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (hasChain && effectiveParams.chain) {
 				const result = await runChainPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(withForkThinkingNotes(result, forkThinkingDowngrades), effectiveParams.context);
+				return withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary);
 			}
 			if (hasTasks && effectiveParams.tasks) {
 				const result = await runParallelPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(withForkThinkingNotes(result, forkThinkingDowngrades), effectiveParams.context);
+				return withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary);
 			}
 			if (hasSingle) {
 				const result = await runSinglePath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withForkContext(withForkThinkingNotes(result, forkThinkingDowngrades), effectiveParams.context);
+				return withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary);
 			}
 		} catch (error) {
-			const errorResult = withForkThinkingNotes(toExecutionErrorResult(effectiveParams, error), forkThinkingDowngrades);
+			const errorResult = withForkThinkingNotes(toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary), forkThinkingDowngrades);
 			if (nestedForegroundStarted) writeNestedForegroundEvent("subagent.nested.completed", errorResult);
 			return errorResult;
 		} finally {
@@ -3904,11 +3931,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 		}
 
-		return withForkContext({
+		return withResolvedContext({
 			content: [{ type: "text", text: "Invalid params" }],
 			isError: true,
 			details: { mode: "single" as const, results: [] },
-		}, effectiveParams.context);
+		}, contextPolicy.contextSummary);
 	};
 
 	const executeWithSingleDispatchGuard = async (

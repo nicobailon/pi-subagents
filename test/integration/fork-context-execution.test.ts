@@ -19,10 +19,10 @@ interface ExecutorModule {
 			isError?: boolean;
 			content: Array<{ text?: string }>;
 			details?: {
-				context?: "fresh" | "fork";
+				context?: "fresh" | "fork" | "mixed";
 				mode?: "single" | "parallel" | "chain";
 				asyncId?: string;
-				results?: Array<{ detached?: boolean; exitCode?: number; skills?: string[] }>;
+				results?: Array<{ context?: "fresh" | "fork"; detached?: boolean; exitCode?: number; skills?: string[] }>;
 			};
 		}>;
 	};
@@ -854,7 +854,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.equal(result.details?.context, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.equal(result.details?.results?.[0]?.context, "fresh");
 		assert.deepEqual(openedPaths, []);
 		assert.deepEqual(branchedLeafIds, []);
 		assert.notEqual(readSessionArgsFromCalls()[0], path.join(tempDir, "fork-1.jsonl"));
@@ -880,7 +881,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.equal(result.details?.context, "fork");
+		assert.equal(result.details?.context, "mixed");
+		assert.deepEqual(result.details?.results?.map((entry) => entry.context), ["fork", "fresh"]);
 		assert.deepEqual(openedPaths, [parentSessionFile]);
 		assert.deepEqual(branchedLeafIds, ["leaf-current"]);
 		const workerArgs = readCallArgsForTask("one");
@@ -911,7 +913,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.equal(result.details?.context, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.deepEqual(result.details?.results?.map((entry) => entry.context), ["fresh", "fresh"]);
 		assert.deepEqual(openedPaths, []);
 	});
 
@@ -935,7 +938,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.equal(result.details?.context, "fork");
+		assert.equal(result.details?.context, "mixed");
+		assert.deepEqual(result.details?.results?.map((entry) => entry.context), ["fresh", "fork"]);
 		assert.deepEqual(openedPaths, [parentSessionFile]);
 		assert.deepEqual(branchedLeafIds, ["leaf-current"]);
 		const scanArgs = readCallArgsForTask("scan");

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
+
 ## [0.35.1] - 2026-07-17
 
 ### Fixed

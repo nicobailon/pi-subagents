@@ -333,6 +333,33 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /Agent 3\/3: reviewer · complete · 1\.5k token/);
 	});
 
+	it("shows async job and step context badges", () => {
+		const now = Date.now();
+		const text = buildWidgetLines([
+			{
+				asyncId: "run-1",
+				asyncDir: "/tmp/1",
+				status: "running",
+				mode: "parallel",
+				context: "mixed",
+				agents: ["scout", "worker"],
+				activeParallelGroup: true,
+				runningSteps: 2,
+				completedSteps: 0,
+				stepsTotal: 2,
+				updatedAt: now,
+				steps: [
+					{ agent: "scout", context: "fresh", status: "running", lastActivityAt: now },
+					{ agent: "worker", context: "fork", status: "running", currentTool: "bash", currentToolStartedAt: now - 1000 },
+				],
+			},
+		], theme, 160).join("\n");
+
+		assert.match(text, /parallel \[mixed\]/);
+		assert.match(text, /Agent 1\/2: scout \[fresh\] · running/);
+		assert.match(text, /Agent 2\/2: worker \[fork\] · running/);
+	});
+
 	it("shows model and thinking for active async widget rows", () => {
 		const lines = buildWidgetLines([
 			{

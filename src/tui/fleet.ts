@@ -6,6 +6,7 @@ import { RESULTS_DIR, type AsyncJobState, type ForegroundResumeChild, type Foreg
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, summarizeAsyncStatus, type AsyncRunSummary } from "../runs/background/async-status.ts";
+import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 
 const REFRESH_MS = 750;
 const MAX_RECENT_ASYNC_RUNS = 20;
@@ -39,6 +40,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 		...(job.sessionId ? { sessionId: job.sessionId } : {}),
 		state: job.status,
 		mode: job.mode ?? "single",
+		...(job.context ? { context: job.context } : {}),
 		startedAt,
 		...(job.updatedAt !== undefined ? { lastUpdate: job.updatedAt } : {}),
 		...(job.currentStep !== undefined ? { currentStep: job.currentStep } : {}),
@@ -180,7 +182,7 @@ function foregroundRecentDetail(item: Extract<FleetItem, { kind: "foreground-rec
 		"Source: foreground",
 		`State: ${child.status}`,
 		`Mode: ${run.mode}`,
-		`Child: ${child.index} (${child.agent})`,
+		`Child: ${child.index} (${child.agent})${contextModeLabel(child.context) ? ` ${contextModeLabel(child.context)}` : ""}`,
 		`Updated: ${new Date(child.updatedAt ?? run.updatedAt).toISOString()}`,
 		outputPath ? `Output: ${outputPath}` : undefined,
 		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
@@ -206,8 +208,8 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 		`Run: ${item.runId}`,
 		"Source: async",
 		`State: ${item.state}`,
-		`Mode: ${item.run.mode}`,
-		item.index !== undefined ? `Child: ${item.index} (${item.agent})` : `Agent: ${item.agent}`,
+		`Mode: ${item.run.mode}${contextModeLabel(item.run.context) ? ` ${contextModeLabel(item.run.context)}` : ""}`,
+		item.index !== undefined ? `Child: ${item.index} (${item.agent})${contextModeLabel(item.step?.context) ? ` ${contextModeLabel(item.step?.context)}` : ""}` : `Agent: ${item.agent}${contextModeLabel(item.run.context) ? ` ${contextModeLabel(item.run.context)}` : ""}`,
 		outputPath ? `Output: ${outputPath}` : undefined,
 		item.step?.sessionFile ? `Session: ${item.step.sessionFile}` : item.run.sessionFile ? `Session: ${item.run.sessionFile}` : undefined,
 		"",
@@ -327,7 +329,8 @@ export class SubagentFleetComponent implements Component {
 			const marker = index === this.selected ? this.theme.fg("accent", "›") : " ";
 			const child = item.index !== undefined ? `:${item.index + 1}` : "";
 			const source = item.kind === "async" ? "async" : item.kind === "foreground-active" ? "live" : "recent";
-			const left = `${marker} ${statusGlyph(item, this.theme)} ${source} ${item.runId.slice(0, 8)}${child} ${item.agent}`;
+			const context = item.kind === "async" ? contextModeBadge(this.theme, item.step?.context ?? item.run.context) : item.kind === "foreground-recent" ? contextModeBadge(this.theme, item.child.context) : "";
+			const left = `${marker} ${statusGlyph(item, this.theme)} ${source} ${item.runId.slice(0, 8)}${child} ${item.agent}${context}`;
 			return rightAligned(left, this.theme.fg("dim", item.state), width);
 		});
 	}

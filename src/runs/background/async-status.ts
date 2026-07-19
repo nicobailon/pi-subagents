@@ -7,11 +7,13 @@ import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
+import { contextModeLabel, summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
 	agent: string;
+	context?: ContextMode;
 	label?: string;
 	phase?: string;
 	outputName?: string;
@@ -59,6 +61,7 @@ export interface AsyncRunSummary {
 	toolCount?: number;
 	steering?: SteeringStatus;
 	mode: SubagentRunMode;
+	context?: ContextSummary;
 	cwd?: string;
 	startedAt: number;
 	lastUpdate?: number;
@@ -163,6 +166,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		return {
 			index,
 			agent: step.agent,
+			...(step.context ? { context: step.context } : {}),
 			...(step.label ? { label: step.label } : {}),
 			...(step.phase ? { phase: step.phase } : {}),
 			...(step.outputName ? { outputName: step.outputName } : {}),
@@ -211,6 +215,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		toolCount: status.toolCount,
 		steering: status.steering,
 		mode: status.mode,
+		...(summarizeContextModes(summarizedSteps.map((step) => step.context)) ? { context: summarizeContextModes(summarizedSteps.map((step) => step.context)) } : {}),
 		cwd: status.cwd,
 		startedAt: status.startedAt,
 		lastUpdate: status.lastUpdate,
@@ -333,8 +338,9 @@ function formatActivityFacts(input: { activityState?: ActivityState; lastActivit
 
 function formatStepLine(step: AsyncRunStepSummary): string {
 	const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+	const context = contextModeLabel(step.context);
 	const phase = step.phase ? `[${step.phase}] ` : "";
-	const parts = [`${step.index + 1}. ${phase}${display}`, step.status];
+	const parts = [`${step.index + 1}. ${phase}${display}${context ? ` ${context}` : ""}`, step.status];
 	const activity = formatActivityFacts(step);
 	if (activity) parts.push(activity);
 	const modelThinking = formatModelThinking(step.model, step.thinking);
@@ -375,7 +381,8 @@ function formatRunHeader(run: AsyncRunSummary): string {
 	const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
 	const activity = formatActivityFacts(run);
 	const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
-	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
+	const context = contextModeLabel(run.context);
+	return `${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode}${context ? ` ${context}` : ""} | ${stepLabel}${pending} | ${cwd}`;
 }
 
 export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active async runs"): string {
