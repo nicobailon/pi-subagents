@@ -322,6 +322,54 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("streams detached foreground transcript activity while waiting", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-progress-"));
+		try {
+			const transcriptPath = path.join(root, "foreground-transcript.jsonl");
+			const ts = Date.now();
+			fs.writeFileSync(transcriptPath, [
+				JSON.stringify({ version: 1, recordType: "message", sourceEventType: "initial_prompt", role: "user", text: "large delegated task", ts }),
+				JSON.stringify({ version: 1, recordType: "message", sourceEventType: "message_end", role: "assistant", text: "I found the relevant renderer path.", ts: ts + 1 }),
+				JSON.stringify({ version: 1, recordType: "tool_start", toolName: "edit", argsPreview: "{ path: src/render.ts }", ts: ts + 2 }),
+				"{\"recordType\":\"message\"", // Simulate a concurrent partial append.
+			].join("\n"), "utf-8");
+
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-live", {
+				runId: "foreground-live",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: ts,
+				children: [{ agent: "worker", index: 0, status: "detached", transcriptPath, updatedAt: ts }],
+			}]]);
+			const updates: string[] = [];
+			const result = await waitForSubagents({ id: "foreground-live" }, undefined, baseDeps(root, state, {
+				onUpdate: (update) => updates.push(textOf(update)),
+				sleep: async () => {
+					state.foregroundRuns!.get("foreground-live")!.children[0] = {
+						agent: "worker",
+						index: 0,
+						status: "completed",
+						finalOutput: "Implemented the renderer fix.",
+						transcriptPath,
+						updatedAt: ts + 3,
+					};
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.equal(updates.length, 1);
+			assert.match(updates[0]!, /Waiting for detached foreground run "foreground-live"/);
+			assert.match(updates[0]!, /worker · working after supervisor handoff/);
+			assert.match(updates[0]!, /current: edit: \{ path: src\/render\.ts \}/);
+			assert.match(updates[0]!, /assistant: I found the relevant renderer path\./);
+			assert.doesNotMatch(updates[0]!, /large delegated task/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("does not claim completion when a detached foreground run disappears or the active session changes", async () => {
 		for (const scenario of ["missing", "session-change"] as const) {
 			const root = fs.mkdtempSync(path.join(os.tmpdir(), `pi-wait-foreground-${scenario}-`));
