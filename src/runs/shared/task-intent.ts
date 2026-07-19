@@ -25,10 +25,11 @@ const REVIEW_ONLY_PATTERNS = [
 ];
 
 const REVIEWER_REQUIRED_EDIT_PATTERNS = [
-	/\bmust\s+(?:edit|modify|change|fix|patch|apply)\b/i,
-	/\brequired\s+to\s+(?:edit|modify|change|fix|patch|apply)\b/i,
+	/\bmust\s+(?:edit|modify|change|fix|patch|apply|implement)\b/i,
+	/\brequired\s+to\s+(?:edit|modify|change|fix|patch|apply|implement)\b/i,
+	/(?:^|[.!?\n]\s*)implement\s+(?:the\s+)?(?:approved|requested|specified|file|code|source|fix(?:es)?|changes?)\b/i,
 	/\bregardless\s+of\s+findings\b/i,
-	/\balways\s+(?:edit|modify|change|fix|patch|apply)\b/i,
+	/\balways\s+(?:edit|modify|change|fix|patch|apply|implement)\b/i,
 	/\bapply\s+(?:the\s+)?fix(?:es)?\s+directly\b/i,
 	/\bmake\s+(?:the\s+)?code\s+changes\b/i,
 ];
@@ -134,8 +135,12 @@ function taskHasReadOnlyDeliverable(taskText: string): boolean {
 	return READ_ONLY_DELIVERABLE_PATTERNS.some((pattern) => pattern.test(taskText));
 }
 
+function isReviewerStyleAgent(agent: string): boolean {
+	return /\b(?:reviewer|oracle)\b/i.test(agent);
+}
+
 function hasImplementationIntent(agent: string, taskText: string): boolean {
-	if (/\breviewer\b/i.test(agent)) return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText));
+	if (isReviewerStyleAgent(agent)) return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText));
 	if (agent === "worker") return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
 	return GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
 }
@@ -151,7 +156,7 @@ export function classifyTaskMutationIntent(agent: string, task: string): TaskMut
 
 	if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent))) return { kind: "read-only" };
 	if (hasImplementationIntent(agent, taskText)) return { kind: "implementation" };
-	if (/\breviewer\b/i.test(agent)) return { kind: "read-only" };
+	if (isReviewerStyleAgent(agent)) return { kind: "read-only" };
 	return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints) ? { kind: "read-only" } : { kind: "unknown" };
 }
 

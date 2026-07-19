@@ -54,6 +54,19 @@ describe("acceptance gates", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }).level, "reviewed");
 	});
 
+	it("keeps async oracle review tasks on read-only acceptance despite implementation vocabulary", () => {
+		const resolved = resolveEffectiveAcceptance({
+			agentName: "oracle",
+			task: "Review prep findings and determine what to implement with playbooks instead of before.",
+			mode: "single",
+			async: true,
+		});
+
+		assert.equal(resolved.level, "attested");
+		assert.deepEqual(resolved.inferredReason, ["read-only/reviewer-style agent"]);
+		assert.deepEqual(resolved.criteria.map((criterion) => criterion.must), ["Return concrete findings with file paths and severity when applicable"]);
+	});
+
 	it("uses explicit agent roles for ambiguous tasks while preserving task-intent precedence", () => {
 		assert.equal(resolveEffectiveAcceptance({
 			agentName: "explorer",

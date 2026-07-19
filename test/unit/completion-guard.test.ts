@@ -103,6 +103,22 @@ test("worker with mutating-capable tools still triggers when no mutation is obse
 	});
 });
 
+test("oracle review tasks with bash available do not require mutation", () => {
+	const task = "Review prep findings and determine what to implement with playbooks instead of before.";
+	const result = evaluateCompletionMutationGuard({
+		agent: "oracle",
+		task,
+		messages: [assistantText("Review complete with file-backed findings.")],
+		tools: ["read", "grep", "find", "ls", "bash", "intercom"],
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+	});
+});
+
 test("review-only, research, and framework output instructions do not expect mutation", () => {
 	assert.equal(expectsImplementationMutation("worker", "Review only: return findings, do not edit"), false);
 	assert.equal(expectsImplementationMutation("worker", "Do not edit files. Tell me how to fix the bug."), false);
