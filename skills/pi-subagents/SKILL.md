@@ -291,7 +291,8 @@ subagent({
 ```typescript
 subagent({
   agent: "oracle",
-  task: "Review my current direction and challenge assumptions."
+  task: "Review my current direction and challenge assumptions.",
+  context: "fork"
 })
 ```
 
