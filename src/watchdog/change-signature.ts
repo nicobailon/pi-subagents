@@ -45,6 +45,28 @@ function largeFileHash(stat: fs.Stats): string {
 	return "large:" + stat.size + ":" + Math.floor(stat.mtimeMs);
 }
 
+function hashFileEntry(normalized: string, fullPath: string, stat: fs.Stats): unknown {
+	let hash: string;
+	if (stat.size > maxHashFileBytes()) {
+		hash = largeFileHash(stat);
+	} else {
+		try {
+			hash = hashFile(fullPath);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			// A file racing away between lstat and read: mirror the lstat ENOENT path.
+			if (code === "ENOENT") return { path: normalized, state: "deleted" };
+			// Any other read failure (too-large, EACCES, EISDIR, ...) degrades to the
+			// metadata marker so one unreadable file never discards the whole signature.
+			hash = largeFileHash(stat);
+			if (code !== "ERR_FS_FILE_TOO_LARGE") {
+				console.warn("[pi-subagents] watchdog hashFile fell back to metadata for", normalized + ":", (error as Error)?.message);
+			}
+		}
+	}
+	return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash };
+}
+
 function hashPath(root: string, relPath: string): unknown {
 	const normalized = normalizeRelPath(relPath);
 	const fullPath = path.join(root, normalized);
@@ -74,26 +96,7 @@ function hashPath(root: string, relPath: string): unknown {
 			.sort();
 		return { path: normalized, state: "dir", entries: entries.map((entry) => hashPath(root, entry)) };
 	}
-	if (stat.isFile()) {
-		if (stat.size > maxHashFileBytes()) {
-			return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash: largeFileHash(stat) };
-		}
-		let hash: string;
-		try {
-			hash = hashFile(fullPath);
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code;
-			// A file racing away between lstat and read: mirror the lstat ENOENT path.
-			if (code === "ENOENT") return { path: normalized, state: "deleted" };
-			// Any other read failure (too-large, EACCES, EISDIR, ...) degrades to the
-			// metadata marker so one unreadable file never discards the whole signature.
-			hash = largeFileHash(stat);
-			if (code !== "ERR_FS_FILE_TOO_LARGE") {
-				console.warn("[pi-subagents] watchdog hashFile fell back to metadata for", normalized + ":", (error as Error)?.message);
-			}
-		}
-		return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash };
-	}
+	if (stat.isFile()) return hashFileEntry(normalized, fullPath, stat);
 	return { path: normalized, state: "other", mode: stat.mode };
 }
 
@@ -115,27 +118,31 @@ function parsePorcelainZ(raw: string): Array<{ status: string; paths: string[] }
 	return entries;
 }
 
+function buildRepoChangeSignature(root: string, statusOutput: string): WatchdogRepoChangeSignature {
+	const entries = parsePorcelainZ(statusOutput)
+		.map((entry) => ({
+			status: entry.status,
+			paths: entry.paths.map(normalizeRelPath).filter((relPath) => !ignoredRelPath(relPath)),
+		}))
+		.filter((entry) => entry.paths.length > 0)
+		.sort((a, b) => `${a.status} ${a.paths.join("\0")}`.localeCompare(`${b.status} ${b.paths.join("\0")}`));
+	const changedPaths = [...new Set(entries.flatMap((entry) => entry.paths))].sort();
+	const payload = entries.map((entry) => ({
+		status: entry.status,
+		paths: entry.paths,
+		content: entry.paths.map((relPath) => hashPath(root, relPath)),
+	}));
+	const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+	return { root, key, changedPaths };
+}
+
 export function computeWatchdogRepoChangeSignature(cwd: string): WatchdogRepoChangeSignature | undefined {
 	const root = git(cwd, ["rev-parse", "--show-toplevel"])?.trim();
 	if (!root) return undefined;
 	const statusOutput = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
 	if (statusOutput === undefined) return undefined;
 	try {
-		const entries = parsePorcelainZ(statusOutput)
-			.map((entry) => ({
-				status: entry.status,
-				paths: entry.paths.map(normalizeRelPath).filter((relPath) => !ignoredRelPath(relPath)),
-			}))
-			.filter((entry) => entry.paths.length > 0)
-			.sort((a, b) => `${a.status} ${a.paths.join("\0")}`.localeCompare(`${b.status} ${b.paths.join("\0")}`));
-		const changedPaths = [...new Set(entries.flatMap((entry) => entry.paths))].sort();
-		const payload = entries.map((entry) => ({
-			status: entry.status,
-			paths: entry.paths,
-			content: entry.paths.map((relPath) => hashPath(root, relPath)),
-		}));
-		const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-		return { root, key, changedPaths };
+		return buildRepoChangeSignature(root, statusOutput);
 	} catch (error) {
 		console.warn("[pi-subagents] watchdog repo change signature failed:", (error as Error)?.message);
 		return undefined;

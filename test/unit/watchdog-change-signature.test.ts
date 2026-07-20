@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -14,7 +14,7 @@ import { computeWatchdogRepoChangeSignature } from "../../src/watchdog/change-si
 // `require("node:fs").openSync` deterministically forces the inner read error
 // paths without touching lstat/readdir (which do not go through openSync).
 const require = createRequire(import.meta.url);
-const cjsFs = require("node:fs") as { openSync: typeof fs.openSync };
+const cjsFs = require("node:fs") as { openSync: typeof fs.openSync; lstatSync: typeof fs.lstatSync };
 
 function withOpenSyncError<T>(code: string, run: () => T): T {
 	const previous = cjsFs.openSync;
@@ -25,6 +25,20 @@ function withOpenSyncError<T>(code: string, run: () => T): T {
 		return run();
 	} finally {
 		cjsFs.openSync = previous;
+	}
+}
+
+function withLstatSyncError<T>(code: string, run: () => T): T {
+	const previous = cjsFs.lstatSync;
+	cjsFs.lstatSync = () => {
+		throw Object.assign(new Error("forced stat failure"), { code });
+	};
+	syncBuiltinESMExports();
+	try {
+		return run();
+	} finally {
+		cjsFs.lstatSync = previous;
+		syncBuiltinESMExports();
 	}
 }
 
@@ -236,17 +250,10 @@ describe("watchdog change signature", () => {
 		const repo = createRepo("watchdog-outer-");
 		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
 
-		// Commit a directory, then replace it with a regular file of the same name.
-		// Git reports the tracked child as deleted, so hashPath lstats `x/child` and
-		// hits ENOTDIR (a non-ENOENT error that propagates out of hashPath). This
-		// deterministically exercises the outer fail-safe without relying on mocks
-		// or file permissions (root-safe).
-		fs.mkdirSync(path.join(repo, "x"));
-		fs.writeFileSync(path.join(repo, "x", "child"), "hi\n", "utf-8");
-		git(repo, ["add", "-A"]);
-		git(repo, ["commit", "-m", "initial"]);
-		fs.rmSync(path.join(repo, "x"), { recursive: true, force: true });
-		fs.writeFileSync(path.join(repo, "x"), "now a file\n", "utf-8");
+		// Use a deterministic stat failure to exercise the outer fail-safe on every
+		// platform without depending on POSIX permissions or ENOTDIR/ENOENT differences
+		// between Unix and Windows.
+		fs.writeFileSync(path.join(repo, "x.txt"), "changed\n", "utf-8");
 
 		const warnings: string[] = [];
 		const previousWarn = console.warn;
@@ -254,7 +261,7 @@ describe("watchdog change signature", () => {
 		let result: ReturnType<typeof computeWatchdogRepoChangeSignature>;
 		try {
 			assert.doesNotThrow(() => {
-				result = computeWatchdogRepoChangeSignature(repo);
+				result = withLstatSyncError("EIO", () => computeWatchdogRepoChangeSignature(repo));
 			});
 		} finally {
 			console.warn = previousWarn;
