@@ -559,7 +559,7 @@ describe("subagent prompt runtime", () => {
 			const diagnosticPath = path.join(dir, "tools.json");
 			const handlers = new Map<string, (payload?: unknown) => unknown>();
 			const registered: string[] = [];
-			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "intercom"]);
+			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"]);
 			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
 			process.env[SUBAGENT_CHILD_AGENT_ENV] = "scout";
 
@@ -567,7 +567,7 @@ describe("subagent prompt runtime", () => {
 				on(event: string, handler: (payload?: unknown) => unknown) {
 					handlers.set(event, handler);
 				},
-				getAllTools: () => [{ name: "read" }, ...registered.map((name) => ({ name }))],
+				getAllTools: () => registered.map((name) => ({ name })),
 				registerTool(tool: { name: string }) {
 					registered.push(tool.name);
 				},

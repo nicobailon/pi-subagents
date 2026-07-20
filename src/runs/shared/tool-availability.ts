@@ -11,13 +11,15 @@ export interface ChildToolDiagnostic {
 	missing: string[];
 }
 
+const PI_CORE_CHILD_TOOLS = new Set(["bash", "edit", "find", "grep", "ls", "read", "write"]);
+
 export function writeChildToolDiagnostic(
 	filePath: string,
 	required: string[],
 	available: string[],
 	agent?: string,
 ): ChildToolDiagnostic | undefined {
-	const availableNames = new Set(available);
+	const availableNames = new Set([...available, ...PI_CORE_CHILD_TOOLS]);
 	const missing = required.filter((name) => !availableNames.has(name));
 	if (missing.length === 0) {
 		fs.rmSync(filePath, { force: true });
