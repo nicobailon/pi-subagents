@@ -9,6 +9,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../../agents/agents.ts";
 import {
 	ensureArtifactsDir,
+	formatOutputArtifactContent,
 	getArtifactPaths,
 	writeArtifact,
 	writeMetadata,
@@ -1402,7 +1403,12 @@ export async function runSync(
 	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
 		result.artifactPaths = artifactPathsResult;
 		if (options.artifactConfig?.includeOutput !== false) {
-			writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
+			writeArtifact(artifactPathsResult.outputPath, formatOutputArtifactContent({
+				output: artifactOutputByResult.get(result) ?? result.finalOutput ?? "",
+				error: result.error,
+				transcriptPath: result.transcriptPath,
+				metadataPath: options.artifactConfig?.includeMetadata === false ? undefined : artifactPathsResult.metadataPath,
+			}));
 		}
 		if (options.maxOutput) {
 			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };

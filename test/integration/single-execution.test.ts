@@ -1499,6 +1499,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
 	});
 
+	it("writes a failure stub to foreground output artifacts when no output was produced", async () => {
+		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });
+		const artifactsDir = path.join(tempDir, "artifacts-failed-output");
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "failed-no-output",
+			artifactsDir,
+			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeMetadata: true },
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.ok(result.artifactPaths?.outputPath, "should expose an output artifact path");
+		const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+		assert.match(artifact, /Subagent run failed before producing output\./);
+		assert.match(artifact, /Error:\nmodel unavailable/);
+		assert.match(artifact, /Transcript:/);
+		assert.match(artifact, /Metadata:/);
+	});
+
 	it("does not surface transcript paths when transcript artifacts are disabled", async () => {
 		mockPi.onCall({ output: "Result text" });
 		const agents = makeAgentConfigs(["echo"]);

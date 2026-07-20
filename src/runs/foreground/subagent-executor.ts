@@ -1364,7 +1364,7 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	if (output && output !== error.trim()) {
 		lines.push("", "Output:", output);
 	}
-	if (result.artifactPaths?.outputPath) {
+	if (result.artifactPaths?.outputPath && fs.existsSync(result.artifactPaths.outputPath)) {
 		lines.push("", `Output artifact: ${result.artifactPaths.outputPath}`);
 	}
 	return lines.join("\n");

@@ -427,6 +427,32 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.error ?? "", /protocol_output_limit/);
 	});
 
+	it("background writes a failure stub to output artifacts when no output was produced", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });
+		const id = `async-empty-failure-artifact-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Fail before output",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, false);
+		const outputPath = payload.results[0]?.artifactPaths?.outputPath;
+		assert.ok(outputPath, "should expose an output artifact path");
+		const artifact = fs.readFileSync(outputPath, "utf-8");
+		assert.match(artifact, /Subagent run failed before producing output\./);
+		assert.match(artifact, /Error:\nmodel unavailable/);
+		assert.match(artifact, /Transcript:/);
+		assert.match(artifact, /Metadata:/);
+	});
+
 	it("background keeps only a bounded UTF-8 stderr tail", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "failed", stderr: `${"x".repeat(MAX_CHILD_STDERR_BYTES + 1024)}终`, exitCode: 1 });
 		const id = `async-stderr-tail-${Date.now().toString(36)}`;

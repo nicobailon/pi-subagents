@@ -47,6 +47,19 @@ export function writeArtifact(filePath: string, content: string): void {
 	fs.writeFileSync(filePath, content, "utf-8");
 }
 
+export function formatOutputArtifactContent(input: {
+	output: string;
+	error?: string;
+	transcriptPath?: string;
+	metadataPath?: string;
+}): string {
+	if (input.output.trim() || !input.error) return input.output;
+	const lines = ["Subagent run failed before producing output.", "", "Error:", input.error];
+	if (input.transcriptPath) lines.push("", `Transcript: ${input.transcriptPath}`);
+	if (input.metadataPath) lines.push(`Metadata: ${input.metadataPath}`);
+	return lines.join("\n");
+}
+
 export function writeMetadata(filePath: string, metadata: object): void {
 	fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
