@@ -10,6 +10,7 @@
 - Kept async oracle review tasks with implementation vocabulary from triggering write-evidence acceptance contracts or the no-mutation implementation guard.
 - Added the missing `context: "fork"` field to the fork-context example in the bundled `pi-subagents` skill. Thanks to Kier (@kierr) for #540.
 - Resolved host-provided TypeBox compiler lookup for detached async runners and structured-output validation. Thanks to @nistaux for #526, 96tommykim (@96tommykim) for #545, and @git-geeky and @lukechen526 for reproduction and validation details.
+- Recognize Cursor edit/write thinking traces and replay tool calls as mutation evidence, so Cursor-provider workers that actually edit files no longer false-fail with `completed-without-making-edits`. Thanks to Mikhail Wijanarko (@mwijanarko1) for #539.
 
 ## [0.35.1] - 2026-07-17
 

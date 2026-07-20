@@ -8,6 +8,7 @@ import {
 	expectsImplementationMutation,
 	hasMutationToolCall,
 } from "../../src/runs/shared/completion-guard.ts";
+import { isMutatingTool } from "../../src/runs/shared/long-running-guard.ts";
 
 function assistantToolCall(name: string, args: Record<string, unknown> = {}): Message {
 	return {
@@ -200,4 +201,62 @@ test("implementation task with mutation attempts does not trigger", () => {
 	});
 
 	assert.equal(result.triggered, false);
+});
+
+function assistantThinking(thinking: string): Message {
+	return {
+		role: "assistant",
+		content: [{ type: "thinking", thinking }],
+	} as unknown as Message;
+}
+
+test("Cursor edit/write thinking traces count as mutation attempts", () => {
+	assert.equal(
+		hasMutationToolCall([assistantThinking("Cursor edit: docs/BACKEND_ARCHITECTURE.md added 10 lines, removed 3 lines\n")]),
+		true,
+	);
+	assert.equal(
+		hasMutationToolCall([assistantThinking("Cursor write: src/file.ts created\n")]),
+		true,
+	);
+	assert.equal(
+		hasMutationToolCall([assistantThinking("I plan to edit the file next\n")]),
+		false,
+	);
+	assert.equal(
+		hasMutationToolCall([assistantThinking("Cursor read: docs/BACKEND_ARCHITECTURE.md\n")]),
+		false,
+	);
+});
+
+test("Cursor replay tool calls count only edit/write activity as mutation", () => {
+	const cursorEdit = { activityTitle: "Cursor edit", path: "docs/BACKEND_ARCHITECTURE.md" };
+	const cursorWrite = { activityTitle: "Cursor write", path: "src/file.ts" };
+	assert.equal(hasMutationToolCall([assistantToolCall("cursor", cursorEdit)]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("cursor", cursorWrite)]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("cursor", { activityTitle: "Cursor read" })]), false);
+	assert.equal(isMutatingTool("cursor", cursorEdit), true);
+	assert.equal(isMutatingTool("cursor", { activityTitle: "Cursor read" }), false);
+});
+
+test("claimed changedFiles without mutation evidence does not bypass the guard", () => {
+	const report = assistantText(`Done.\n\`\`\`acceptance-report\n{\n  "changedFiles": ["docs/BACKEND_ARCHITECTURE.md"]\n}\n\`\`\``);
+	assert.equal(hasMutationToolCall([report]), false);
+});
+
+test("implementation task with Cursor edit thinking does not trigger", () => {
+	const result = evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Edit docs/BACKEND_ARCHITECTURE.md",
+		messages: [
+			assistantThinking("Cursor edit: docs/BACKEND_ARCHITECTURE.md added 1 line\n"),
+			assistantText("Implemented the six simplifications."),
+		],
+		tools: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
+	});
+	assert.deepEqual(result, {
+		expectedMutation: true,
+		attemptedMutation: true,
+		triggered: false,
+	});
 });
