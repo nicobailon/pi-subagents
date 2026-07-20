@@ -8,6 +8,7 @@
 ### Fixed
 - Registered the native child `intercom` fallback before strict tool-allowlist diagnostics run and stopped treating Pi core tools as missing extension tools, preventing read-only scouts and workers from failing before execution when strict child tool allowlists are active.
 - Kept async oracle review tasks with implementation vocabulary from triggering write-evidence acceptance contracts or the no-mutation implementation guard.
+- Added the missing `context: "fork"` field to the fork-context example in the bundled `pi-subagents` skill. Thanks to Kier (@kierr) for #540.
 
 ## [0.35.1] - 2026-07-17
 
