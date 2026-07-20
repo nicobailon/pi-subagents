@@ -90,23 +90,27 @@ test("detached async runner's runtime import graph never reaches a host peer pac
 	assert.ok(visited.size > 20, `expected a non-trivial reachable file set (a broken resolver could undercount it), got ${visited.size}`);
 });
 
+function writeFakeTypeboxPackage(typeboxDir: string): void {
+	fs.mkdirSync(typeboxDir, { recursive: true });
+	fs.writeFileSync(
+		path.join(typeboxDir, "package.json"),
+		JSON.stringify({ name: "typebox", version: "0.0.0-test", exports: { "./compile": "./compile.mjs" } }),
+	);
+	fs.writeFileSync(path.join(typeboxDir, "compile.mjs"), "export function Compile() {\n\treturn { Check: () => true, Errors: () => [], fakeTypebox: true };\n}\n");
+}
+
 test("resolveCompileFromPackageRoot loads typebox/compile from a fake Pi host package root", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-host-root-"));
 	try {
 		fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fake-pi-coding-agent", version: "0.0.0" }));
-		const typeboxDir = path.join(root, "node_modules", "typebox");
-		fs.mkdirSync(typeboxDir, { recursive: true });
-		fs.writeFileSync(
-			path.join(typeboxDir, "package.json"),
-			JSON.stringify({ name: "typebox", version: "0.0.0-test", exports: { "./compile": "./compile.mjs" } }),
-		);
-		fs.writeFileSync(path.join(typeboxDir, "compile.mjs"), "export function Compile() {\n\treturn { Check: () => true, Errors: () => [] };\n}\n");
+		writeFakeTypeboxPackage(path.join(root, "node_modules", "typebox"));
 
 		const compile = await resolveCompileFromPackageRoot(root);
 		assert.equal(typeof compile, "function");
 		const compiled = compile!({});
 		assert.equal(compiled.Check({}), true);
 		assert.deepEqual([...compiled.Errors({})], []);
+		assert.equal((compiled as { fakeTypebox?: boolean }).fakeTypebox, true);
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
@@ -116,6 +120,24 @@ test("resolveCompileFromPackageRoot loads typebox/compile from a fake Pi host pa
 		await assert.rejects(resolveCompileFromPackageRoot(emptyRoot));
 	} finally {
 		fs.rmSync(emptyRoot, { recursive: true, force: true });
+	}
+});
+
+test("resolveCompileFromPackageRoot resolves typebox hoisted to an ancestor node_modules", async () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-hoisted-root-"));
+	try {
+		writeFakeTypeboxPackage(path.join(tmp, "node_modules", "typebox"));
+		const packageRoot = path.join(tmp, "apps", "pi", "node_modules", "@earendil-works", "pi-coding-agent");
+		fs.mkdirSync(packageRoot, { recursive: true });
+		fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.0.0" }));
+
+		const compile = await resolveCompileFromPackageRoot(packageRoot);
+		assert.equal(typeof compile, "function");
+		const compiled = compile!({});
+		assert.equal(compiled.Check({}), true);
+		assert.equal((compiled as { fakeTypebox?: boolean }).fakeTypebox, true);
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
 
