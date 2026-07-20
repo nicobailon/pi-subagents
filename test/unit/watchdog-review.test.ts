@@ -59,6 +59,7 @@ function createCtx(input: {
 	models?: Model<any>[];
 	authenticated?: string[];
 	thinkingLevel?: string;
+	providerConfig?: { provider: string; api: string; streamSimple: StreamFn };
 }) {
 	const allModels = input.models ?? (input.current ? [input.current] : []);
 	const authenticated = new Set(input.authenticated ?? allModels.map((entry) => `${entry.provider}/${entry.id}`));
@@ -75,6 +76,7 @@ function createCtx(input: {
 			getApiKeyAndHeaders: async (entry: Model<any>) => authenticated.has(`${entry.provider}/${entry.id}`)
 				? { ok: true as const, apiKey: `key-${entry.provider}-${entry.id}`, headers: { "x-model": entry.id }, env: { WATCHDOG_PROVIDER: entry.provider } }
 				: { ok: false as const, error: `No auth for ${entry.provider}/${entry.id}` },
+			getRegisteredProviderConfig: (provider: string) => input.providerConfig?.provider === provider ? input.providerConfig : undefined,
 		},
 	} as never;
 }
@@ -274,6 +276,22 @@ describe("main watchdog review adapter", () => {
 			() => resolveWatchdogReviewModel(ctx, enabledConfig({ model: "anthropic/missing-watchdog" })),
 			/was not found.*anthropic\/missing-watchdog/s,
 		);
+	});
+
+	it("uses the registered stream for matching custom providers", async () => {
+		const current = model("custom-provider", "watchdog", { api: "custom-api" });
+		const { streamFn, calls } = createStreamFn([fauxAssistantMessage("clean", { stopReason: "stop" })]);
+		const ctx = createCtx({ current, providerConfig: { provider: current.provider, api: "custom-api", streamSimple: streamFn } });
+		const warnings: WatchdogWarning[] = [];
+
+		const result = await createMainWatchdogReview(ctx)(request(enabledConfig(), warnings));
+
+		assert.equal(result?.stopReason, "stop");
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0]?.model, current);
+		assert.equal(calls[0]?.options?.apiKey, "key-custom-provider-watchdog");
+		assert.equal(calls[0]?.options?.headers?.["x-model"], "watchdog");
+		assert.deepEqual(calls[0]?.options?.env, { WATCHDOG_PROVIDER: "custom-provider" });
 	});
 
 	it("falls back to the current session model and thinking when no watchdog model is configured", async () => {

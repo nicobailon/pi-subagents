@@ -252,7 +252,12 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		});
 		if (ctx.signal?.aborted || request.signal?.aborted) return { stopReason: "aborted" };
 		const auth = selection.auth;
-		const baseStreamFn = options.streamFn ?? streamSimple;
+		const registeredProvider = (ctx.modelRegistry as {
+			getRegisteredProviderConfig?: (provider: string) => { api?: string; streamSimple?: StreamFn } | undefined;
+		}).getRegisteredProviderConfig?.(selection.model.provider);
+		const baseStreamFn = options.streamFn ?? (registeredProvider?.streamSimple && registeredProvider.api === selection.model.api
+			? registeredProvider.streamSimple
+			: streamSimple);
 		const streamFn: StreamFn = (model, context, streamOptions) => baseStreamFn(model, context, {
 			...streamOptions,
 			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
