@@ -982,6 +982,14 @@ export interface ForegroundResumeChild {
 	context?: "fresh" | "fork";
 	sessionFile?: string;
 	status: SubagentResultStatus;
+	activityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	currentPath?: string;
+	turnCount?: number;
+	tokens?: number;
+	toolCount?: number;
 	exitCode?: number;
 	error?: string;
 	finalOutput?: string;

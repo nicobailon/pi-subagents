@@ -352,6 +352,19 @@ function trimRememberedForegroundRuns(state: SubagentState): void {
 	}
 }
 
+function foregroundChildActivityFromProgress(progress: SingleResult["progress"] | undefined) {
+	return {
+		...(progress?.activityState ? { activityState: progress.activityState } : {}),
+		...(progress?.lastActivityAt !== undefined ? { lastActivityAt: progress.lastActivityAt } : {}),
+		...(progress?.currentTool ? { currentTool: progress.currentTool } : {}),
+		...(progress?.currentToolStartedAt !== undefined ? { currentToolStartedAt: progress.currentToolStartedAt } : {}),
+		...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
+		...(progress?.turnCount !== undefined ? { turnCount: progress.turnCount } : {}),
+		...(progress?.tokens !== undefined ? { tokens: progress.tokens } : {}),
+		...(progress?.toolCount !== undefined ? { toolCount: progress.toolCount } : {}),
+	};
+}
+
 function rememberForegroundRun(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[] }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
@@ -368,6 +381,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				index,
 				...(result.context ? { context: result.context } : {}),
 				status: resolveSubagentResultStatus({ exitCode: result.exitCode, interrupted: result.interrupted, detached: result.detached }),
+				...foregroundChildActivityFromProgress(result.progress),
 				updatedAt,
 				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
 				...(result.error ? { error: result.error } : {}),
@@ -389,6 +403,29 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 	trimRememberedForegroundRuns(state);
 }
 
+function applyControlEventToRememberedForegroundRun(state: SubagentState, event: ControlEvent): void {
+	const run = state.foregroundRuns?.get(event.runId);
+	if (!run) return;
+	const index = event.index ?? (run.children.length === 1 ? run.children[0]?.index : undefined);
+	if (index === undefined) return;
+	const child = run.children[index];
+	if (!child || child.status !== "detached") return;
+	const updatedAt = event.ts;
+	run.updatedAt = updatedAt;
+	run.children[index] = {
+		...child,
+		activityState: event.to,
+		updatedAt,
+		...(event.elapsedMs !== undefined ? { lastActivityAt: event.ts - event.elapsedMs } : {}),
+		...(event.currentTool ? { currentTool: event.currentTool } : {}),
+		...(event.currentToolDurationMs !== undefined ? { currentToolStartedAt: event.ts - event.currentToolDurationMs } : {}),
+		...(event.currentPath ? { currentPath: event.currentPath } : {}),
+		...(event.turns !== undefined ? { turnCount: event.turns } : {}),
+		...(event.tokens !== undefined ? { tokens: event.tokens } : {}),
+		...(event.toolCount !== undefined ? { toolCount: event.toolCount } : {}),
+	};
+}
+
 function updateRememberedForegroundChild(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; index: number; result: SingleResult; events: IntercomEventBus }): void {
 	state.foregroundRuns ??= new Map();
 	const updatedAt = Date.now();
@@ -407,6 +444,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		status: input.result.acceptance?.status === "rejected"
 			? "failed"
 			: resolveSubagentResultStatus({ exitCode: input.result.exitCode, interrupted: input.result.interrupted, detached: false }),
+		...foregroundChildActivityFromProgress(input.result.progress),
 		updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.error ? { error: input.result.error } : {}),
@@ -1332,13 +1370,16 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	return lines.join("\n");
 }
 
-function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge">, deps: Pick<ExecutorDeps, "pi">): (event: ControlEvent) => void {
-	return (event) => emitControlNotification({
-		pi: deps.pi,
-		controlConfig: data.controlConfig,
-		intercomBridge: data.intercomBridge,
-		event,
-	});
+function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
+	return (event) => {
+		applyControlEventToRememberedForegroundRun(deps.state, event);
+		emitControlNotification({
+			pi: deps.pi,
+			controlConfig: data.controlConfig,
+			intercomBridge: data.intercomBridge,
+			event,
+		});
+	};
 }
 
 async function emitForegroundResultIntercom(input: {

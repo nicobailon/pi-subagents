@@ -322,6 +322,43 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("wakes when a remembered detached foreground run needs attention", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-attn-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-blocked", {
+				runId: "foreground-blocked",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: 1,
+				children: [{ agent: "researcher", index: 0, status: "detached", updatedAt: 1 }],
+			}]]);
+			let polls = 0;
+			const result = await waitForSubagents({ id: "foreground-blocked", timeoutMs: 30_000 }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					polls += 1;
+					state.foregroundRuns!.get("foreground-blocked")!.children[0] = {
+						agent: "researcher",
+						index: 0,
+						status: "detached",
+						activityState: "needs_attention",
+						updatedAt: 2,
+					};
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /attention required/i);
+			assert.match(textOf(result), /foreground-blocked/);
+			assert.match(textOf(result), /researcher#0/);
+			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("streams detached foreground transcript activity while waiting", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-progress-"));
 		try {

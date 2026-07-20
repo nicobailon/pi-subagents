@@ -217,6 +217,17 @@ function summarizeForegroundChildren(run: ForegroundResumeRun, indices: Set<numb
 	return [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(", ");
 }
 
+function foregroundChildrenNeedingAttention(run: ForegroundResumeRun, indices: Set<number>) {
+	return run.children.filter((child) => indices.has(child.index) && child.status === "detached" && child.activityState === "needs_attention");
+}
+
+function formatForegroundAttention(run: ForegroundResumeRun, children: ReturnType<typeof foregroundChildrenNeedingAttention>, elapsedMs: number): AgentToolResult<Details> {
+	const childList = children.map((child) => `${child.agent}${child.index !== undefined ? `#${child.index}` : ""}`).join(", ");
+	return result(
+		`Waited ${formatDuration(elapsedMs)} for remembered detached foreground run "${run.runId}"; attention required. ${children.length} child run(s) need attention: ${childList}. Reply to any pending supervisor request, then call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
+	);
+}
+
 /** A running run that has flagged it needs the parent's attention. */
 function needsAttention(run: AsyncRunSummary): boolean {
 	return run.activityState === "needs_attention";
@@ -393,13 +404,15 @@ async function waitForDetachedForegroundRun(
 	const initialDetachedIndices = new Set(run.children.filter((child) => child.status === "detached").map((child) => child.index));
 	while (true) {
 		if (deps.state.currentSessionId !== run.sessionId) {
-			return result(`Wait stopped because the active session changed while remembered foreground run "${run.runId}" was still detached. Return to the originating session to inspect or wait for it.`, true);
+			return result(`Wait stopped because the active session changed while remembered foreground run "${run.runId}" was still detached. Return to the originating session to inspect or wait for it. Reply to any pending supervisor request before resuming or launching a replacement.`, true);
 		}
 		const current = deps.state.foregroundRuns?.get(run.runId);
 		if (!current || current.sessionId !== run.sessionId) {
 			return result(`Remembered foreground run "${run.runId}" disappeared before a terminal child result was recorded. Completion cannot be confirmed; do not launch a replacement without checking the originating child session.`, true);
 		}
 		const pending = current.children.filter((child) => initialDetachedIndices.has(child.index) && child.status === "detached");
+		const attention = deps.stopOnAttention === false ? [] : foregroundChildrenNeedingAttention(current, initialDetachedIndices);
+		if (attention.length > 0) return formatForegroundAttention(current, attention, now() - startedAt);
 		if (pending.length === 0) {
 			const outcome = summarizeForegroundChildren(current, initialDetachedIndices);
 			return result(
@@ -409,7 +422,7 @@ async function waitForDetachedForegroundRun(
 		const updateNow = now();
 		deps.onUpdate?.(detachedForegroundWaitUpdate(current, initialDetachedIndices, updateNow, updateNow - startedAt));
 		if (signal?.aborted) {
-			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Remembered foreground run "${run.runId}" remains detached.`, true);
+			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Remembered foreground run "${run.runId}" remains detached. Reply to any pending supervisor request before resuming or launching a replacement.`, true);
 		}
 		if (now() - startedAt >= timeoutMs) {
 			return result(
