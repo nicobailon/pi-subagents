@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -31,6 +32,16 @@ function readText(result: { content: Array<{ type: string; text?: string }> }): 
 	assert.equal(first.type, "text");
 	assert.equal(typeof first.text, "string");
 	return first.text;
+}
+
+function taskHash(task: string): string {
+	return createHash("sha256").update(task).digest("hex");
+}
+
+function assertPrivateHistoryModes(historyPath: string): void {
+	if (process.platform === "win32") return;
+	assert.equal(fs.statSync(path.dirname(historyPath)).mode & 0o777, 0o700);
+	assert.equal(fs.statSync(historyPath).mode & 0o777, 0o600);
 }
 
 describe("PI_CODING_AGENT_DIR runtime paths", () => {
@@ -167,13 +178,22 @@ Package skill content.
 		assert.ok(available.find((skill) => skill.name === "package-skill" && skill.source === "user-package"));
 	});
 
-	it("records run history and cleans session artifacts under the configured agent dir", () => {
-		recordRun("env-agent", "Inspect", 0, 42);
+	it("records private redacted run history and cleans session artifacts under the configured agent dir", () => {
+		const task = "Inspect customer ACME token=SECRET";
+		recordRun("env-agent", task, 0, 42);
 		const historyPath = path.join(agentDir, "run-history.jsonl");
 		assert.equal(fs.existsSync(historyPath), true);
+		assertPrivateHistoryModes(historyPath);
+
+		const rawHistory = fs.readFileSync(historyPath, "utf-8");
+		assert.doesNotMatch(rawHistory, /Inspect customer|ACME|SECRET/);
+		assert.match(rawHistory, /"task":"\[redacted\]"/);
+		assert.match(rawHistory, /"taskHash":"[a-f0-9]{64}"/);
+
 		const history = loadRunsForAgent("env-agent");
 		assert.equal(history.length, 1);
-		assert.equal(history[0]?.task, "Inspect");
+		assert.equal(history[0]?.task, "[redacted]");
+		assert.equal(history[0]?.taskHash, taskHash(task));
 		assert.equal(history[0]?.status, "ok");
 
 		const artifactPath = path.join(agentDir, "sessions", "session-1", "subagent-artifacts", "old_output.md");
@@ -183,6 +203,33 @@ Package skill content.
 
 		cleanupAllArtifactDirs(0);
 		assert.equal(fs.existsSync(artifactPath), false);
+	});
+
+	it("hardens and redacts existing run history while recording", () => {
+		const historyPath = path.join(agentDir, "run-history.jsonl");
+		fs.mkdirSync(agentDir, { recursive: true, mode: 0o755 });
+		fs.writeFileSync(historyPath, `${JSON.stringify({
+			agent: "env-agent",
+			task: "legacy customer secret",
+			ts: 1,
+			status: "ok",
+			duration: 2,
+		})}\nnot json with pasted secret\n`, { encoding: "utf-8", mode: 0o644 });
+
+		recordRun("env-agent", "new customer secret", 1, 9);
+
+		assertPrivateHistoryModes(historyPath);
+		const rawHistory = fs.readFileSync(historyPath, "utf-8");
+		assert.doesNotMatch(rawHistory, /legacy customer secret|new customer secret|not json with pasted secret/);
+
+		const history = loadRunsForAgent("env-agent");
+		assert.equal(history.length, 2);
+		assert.equal(history[0]?.task, "[redacted]");
+		assert.equal(history[0]?.taskHash, taskHash("new customer secret"));
+		assert.equal(history[0]?.status, "error");
+		assert.equal(history[0]?.exit, 1);
+		assert.equal(history[1]?.task, "[redacted]");
+		assert.equal(history[1]?.taskHash, taskHash("legacy customer secret"));
 	});
 
 	it("uses the configured agent dir for subagent bridge instruction files", () => {
