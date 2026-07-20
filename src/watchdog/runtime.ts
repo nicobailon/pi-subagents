@@ -536,6 +536,13 @@ export class MainWatchdogRuntime {
 	}
 
 	private resetRepoChangeBaseline(options: { cwd?: string; reviewed?: boolean } = {}): void {
+		// Skip the blocking git-status call when the watchdog is disabled (the default).
+		// computeWatchdogRepoChangeSignature runs `git status --porcelain=v1 -z
+		// --untracked-files=all` synchronously via spawnSync. On large repositories
+		// (monorepos, NX/Turborepo workspaces, etc.) this can take 1.5–4 seconds and
+		// freezes the pi TUI on every startup — even though the result is never used
+		// until the watchdog is explicitly enabled.
+		if (!this.isEnabled()) return;
 		this.turnStartChangeSignature = this.currentRepoChangeSignature(options.cwd ?? this.cwd);
 		if (options.reviewed) this.lastReviewedChangeSignature = this.turnStartChangeSignature?.key;
 		else this.lastReviewedChangeSignature ??= this.turnStartChangeSignature?.key;
