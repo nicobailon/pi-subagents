@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -250,6 +250,21 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 	}
 }
 
+function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): AcceptanceInput | undefined {
+	if (value && typeof value === "object" && !Array.isArray(value) && ("explicit" in value || "inferredReason" in value)) {
+		const { explicit, inferredReason: _inferredReason, ...publicAcceptance } = value as Record<string, unknown>;
+		if (explicit === false) return undefined;
+		if (publicAcceptance.level === "reviewed") {
+			publicAcceptance.level = "verified";
+			delete publicAcceptance.review;
+		}
+		value = publicAcceptance;
+	}
+	const errors = validateAcceptanceInput(value, "recoveryDescriptor.acceptance");
+	if (errors.length) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${errors.join(" ")}`);
+	return value as AcceptanceInput;
+}
+
 export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): SteeringRecoveryDescriptor | undefined {
 	if (!asyncDir) return undefined;
 	const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
@@ -335,8 +350,9 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (!Array.isArray(control.notifyChannels) || control.notifyChannels.some((item) => item !== "event" && item !== "async" && item !== "intercom")) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig.notifyChannels is invalid.`);
 	}
 	if (parsed.acceptance !== undefined) {
-		const errors = validateAcceptanceInput(parsed.acceptance, "recoveryDescriptor.acceptance");
-		if (errors.length) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${errors.join(" ")}`);
+		const acceptance = normalizeRecoveryAcceptance(parsed.acceptance, descriptorPath);
+		if (acceptance === undefined) delete parsed.acceptance;
+		else parsed.acceptance = acceptance;
 	}
 	return parsed as unknown as SteeringRecoveryDescriptor;
 }

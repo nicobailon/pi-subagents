@@ -70,6 +70,149 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("accepts legacy resolved acceptance metadata in recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-acceptance");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				version: 1,
+				sourceRunId: "run-acceptance",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				acceptance: {
+					level: "attested",
+					explicit: true,
+					inferredReason: ["async write-capable or risky run"],
+					criteria: [{ id: "criterion-1", must: "Return evidence", evidence: ["manual-notes"], severity: "required" }],
+					evidence: ["manual-notes", "residual-risks"],
+					verify: [],
+					stopRules: [],
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.equal(target.kind, "revive");
+			assert.deepEqual(target.recoveryDescriptor?.acceptance, {
+				level: "attested",
+				criteria: [{ id: "criterion-1", must: "Return evidence", evidence: ["manual-notes"], severity: "required" }],
+				evidence: ["manual-notes", "residual-risks"],
+				verify: [],
+				stopRules: [],
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("downgrades explicit legacy reviewed acceptance metadata in recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-reviewed-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-reviewed-acceptance");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-reviewed-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				version: 1,
+				sourceRunId: "run-reviewed-acceptance",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				acceptance: {
+					level: "reviewed",
+					explicit: true,
+					inferredReason: ["async write-capable or risky run"],
+					criteria: ["Return evidence"],
+					evidence: ["validation-output"],
+					verify: [],
+					review: { agent: "reviewer", required: true },
+					stopRules: [],
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-reviewed-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.equal(target.kind, "revive");
+			assert.deepEqual(target.recoveryDescriptor?.acceptance, {
+				level: "verified",
+				criteria: ["Return evidence"],
+				evidence: ["validation-output"],
+				verify: [],
+				stopRules: [],
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("drops inferred legacy acceptance metadata from recovery descriptors", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-inferred-acceptance-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-inferred-acceptance");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-inferred-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				version: 1,
+				sourceRunId: "run-inferred-acceptance",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+				acceptance: {
+					level: "reviewed",
+					explicit: false,
+					inferredReason: ["async write-capable or risky run"],
+					criteria: [],
+					evidence: [],
+					verify: [],
+					review: { agent: "reviewer", required: true },
+					stopRules: [],
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-inferred-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.equal(target.kind, "revive");
+			assert.equal(target.recoveryDescriptor?.acceptance, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects stopped runs instead of reviving them", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-stopped-"));
 		try {

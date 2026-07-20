@@ -6,6 +6,7 @@
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
+- Kept async resume recovery descriptors from rejecting acceptance metadata written by earlier async runs, and now persist only the public acceptance input needed for safe revival. Thanks to Phil (@philliugithub) for #537.
 - Made `subagent_wait({ id })` wake when a remembered detached foreground child reaches `needs_attention`, so headless parents can answer pending supervisor requests instead of waiting until timeout. Thanks to Mattias Petter Johansson (@mpj) for #554.
 - Made `run-history.jsonl` and its agent directory owner-only where supported, redacted stored task prompts, and retained only a SHA-256 task hash for history correlation. Thanks to @avishkandi for #534.
 - Registered the native child `intercom` fallback before strict tool-allowlist diagnostics run and stopped treating Pi core tools as missing extension tools, preventing read-only scouts and workers from failing before execution when strict child tool allowlists are active.
