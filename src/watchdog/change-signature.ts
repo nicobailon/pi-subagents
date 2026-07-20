@@ -82,8 +82,15 @@ function hashPath(root: string, relPath: string): unknown {
 		try {
 			hash = hashFile(fullPath);
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ERR_FS_FILE_TOO_LARGE") hash = largeFileHash(stat);
-			else throw error;
+			const code = (error as NodeJS.ErrnoException).code;
+			// A file racing away between lstat and read: mirror the lstat ENOENT path.
+			if (code === "ENOENT") return { path: normalized, state: "deleted" };
+			// Any other read failure (too-large, EACCES, EISDIR, ...) degrades to the
+			// metadata marker so one unreadable file never discards the whole signature.
+			hash = largeFileHash(stat);
+			if (code !== "ERR_FS_FILE_TOO_LARGE") {
+				console.warn("[pi-subagents] watchdog hashFile fell back to metadata for", normalized + ":", (error as Error)?.message);
+			}
 		}
 		return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash };
 	}

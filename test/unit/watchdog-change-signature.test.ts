@@ -1,10 +1,32 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { computeWatchdogRepoChangeSignature } from "../../src/watchdog/change-signature.ts";
+
+// The module under test hashes file content via `fs.readFileSync`, whose ESM
+// binding cannot be reassigned (module namespaces are frozen) and mock.module is
+// gated behind an experimental flag not passed by the runner. However, the ESM
+// `readFileSync` dispatches through the CJS module's `openSync`, so patching
+// `require("node:fs").openSync` deterministically forces the inner read error
+// paths without touching lstat/readdir (which do not go through openSync).
+const require = createRequire(import.meta.url);
+const cjsFs = require("node:fs") as { openSync: typeof fs.openSync };
+
+function withOpenSyncError<T>(code: string, run: () => T): T {
+	const previous = cjsFs.openSync;
+	cjsFs.openSync = () => {
+		throw Object.assign(new Error("forced read failure"), { code });
+	};
+	try {
+		return run();
+	} finally {
+		cjsFs.openSync = previous;
+	}
+}
 
 function git(cwd: string, args: string[]): string {
 	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
@@ -152,6 +174,93 @@ describe("watchdog change signature", () => {
 		fs.utimesSync(filePath, laterMtime, laterMtime);
 		const afterMtime = computeWatchdogRepoChangeSignature(repo);
 		assert.notEqual(afterMtime?.key, sig?.key, "mtime-only change must alter the key for large files in subdirs");
+	});
+
+	it("degrades to the metadata marker when a per-file read raises ERR_FS_FILE_TOO_LARGE", (t) => {
+		const repo = createRepo("watchdog-inner-toolarge-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+		// Small file (default threshold) so it enters the content-hash try branch.
+		fs.writeFileSync(path.join(repo, "small.txt"), "hello\n", "utf-8");
+
+		const warnings: string[] = [];
+		const previousWarn = console.warn;
+		console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+		let sig: ReturnType<typeof computeWatchdogRepoChangeSignature>;
+		try {
+			sig = withOpenSyncError("ERR_FS_FILE_TOO_LARGE", () => computeWatchdogRepoChangeSignature(repo));
+		} finally {
+			console.warn = previousWarn;
+		}
+
+		assert.ok(sig, "a single unreadable file must not discard the whole signature");
+		assert.equal(typeof sig?.key, "string");
+		assert.ok(sig?.changedPaths.includes("small.txt"));
+		assert.deepEqual(warnings, [], "the too-large case is expected and must stay quiet");
+	});
+
+	it("keeps a valid signature when a per-file read races into ENOENT", (t) => {
+		const repo = createRepo("watchdog-inner-enoent-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+		fs.writeFileSync(path.join(repo, "small.txt"), "hello\n", "utf-8");
+
+		const sig = withOpenSyncError("ENOENT", () => computeWatchdogRepoChangeSignature(repo));
+		assert.ok(sig, "an ENOENT during read must degrade to the deleted marker, not undefined");
+		assert.equal(typeof sig?.key, "string");
+		assert.ok(sig?.changedPaths.includes("small.txt"));
+	});
+
+	it("warns and falls back to metadata for other per-file read errors", (t) => {
+		const repo = createRepo("watchdog-inner-eacces-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+		fs.writeFileSync(path.join(repo, "small.txt"), "hello\n", "utf-8");
+
+		const warnings: string[] = [];
+		const previousWarn = console.warn;
+		console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+		let sig: ReturnType<typeof computeWatchdogRepoChangeSignature>;
+		try {
+			sig = withOpenSyncError("EACCES", () => computeWatchdogRepoChangeSignature(repo));
+		} finally {
+			console.warn = previousWarn;
+		}
+
+		assert.ok(sig, "a single unreadable file must not discard the whole signature");
+		assert.equal(typeof sig?.key, "string");
+		assert.ok(warnings.some((line) => line.includes("hashFile fell back to metadata") && line.includes("small.txt")));
+	});
+
+	it("returns undefined instead of throwing when hashing a changed path raises", (t) => {
+		const repo = createRepo("watchdog-outer-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+		// Commit a directory, then replace it with a regular file of the same name.
+		// Git reports the tracked child as deleted, so hashPath lstats `x/child` and
+		// hits ENOTDIR (a non-ENOENT error that propagates out of hashPath). This
+		// deterministically exercises the outer fail-safe without relying on mocks
+		// or file permissions (root-safe).
+		fs.mkdirSync(path.join(repo, "x"));
+		fs.writeFileSync(path.join(repo, "x", "child"), "hi\n", "utf-8");
+		git(repo, ["add", "-A"]);
+		git(repo, ["commit", "-m", "initial"]);
+		fs.rmSync(path.join(repo, "x"), { recursive: true, force: true });
+		fs.writeFileSync(path.join(repo, "x"), "now a file\n", "utf-8");
+
+		const warnings: string[] = [];
+		const previousWarn = console.warn;
+		console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+		let result: ReturnType<typeof computeWatchdogRepoChangeSignature>;
+		try {
+			assert.doesNotThrow(() => {
+				result = computeWatchdogRepoChangeSignature(repo);
+			});
+		} finally {
+			console.warn = previousWarn;
+		}
+
+		assert.equal(result, undefined, "a throw in the hashing region must fail safe to undefined");
 	});
 
 	it("still hashes small files by content when under the threshold", (t) => {
