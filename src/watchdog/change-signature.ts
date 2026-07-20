@@ -6,6 +6,16 @@ import * as path from "node:path";
 const IGNORED_CHANGE_PREFIXES = [".pi-subagents/", "tmp/", "node_modules/"];
 const IGNORED_CHANGE_PATHS = new Set([".pi-subagents", "tmp", "node_modules"]);
 
+const DEFAULT_MAX_HASH_FILE_BYTES = 64 * 1024 * 1024;
+
+// Read at call time (not module load) so PI_SUBAGENTS_MAX_HASH_FILE_BYTES can be
+// overridden by tests after this module is imported. Falls back to the 64 MiB
+// default when the env value is missing, non-numeric, non-finite, or <= 0.
+function maxHashFileBytes(): number {
+	const parsed = Number(process.env.PI_SUBAGENTS_MAX_HASH_FILE_BYTES);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_HASH_FILE_BYTES;
+}
+
 export interface WatchdogRepoChangeSignature {
 	root: string;
 	key: string;
@@ -29,6 +39,10 @@ function ignoredRelPath(relPath: string): boolean {
 
 function hashFile(filePath: string): string {
 	return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function largeFileHash(stat: fs.Stats): string {
+	return "large:" + stat.size + ":" + Math.floor(stat.mtimeMs);
 }
 
 function hashPath(root: string, relPath: string): unknown {
@@ -61,7 +75,17 @@ function hashPath(root: string, relPath: string): unknown {
 		return { path: normalized, state: "dir", entries: entries.map((entry) => hashPath(root, entry)) };
 	}
 	if (stat.isFile()) {
-		return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash: hashFile(fullPath) };
+		if (stat.size > maxHashFileBytes()) {
+			return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash: largeFileHash(stat) };
+		}
+		let hash: string;
+		try {
+			hash = hashFile(fullPath);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ERR_FS_FILE_TOO_LARGE") hash = largeFileHash(stat);
+			else throw error;
+		}
+		return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash };
 	}
 	return { path: normalized, state: "other", mode: stat.mode };
 }
@@ -89,21 +113,26 @@ export function computeWatchdogRepoChangeSignature(cwd: string): WatchdogRepoCha
 	if (!root) return undefined;
 	const statusOutput = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
 	if (statusOutput === undefined) return undefined;
-	const entries = parsePorcelainZ(statusOutput)
-		.map((entry) => ({
+	try {
+		const entries = parsePorcelainZ(statusOutput)
+			.map((entry) => ({
+				status: entry.status,
+				paths: entry.paths.map(normalizeRelPath).filter((relPath) => !ignoredRelPath(relPath)),
+			}))
+			.filter((entry) => entry.paths.length > 0)
+			.sort((a, b) => `${a.status} ${a.paths.join("\0")}`.localeCompare(`${b.status} ${b.paths.join("\0")}`));
+		const changedPaths = [...new Set(entries.flatMap((entry) => entry.paths))].sort();
+		const payload = entries.map((entry) => ({
 			status: entry.status,
-			paths: entry.paths.map(normalizeRelPath).filter((relPath) => !ignoredRelPath(relPath)),
-		}))
-		.filter((entry) => entry.paths.length > 0)
-		.sort((a, b) => `${a.status} ${a.paths.join("\0")}`.localeCompare(`${b.status} ${b.paths.join("\0")}`));
-	const changedPaths = [...new Set(entries.flatMap((entry) => entry.paths))].sort();
-	const payload = entries.map((entry) => ({
-		status: entry.status,
-		paths: entry.paths,
-		content: entry.paths.map((relPath) => hashPath(root, relPath)),
-	}));
-	const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-	return { root, key, changedPaths };
+			paths: entry.paths,
+			content: entry.paths.map((relPath) => hashPath(root, relPath)),
+		}));
+		const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+		return { root, key, changedPaths };
+	} catch (error) {
+		console.warn("[pi-subagents] watchdog repo change signature failed:", (error as Error)?.message);
+		return undefined;
+	}
 }
 
 function toolNameFromMessage(message: Record<string, unknown>): string {
