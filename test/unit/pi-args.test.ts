@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
@@ -41,6 +42,7 @@ const originalEnv = {
 	PI_SUBAGENT_PARENT_CAPABILITY_TOKEN: process.env.PI_SUBAGENT_PARENT_CAPABILITY_TOKEN,
 	PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
 	PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
+	[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV],
 };
 const originalCwd = process.cwd();
 const tempRoots: string[] = [];
@@ -504,6 +506,19 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,fixture_search,structured_output");
 		assert.deepEqual(JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"), ["read", "fixture_search", "structured_output"]);
+	});
+
+	it("forwards the Pi package root to child processes for host peer resolution", () => {
+		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = "/opt/pi-coding-agent";
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.equal(env[PI_CODING_AGENT_PACKAGE_ROOT_ENV], "/opt/pi-coding-agent");
 	});
 
 	it("adds read to explicit tool allowlists when skills must be loaded lazily", () => {
