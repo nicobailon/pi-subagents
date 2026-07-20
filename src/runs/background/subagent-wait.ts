@@ -38,6 +38,7 @@
  * polling.
  */
 
+import * as fs from "node:fs";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	listBackgroundWorkWakeChannels,
@@ -89,6 +90,8 @@ export interface WaitEventBus {
 
 export interface SubagentWaitDeps {
 	state: SubagentState;
+	/** Stream live wait status into Pi's pending tool row. */
+	onUpdate?: (result: AgentToolResult<Details>) => void;
 	asyncDirRoot?: string;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -283,6 +286,101 @@ function result(text: string, isError = false): AgentToolResult<Details> {
 	};
 }
 
+const TRANSCRIPT_TAIL_BYTES = 128 * 1024;
+const TRANSCRIPT_PREVIEW_LINES = 3;
+const TRANSCRIPT_PREVIEW_WIDTH = 220;
+
+interface TranscriptActivity {
+	currentTool?: string;
+	currentToolArgs?: string;
+	latestAt?: number;
+	recent: string[];
+}
+
+function compactTranscriptText(value: unknown, maxWidth = TRANSCRIPT_PREVIEW_WIDTH): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const compact = value.replace(/\s+/g, " ").trim();
+	if (!compact) return undefined;
+	return compact.length <= maxWidth ? compact : `${compact.slice(0, Math.max(1, maxWidth - 1))}…`;
+}
+
+function readTranscriptActivity(transcriptPath: string | undefined): TranscriptActivity | undefined {
+	if (!transcriptPath) return undefined;
+	let fd: number | undefined;
+	try {
+		const stat = fs.statSync(transcriptPath);
+		if (!stat.isFile() || stat.size <= 0) return undefined;
+		const start = Math.max(0, stat.size - TRANSCRIPT_TAIL_BYTES);
+		const length = stat.size - start;
+		const buffer = Buffer.allocUnsafe(length);
+		fd = fs.openSync(transcriptPath, "r");
+		const bytesRead = fs.readSync(fd, buffer, 0, length, start);
+		let lines = buffer.subarray(0, bytesRead).toString("utf-8").split(/\r?\n/);
+		if (start > 0) lines = lines.slice(1); // The first tail line may be partial JSON.
+
+		let currentTool: string | undefined;
+		let currentToolArgs: string | undefined;
+		let latestAt: number | undefined;
+		const recent: string[] = [];
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			let record: Record<string, unknown>;
+			try {
+				record = JSON.parse(line) as Record<string, unknown>;
+			} catch {
+				continue; // Concurrent append can leave the final line temporarily incomplete.
+			}
+			if (typeof record.ts === "number" && Number.isFinite(record.ts)) latestAt = record.ts;
+			if (record.recordType === "tool_start" && typeof record.toolName === "string") {
+				currentTool = record.toolName;
+				currentToolArgs = compactTranscriptText(record.argsPreview, 140);
+				const preview = currentToolArgs ? `${currentTool}: ${currentToolArgs}` : currentTool;
+				recent.push(`tool: ${preview}`);
+				continue;
+			}
+			if (record.recordType === "tool_end") {
+				currentTool = undefined;
+				currentToolArgs = undefined;
+				continue;
+			}
+			if (record.recordType === "message") {
+				if (record.sourceEventType === "initial_prompt" || record.role === "user") continue;
+				const text = compactTranscriptText(record.text);
+				if (text) recent.push(`${typeof record.role === "string" ? record.role : "message"}: ${text}`);
+				continue;
+			}
+			if (record.recordType === "stdout" || record.recordType === "stderr") {
+				const text = compactTranscriptText(record.text);
+				if (text) recent.push(`${record.recordType}: ${text}`);
+			}
+		}
+		return { currentTool, currentToolArgs, latestAt, recent: recent.slice(-TRANSCRIPT_PREVIEW_LINES) };
+	} catch {
+		return undefined;
+	} finally {
+		if (fd !== undefined) {
+			try { fs.closeSync(fd); } catch { /* best-effort close */ }
+		}
+	}
+}
+
+function detachedForegroundWaitUpdate(run: ForegroundResumeRun, pendingIndices: Set<number>, nowMs: number, elapsedMs: number): AgentToolResult<Details> {
+	const lines = [`Waiting for detached foreground run "${run.runId}" · ${formatDuration(elapsedMs)}`];
+	for (const child of run.children) {
+		if (!pendingIndices.has(child.index) || child.status !== "detached") continue;
+		const activity = readTranscriptActivity(child.transcriptPath);
+		const age = activity?.latestAt !== undefined ? ` · activity ${formatDuration(Math.max(0, nowMs - activity.latestAt))} ago` : "";
+		lines.push(`${child.agent} · working after supervisor handoff${age}`);
+		if (activity?.currentTool) {
+			lines.push(`  current: ${activity.currentTool}${activity.currentToolArgs ? `: ${activity.currentToolArgs}` : ""}`);
+		}
+		for (const preview of activity?.recent ?? []) lines.push(`  ${preview}`);
+		if (!activity && child.transcriptPath) lines.push("  live transcript has no new activity yet");
+		if (!child.transcriptPath) lines.push("  live transcript unavailable; waiting for completion event");
+	}
+	return result(lines.join("\n"));
+}
+
 async function waitForDetachedForegroundRun(
 	run: ForegroundResumeRun,
 	signal: AbortSignal | undefined,
@@ -308,6 +406,8 @@ async function waitForDetachedForegroundRun(
 				`Waited ${formatDuration(now() - startedAt)} for remembered detached foreground run "${run.runId}"; done. Outcome: ${outcome || "no recovered child status"}. Completion event observed; inspect with subagent({ action: "status", id: "${run.runId}" }) for recovered output.`,
 			);
 		}
+		const updateNow = now();
+		deps.onUpdate?.(detachedForegroundWaitUpdate(current, initialDetachedIndices, updateNow, updateNow - startedAt));
 		if (signal?.aborted) {
 			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Remembered foreground run "${run.runId}" remains detached.`, true);
 		}
