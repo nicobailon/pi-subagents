@@ -1207,7 +1207,7 @@ async function runSingleStep(
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
 		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !emptyOutputError) {
-			const structured = readStructuredOutput({
+			const structured = await readStructuredOutput({
 				schema: effectiveStructuredOutput.schema,
 				schemaPath: effectiveStructuredOutput.schemaPath,
 				outputPath: effectiveStructuredOutput.outputPath,
@@ -2610,7 +2610,7 @@ async function runSubagent(
 				if (materialized.parallel.length > 1 && step.parallel.outputPath && !step.parallel.namespaceOutputPath) {
 					throw new DynamicFanoutError(`Dynamic chain step ${stepIndex + 1} materialized ${materialized.parallel.length} items that resolve output to the same path: ${step.parallel.outputPath}. Remove the explicit output path or use an inherited relative agent output so each item can be isolated.`);
 				}
-				if (materialized.collectedOnEmpty) validateDynamicCollection(step.collect.outputSchema, materialized.collectedOnEmpty);
+				if (materialized.collectedOnEmpty) await validateDynamicCollection(step.collect.outputSchema, materialized.collectedOnEmpty);
 			} catch (error) {
 				const now = Date.now();
 				const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
@@ -2947,7 +2947,7 @@ async function runSubagent(
 			const failures = parallelResults.filter((result) => result.exitCode !== 0 && result.exitCode !== -1);
 			if (failures.length === 0) {
 				try {
-					validateDynamicCollection(step.collect.outputSchema, collection);
+					await validateDynamicCollection(step.collect.outputSchema, collection);
 					outputs[step.collect.as] = {
 						text: JSON.stringify(collection),
 						structured: collection,

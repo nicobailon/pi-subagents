@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Compile } from "typebox/compile";
+import { pathToFileURL } from "node:url";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 
 export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
@@ -16,6 +18,51 @@ export interface StructuredOutputRuntime {
 interface CompiledJsonSchema {
 	Check(value: unknown): boolean;
 	Errors(value: unknown): Iterable<{ instancePath?: string; message?: string }>;
+}
+
+type CompileJsonSchema = (schema: unknown) => CompiledJsonSchema;
+
+let cachedCompile: Promise<CompileJsonSchema> | undefined;
+
+export async function resolveCompileFromPackageRoot(packageRoot: string): Promise<CompileJsonSchema | undefined> {
+	const requireFromRoot = createRequire(path.join(packageRoot, "package.json"));
+	const resolved = requireFromRoot.resolve("typebox/compile");
+	const mod = (await import(pathToFileURL(resolved).href)) as { Compile?: unknown };
+	return typeof mod.Compile === "function" ? (mod.Compile as CompileJsonSchema) : undefined;
+}
+
+async function importCompile(): Promise<CompileJsonSchema> {
+	const failures: string[] = [];
+	try {
+		const mod = (await import("typebox/compile")) as { Compile?: unknown };
+		if (typeof mod.Compile === "function") return mod.Compile as CompileJsonSchema;
+		failures.push("typebox/compile did not export a Compile function");
+	} catch (error) {
+		failures.push(`direct import failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	const packageRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	if (packageRoot) {
+		try {
+			const compile = await resolveCompileFromPackageRoot(packageRoot);
+			if (compile) return compile;
+			failures.push("Pi package root typebox/compile did not export a Compile function");
+		} catch (error) {
+			failures.push(`Pi package root import failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	} else {
+		failures.push(`${PI_CODING_AGENT_PACKAGE_ROOT_ENV} is not set`);
+	}
+	throw new Error(`Cannot load typebox/compile for structured output validation (${failures.join("; ")})`);
+}
+
+function loadCompile(): Promise<CompileJsonSchema> {
+	if (!cachedCompile) {
+		cachedCompile = importCompile().catch((error) => {
+			cachedCompile = undefined;
+			throw error;
+		});
+	}
+	return cachedCompile;
 }
 
 export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"): asserts schema is JsonSchemaObject {
@@ -35,10 +82,11 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 	return { schema, schemaPath, outputPath };
 }
 
-export function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
+export async function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): Promise<{ status: "valid" } | { status: "invalid"; message: string }> {
+	const compile = await loadCompile();
 	let validator: CompiledJsonSchema;
 	try {
-		validator = (Compile as (schema: unknown) => CompiledJsonSchema)(schema);
+		validator = compile(schema);
 	} catch (error) {
 		return { status: "invalid", message: `invalid outputSchema: ${error instanceof Error ? error.message : String(error)}` };
 	}
@@ -52,7 +100,7 @@ export function validateStructuredOutputValue(schema: JsonSchemaObject, value: u
 	return { status: "invalid", message: errors.join("; ") || "schema validation failed" };
 }
 
-export function readStructuredOutput(runtime: StructuredOutputRuntime): { value?: unknown; error?: string } {
+export async function readStructuredOutput(runtime: StructuredOutputRuntime): Promise<{ value?: unknown; error?: string }> {
 	if (!fs.existsSync(runtime.outputPath)) {
 		return { error: "Missing structured_output call; this step has outputSchema and must finish by calling structured_output." };
 	}
@@ -62,8 +110,12 @@ export function readStructuredOutput(runtime: StructuredOutputRuntime): { value?
 	} catch (error) {
 		return { error: `Failed to read structured output: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	const validation = validateStructuredOutputValue(runtime.schema, value);
-	if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
+	try {
+		const validation = await validateStructuredOutputValue(runtime.schema, value);
+		if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
+	} catch (error) {
+		return { error: `Failed to validate structured output: ${error instanceof Error ? error.message : String(error)}` };
+	}
 	return { value };
 }
 

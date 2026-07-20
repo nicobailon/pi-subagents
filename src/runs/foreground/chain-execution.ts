@@ -868,7 +868,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			if (materialized.parallel.length === 0) {
 				const collection: DynamicCollectedResult[] = [];
 				try {
-					validateDynamicCollection(step.collect.outputSchema, collection);
+					await validateDynamicCollection(step.collect.outputSchema, collection);
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
 					dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };
@@ -1037,7 +1037,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				};
 			}
 			try {
-				validateDynamicCollection(step.collect.outputSchema, collected);
+				await validateDynamicCollection(step.collect.outputSchema, collected);
 			} catch (error) {
 				const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: message };

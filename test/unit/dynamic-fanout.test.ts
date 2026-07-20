@@ -190,7 +190,7 @@ describe("dynamic fanout helpers", () => {
 		], {}, { priorOutputNames: ["targets"], startStepIndex: 2 }));
 	});
 
-	it("collects ordered child result records and validates aggregate schema", () => {
+	it("collects ordered child result records and validates aggregate schema", async () => {
 		const step: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
 			parallel: { agent: "reviewer", task: "Review {item.path}" },
@@ -211,7 +211,7 @@ describe("dynamic fanout helpers", () => {
 		assert.deepEqual(collected.map((item) => item.key), ["src/a.ts", "src/b.ts"]);
 		assert.deepEqual(collected.map((item) => item.structured), [{ ok: "a" }, { ok: "b" }]);
 		assert.equal(collected[1]?.timedOut, true);
-		assert.doesNotThrow(() => validateDynamicCollection({ type: "array", minItems: 2 }, collected));
-		assert.throws(() => validateDynamicCollection({ type: "object" }, collected), DynamicFanoutError);
+		await assert.doesNotReject(validateDynamicCollection({ type: "array", minItems: 2 }, collected));
+		await assert.rejects(validateDynamicCollection({ type: "object" }, collected), DynamicFanoutError);
 	});
 });

@@ -1046,7 +1046,7 @@ async function runSingleAttempt(
 		}
 	}
 	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
-		const structured = readStructuredOutput({
+		const structured = await readStructuredOutput({
 			schema: options.structuredOutput.schema,
 			schemaPath: options.structuredOutput.schemaPath,
 			outputPath: options.structuredOutput.outputPath,

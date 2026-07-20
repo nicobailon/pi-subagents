@@ -288,9 +288,9 @@ export function collectDynamicResults(
 	});
 }
 
-export function validateDynamicCollection(schema: JsonSchemaObject | undefined, value: DynamicCollectedResult[]): void {
+export async function validateDynamicCollection(schema: JsonSchemaObject | undefined, value: DynamicCollectedResult[]): Promise<void> {
 	if (!schema) return;
-	const validation = validateStructuredOutputValue(schema, value);
+	const validation = await validateStructuredOutputValue(schema, value);
 	if (validation.status === "invalid") {
 		throw new DynamicFanoutError(`Collected output validation failed: ${validation.message}`);
 	}
