@@ -552,6 +552,35 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(registered, ["subagent_wait"]);
 	});
 
+	it("registers native intercom before checking a strict allowlist", () => {
+		setSupervisorEnv();
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-intercom-diagnostic-"));
+		try {
+			const diagnosticPath = path.join(dir, "tools.json");
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const registered: string[] = [];
+			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "intercom"]);
+			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "scout";
+
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				getAllTools: () => [{ name: "read" }, ...registered.map((name) => ({ name }))],
+				registerTool(tool: { name: string }) {
+					registered.push(tool.name);
+				},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
+
+			handlers.get("session_start")?.({});
+			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor", "intercom"]);
+			assert.equal(fs.existsSync(diagnosticPath), false);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps installed pi-intercom while filling only a missing child contact_supervisor tool", async () => {
 		setSupervisorEnv();
 		const handlers = new Map<string, (payload?: unknown) => unknown>();

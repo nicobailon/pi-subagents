@@ -5,6 +5,9 @@
 ### Added
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
+### Fixed
+- Registered the native child `intercom` fallback before strict tool-allowlist diagnostics run, preventing read-only scouts from failing before execution when the bridge adds `intercom` to their tools.
+
 ## [0.35.1] - 2026-07-17
 
 ### Fixed

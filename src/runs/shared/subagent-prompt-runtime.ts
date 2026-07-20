@@ -69,14 +69,20 @@ function readBooleanEnv(name: string): boolean | undefined {
 	return value !== "0";
 }
 
-function refreshChildToolDiagnostic(pi: ExtensionAPI): ChildToolDiagnostic | undefined {
-	const filePath = process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV]?.trim();
+function readRequiredChildTools(): string[] | undefined {
 	const encoded = process.env[REQUIRED_CHILD_TOOLS_ENV]?.trim();
-	if (!filePath || !encoded) return undefined;
+	if (!encoded) return undefined;
 	const required = JSON.parse(encoded) as unknown;
 	if (!Array.isArray(required) || required.some((name) => typeof name !== "string" || !name)) {
 		throw new Error(`Invalid ${REQUIRED_CHILD_TOOLS_ENV} payload.`);
 	}
+	return required;
+}
+
+function refreshChildToolDiagnostic(pi: ExtensionAPI): ChildToolDiagnostic | undefined {
+	const filePath = process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV]?.trim();
+	const required = readRequiredChildTools();
+	if (!filePath || !required) return undefined;
 	const available = pi.getAllTools().map((tool) => tool.name);
 	return writeChildToolDiagnostic(filePath, required, available, process.env[SUBAGENT_CHILD_AGENT_ENV]?.trim());
 }
@@ -365,6 +371,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
 		registerNativeSupervisorClientOnce();
+		if (readRequiredChildTools()?.includes("intercom")) registerNativeSupervisorFallbackOnce();
 		refreshChildToolDiagnostic(pi);
 	});
 	onRuntimeEvent("agent_end", async (_event: unknown, ctx: unknown) => {
