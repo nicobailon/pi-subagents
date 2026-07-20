@@ -11,7 +11,7 @@
 - Added the missing `context: "fork"` field to the fork-context example in the bundled `pi-subagents` skill. Thanks to Kier (@kierr) for #540.
 - Resolved host-provided TypeBox compiler lookup for detached async runners and structured-output validation. Thanks to @nistaux for #526, 96tommykim (@96tommykim) for #545, and @git-geeky and @lukechen526 for reproduction and validation details.
 - Recognize Cursor edit/write thinking traces and replay tool calls as mutation evidence, so Cursor-provider workers that actually edit files no longer false-fail with `completed-without-making-edits`. Thanks to Mikhail Wijanarko (@mwijanarko1) for #539.
-- Skip repository change signatures while the watchdog is disabled and inspect modified nested Git worktrees through Git, preventing startup from recursively hashing ignored submodule dependencies. Thanks to 傅洋 (@4ier) for #531 and #532.
+- Skip repository change signatures while the watchdog is disabled and inspect modified nested Git worktrees through Git, preventing startup from recursively hashing ignored submodule dependencies. Thanks to 傅洋 (@4ier) for #531/#532 and tlhc (@tlhc) for #528.
 
 ## [0.35.1] - 2026-07-17
 
