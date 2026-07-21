@@ -400,6 +400,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(invalid.isError, true);
 		assert.equal(invalid.details?.results?.[0]?.structuredOutputFailed, true);
 		assert.match(invalid.details?.results?.[0]?.error ?? "", /Structured output validation failed/);
+
+		mockPi.onCall({ output: "prose only", writeStructuredOutputCapture: { status: "ok" } });
+		const bypass = await executor.execute(
+			"structured-direct-capture-bypass",
+			{ agent: "echo", task: "Return the contract result", outputSchema: schema, artifacts: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(bypass.isError, true);
+		assert.equal(bypass.details?.results?.[0]?.structuredOutputFailed, true);
+		assert.match(bypass.details?.results?.[0]?.error ?? "", /Missing structured_output call/);
 	});
 
 	it("keeps schema-bound foreground execution attached until structured validation completes", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

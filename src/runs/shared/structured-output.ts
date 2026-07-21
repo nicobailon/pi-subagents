@@ -301,9 +301,11 @@ export async function validateStructuredOutputValue(schema: JsonSchemaObject, va
 	return { status: "invalid", message: errors.join("; ") || "schema validation failed" };
 }
 
+export const MISSING_STRUCTURED_OUTPUT_CALL_ERROR = "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.";
+
 export async function readStructuredOutput(runtime: StructuredOutputRuntime): Promise<{ value?: unknown; error?: string }> {
 	if (!fs.existsSync(runtime.outputPath)) {
-		return { error: "Missing structured_output call; this step has outputSchema and must finish by calling structured_output." };
+		return { error: MISSING_STRUCTURED_OUTPUT_CALL_ERROR };
 	}
 	let value: unknown;
 	try {

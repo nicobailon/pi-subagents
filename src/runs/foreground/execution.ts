@@ -52,7 +52,7 @@ import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
-import { readStructuredOutput } from "../shared/structured-output.ts";
+import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -314,6 +314,7 @@ async function runSingleAttempt(
 	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
+	let structuredOutputToolInvoked = false;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
@@ -752,6 +753,9 @@ async function runSingleAttempt(
 				if (options.allowIntercomDetach && (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
 					intercomStarted = true;
 				}
+				if (options.structuredOutput && evt.toolName === "structured_output") {
+					structuredOutputToolInvoked = true;
+				}
 				progress.toolCount++;
 				if (options.toolBudget) {
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
@@ -1121,19 +1125,25 @@ async function runSingleAttempt(
 		}
 	}
 	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
-		const structured = await readStructuredOutput({
-			schema: options.structuredOutput.schema,
-			schemaPath: options.structuredOutput.schemaPath,
-			outputPath: options.structuredOutput.outputPath,
-		});
 		result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
 		result.structuredOutputPath = options.structuredOutput.outputPath;
-		if (structured.error) {
+		if (!structuredOutputToolInvoked) {
 			result.exitCode = 1;
-			result.error = structured.error;
+			result.error = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
 			result.structuredOutputFailed = true;
 		} else {
-			result.structuredOutput = structured.value;
+			const structured = await readStructuredOutput({
+				schema: options.structuredOutput.schema,
+				schemaPath: options.structuredOutput.schemaPath,
+				outputPath: options.structuredOutput.outputPath,
+			});
+			if (structured.error) {
+				result.exitCode = 1;
+				result.error = structured.error;
+				result.structuredOutputFailed = true;
+			} else {
+				result.structuredOutput = structured.value;
+			}
 		}
 	}
 
