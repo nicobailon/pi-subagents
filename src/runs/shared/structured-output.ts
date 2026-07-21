@@ -16,6 +16,58 @@ export interface StructuredOutputRuntime {
 	outputPath: string;
 }
 
+const SCHEMA_MAP_KEYWORDS = ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"] as const;
+const SCHEMA_SINGLE_KEYWORDS = ["additionalItems", "additionalProperties", "contains", "not", "propertyNames", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties", "contentSchema"] as const;
+const SCHEMA_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf", "prefixItems"] as const;
+
+function rewriteLocalJsonPointerRefs(schema: unknown, pointerPrefix: string, inheritsWrapperResource = true): unknown {
+	if (typeof schema === "boolean" || !schema || typeof schema !== "object" || Array.isArray(schema)) return schema;
+	const source = schema as Record<string, unknown>;
+	const rewritten: Record<string, unknown> = { ...source };
+	const sharesWrapperResource = inheritsWrapperResource && typeof source.$id !== "string";
+	if (sharesWrapperResource) {
+		for (const keyword of ["$ref", "$dynamicRef", "$recursiveRef"] as const) {
+			const ref = source[keyword];
+			if (ref === "#") rewritten[keyword] = pointerPrefix;
+			else if (typeof ref === "string" && ref.startsWith("#/")) rewritten[keyword] = `${pointerPrefix}${ref.slice(1)}`;
+		}
+	}
+	for (const keyword of SCHEMA_MAP_KEYWORDS) {
+		const entries = source[keyword];
+		if (!entries || typeof entries !== "object" || Array.isArray(entries)) continue;
+		rewritten[keyword] = Object.fromEntries(Object.entries(entries).map(([name, nested]) => [
+			name,
+			rewriteLocalJsonPointerRefs(nested, pointerPrefix, sharesWrapperResource),
+		]));
+	}
+	const items = source.items;
+	if (Array.isArray(items)) rewritten.items = items.map((nested) => rewriteLocalJsonPointerRefs(nested, pointerPrefix, sharesWrapperResource));
+	else if (items !== undefined) rewritten.items = rewriteLocalJsonPointerRefs(items, pointerPrefix, sharesWrapperResource);
+	for (const keyword of SCHEMA_SINGLE_KEYWORDS) {
+		if (source[keyword] !== undefined) rewritten[keyword] = rewriteLocalJsonPointerRefs(source[keyword], pointerPrefix, sharesWrapperResource);
+	}
+	for (const keyword of SCHEMA_ARRAY_KEYWORDS) {
+		if (Array.isArray(source[keyword])) rewritten[keyword] = source[keyword].map((nested) => rewriteLocalJsonPointerRefs(nested, pointerPrefix, sharesWrapperResource));
+	}
+	const dependencies = source.dependencies;
+	if (dependencies && typeof dependencies === "object" && !Array.isArray(dependencies)) {
+		rewritten.dependencies = Object.fromEntries(Object.entries(dependencies).map(([name, nested]) => [
+			name,
+			Array.isArray(nested) ? nested : rewriteLocalJsonPointerRefs(nested, pointerPrefix, sharesWrapperResource),
+		]));
+	}
+	return rewritten;
+}
+
+export function createStructuredOutputToolParameters(schema: JsonSchemaObject): JsonSchemaObject {
+	return {
+		type: "object",
+		properties: { value: rewriteLocalJsonPointerRefs(schema, "#/properties/value") },
+		required: ["value"],
+		additionalProperties: false,
+	};
+}
+
 interface CompiledJsonSchema {
 	Check(value: unknown): boolean;
 	Errors(value: unknown): Iterable<{ instancePath?: string; message?: string }>;

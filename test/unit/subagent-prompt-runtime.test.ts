@@ -16,7 +16,7 @@ import {
 	SUBAGENT_STEER_INBOX_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
+import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
@@ -354,6 +354,36 @@ describe("subagent prompt runtime", () => {
 			const result = await execute("tool-1", { value: { ok: true } });
 			assert.equal(result.terminate, true);
 			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), { ok: true });
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves caller-local JSON Pointer refs when nesting the structured_output value schema", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-ref-runtime-"));
+		try {
+			const schemaPath = path.join(dir, "schema.json");
+			const outputPath = path.join(dir, "output.json");
+			fs.writeFileSync(schemaPath, JSON.stringify({
+				type: "object",
+				$defs: { answer: { type: "string", enum: ["ok"] } },
+				required: ["answer"],
+				properties: { answer: { $ref: "#/$defs/answer" } },
+			}), "utf-8");
+			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
+			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
+			let parameters: unknown;
+
+			registerSubagentPromptRuntime({
+				registerTool(tool: { name: string; parameters: unknown }) {
+					if (tool.name === "structured_output") parameters = tool.parameters;
+				},
+				on() {},
+			} as { registerTool(tool: { name: string; parameters: unknown }): void; on(): void });
+
+			const wrapped = parameters as { properties?: { value?: { properties?: { answer?: { $ref?: string } } } } };
+			assert.equal(wrapped.properties?.value?.properties?.answer?.$ref, "#/properties/value/$defs/answer");
+			assert.deepEqual(await validateStructuredOutputValue(parameters as Record<string, unknown>, { value: { answer: "ok" } }), { status: "valid" });
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
