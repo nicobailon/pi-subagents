@@ -191,6 +191,7 @@ and user/project agents override builtins with the same name.
 | `researcher` | Web research brief generator | inherits default | Writes `research.md` |
 | `delegate` | Lightweight generic delegate | inherits default | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
+| `advisor` | Claude Code-compatible alias for `oracle` | inherits default | Same advisory role as `oracle` |
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
 
@@ -731,7 +732,7 @@ Methods: `ping`, `status`, `spawn`, `interrupt`, and `stop`. `spawn` is async-on
 
 - **Forking requires a persisted parent session.** If the current session does not
   have a persisted session file, forked runs fail. Packaged `planner`, `worker`,
-  and `oracle` default to forked context, so use `context: "fresh"` explicitly
+  `oracle`, and `advisor` default to forked context, so use `context: "fresh"` explicitly
   when that is not available or not wanted.
 - **Forked runs inherit parent history.** They are branched threads, not fresh
   filtered contexts. Use fresh context for adversarial reviewers unless the user explicitly asks for forked context.
@@ -828,7 +829,7 @@ Run the work through seven gated phases:
 
 For straightforward non-trivial work, this sequence is the lightweight version of the parent-owned loop. When the task is complex, use Fable mode above. In either case, factor in the packaged prompt workflows without literally invoking slash commands. Use the same patterns through tools and subagents.
 
-Keep builtin agent defaults unless the user explicitly asks for a different model, thinking level, skills, output behavior, context mode, or other override. Do not add overrides just because you are orchestrating; the defaults encode the intended role behavior. In particular, packaged `planner`, `worker`, and `oracle` default to forked context.
+Keep builtin agent defaults unless the user explicitly asks for a different model, thinking level, skills, output behavior, context mode, or other override. Do not add overrides just because you are orchestrating; the defaults encode the intended role behavior. In particular, packaged `planner`, `worker`, `oracle`, and `advisor` default to forked context.
 
 When the user approves launching a subagent to carry out a plan or workflow, treat that as approval to generate a proper role-specific meta prompt for that subagent. Include the approved plan path or summary, clarified requirements, non-goals, relevant context, role boundaries, files or areas to inspect, acceptance criteria, expected output, and validation expectations. Do not pass vague instructions like “implement the plan fully” or “review this” by themselves.
 

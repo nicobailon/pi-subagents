@@ -136,7 +136,7 @@ function taskHasReadOnlyDeliverable(taskText: string): boolean {
 }
 
 function isReviewerStyleAgent(agent: string): boolean {
-	return /\b(?:reviewer|oracle)\b/i.test(agent);
+	return /\b(?:advisor|reviewer|oracle)\b/i.test(agent);
 }
 
 function hasImplementationIntent(agent: string, taskText: string): boolean {

@@ -49,8 +49,10 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("researcher", "Research this and patch the bug").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("reviewer", "Review this and fix any real issues").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("oracle", "Review findings and determine what to implement with playbooks instead of before").kind, "read-only");
+		assert.equal(classifyTaskMutationIntent("advisor", "Review findings and determine what to implement with playbooks instead of before").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("reviewer", "Review this; regardless of findings, apply changes directly").kind, "implementation");
 		assert.equal(classifyTaskMutationIntent("oracle", "Implement the approved file changes").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("advisor", "Implement the approved file changes").kind, "implementation");
 	});
 
 	it("keeps report-writing deliverables read-only", () => {
