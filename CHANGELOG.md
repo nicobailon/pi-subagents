@@ -7,6 +7,8 @@
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
+- Added caller-owned JSON Schema enforcement to the public foreground delegation API, returning the runtime-validated value or the dedicated `structured_output_failed` terminal status.
+- Preserved public usage, output, session, and warning evidence while mapping hard turn and tool-call budget exhaustion to dedicated terminal statuses. The public foreground contract no longer extends its hard turn limit when every boundary response starts more tool work; existing tool and async launch semantics remain unchanged.
 - Documented that relative chain `output` paths are chain-artifact paths under `{chain_dir}`, with persistent `chainDir` and absolute `output` paths as the supported ways to keep artifacts outside the temp run directory. Thanks to @dougEfresh for #529.
 - Bounded main-watchdog repository signatures so startup and agent-end checks no longer recurse through nested Git worktrees or generated dependency trees, reducing slow starts in large repos. Thanks to @pompanonb for #551 and @markg85 for #555.
 - Raised the child stdout line limit above Pi’s resized-image payload range so image OCR subagents no longer fail with `protocol_output_limit` on valid `read` tool image events. Thanks to @zmarty for #538.
@@ -23,7 +25,6 @@
 - Skip repository change signatures while the watchdog is disabled and inspect modified nested Git worktrees through Git, preventing startup from recursively hashing ignored submodule dependencies. Thanks to 傅洋 (@4ier) for #531/#532, tlhc (@tlhc) for #528, and 小旭 (@BigSharkLx) for #548.
 - Stream detached foreground child tool and transcript activity through `subagent_wait({ id })` pending updates while waiting after supervisor handoff. Thanks to Dominic (@DevDominic) for #544.
 - Stopped hashing the full content of very large changed/untracked files when computing the watchdog repo change signature, and made signature computation non-fatal, so `pi` no longer crashes at startup with `Failed to load extension … File size (N) is greater than 2 GiB` in repositories that contain files ≥ 2 GiB. Files larger than a threshold (64 MiB default, overridable via `PI_SUBAGENTS_MAX_HASH_FILE_BYTES`) are now fingerprinted by size and mtime instead of being read into memory. Thanks to Alexander Prilipko (@axelbaumlisto) for #553, @astarktc for #535, @restrolla for #536, and @pompanonb for #551.
-
 ## [0.35.1] - 2026-07-17
 
 ### Fixed

@@ -1001,6 +1001,12 @@ const request: SubagentDelegationRequest = {
   cwd: ctx.cwd,
   timeoutMs: 120_000,
   toolBudget: { soft: 10, hard: 16, block: "*" },
+  outputSchema: {
+    type: "object",
+    properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+    required: ["verdict"],
+    additionalProperties: false,
+  },
 };
 
 const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
@@ -1012,9 +1018,11 @@ const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) =
 pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
 ```
 
-The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, skills, output behavior, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
+The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, a caller-owned JSON output schema, skills, output behavior, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
 
-Responses distinguish completion, failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, explicit acceptance failure, invalid requests, and unavailable active context. Optional run, model, output, session, acceptance, usage, progress, and warning fields are omitted when unavailable. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
+When `outputSchema` is present, the child receives the runtime-owned `structured_output` tool and must call it with a schema-valid `value`. The runtime validates that value before returning it as `response.structuredOutput`; prose-only completion, a missing tool call, or an invalid value terminates as `structured_output_failed`, never `completed`. This is a package-owned tool protocol because Pi 0.80.10 does not expose a native final-response schema primitive.
+
+Responses distinguish completion, failure, structured-output failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, explicit acceptance failure, invalid requests, and unavailable active context. Optional run, model, output, structured value, session, acceptance, usage (including cache reads and writes), progress, and warning fields are omitted when unavailable. The public foreground contract enforces `maxTurns + graceTurns` as a hard model-turn limit: a response that tries to start more tool work is aborted at that assistant boundary. Hard turn and tool-call budgets have dedicated terminal statuses; they are independent of token accounting, timeout, and cancellation. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
 
 Delegation requires an active extension context. Emit requests from a supported event callback or queued application step, not by recursively invoking the `subagent` tool inside another tool's `tool_call` hook. The caller selects a configured agent, but agent discovery and effective tools remain package-owned. A request cannot grant arbitrary tools, and tool restrictions are not an operating-system sandbox. The detached RPC remains async-only; this API is foreground-only.
 

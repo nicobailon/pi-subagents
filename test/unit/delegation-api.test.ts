@@ -74,6 +74,16 @@ const request: SubagentDelegationRequest = {
 	artifacts: true,
 };
 
+const outputSchema = {
+	type: "object",
+	properties: {
+		status: { type: "string", enum: ["ok"] },
+		findings: { type: "array", items: { type: "string" } },
+	},
+	required: ["status", "findings"],
+	additionalProperties: false,
+};
+
 describe("public subagent delegation contract", () => {
 	it("uses the existing prompt-template event family as the only transport", () => {
 		assert.equal(SUBAGENT_DELEGATION_PROTOCOL_VERSION, 1);
@@ -90,6 +100,14 @@ describe("public subagent delegation contract", () => {
 		assert.deepEqual(parseSubagentDelegationRequest(requestWithAcceptance), { ok: true, request: requestWithAcceptance });
 	});
 
+	it("accepts a caller-owned output schema on the public foreground request", () => {
+		const structuredRequest = { ...request, outputSchema };
+		assert.deepEqual(parseSubagentDelegationRequest(structuredRequest), {
+			ok: true,
+			request: structuredRequest,
+		});
+	});
+
 	it("rejects unsupported versions, unknown fields, aliases, and malformed controls", () => {
 		const malformed = [
 			[{ ...request, version: 2 }, /Unsupported delegation protocol version/],
@@ -100,6 +118,7 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, turnBudget: { maxTurns: 1, extra: true } }, /turnBudget.extra is not supported/],
 			[{ ...request, toolBudget: { hard: 1, soft: 2 } }, /toolBudget.soft must be <=/],
 			[{ ...request, toolBudget: { hard: 1, extra: true } }, /toolBudget.extra is not supported/],
+			[{ ...request, outputSchema: { type: "not-a-json-schema-type" } }, /invalid outputSchema/],
 			[{ ...request, skill: [] }, /skill must/],
 			[{ ...request, output: "" }, /output must/],
 			[{ ...request, output: false, outputMode: "file-only" }, /outputMode.*output.*path/],
@@ -179,6 +198,7 @@ describe("public subagent delegation contract", () => {
 			model: "openai/gpt-5",
 			timeoutMs: 1_000,
 			turnBudget: { maxTurns: 4, graceTurns: 1 },
+			enforceHardTurnLimit: true,
 			toolBudget: { soft: 3, hard: 5, block: "*" },
 			skill: ["review"],
 			output: "result.md",
@@ -201,6 +221,87 @@ describe("public subagent delegation contract", () => {
 		assert.deepEqual(response.acceptance, { status: "checked", explicit: true });
 		assert.deepEqual(response.warnings, ["Skills not found: review"]);
 		bridge.dispose();
+	});
+
+	it("returns the runtime-validated structured value through the public response", async () => {
+		const events = new FakeEvents();
+		let observedRequest: unknown;
+		const value = { status: "ok", findings: ["contract preserved"] };
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async (_requestId, delegatedRequest) => {
+				observedRequest = delegatedRequest;
+				return {
+					details: {
+						mode: "single",
+						runId: "structured-run",
+						results: [{
+							agent: "reviewer",
+							exitCode: 0,
+							finalOutput: "Structured output captured.",
+							structuredOutput: value,
+							usage: { input: 11, output: 7, cacheRead: 5, cacheWrite: 3, cost: 0.01, turns: 2 },
+							progressSummary: { toolCount: 1, tokens: 18, durationMs: 20 },
+						}],
+					},
+				};
+			},
+		});
+		const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "structured-1", outputSchema });
+		const response = await responsePromise as SubagentDelegationResponse & {
+			structuredOutput?: unknown;
+			usage?: Record<string, number>;
+		};
+
+		assert.deepEqual((observedRequest as { outputSchema?: unknown }).outputSchema, outputSchema);
+		assert.equal(response.status, "completed");
+		assert.deepEqual(response.structuredOutput, value);
+		assert.deepEqual(response.usage, {
+			inputTokens: 11,
+			outputTokens: 7,
+			cacheReadTokens: 5,
+			cacheWriteTokens: 3,
+			costUsd: 0.01,
+			turns: 2,
+			toolCalls: 1,
+		});
+		bridge.dispose();
+	});
+
+	it("returns a dedicated terminal failure for invalid or missing structured output", async () => {
+		for (const error of [
+			"Structured output validation failed: status: Expected required property",
+			"Missing structured_output call; this step has outputSchema and must finish by calling structured_output.",
+		]) {
+			const events = new FakeEvents();
+			const bridge = registerPromptTemplateDelegationBridge({
+				events,
+				getContext: () => ({ cwd: "/repo" }),
+				execute: async () => ({
+					isError: true,
+					details: {
+						mode: "single",
+						results: [{
+							agent: "reviewer",
+							exitCode: 1,
+							error,
+							structuredOutputFailed: true,
+							usage: { input: 11, output: 7, cacheRead: 5, cacheWrite: 3, cost: 0.01, turns: 2 },
+							progressSummary: { toolCount: 0, tokens: 18, durationMs: 20 },
+						}],
+					},
+				}),
+			});
+			const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
+			events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: `structured-failure-${Math.random()}`, outputSchema });
+			const response = await responsePromise as SubagentDelegationResponse;
+			assert.equal(response.status, "structured_output_failed");
+			assert.equal(response.error, error);
+			assert.notEqual(response.status, "completed");
+			bridge.dispose();
+		}
 	});
 
 	it("returns correlated invalid-request and unavailable-context statuses without executing", async () => {
@@ -265,6 +366,75 @@ describe("public subagent delegation contract", () => {
 			assert.equal((await responsePromise as SubagentDelegationResponse).status, expectedStatus);
 			bridge.dispose();
 		}
+	});
+
+	it("preserves terminal evidence for turn and tool budget exhaustion", async () => {
+		for (const [child, expectedStatus] of [
+			[{ turnBudgetExceeded: true, error: "turn limit reached" }, "turn_budget_exhausted"],
+			[{ toolBudgetBlocked: true, error: "tool limit reached" }, "tool_budget_exhausted"],
+		] as const) {
+			const events = new FakeEvents();
+			const bridge = registerPromptTemplateDelegationBridge({
+				events,
+				getContext: () => ({ cwd: "/repo" }),
+				execute: async () => ({
+					isError: true,
+					details: {
+						mode: "single",
+						runId: `run-${expectedStatus}`,
+						results: [{
+							agent: "reviewer",
+							exitCode: 1,
+							finalOutput: "partial output",
+							sessionFile: "/tmp/session.jsonl",
+							usage: { input: 13, output: 8, cacheRead: 5, cacheWrite: 2, cost: 0.02, turns: 3 },
+							progressSummary: { toolCount: 4, tokens: 21, durationMs: 30 },
+							skillsWarning: "warning retained",
+							...child,
+						}],
+					},
+				}),
+			});
+			const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
+			events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: `budget-${expectedStatus}` });
+			const response = await responsePromise as SubagentDelegationResponse & { usage?: Record<string, number> };
+			assert.equal(response.status, expectedStatus);
+			assert.equal(response.output, "partial output");
+			assert.equal(response.sessionFile, "/tmp/session.jsonl");
+			assert.deepEqual(response.warnings, ["warning retained"]);
+			assert.equal(response.usage?.cacheReadTokens, 5);
+			assert.equal(response.usage?.cacheWriteTokens, 2);
+			bridge.dispose();
+		}
+	});
+
+	it("emits exactly one correlated terminal event and suppresses late updates", async () => {
+		const events = new FakeEvents();
+		const started: unknown[] = [];
+		const updates: unknown[] = [];
+		const terminals: unknown[] = [];
+		let lateUpdate: ((result: { details: { mode: "single"; progress: Array<{ agent: string; toolCount: number }> } }) => void) | undefined;
+		events.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => started.push(payload));
+		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload));
+		events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => terminals.push(payload));
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async (_requestId, _params, _signal, _ctx, onUpdate) => {
+				lateUpdate = onUpdate as typeof lateUpdate;
+				return { details: { mode: "single", results: [{ agent: "reviewer", exitCode: 0, finalOutput: "done" }] } };
+			},
+		});
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "terminal-once" });
+		await tick();
+		lateUpdate?.({ details: { mode: "single", progress: [{ agent: "reviewer", toolCount: 99 }] } });
+		await tick();
+
+		assert.deepEqual(started, [{ version: 1, requestId: "terminal-once" }]);
+		assert.equal(terminals.length, 1);
+		assert.equal((terminals[0] as SubagentDelegationResponse).requestId, "terminal-once");
+		assert.equal(updates.length, 0);
+		bridge.dispose();
 	});
 
 	it("ignores malformed versioned cancellation without aborting the owner", async () => {

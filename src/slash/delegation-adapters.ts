@@ -6,7 +6,7 @@ import {
 	type SubagentDelegationStatus,
 	type SubagentDelegationUpdate,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, JsonSchemaObject, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
 
 export interface PromptTemplateDelegationTask {
 	agent: string;
@@ -91,10 +91,12 @@ export interface PromptTemplateBridgeResult {
 			stopped?: boolean;
 			turnBudgetExceeded?: boolean;
 			toolBudgetBlocked?: boolean;
+			structuredOutput?: unknown;
+			structuredOutputFailed?: boolean;
 			savedOutputPath?: string;
 			sessionFile?: string;
 			acceptance?: SubagentDelegationAcceptanceResult;
-			usage?: { turns?: number };
+			usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: number; turns?: number };
 			progressSummary?: { toolCount?: number; durationMs?: number; tokens?: number };
 			skillsWarning?: string;
 			outputSaveError?: string;
@@ -125,7 +127,9 @@ export interface DelegatedSubagentExecutionParams {
 	worktree?: boolean;
 	timeoutMs?: number;
 	turnBudget?: TurnBudgetConfig;
+	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
+	outputSchema?: JsonSchemaObject;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
@@ -343,7 +347,9 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		model: request.model,
 		timeoutMs: request.timeoutMs,
 		turnBudget: request.turnBudget,
+		enforceHardTurnLimit: true,
 		toolBudget: request.toolBudget,
+		...(request.outputSchema ? { outputSchema: request.outputSchema } : {}),
 		skill: request.skill,
 		output: request.output,
 		outputMode: request.outputMode,
@@ -383,6 +389,7 @@ function resolveSubagentDelegationStatus(
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
+	if (child?.structuredOutputFailed) return "structured_output_failed";
 	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
@@ -400,17 +407,23 @@ export function toSubagentDelegationResponse(
 		.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
 	const status = resolveSubagentDelegationStatus(result, aborted);
 	const fallbackError = status === "failed" ? firstTextContent(result.content) : undefined;
+	const terminalError = child?.error
+		?? (status === "tool_budget_exhausted" ? "Subagent exhausted its hard tool-call budget." : undefined)
+		?? fallbackError;
+	const usage = child?.usage;
+	const toolCalls = progress?.toolCount ?? 0;
 	return {
 		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 		requestId,
 		status,
-		...(child?.error || fallbackError ? { error: child?.error ?? fallbackError } : {}),
+		...(terminalError ? { error: terminalError } : {}),
 		...(result.details?.runId ? { runId: result.details.runId } : {}),
 		...(child ? { childIndex: 0 } : {}),
 		...(child?.agent ? { agent: child.agent } : {}),
 		...(child?.model ? { model: child.model } : {}),
 		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
 		...(child?.finalOutput ? { output: child.finalOutput } : {}),
+		...(child?.structuredOutput !== undefined ? { structuredOutput: child.structuredOutput } : {}),
 		...(child?.savedOutputPath ? { outputPath: child.savedOutputPath } : {}),
 		...(child?.sessionFile ? { sessionFile: child.sessionFile } : {}),
 		...(child?.acceptance ? { acceptance: { status: child.acceptance.status, explicit: child.acceptance.explicit } } : {}),
@@ -418,6 +431,17 @@ export function toSubagentDelegationResponse(
 		...(typeof progress?.toolCount === "number" ? { toolCount: progress.toolCount } : {}),
 		...(typeof progress?.durationMs === "number" ? { durationMs: progress.durationMs } : {}),
 		...(typeof progress?.tokens === "number" ? { tokens: progress.tokens } : {}),
+		...(usage ? {
+			usage: {
+				inputTokens: usage.input ?? 0,
+				outputTokens: usage.output ?? 0,
+				cacheReadTokens: usage.cacheRead ?? 0,
+				cacheWriteTokens: usage.cacheWrite ?? 0,
+				costUsd: usage.cost ?? 0,
+				turns: usage.turns ?? 0,
+				toolCalls,
+			},
+		} : {}),
 		...(warnings.length > 0 ? { warnings } : {}),
 	};
 }

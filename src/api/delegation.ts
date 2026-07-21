@@ -19,6 +19,8 @@ export interface SubagentDelegationToolBudget {
 	block?: string[] | "*";
 }
 
+export type SubagentDelegationOutputSchema = Record<string, unknown>;
+
 export type SubagentDelegationAcceptanceEvidence =
 	| "changed-files"
 	| "tests-added"
@@ -84,6 +86,7 @@ export interface SubagentDelegationRequest {
 	timeoutMs?: number;
 	turnBudget?: SubagentDelegationTurnBudget;
 	toolBudget?: SubagentDelegationToolBudget;
+	outputSchema?: SubagentDelegationOutputSchema;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
@@ -116,6 +119,7 @@ export type SubagentDelegationStatus =
 	| "interrupted"
 	| "turn_budget_exhausted"
 	| "tool_budget_exhausted"
+	| "structured_output_failed"
 	| "acceptance_failed"
 	| "invalid_request"
 	| "unavailable_context";
@@ -145,6 +149,7 @@ export interface SubagentDelegationResponse extends SubagentDelegationStarted {
 	model?: string;
 	exitCode?: number;
 	output?: string;
+	structuredOutput?: unknown;
 	outputPath?: string;
 	sessionFile?: string;
 	acceptance?: SubagentDelegationAcceptanceResult;
@@ -152,6 +157,15 @@ export interface SubagentDelegationResponse extends SubagentDelegationStarted {
 	toolCount?: number;
 	durationMs?: number;
 	tokens?: number;
+	usage?: {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheWriteTokens: number;
+		costUsd: number;
+		turns: number;
+		toolCalls: number;
+	};
 	warnings?: string[];
 }
 

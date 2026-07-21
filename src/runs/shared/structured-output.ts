@@ -71,6 +71,57 @@ export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"):
 	}
 }
 
+export function validateStructuredOutputSchema(schema: unknown, label = "outputSchema"): { status: "valid" } | { status: "invalid"; message: string } {
+	try {
+		assertJsonSchemaObject(schema, label);
+		validateJsonSchemaTypeKeywords(schema, label);
+		return { status: "valid" };
+	} catch (error) {
+		return { status: "invalid", message: `invalid ${label}: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
+const JSON_SCHEMA_TYPES = new Set(["null", "boolean", "object", "array", "number", "string", "integer"]);
+
+function validateJsonSchemaTypeKeywords(schema: unknown, pathLabel: string): void {
+	if (typeof schema === "boolean") return;
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+		throw new Error(`${pathLabel} must be a JSON Schema object or boolean.`);
+	}
+	const value = schema as Record<string, unknown>;
+	if (Object.hasOwn(value, "type")) {
+		const types = typeof value.type === "string" ? [value.type] : value.type;
+		if (!Array.isArray(types) || types.length === 0 || !types.every((entry) => typeof entry === "string" && JSON_SCHEMA_TYPES.has(entry))) {
+			throw new Error(`${pathLabel}.type must be a JSON Schema type or non-empty array of JSON Schema types.`);
+		}
+	}
+	for (const keyword of ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"] as const) {
+		const entries = value[keyword];
+		if (entries === undefined) continue;
+		if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+			throw new Error(`${pathLabel}.${keyword} must be an object of schemas.`);
+		}
+		for (const [name, nested] of Object.entries(entries)) {
+			validateJsonSchemaTypeKeywords(nested, `${pathLabel}.${keyword}.${name}`);
+		}
+	}
+	for (const keyword of ["items", "additionalItems", "additionalProperties", "contains", "not", "propertyNames", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties"] as const) {
+		const nested = value[keyword];
+		if (nested === undefined) continue;
+		if (keyword === "items" && Array.isArray(nested)) {
+			nested.forEach((entry, index) => validateJsonSchemaTypeKeywords(entry, `${pathLabel}.items[${index}]`));
+			continue;
+		}
+		validateJsonSchemaTypeKeywords(nested, `${pathLabel}.${keyword}`);
+	}
+	for (const keyword of ["allOf", "anyOf", "oneOf", "prefixItems"] as const) {
+		const nested = value[keyword];
+		if (nested === undefined) continue;
+		if (!Array.isArray(nested) || nested.length === 0) throw new Error(`${pathLabel}.${keyword} must be a non-empty array of schemas.`);
+		nested.forEach((entry, index) => validateJsonSchemaTypeKeywords(entry, `${pathLabel}.${keyword}[${index}]`));
+	}
+}
+
 export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?: string): StructuredOutputRuntime {
 	assertJsonSchemaObject(schema);
 	const rootDir = baseDir ?? os.tmpdir();

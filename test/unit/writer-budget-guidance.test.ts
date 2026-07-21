@@ -22,9 +22,9 @@ describe("writer budget guidance", () => {
 		assert.match(readme, /elapsed timeout is not a mutation-safe boundary/i);
 	});
 
-	it("documents deferred hard-limit termination at tool-using boundaries", () => {
+	it("documents the hard model-turn boundary for tool-using responses", () => {
 		const readme = readProjectFile("README.md");
-		assert.match(readme, /termination occurs at the next assistant boundary/);
-		assert.match(readme, /`termination-deferred`/);
+		assert.match(readme, /hard model-turn limit/);
+		assert.match(readme, /tries to start more tool work is aborted at that assistant boundary/);
 	});
 });

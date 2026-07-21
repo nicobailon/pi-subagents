@@ -599,7 +599,7 @@ async function runSingleAttempt(
 				result.wrapUpRequested = true;
 				appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
 			}
-			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting);
+			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting, options.enforceHardTurnLimit);
 			if (decision === "defer") {
 				result.turnBudget = turnBudgetDeferredState(
 					budget,
@@ -737,6 +737,14 @@ async function runSingleAttempt(
 
 			if (evt.type === "message_end" && evt.message) {
 				result.messages.push(evt.message);
+				if (evt.message.role === "toolResult") {
+					const resultText = extractTextFromContent(evt.message.content);
+					if (options.toolBudget && pendingToolResult && resultText.includes("Tool budget hard limit reached")) {
+						result.toolBudgetBlocked = true;
+						result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, pendingToolResult.tool);
+					}
+					pendingToolResult = undefined;
+				}
 				if (evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
@@ -1038,10 +1046,7 @@ async function runSingleAttempt(
 	}
 	if (result.exitCode === 0 && !result.error) {
 		const finalText = getFinalOutput(result.messages);
-		const missingStructuredOutput = options.structuredOutput
-			? !existsSync(options.structuredOutput.outputPath)
-			: false;
-		if (!finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
+		if (!finalText?.trim() && !options.structuredOutput) {
 			result.exitCode = 1;
 			result.error = "Subagent produced no output (possible model cold-start or empty response).";
 		}
@@ -1057,6 +1062,7 @@ async function runSingleAttempt(
 		if (structured.error) {
 			result.exitCode = 1;
 			result.error = structured.error;
+			result.structuredOutputFailed = true;
 		} else {
 			result.structuredOutput = structured.value;
 		}

@@ -89,6 +89,8 @@ interface RunSyncResult {
 	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number };
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
+	toolBudget?: { hard: number; outcome: string; toolCount: number; blockedTool?: string };
+	toolBudgetBlocked?: boolean;
 	detached?: boolean;
 	detachedReason?: string;
 	savedOutputPath?: string;
@@ -201,6 +203,12 @@ interface ExecutorToolResult {
 		asyncId?: string;
 		timeoutMs?: number;
 		turnBudget?: { maxTurns: number; graceTurns: number };
+		results?: Array<{
+			exitCode?: number;
+			error?: string;
+			structuredOutput?: unknown;
+			structuredOutputFailed?: boolean;
+		}>;
 	};
 }
 
@@ -333,6 +341,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
+	});
+
+	it("enforces a caller-owned schema in the foreground single executor", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const schema = {
+			type: "object",
+			properties: { status: { type: "string", enum: ["ok"] } },
+			required: ["status"],
+			additionalProperties: false,
+		};
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		mockPi.onCall({ output: "Structured output captured.", structuredOutput: { status: "ok" } });
+		const valid = await executor.execute(
+			"structured-valid",
+			{ agent: "echo", task: "Return the contract result", outputSchema: schema },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(valid.isError, undefined);
+		assert.deepEqual(valid.details?.results?.[0]?.structuredOutput, { status: "ok" });
+
+		mockPi.onCall({ output: "prose only" });
+		const missing = await executor.execute(
+			"structured-missing",
+			{ agent: "echo", task: "Return the contract result", outputSchema: schema },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(missing.isError, true);
+		assert.equal(missing.details?.results?.[0]?.structuredOutputFailed, true);
+		assert.match(missing.details?.results?.[0]?.error ?? "", /Missing structured_output call/);
+
+		mockPi.onCall({ output: "Structured output captured.", structuredOutput: { status: "wrong" } });
+		const invalid = await executor.execute(
+			"structured-invalid",
+			{ agent: "echo", task: "Return the contract result", outputSchema: schema },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(invalid.isError, true);
+		assert.equal(invalid.details?.results?.[0]?.structuredOutputFailed, true);
+		assert.match(invalid.details?.results?.[0]?.error ?? "", /Structured output validation failed/);
 	});
 
 	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2296,7 +2349,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.finalOutput ?? "", /final wrapped output/);
 	});
 
-	it("defers a foreground hard turn limit through active tool work and aborts at the next assistant boundary", async () => {
+	it("enforces the foreground hard turn limit even when the boundary response starts tool work", async () => {
 		mockPi.onCall({
 			steps: [
 				{
@@ -2326,6 +2379,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await runSync(tempDir, agents, "worker", "Finish active tool work before enforcing the hard limit.", {
 			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			enforceHardTurnLimit: true,
 			runId: "foreground-turn-budget-deferred",
 			onUpdate(update: { details?: { results?: Array<{ turnBudget?: { outcome?: string; terminationDeferredAtTurn?: number }; turnBudgetExceeded?: boolean; error?: string }>; progress?: Array<{ currentTool?: string; status?: string }> } }) {
 				const current = update.details?.results?.[0];
@@ -2340,17 +2394,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			},
 		});
 
-		const duringTool = snapshots.find((snapshot) => snapshot.turnBudget?.outcome === "termination-deferred" && snapshot.currentTool === "bash");
-		assert.ok(duringTool, "expected a running snapshot with deferred termination and the active tool");
-		assert.equal(duringTool.turnBudget?.terminationDeferredAtTurn, 1);
-		assert.equal(duringTool.turnBudgetExceeded, undefined);
-		assert.equal(duringTool.error, undefined);
-		assert.equal(duringTool.status, "running");
+		assert.equal(snapshots.some((snapshot) => snapshot.turnBudget?.outcome === "termination-deferred"), false);
 		assert.equal(result.turnBudgetExceeded, true);
 		assert.equal(result.turnBudget?.outcome, "exceeded");
-		assert.equal(result.turnBudget?.turnCount, 2);
-		assert.match(result.finalOutput ?? "", /safe assistant boundary reached/);
-		assert.ok(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")));
+		assert.equal(result.turnBudget?.turnCount, 1);
+		assert.match(result.finalOutput ?? "", /Subagent exceeded turn budget after 1 assistant turn/);
+		assert.equal(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")), false);
+	});
+
+	it("preserves a hard tool-budget block delivered as a Pi message_end tool result", async () => {
+		const blockedMessage = "Tool budget hard limit reached after 2 tool calls (hard 1). The 'read' tool is blocked so you can finalize from the context you already have.";
+		mockPi.onCall({
+			jsonl: [
+				events.toolStart("read", { path: "package.json" }),
+				events.toolResult("read", "package contents"),
+				events.toolEnd("read"),
+				events.toolStart("read", { path: "src/index.ts" }),
+				{
+					type: "message_end",
+					message: {
+						role: "toolResult",
+						toolName: "read",
+						isError: true,
+						content: [{ type: "text", text: blockedMessage }],
+					},
+				},
+				events.toolEnd("read"),
+				events.assistantMessage("partial output after budget exhaustion"),
+			],
+		});
+		const agents = makeAgentConfigs(["reviewer"]);
+
+		const result = await runSync(tempDir, agents, "reviewer", "Read two files.", {
+			toolBudget: { hard: 1, block: "*" },
+			runId: "foreground-tool-budget-message-end",
+		});
+
+		assert.equal(result.toolBudgetBlocked, true);
+		assert.equal(result.toolBudget?.outcome, "hard-blocked");
+		assert.equal(result.toolBudget?.toolCount, 2);
+		assert.equal(result.toolBudget?.blockedTool, "read");
+		assert.match(result.finalOutput ?? "", /partial output after budget exhaustion/);
 	});
 
 	it("does not run acceptance verification after a foreground timeout", async () => {

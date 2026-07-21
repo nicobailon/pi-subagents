@@ -183,7 +183,12 @@ describe("turn-budget module", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, false), "continue");
 		});
 
-		it("defers termination when the hard-limit assistant response starts tool work", () => {
+		it("never permits a tool-starting assistant turn to extend the hard model-turn limit", () => {
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 1, graceTurns: 0 }), 1, false, true, true), "abort");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, true, true), "abort");
+		});
+
+		it("preserves deferred tool-boundary semantics when hard enforcement is not requested", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, true), "defer");
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, false, true), "defer");
 		});

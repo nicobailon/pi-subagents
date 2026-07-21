@@ -46,6 +46,7 @@ import { formatControlIntercomMessage, formatControlNoticeMessage, resolveContro
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -89,6 +90,7 @@ import {
 	type Details,
 	type ExtensionConfig,
 	type IntercomEventBus,
+	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
 	type NestedRunSummary,
@@ -130,6 +132,7 @@ interface TaskParam {
 	skill?: string | string[] | boolean;
 	acceptance?: AcceptanceInput;
 	toolBudget?: ToolBudgetConfig;
+	outputSchema?: JsonSchemaObject;
 }
 
 export interface SubagentParamsLike {
@@ -153,6 +156,7 @@ export interface SubagentParamsLike {
 	timeoutMs?: number;
 	maxRuntimeMs?: number;
 	turnBudget?: TurnBudgetConfig;
+	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	clarify?: boolean;
 	share?: boolean;
@@ -3150,6 +3154,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: undefined;
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
+	const structuredOutput = params.outputSchema
+		? createStructuredOutputRuntime(params.outputSchema, path.join(artifactsDir, "structured-output"))
+		: undefined;
 	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
 		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 		context: data.contextPolicy.contextForAgent(params.agent!),
@@ -3188,7 +3195,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		timeoutMs: data.timeoutMs,
 		deadlineAt,
 		turnBudget: data.turnBudget,
+		enforceHardTurnLimit: params.enforceHardTurnLimit,
 		toolBudget: effectiveToolBudget.toolBudget,
+		structuredOutput,
 	});
 	if (foregroundControl?.currentIndex === 0) {
 		foregroundControl.interrupt = undefined;

@@ -620,6 +620,7 @@ export interface SingleResult {
 	outputReference?: SavedOutputReference;
 	outputSaveError?: string;
 	structuredOutput?: unknown;
+	structuredOutputFailed?: boolean;
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
@@ -1112,6 +1113,8 @@ export interface RunSyncOptions {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	/** Enforce maxTurns + graceTurns as a hard model-turn boundary. */
+	enforceHardTurnLimit?: boolean;
 	toolBudget?: ResolvedToolBudget;
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;

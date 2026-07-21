@@ -3,6 +3,7 @@ import {
 	type SubagentDelegationRequest,
 } from "../api/delegation.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+import { validateStructuredOutputSchema } from "../runs/shared/structured-output.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 
@@ -21,6 +22,7 @@ const supportedFields = new Set([
 	"timeoutMs",
 	"turnBudget",
 	"toolBudget",
+	"outputSchema",
 	"skill",
 	"output",
 	"outputMode",
@@ -77,6 +79,10 @@ export function parseSubagentDelegationRequest(data: unknown): SubagentDelegatio
 	}
 	const toolBudget = validateToolBudgetConfig(value.toolBudget);
 	if (toolBudget.error) return { ok: false, requestId, error: toolBudget.error };
+	if (value.outputSchema !== undefined) {
+		const schema = validateStructuredOutputSchema(value.outputSchema);
+		if (schema.status === "invalid") return { ok: false, requestId, error: schema.message };
+	}
 	if (value.skill !== undefined) {
 		const validSkill = typeof value.skill === "boolean"
 			|| nonEmptyString(value.skill)
