@@ -276,7 +276,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 				tools,
 			},
 			convertToLlm,
-			streamFn,
+			streamFunction: streamFn,
 			getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
 			beforeToolCall: async ({ toolCall }) => WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name)
 				? undefined

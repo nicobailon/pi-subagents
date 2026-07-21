@@ -19,10 +19,10 @@ const hostPeerPackages = [
 	"typebox",
 ] as const;
 const expectedHostDevVersions = {
-	"@earendil-works/pi-agent-core": "0.80.10",
-	"@earendil-works/pi-ai": "0.80.10",
-	"@earendil-works/pi-coding-agent": "0.80.10",
-	"@earendil-works/pi-tui": "0.80.10",
+	"@earendil-works/pi-agent-core": "0.81.0",
+	"@earendil-works/pi-ai": "0.81.0",
+	"@earendil-works/pi-coding-agent": "0.81.0",
+	"@earendil-works/pi-tui": "0.81.0",
 	typebox: "1.1.38",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;
 
