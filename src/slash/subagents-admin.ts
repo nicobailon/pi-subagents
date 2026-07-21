@@ -16,6 +16,7 @@ import { serializeAgent } from "../agents/agent-serializer.ts";
 import { editableAgentConfig, preservedAgentFrontmatterFields } from "../agents/agent-management.ts";
 import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";
 import { editorLabel, resolveEditorCommand, runEditorAndWait } from "./subagents-editor.ts";
+import { SelectorComponent, type SelectorItem, type SelectorResult } from "./selector.ts";
 
 const ADMIN_MESSAGE_TYPE = "subagents-admin";
 const INHERIT_MODEL_CHOICE = "Default / inherit session model";
@@ -50,6 +51,10 @@ function agentChoices(agents: AgentConfig[]): Map<string, AgentConfig> {
 		const label = labels[index]!;
 		return [counts.get(label) === 1 ? label : `${label} · ${agent.filePath}`, agent] as const;
 	}));
+}
+
+function agentSelectItems(byLabel: Map<string, AgentConfig>): SelectorItem[] {
+	return [...byLabel.keys()].map((label) => ({ value: label, label }));
 }
 
 function agentMatches(agent: AgentConfig, rawName: string): boolean {
@@ -156,7 +161,7 @@ async function selectAgent(ctx: ExtensionContext, args: string): Promise<AgentSe
 		if (matches.length > 1 && !ctx.hasUI) return { kind: "ambiguous", requestedName, matches };
 		if (matches.length > 1) {
 			const byLabel = agentChoices(matches);
-			const choice = await ctx.ui.select(`Multiple subagents named '${requestedName}'`, [...byLabel.keys()]);
+			const choice = await selectFromList(ctx, `Multiple subagents named '${requestedName}'`, undefined, agentSelectItems(byLabel));
 			return choice ? { kind: "selected", agent: byLabel.get(choice)! } : { kind: "cancelled" };
 		}
 		return { kind: "not-found", agents, requestedName };
@@ -164,7 +169,7 @@ async function selectAgent(ctx: ExtensionContext, args: string): Promise<AgentSe
 
 	if (!ctx.hasUI) return { kind: "not-found", agents };
 	const byLabel = agentChoices(agents);
-	const choice = await ctx.ui.select("Select subagent", [...byLabel.keys()]);
+	const choice = await selectFromList(ctx, "Select subagent", undefined, agentSelectItems(byLabel));
 	return choice ? { kind: "selected", agent: byLabel.get(choice)! } : { kind: "cancelled" };
 }
 
@@ -198,13 +203,33 @@ function metadataFor(agent: AgentConfig): string {
 	return lines.join("\n");
 }
 
+async function selectFromList(ctx: ExtensionContext, title: string, subtitle: string | undefined, items: SelectorItem[]): Promise<string | undefined> {
+	if (typeof ctx.ui.custom === "function") {
+		const result = await ctx.ui.custom<SelectorResult>(
+			(tui, theme, kb, done) => new SelectorComponent(tui, theme, kb, { title, subtitle, items, done }),
+			{ overlay: false },
+		);
+		return result?.confirmed ? result.value : undefined;
+	}
+	const flatTitle = subtitle ? `${title}\nCurrent: ${subtitle}` : title;
+	const labelToValue = new Map(items.map((item) => [item.label, item.value] as const));
+	const choice = await ctx.ui.select(flatTitle, items.map((item) => item.label));
+	return choice ? labelToValue.get(choice) : undefined;
+}
+
 async function chooseModel(ctx: ExtensionContext, agent: AgentConfig): Promise<string | undefined | null> {
-	const models = liveAvailableModels(ctx).map((model) => modelFullId(model));
+	const models = liveAvailableModels(ctx);
 	const current = agent.model ?? INHERIT_MODEL_CHOICE;
-	const choices = [INHERIT_MODEL_CHOICE, ...models.filter((model) => model !== agent.model)];
-	if (agent.model && !choices.includes(agent.model)) choices.splice(1, 0, agent.model);
-	const choice = await ctx.ui.select(`Select model for ${agent.name}\nCurrent: ${current}`, choices);
-	if (!choice) return null;
+	const items: SelectorItem[] = [{ value: INHERIT_MODEL_CHOICE, label: INHERIT_MODEL_CHOICE, current: !agent.model }];
+	if (agent.model && !models.some((model) => modelFullId(model) === agent.model)) {
+		items.push({ value: agent.model, label: agent.model, current: true });
+	}
+	for (const model of models) {
+		const fullId = modelFullId(model);
+		items.push({ value: fullId, label: model.id, badge: model.provider, current: fullId === agent.model });
+	}
+	const choice = await selectFromList(ctx, `Select model for ${agent.name}`, current, items);
+	if (choice === undefined) return null;
 	return choice === INHERIT_MODEL_CHOICE ? undefined : choice;
 }
 
@@ -214,18 +239,16 @@ async function chooseThinking(ctx: ExtensionContext, agent: AgentConfig): Promis
 	const modelInfo = findModelInfo(effectiveModel, availableModels, ctx.model?.provider);
 	const levels = getSupportedThinkingLevels(modelInfo);
 	const current = agent.thinking === false ? "off" : agent.thinking ?? INHERIT_THINKING_CHOICE;
-	const choices: string[] = [INHERIT_THINKING_CHOICE, ...levels];
-	if (current !== INHERIT_THINKING_CHOICE && !choices.includes(current)) choices.splice(1, 0, current);
+	const values: string[] = [INHERIT_THINKING_CHOICE, ...levels];
+	if (current !== INHERIT_THINKING_CHOICE && !values.includes(current)) values.splice(1, 0, current);
 	const modelNote = agent.model
 		? `Model: ${agent.model}`
 		: effectiveModel
 			? `Session model: ${effectiveModel}`
 			: "Model: default / inherit";
-	const choice = await ctx.ui.select(
-		`Select thinking level for ${agent.name}\n${modelNote} · Current: ${current}`,
-		choices,
-	);
-	if (!choice) return null;
+	const items: SelectorItem[] = values.map((value) => ({ value, label: value, current: value === current }));
+	const choice = await selectFromList(ctx, `Select thinking level for ${agent.name}`, `${modelNote} · ${current}`, items);
+	if (choice === undefined) return null;
 	return choice === INHERIT_THINKING_CHOICE ? undefined : choice;
 }
 
