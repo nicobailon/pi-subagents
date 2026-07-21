@@ -5,6 +5,7 @@ import {
 	createBoundedByteTail,
 	createBoundedLineReader,
 	formatProtocolOutputLimit,
+	MAX_CHILD_PENDING_LINE_BYTES,
 	projectChildLifecycle,
 	type ProtocolOutputLimit,
 } from "../../src/runs/shared/child-protocol.ts";
@@ -28,6 +29,18 @@ describe("bounded child protocol reader", () => {
 		reader.push(bytes.subarray(split));
 		reader.end();
 		assert.deepEqual(lines, ['{"text":"你好"}']);
+	});
+
+	it("accepts Pi-sized image payload lines by default", () => {
+		const lines: string[] = [];
+		const reader = createBoundedLineReader({ onLine: (line) => lines.push(line), onLimit: () => assert.fail("unexpected limit") });
+		const imageSizedLine = "x".repeat(5 * 1024 * 1024);
+		reader.push(imageSizedLine);
+		reader.push("\n");
+		reader.end();
+		assert.equal(MAX_CHILD_PENDING_LINE_BYTES, 16 * 1024 * 1024);
+		assert.equal(lines.length, 1);
+		assert.equal(lines[0]?.length, imageSizedLine.length);
 	});
 
 	it("stops buffering an oversized line and returns bounded diagnostics", () => {

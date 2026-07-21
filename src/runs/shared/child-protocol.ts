@@ -3,7 +3,7 @@ import type { ProtocolOutputLimit } from "../../shared/types.ts";
 
 export type { ProtocolOutputLimit } from "../../shared/types.ts";
 
-export const MAX_CHILD_PENDING_LINE_BYTES = 4 * 1024 * 1024;
+export const MAX_CHILD_PENDING_LINE_BYTES = 16 * 1024 * 1024;
 export const MAX_CHILD_STDERR_BYTES = 128 * 1024;
 const MAX_PROTOCOL_DIAGNOSTIC_BYTES = 4096;
 
