@@ -40,6 +40,8 @@ interface TestSequentialStep {
 	progress?: boolean;
 	cwd?: string;
 	acceptance?: unknown;
+	agentContract?: { version: 1 };
+	gateOn?: "execution" | "acceptance";
 }
 
 interface TestParallelTask {
@@ -57,6 +59,8 @@ interface TestParallelTask {
 	progress?: boolean;
 	cwd?: string;
 	acceptance?: unknown;
+	agentContract?: { version: 1 };
+	gateOn?: "execution" | "acceptance";
 }
 
 type TestChainStep = TestSequentialStep | {
@@ -65,6 +69,8 @@ type TestChainStep = TestSequentialStep | {
 	failFast?: boolean;
 	worktree?: boolean;
 	cwd?: string;
+	agentContract?: { version: 1 };
+	gateOn?: "execution" | "acceptance";
 } | {
 	expand: {
 		from: { output: string; path: string };
@@ -79,6 +85,8 @@ type TestChainStep = TestSequentialStep | {
 	failFast?: boolean;
 	label?: string;
 	acceptance?: unknown;
+	agentContract?: { version: 1 };
+	gateOn?: "execution" | "acceptance";
 };
 
 interface ChainResultItem {
@@ -1067,6 +1075,50 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.ok(result.isError, "chain should fail");
 		assert.equal(result.details.results.length, 1, "only step1 should have run");
 		assert.equal(result.details.results[0].exitCode, 1);
+	});
+
+	it("agent contract v1 chain defaults to execution gating after acceptance rejection", async () => {
+		mockPi.onCall({ output: "Step 1 done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
+		mockPi.onCall({ output: "Step 2 ran" });
+		const agents = [makeAgent("step1", { completionGuard: false }), makeAgent("step2", { completionGuard: false })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[
+					{ agent: "step1", task: "First", acceptance: { level: "checked", criteria: ["Return required proof"] } },
+					{ agent: "step2", task: "Second receives {previous}" },
+				],
+				agents,
+				{ task: "Original", agentContract: { version: 1 } },
+			),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results.length, 2);
+		assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
+		assert.equal(result.details.results[0]?.exitCode, 0);
+		assert.match(result.details.results[1]?.finalOutput ?? "", /Step 2 ran/);
+	});
+
+	it("agent contract v1 chain can gate progression on acceptance", async () => {
+		mockPi.onCall({ output: "Step 1 done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
+		const agents = [makeAgent("step1", { completionGuard: false }), makeAgent("step2", { completionGuard: false })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[
+					{ agent: "step1", task: "First", acceptance: { level: "checked", criteria: ["Return required proof"] }, gateOn: "acceptance" },
+					{ agent: "step2", task: "Should not run" },
+				],
+				agents,
+				{ task: "Original", agentContract: { version: 1 } },
+			),
+		);
+
+		assert.equal(result.isError, true);
+		assert.equal(result.details.results.length, 1);
+		assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("runs a 3-step chain end-to-end", async () => {

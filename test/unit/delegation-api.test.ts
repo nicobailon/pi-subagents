@@ -70,6 +70,8 @@ const request: SubagentDelegationRequest = {
 	skill: ["review"],
 	output: "result.md",
 	outputMode: "file-only",
+	outputSchema: { type: "object", properties: { ok: { type: "boolean" } } },
+	agentContract: { version: 1 },
 	acceptance: "checked",
 	artifacts: true,
 };
@@ -103,6 +105,9 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, skill: [] }, /skill must/],
 			[{ ...request, output: "" }, /output must/],
 			[{ ...request, output: false, outputMode: "file-only" }, /outputMode.*output.*path/],
+			[{ ...request, outputSchema: [] }, /outputSchema must be a JSON Schema object/],
+			[{ ...request, agentContract: { version: 2 } }, /agentContract must be \{ version: 1 \}/],
+			[{ ...request, agentContract: { version: 1, extra: true } }, /agentContract must be \{ version: 1 \}/],
 			[{ ...request, acceptance: "none" }, /level "none" requires a reason/],
 			[{ ...request, acceptance: { level: "none" } }, /reason is required/],
 			[{ ...request, artifacts: "yes" }, /artifacts must be a boolean/],
@@ -144,7 +149,11 @@ describe("public subagent delegation contract", () => {
 							sessionFile: "/tmp/session.jsonl",
 							usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 2 },
 							progressSummary: { toolCount: 4, tokens: 5, durationMs: 6 },
+							agentContract: { version: 1 },
+							execution: { status: "completed", success: true, exitCode: 0 },
 							acceptance: { status: "checked", explicit: true },
+							review: { status: "not-requested" },
+							effects: { fileMutation: { status: "missing", expected: true, attempted: false } },
 							skillsWarning: "Skills not found: review",
 						}],
 					},
@@ -183,6 +192,8 @@ describe("public subagent delegation contract", () => {
 			skill: ["review"],
 			output: "result.md",
 			outputMode: "file-only",
+			outputSchema: { type: "object", properties: { ok: { type: "boolean" } } },
+			agentContract: { version: 1 },
 			acceptance: "checked",
 			artifacts: true,
 			async: false,
@@ -195,6 +206,9 @@ describe("public subagent delegation contract", () => {
 		assert.equal(response.output, "done");
 		assert.equal(response.outputPath, "/repo/result.md");
 		assert.equal(response.sessionFile, "/tmp/session.jsonl");
+		assert.deepEqual(response.execution, { status: "completed", success: true, exitCode: 0 });
+		assert.deepEqual(response.review, { status: "not-requested" });
+		assert.deepEqual(response.effects, { fileMutation: { status: "missing", expected: true, attempted: false } });
 		assert.equal(response.turns, 2);
 		assert.equal(response.toolCount, 4);
 		assert.equal(response.tokens, 5);
@@ -239,6 +253,7 @@ describe("public subagent delegation contract", () => {
 			[{ turnBudgetExceeded: true }, "turn_budget_exhausted"],
 			[{ toolBudgetBlocked: true }, "tool_budget_exhausted"],
 			[{ acceptance: { status: "rejected", explicit: true } }, "acceptance_failed"],
+			[{ agentContract: { version: 1 }, acceptance: { status: "rejected", explicit: true } }, "completed"],
 			[{ acceptance: { status: "rejected", explicit: false } }, "completed"],
 			[{ exitCode: 1, error: "failed" }, "failed"],
 		] as const;

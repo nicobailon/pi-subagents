@@ -53,6 +53,38 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("preserves agent contract projections on step summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-contract-"));
+		try {
+			createAsyncDir(root, "run-contract", {
+				runId: "run-contract",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					status: "complete",
+					agentContract: { version: 1 },
+					execution: { status: "completed", success: true, exitCode: 0 },
+					acceptance: { status: "rejected", effectiveAcceptance: { level: "checked", explicit: true } },
+					review: { status: "not-requested" },
+					effects: { fileMutation: { status: "missing", expected: true, attempted: false } },
+				}],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["complete"] });
+			const step = runs[0]?.steps[0];
+			assert.equal(step?.agentContract?.version, 1);
+			assert.deepEqual(step?.execution, { status: "completed", success: true, exitCode: 0 });
+			assert.equal(step?.acceptance?.status, "rejected");
+			assert.equal(step?.review?.status, "not-requested");
+			assert.equal(step?.effects?.fileMutation?.status, "missing");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("formats async run and step context labels", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-context-"));
 		try {

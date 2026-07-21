@@ -348,6 +348,13 @@ handoffs or full fan-in summaries. Use `phase` and `label` for status readabilit
 Use `outputSchema` when later steps need reliable structured data; the child must
 call `structured_output` with schema-valid JSON, or the step fails.
 
+Use `agentContract: { version: 1 }` when a caller needs generic result projections
+instead of acceptance or mutation effects rewriting execution success. V1 adds
+`execution`, `acceptance`, `review`, and `effects`; omitted acceptance means no
+acceptance request. Chain steps advance on execution by default under v1. Set
+`gateOn: "acceptance"` only when a rejected explicit acceptance report should stop
+the chain.
+
 ### Async/background
 
 Prefer async mode for every subagent launch. Set `async: true` no matter the task unless there is a specific reason to opt into a foreground/blocking run. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, chains, and parallel groups. Keep the write path single-threaded even when the run is async.

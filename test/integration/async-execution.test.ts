@@ -45,7 +45,7 @@ interface AsyncResultPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
+	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 }
@@ -85,6 +85,9 @@ interface AsyncStatusPayload {
 		thinking?: string;
 		tokens?: { total: number };
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+		agentContract?: { version: 1 };
+		execution?: { status?: string; success?: boolean; exitCode?: number };
+		effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } };
 		acceptance?: { status?: string };
 		turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number };
 		turnBudgetExceeded?: boolean;
@@ -2768,6 +2771,77 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(eventsText, /Subagent failed: worker/);
 		assert.doesNotMatch(eventsText, /Status:/);
 		assert.doesNotMatch(eventsText, /Interrupt:/);
+	});
+
+	it("agent contract v1 keeps async acceptance and file-mutation effects separate from execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "I’ll do that now and report back after implementing.\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
+		const id = `async-v1-separate-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the approved fixes",
+			agentConfig: makeAgent("worker", { completionGuard: true }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			agentContract: { version: 1 },
+			acceptance: { level: "checked", criteria: ["Return required proof"] },
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const statusPayload = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+
+		assert.equal(payload.success, true);
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.results[0]?.agentContract?.version, 1);
+		assert.equal(payload.results[0]?.execution?.status, "completed");
+		assert.equal(payload.results[0]?.execution?.success, true);
+		assert.equal(payload.results[0]?.acceptance?.status, "rejected");
+		assert.equal(payload.results[0]?.effects?.fileMutation?.status, "missing");
+		assert.equal(statusPayload.state, "complete");
+		assert.equal(statusPayload.steps?.[0]?.agentContract?.version, 1);
+		assert.equal(statusPayload.steps?.[0]?.execution?.status, "completed");
+		assert.equal(statusPayload.steps?.[0]?.effects?.fileMutation?.status, "missing");
+	});
+
+	it("background single runs support outputSchema", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "structured", structuredOutput: { ok: true, note: "async" } });
+		const id = `async-single-schema-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Return structured data",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+			structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" }, note: { type: "string" } } },
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.deepEqual(payload.results[0]?.structuredOutput, { ok: true, note: "async" });
 	});
 
 	it("background bash-enabled non-implementation agents can opt out of the completion guard", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

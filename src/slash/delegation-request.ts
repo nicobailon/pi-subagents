@@ -24,6 +24,8 @@ const supportedFields = new Set([
 	"skill",
 	"output",
 	"outputMode",
+	"outputSchema",
+	"agentContract",
 	"acceptance",
 	"artifacts",
 ]);
@@ -93,6 +95,14 @@ export function parseSubagentDelegationRequest(data: unknown): SubagentDelegatio
 	}
 	if (value.outputMode === "file-only" && !nonEmptyString(value.output)) {
 		return { ok: false, requestId, error: 'outputMode "file-only" requires output to be a non-empty path.' };
+	}
+	if (value.outputSchema !== undefined && (!value.outputSchema || typeof value.outputSchema !== "object" || Array.isArray(value.outputSchema))) {
+		return { ok: false, requestId, error: "outputSchema must be a JSON Schema object." };
+	}
+	if (value.agentContract !== undefined) {
+		if (!value.agentContract || typeof value.agentContract !== "object" || Array.isArray(value.agentContract)) return { ok: false, requestId, error: "agentContract must be an object." };
+		const contract = value.agentContract as Record<string, unknown>;
+		if (contract.version !== 1 || Object.keys(contract).some((key) => key !== "version")) return { ok: false, requestId, error: "agentContract must be { version: 1 }." };
 	}
 	const acceptanceErrors = validateAcceptanceInput(value.acceptance);
 	if (acceptanceErrors.length > 0) return { ok: false, requestId, error: acceptanceErrors.join(" ") };

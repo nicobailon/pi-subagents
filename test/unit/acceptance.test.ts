@@ -165,6 +165,51 @@ describe("acceptance gates", () => {
 		assert.equal(resolved.verify[0]?.id, "ok");
 	});
 
+	it("agent contract v1 disables inferred acceptance without changing current defaults", () => {
+		const current = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true });
+		assert.equal(current.level, "reviewed");
+		assert.deepEqual(current.inferredReason, ["async write-capable or risky run"]);
+
+		for (const explicit of [undefined, "auto" as const, false] as const) {
+			const resolved = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true, explicit, agentContract: { version: 1 } });
+			assert.equal(resolved.level, "none");
+			assert.deepEqual(resolved.inferredReason, []);
+			assert.equal(resolved.explicit, explicit !== undefined);
+		}
+	});
+
+	it("agent contract v1 keeps explicit acceptance report-optional and verify-only", async () => {
+		const checked = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement the fix",
+			explicit: "checked",
+			agentContract: { version: 1 },
+		});
+		assert.equal(formatAcceptancePrompt(checked, { reportOptional: true }), "");
+		const checkedLedger = await evaluateAcceptance({ acceptance: checked, output: "done", cwd: process.cwd(), reportOptional: true });
+		assert.equal(checkedLedger.status, "checked");
+		assert.equal(acceptanceFailureMessage(checkedLedger), undefined);
+
+		const verified = resolveEffectiveAcceptance({
+			agentName: "worker",
+			task: "Implement the fix",
+			explicit: { level: "verified", verify: [{ id: "ok", command: `${process.execPath} -e "process.exit(0)"` }] },
+			agentContract: { version: 1 },
+		});
+		assert.equal(formatAcceptancePrompt(verified, { reportOptional: true }), "");
+		const verifiedLedger = await evaluateAcceptance({ acceptance: verified, output: "done", cwd: process.cwd(), reportOptional: true });
+		assert.equal(verifiedLedger.status, "verified");
+		assert.equal(verifiedLedger.verifyRuns[0]?.status, "passed");
+	});
+
+	it("current/default acceptance still rejects missing required reports", async () => {
+		const current = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", explicit: "checked" });
+		const ledger = await evaluateAcceptance({ acceptance: current, output: "done", cwd: process.cwd() });
+
+		assert.equal(ledger.status, "rejected");
+		assert.match(acceptanceFailureMessage(ledger) ?? "", /Structured acceptance report not found/);
+	});
+
 	it("formats a standardized child prompt section", () => {
 		const resolved = resolveEffectiveAcceptance({
 			agentName: "worker",

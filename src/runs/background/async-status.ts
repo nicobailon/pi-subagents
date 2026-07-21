@@ -43,6 +43,11 @@ interface AsyncRunStepSummary {
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
+	acceptance?: AsyncJobStep["acceptance"];
+	agentContract?: AsyncJobStep["agentContract"];
+	execution?: AsyncJobStep["execution"];
+	review?: AsyncJobStep["review"];
+	effects?: AsyncJobStep["effects"];
 	children?: NestedRunSummary[];
 }
 
@@ -196,6 +201,11 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
 			...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
 			...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
+			...(step.acceptance ? { acceptance: step.acceptance } : {}),
+			...(step.agentContract ? { agentContract: step.agentContract } : {}),
+			...(step.execution ? { execution: step.execution } : {}),
+			...(step.review ? { review: step.review } : {}),
+			...(step.effects ? { effects: step.effects } : {}),
 			...(step.children?.length ? { children: step.children } : {}),
 		};
 	});

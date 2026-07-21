@@ -46,7 +46,9 @@ import { formatControlIntercomMessage, formatControlNoticeMessage, resolveContro
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
@@ -82,6 +84,7 @@ import {
 	type AgentProgress,
 	type AsyncStatus,
 	type AcceptanceInput,
+	type AgentContract,
 	type ArtifactConfig,
 	type ArtifactPaths,
 	type ControlConfig,
@@ -89,6 +92,7 @@ import {
 	type Details,
 	type ExtensionConfig,
 	type IntercomEventBus,
+	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
 	type NestedRunSummary,
@@ -128,7 +132,9 @@ interface TaskParam {
 	progress?: boolean;
 	model?: string;
 	skill?: string | string[] | boolean;
+	outputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
+	agentContract?: AgentContract;
 	toolBudget?: ToolBudgetConfig;
 }
 
@@ -169,9 +175,11 @@ export interface SubagentParamsLike {
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
+	outputSchema?: JsonSchemaObject;
 	agentScope?: unknown;
 	chainDir?: string;
 	acceptance?: AcceptanceInput;
+	agentContract?: AgentContract;
 	schedule?: string;
 	scheduleName?: string;
 	additional?: number;
@@ -1254,6 +1262,7 @@ async function resumeAsyncRun(input: {
 			shareEnabled: input.params.share === true,
 			sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
 			chainSkills: normalized === false ? [] : (normalized ?? []),
+			agentContract: input.params.agentContract,
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 			waitToolEnabled: input.deps.waitToolEnabled,
@@ -1325,6 +1334,8 @@ async function resumeAsyncRun(input: {
 		availableModels,
 		output: recoveryDescriptor?.outputPath,
 		outputMode: recoveryDescriptor?.outputMode,
+		...(recoveryDescriptor?.agentContract ? { agentContract: recoveryDescriptor.agentContract } : {}),
+		...(recoveryDescriptor?.structuredOutputSchema ? { structuredOutputSchema: recoveryDescriptor.structuredOutputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
 		...(recoveryDescriptor?.acceptance !== undefined && input.params.acceptance === undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
@@ -2025,6 +2036,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
 			...(task.progress !== undefined ? { progress: task.progress } : {}),
 			...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
+			...(task.outputSchema !== undefined ? { outputSchema: task.outputSchema } : {}),
+			...(task.agentContract !== undefined ? { agentContract: task.agentContract } : {}),
 			...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
 		}));
 		return executeAsyncChain(id, {
@@ -2054,6 +2067,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
 			controlConfig,
+			agentContract: params.agentContract,
 			controlIntercomTarget,
 			childIntercomTarget,
 			nestedRoute,
@@ -2094,6 +2108,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
 			controlConfig,
+			agentContract: params.agentContract,
 			controlIntercomTarget,
 			childIntercomTarget,
 			nestedRoute,
@@ -2151,6 +2166,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			controlIntercomTarget,
 			childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(agent, index) : undefined,
 			nestedRoute,
+			agentContract: params.agentContract,
+			structuredOutputSchema: params.outputSchema,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
@@ -2212,6 +2229,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		onUpdate,
 		onControlEvent,
 		controlConfig,
+		agentContract: params.agentContract,
 		childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(runId, agent, index) : undefined,
 		orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 		foregroundControl,
@@ -2278,6 +2296,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
 			controlConfig,
+			agentContract: params.agentContract,
 			controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 			childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
 			nestedRoute: data.nestedRoute,
@@ -2362,8 +2381,8 @@ interface ForegroundParallelRunInput {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudgets: (ResolvedToolBudget | undefined)[];
+	agentContract?: AgentContract;
 }
-
 function buildParallelModeError(message: string): AgentToolResult<Details> {
 	return {
 		content: [{ type: "text", text: message }],
@@ -2509,6 +2528,9 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				return true;
 			};
 		}
+		const structuredRuntime = task.outputSchema
+			? createStructuredOutputRuntime(task.outputSchema, path.join(input.artifactsDir, "structured-output", input.runId))
+			: undefined;
 		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			context: input.contextPolicy.contextForAgent(task.agent),
@@ -2541,6 +2563,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			preferredModelProvider: input.ctx.model?.provider,
 			modelScope: input.modelScope,
 			skills: effectiveSkills === false ? [] : effectiveSkills,
+			structuredOutput: structuredRuntime,
+			agentContract: task.agentContract ?? input.agentContract,
 			acceptance: task.acceptance,
 			acceptanceContext: { mode: "parallel" },
 			timeoutMs: input.timeoutMs,
@@ -2750,7 +2774,9 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 					...(behaviorOverrides[i]?.reads !== undefined ? { reads: behaviorOverrides[i]!.reads } : {}),
 					...(progress !== undefined ? { progress } : {}),
 					...(t.toolBudget !== undefined ? { toolBudget: t.toolBudget } : {}),
+					...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
 					...(t.acceptance !== undefined ? { acceptance: t.acceptance } : {}),
+					...(t.agentContract !== undefined ? { agentContract: t.agentContract } : {}),
 				};
 			});
 			return executeAsyncChain(id, {
@@ -2776,10 +2802,14 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 				worktreeBaseDir: deps.config.worktreeBaseDir,
 				controlConfig,
+				agentContract: params.agentContract,
 				controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 				childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
+				nestedRoute: data.nestedRoute,
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
+				toolBudget: data.toolBudget,
+				configToolBudget: data.configToolBudget,
 				globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 			});
 		}
@@ -2872,6 +2902,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			deadlineAt,
 			turnBudget: data.turnBudget,
 			toolBudgets,
+			agentContract: params.agentContract,
 		});
 		for (let i = 0; i < results.length; i++) {
 			const run = results[i]!;
@@ -3089,6 +3120,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				controlConfig,
 				controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 				childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
+				nestedRoute: data.nestedRoute,
+				agentContract: params.agentContract,
+				structuredOutputSchema: params.outputSchema,
+				acceptance: params.acceptance,
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
 				toolBudget: effectiveToolBudget.toolBudget,
@@ -3101,6 +3136,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
+	const structuredRuntime = params.outputSchema
+		? createStructuredOutputRuntime(params.outputSchema, path.join(artifactsDir, "structured-output", runId))
+		: undefined;
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
@@ -3182,6 +3220,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		preferredModelProvider: currentProvider,
 		modelScope: data.modelScope,
 		skills: effectiveSkills,
+		structuredOutput: structuredRuntime,
+		agentContract: params.agentContract,
 		acceptance: params.acceptance,
 		acceptanceContext: { mode: "single" },
 		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),

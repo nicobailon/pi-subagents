@@ -30,8 +30,10 @@ import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { resolveEffectiveAcceptance } from "../shared/acceptance.ts";
 import {
 	type AcceptanceInput,
+	type AgentContract,
 	type ArtifactConfig,
 	type Details,
+	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
@@ -132,6 +134,7 @@ interface AsyncChainParams {
 	artifactConfig: ArtifactConfig;
 	shareEnabled: boolean;
 	sessionRoot?: string;
+	agentContract?: AgentContract;
 	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
@@ -177,6 +180,8 @@ interface AsyncSingleParams {
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
 	outputBaseDir?: string;
+	agentContract?: AgentContract;
+	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
 	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
@@ -217,6 +222,7 @@ export interface AsyncRunnerStepBuildParams {
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	contextForAgent?: (agentName: string) => ContextMode;
 	progressDir?: string;
+	agentContract?: AgentContract;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
 	waitToolEnabled?: boolean;
@@ -628,11 +634,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		const effectiveThinking = thinkingOverride ?? a.thinking;
 		const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
+		const agentContract = s.agentContract ?? params.agentContract;
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			agent: s.agent,
 			task,
 			...(params.contextForAgent ? { context: params.contextForAgent(s.agent) } : {}),
+			...(agentContract ? { agentContract } : {}),
 			phase: s.phase,
 			label: s.label,
 			outputName: s.as,
@@ -667,9 +675,11 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				mode: resultMode,
 				async: true,
 				dynamic: false,
+				agentContract,
 			}),
 			acceptanceInput: s.acceptance,
 			acceptanceRole: a.acceptanceRole,
+			...(s.gateOn ? { gateOn: s.gateOn } : {}),
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
 			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) } : {}),
 			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
@@ -712,7 +722,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 							}
 						}
 						const staticStep = nextFlatStep();
-						return buildSeqStep(t, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex });
+						return buildSeqStep({ ...t, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn }, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex });
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
@@ -729,7 +739,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				}
 				const maxItems = s.expand.maxItems ?? params.dynamicFanoutMaxItems ?? 0;
 				const dynamicFlatSteps = Array.from({ length: maxItems }, () => nextFlatStep());
-				const parallel = buildSeqStep(s.parallel as SequentialStep, undefined, undefined, progressPrecreated, behavior, undefined, { stepIndex });
+				const parallel = buildSeqStep({ ...(s.parallel as SequentialStep), agentContract: s.parallel.agentContract ?? s.agentContract, gateOn: s.parallel.gateOn ?? s.gateOn }, undefined, undefined, progressPrecreated, behavior, undefined, { stepIndex });
 				return {
 					expand: s.expand,
 					parallel,
@@ -748,9 +758,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 						mode: resultMode,
 						async: true,
 						dynamicGroup: true,
+						agentContract: s.agentContract ?? params.agentContract,
 					}),
 					acceptanceInput: s.acceptance,
 					acceptanceRole: agent.acceptanceRole,
+					...(s.agentContract ?? params.agentContract ? { agentContract: s.agentContract ?? params.agentContract } : {}),
+					...(s.gateOn ? { gateOn: s.gateOn } : {}),
 				};
 			}
 			const staticStep = nextFlatStep();
@@ -851,6 +864,7 @@ export function executeAsyncChain(
 		thinkingOverridesByFlatIndex,
 		contextForAgent: params.contextForAgent,
 		progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
+		agentContract: params.agentContract,
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
 		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 		maxSubagentDepth,
@@ -1132,6 +1146,9 @@ export function executeAsyncSingle(
 	if (timeoutMs !== undefined && timeoutMs <= 0) return formatAsyncStartError("single", "The source run's absolute deadline expired before recovery could launch.");
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	const resolvedSessionDir = params.sessionDir ?? (sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined);
+	const structuredOutput = params.structuredOutputSchema
+		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"))
+		: undefined;
 	const resolvedAcceptance = resolveEffectiveAcceptance({
 		explicit: params.acceptance,
 		agentName: agent,
@@ -1139,10 +1156,12 @@ export function executeAsyncSingle(
 		task,
 		mode: "single",
 		async: true,
+		agentContract: params.agentContract,
 	});
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
 		sourceRunId: id,
+		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: runnerCwd,
@@ -1164,6 +1183,7 @@ export function executeAsyncSingle(
 		...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
+		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
@@ -1213,7 +1233,10 @@ export function executeAsyncSingle(
 						sessionFile,
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						waitToolEnabled: params.waitToolEnabled,
+						...(params.agentContract ? { agentContract: params.agentContract } : {}),
 						effectiveAcceptance: resolvedAcceptance,
+						...(structuredOutput ? { structuredOutput } : {}),
+						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 					},
 				],

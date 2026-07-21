@@ -214,6 +214,42 @@ export interface ControlEvent {
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
 export type SubagentRunMode = "single" | "parallel" | "chain";
+
+export interface AgentContract {
+	version: 1;
+}
+
+export type ChainGateLayer = "execution" | "acceptance";
+
+export type ExecutionProjectionStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
+
+export interface ExecutionProjection {
+	status: ExecutionProjectionStatus;
+	success: boolean;
+	exitCode: number;
+	error?: string;
+	interrupted?: boolean;
+	timedOut?: boolean;
+	stopped?: boolean;
+	detached?: boolean;
+}
+
+export interface ReviewProjection {
+	status: "not-requested" | "no-blockers" | "blockers" | "needs-parent-decision";
+	findings?: AcceptanceReviewResult["findings"];
+}
+
+export interface FileMutationEffect {
+	status: "not-requested" | "not-applicable" | "observed" | "missing";
+	expected: boolean;
+	attempted: boolean;
+	message?: string;
+}
+
+export interface EffectsProjection {
+	fileMutation?: FileMutationEffect;
+}
+
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 2;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
 
@@ -282,6 +318,7 @@ export interface SteeringNotice {
 export interface SteeringRecoveryDescriptor {
 	version: 1;
 	sourceRunId: string;
+	agentContract?: AgentContract;
 	agent: string;
 	sessionFile?: string;
 	cwd: string;
@@ -303,6 +340,7 @@ export interface SteeringRecoveryDescriptor {
 	memory?: { scope: "project" | "user"; path: string };
 	outputPath?: string;
 	outputMode: "inline" | "file-only";
+	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
 	absoluteDeadlineAt?: number;
@@ -623,6 +661,10 @@ export interface SingleResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	agentContract?: AgentContract;
+	execution?: ExecutionProjection;
+	review?: ReviewProjection;
+	effects?: EffectsProjection;
 	transcriptPath?: string;
 	transcriptError?: string;
 	children?: NestedRunSummary[];
@@ -915,6 +957,10 @@ export interface AsyncStatus {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		agentContract?: AgentContract;
+		execution?: ExecutionProjection;
+		review?: ReviewProjection;
+		effects?: EffectsProjection;
 		watchdog?: ChildWatchdogProgress;
 	}>;
 	sessionDir?: string;
@@ -1001,6 +1047,10 @@ export interface ForegroundResumeChild {
 	transcriptError?: string;
 	detachedReason?: string;
 	acceptance?: AcceptanceLedger;
+	agentContract?: AgentContract;
+	execution?: ExecutionProjection;
+	review?: ReviewProjection;
+	effects?: EffectsProjection;
 	updatedAt?: number;
 }
 
@@ -1152,6 +1202,7 @@ export interface RunSyncOptions {
 		schemaPath: string;
 		outputPath: string;
 	};
+	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
 	acceptanceContext?: {
 		mode?: SubagentRunMode;

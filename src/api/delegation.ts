@@ -19,6 +19,37 @@ export interface SubagentDelegationToolBudget {
 	block?: string[] | "*";
 }
 
+export interface SubagentDelegationAgentContract {
+	version: 1;
+}
+
+export type SubagentDelegationJsonSchemaObject = Record<string, unknown>;
+
+export interface SubagentDelegationExecutionResult {
+	status: "completed" | "failed" | "paused" | "stopped" | "detached";
+	success: boolean;
+	exitCode: number;
+	error?: string;
+	interrupted?: boolean;
+	timedOut?: boolean;
+	stopped?: boolean;
+	detached?: boolean;
+}
+
+export interface SubagentDelegationReviewResult {
+	status: "not-requested" | "no-blockers" | "blockers" | "needs-parent-decision";
+	findings?: Array<{ severity: "blocker" | "non-blocking"; file?: string; issue: string; rationale: string }>;
+}
+
+export interface SubagentDelegationEffectsResult {
+	fileMutation?: {
+		status: "not-requested" | "not-applicable" | "observed" | "missing";
+		expected: boolean;
+		attempted: boolean;
+		message?: string;
+	};
+}
+
 export type SubagentDelegationAcceptanceEvidence =
 	| "changed-files"
 	| "tests-added"
@@ -87,6 +118,8 @@ export interface SubagentDelegationRequest {
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
+	outputSchema?: SubagentDelegationJsonSchemaObject;
+	agentContract?: SubagentDelegationAgentContract;
 	acceptance?: SubagentDelegationAcceptance;
 	artifacts?: boolean;
 }
@@ -144,10 +177,13 @@ export interface SubagentDelegationResponse extends SubagentDelegationStarted {
 	agent?: string;
 	model?: string;
 	exitCode?: number;
+	execution?: SubagentDelegationExecutionResult;
 	output?: string;
 	outputPath?: string;
 	sessionFile?: string;
 	acceptance?: SubagentDelegationAcceptanceResult;
+	review?: SubagentDelegationReviewResult;
+	effects?: SubagentDelegationEffectsResult;
 	turns?: number;
 	toolCount?: number;
 	durationMs?: number;

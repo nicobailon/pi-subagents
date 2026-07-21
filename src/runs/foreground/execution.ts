@@ -72,6 +72,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
@@ -250,6 +251,7 @@ async function runSingleAttempt(
 	const result: SingleResult = withRunContext({
 		agent: agent.name,
 		task: shared.originalTask ?? task,
+		...(options.agentContract ? { agentContract: options.agentContract } : {}),
 		exitCode: 0,
 		messages: [],
 		usage: emptyUsage(),
@@ -1093,7 +1095,8 @@ async function runSingleAttempt(
 		const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
 		fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
 	}
-	const completionGuard = result.exitCode === 0 && !result.error && agent.completionGuard !== false
+	const completionGuardEnabled = isAgentContractV1(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
+	const completionGuard = result.exitCode === 0 && !result.error && completionGuardEnabled
 		? evaluateCompletionMutationGuard({
 			agent: agent.name,
 			task: shared.originalTask ?? task,
@@ -1102,7 +1105,19 @@ async function runSingleAttempt(
 			mcpDirectTools: agent.mcpDirectTools,
 		})
 		: undefined;
-	if (completionGuard?.triggered && !observedMutationAttempt) {
+	const completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	if (completionGuard) {
+		result.effects = {
+			...(result.effects ?? {}),
+			fileMutation: {
+				status: completionGuard.expectedMutation ? completionGuardTriggered ? "missing" : "observed" : "not-applicable",
+				expected: completionGuard.expectedMutation,
+				attempted: completionGuard.attemptedMutation || observedMutationAttempt,
+				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
+			},
+		};
+	}
+	if (completionGuardTriggered && !isAgentContractV1(options.agentContract)) {
 		result.exitCode = 1;
 		result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
 		progress.status = "failed";
@@ -1195,8 +1210,9 @@ export async function runSync(
 		async: options.acceptanceContext?.async,
 		dynamic: options.acceptanceContext?.dynamic,
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
+		agentContract: options.agentContract,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
+	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
 	const skillNames = options.skills ?? agent.skills ?? [];
@@ -1282,7 +1298,11 @@ export async function runSync(
 			durationMs: target.progressSummary?.durationMs,
 			toolCount: target.progressSummary?.toolCount,
 			error: target.error,
+			agentContract: target.agentContract,
+			execution: target.execution,
 			acceptance: target.acceptance,
+			review: target.review,
+			effects: target.effects,
 			...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
 			transcriptError: target.transcriptError,
 			skills: target.skills,
@@ -1306,10 +1326,11 @@ export async function runSync(
 							? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 							: undefined,
 						cwd: options.cwd ?? runtimeCwd,
+						reportOptional: isAgentContractV1(options.agentContract),
 					});
 					const acceptanceFailure = acceptanceFailureMessage(recoveredResult.acceptance);
 					stripAcceptanceReportsFromMessages(recoveredResult.messages);
-					if (acceptanceFailure && recoveredResult.acceptance.explicit && recoveredResult.exitCode === 0) {
+					if (acceptanceFailure && recoveredResult.acceptance.explicit && recoveredResult.exitCode === 0 && !isAgentContractV1(options.agentContract)) {
 						recoveredResult.exitCode = 1;
 						recoveredResult.error = recoveredResult.error ? `${recoveredResult.error}\n${acceptanceFailure}` : acceptanceFailure;
 						if (recoveredResult.progress) {
@@ -1317,6 +1338,7 @@ export async function runSync(
 							recoveredResult.progress.error = recoveredResult.error;
 						}
 					}
+					if (isAgentContractV1(options.agentContract)) attachContractProjections(recoveredResult);
 					persistResultMetadata(recoveredResult);
 					options.onDetachedExit?.(recoveredResult);
 				})().catch((error) => {
@@ -1447,11 +1469,12 @@ export async function runSync(
 				? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 				: undefined,
 			cwd: options.cwd ?? runtimeCwd,
+			reportOptional: isAgentContractV1(options.agentContract),
 		});
 	}
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);
-	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut) {
+	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut && !isAgentContractV1(options.agentContract)) {
 		result.exitCode = 1;
 		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
 		if (result.progress) {
@@ -1459,6 +1482,7 @@ export async function runSync(
 			result.progress.error = result.error;
 		}
 	}
+	if (isAgentContractV1(options.agentContract)) attachContractProjections(result);
 	persistResultMetadata(result);
 
 	return result;

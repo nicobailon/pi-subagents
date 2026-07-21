@@ -48,6 +48,7 @@ import {
 } from "../shared/worktree.ts";
 import {
 	type ActivityState,
+	type AgentContract,
 	type AgentProgress,
 	type ArtifactConfig,
 	type ArtifactPaths,
@@ -71,6 +72,7 @@ import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferen
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance, resolveEffectiveAcceptance } from "../shared/acceptance.ts";
+import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
@@ -120,6 +122,7 @@ interface ParallelChainRunInput {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
 	controlConfig: ResolvedControlConfig;
+	agentContract?: AgentContract;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
 	foregroundControl?: {
@@ -313,6 +316,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const structuredRuntime = task.outputSchema
 				? createStructuredOutputRuntime(task.outputSchema, path.join(input.chainDir, "structured-output"))
 				: undefined;
+			const agentContract = task.agentContract ?? input.step.agentContract ?? input.agentContract;
 			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				context: input.contextForAgent?.(task.agent),
@@ -344,6 +348,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				modelScope: input.modelScope,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				structuredOutput: structuredRuntime,
+				agentContract,
 				acceptance: task.acceptance,
 				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined },
 				timeoutMs: input.timeoutMs,
@@ -429,6 +434,7 @@ interface ChainExecutionParams {
 	sessionFileForTask?: (agentName: string, idx?: number, modelOverride?: string) => string | undefined;
 	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
 	contextForAgent?: (agentName: string) => ContextMode;
+	modelScope?: ModelScopeConfig;
 	artifactsDir: string;
 	artifactConfig: ArtifactConfig;
 	includeProgress?: boolean;
@@ -436,6 +442,7 @@ interface ChainExecutionParams {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;
 	controlConfig: ResolvedControlConfig;
+	agentContract?: AgentContract;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
 	foregroundControl?: {
@@ -747,6 +754,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					dynamicChildren,
 					dynamicGroupStatuses,
 					controlConfig,
+					agentContract: params.agentContract,
 					onControlEvent,
 					childIntercomTarget,
 					orchestratorIntercomTarget,
@@ -810,6 +818,24 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						details: buildChainExecutionDetails(makeDetailsInput({
 							currentStepIndex: stepIndex,
 							currentFlatIndex: globalTaskIndex - step.parallel.length + failures[0]!.originalIndex,
+						})),
+					};
+				}
+				const acceptanceFailures = parallelResults
+					.map((result, originalIndex) => ({ result, originalIndex, task: step.parallel[originalIndex] }))
+					.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? step.agentContract ?? params.agentContract) && (task?.gateOn ?? step.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
+				if (acceptanceFailures.length > 0) {
+					const acceptanceSummary = acceptanceFailures
+						.map(({ result, originalIndex }) => `- Task ${originalIndex + 1} (${result.agent}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+						.join("\n");
+					const errorMsg = `Parallel step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
+					const summary = buildChainSummary(chainSteps, results, chainDir, "failed", { index: stepIndex, error: errorMsg });
+					return {
+						content: [{ type: "text", text: summary }],
+						isError: true,
+						details: buildChainExecutionDetails(makeDetailsInput({
+							currentStepIndex: stepIndex,
+							currentFlatIndex: globalTaskIndex - step.parallel.length + acceptanceFailures[0]!.originalIndex,
 						})),
 					};
 				}
@@ -889,6 +915,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						task: (step.parallel.task ?? originalTask ?? "").replace(/\{task\}/g, originalTask ?? ""),
 						mode: "chain",
 						dynamicGroup: true,
+						agentContract: step.agentContract ?? params.agentContract,
 					});
 					const groupAcceptance = await evaluateAcceptance({
 						acceptance: effectiveGroupAcceptance,
@@ -898,9 +925,10 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 							notes: "Dynamic fanout produced 0 results.",
 						}),
 						cwd: cwd ?? ctx.cwd,
+						reportOptional: isAgentContractV1(step.agentContract ?? params.agentContract),
 					});
 					dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-					const groupAcceptanceFailure = acceptanceFailureMessage(groupAcceptance);
+					const groupAcceptanceFailure = !isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance" ? acceptanceFailureMessage(groupAcceptance) : undefined;
 					if (groupAcceptanceFailure) {
 						dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 						return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
@@ -915,6 +943,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				parallel: materialized.parallel,
 				concurrency: step.concurrency,
 				failFast: step.failFast,
+				agentContract: step.agentContract,
+				gateOn: step.gateOn,
 			};
 			const parallelTemplates = materialized.parallel.map((task) => task.task ?? "{previous}");
 			const parallelBehaviors = resolveParallelBehaviors(dynamicParallelStep.parallel, agents, stepIndex, chainSkills)
@@ -969,6 +999,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				dynamicChildren,
 				dynamicGroupStatuses,
 				controlConfig,
+				agentContract: params.agentContract,
 				onControlEvent,
 				childIntercomTarget,
 				orchestratorIntercomTarget,
@@ -1036,6 +1067,22 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					})),
 				};
 			}
+			const acceptanceFailures = parallelResults
+				.map((result, originalIndex) => ({ result, originalIndex, task: dynamicParallelStep.parallel[originalIndex] }))
+				.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? dynamicParallelStep.agentContract ?? params.agentContract) && (task?.gateOn ?? dynamicParallelStep.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
+			if (acceptanceFailures.length > 0) {
+				const acceptanceSummary = acceptanceFailures
+					.map(({ result, originalIndex }) => `- Item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+					.join("\n");
+				const errorMsg = `Dynamic step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
+				dynamicGroupStatuses[stepIndex] = { status: "failed", error: errorMsg };
+				const summary = buildChainSummary(chainSteps, results, chainDir, "failed", { index: stepIndex, error: errorMsg });
+				return {
+					content: [{ type: "text", text: summary }],
+					isError: true,
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: dynamicStartIndex + acceptanceFailures[0]!.originalIndex })),
+				};
+			}
 			try {
 				await validateDynamicCollection(step.collect.outputSchema, collected);
 			} catch (error) {
@@ -1059,6 +1106,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					.join("\n"),
 				mode: "chain",
 				dynamicGroup: true,
+				agentContract: step.agentContract ?? params.agentContract,
 			});
 			const groupAcceptance = await evaluateAcceptance({
 				acceptance: effectiveGroupAcceptance,
@@ -1068,9 +1116,10 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					notes: `Dynamic fanout collected ${collected.length} result(s) into ${step.collect.as}.`,
 				}),
 				cwd: cwd ?? ctx.cwd,
+				reportOptional: isAgentContractV1(step.agentContract ?? params.agentContract),
 			});
 			dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
-			const groupAcceptanceFailure = effectiveGroupAcceptance.explicit ? acceptanceFailureMessage(groupAcceptance) : undefined;
+			const groupAcceptanceFailure = effectiveGroupAcceptance.explicit && (!isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance") ? acceptanceFailureMessage(groupAcceptance) : undefined;
 			if (groupAcceptanceFailure) {
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 				return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - dynamicParallelStep.parallel.length }));
@@ -1169,6 +1218,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const structuredRuntime = seqStep.outputSchema
 				? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
 				: undefined;
+			const agentContract = seqStep.agentContract ?? params.agentContract;
 			const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
 			if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
 				results,
@@ -1217,6 +1267,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				modelScope,
 				skills: behavior.skills === false ? [] : behavior.skills,
 				structuredOutput: structuredRuntime,
+				agentContract,
 				acceptance: seqStep.acceptance,
 				acceptanceContext: { mode: "chain" },
 				timeoutMs: params.timeoutMs,
@@ -1298,6 +1349,17 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				const summary = buildChainSummary(chainSteps, results, chainDir, "failed", {
 					index: stepIndex,
 					error: r.error || "Chain failed",
+				});
+				return {
+					content: [{ type: "text", text: summary }],
+					details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: childIndex })),
+					isError: true,
+				};
+			}
+			if (isAgentContractV1(agentContract) && seqStep.gateOn === "acceptance" && r.acceptance?.status === "rejected") {
+				const summary = buildChainSummary(chainSteps, results, chainDir, "failed", {
+					index: stepIndex,
+					error: acceptanceFailureMessage(r.acceptance) ?? "Chain acceptance gate rejected the step.",
 				});
 				return {
 					content: [{ type: "text", text: summary }],

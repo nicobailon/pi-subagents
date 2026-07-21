@@ -96,6 +96,11 @@ interface RunSyncResult {
 	outputReference?: { path: string; bytes: number; lines: number; message: string };
 	outputSaveError?: string;
 	sessionFile?: string;
+	structuredOutput?: unknown;
+	agentContract?: { version: 1 };
+	execution?: { status?: string; success?: boolean; exitCode?: number; error?: string };
+	review?: { status?: string };
+	effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean; message?: string } };
 	acceptance?: {
 		status?: string;
 		verifyRuns?: Array<{ status?: string }>;
@@ -714,6 +719,75 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.controlEvents?.map((event) => event.message), [
 			"worker completed without making edits for an implementation task",
 		]);
+	});
+
+	it("agent contract v1 reports omitted acceptance separately without injecting a prompt", async () => {
+		mockPi.onCall({ output: "Plan only" });
+		const agents = [makeAgent("worker", { tools: ["read", "write"] })];
+
+		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "v1-no-acceptance",
+			agentContract: { version: 1 },
+		});
+		const call = readCall();
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.agentContract?.version, 1);
+		assert.deepEqual(result.execution, { status: "completed", success: true, exitCode: 0 });
+		assert.equal(result.acceptance?.status, "not-required");
+		assert.equal(result.review?.status, "not-requested");
+		assert.deepEqual(result.effects, {});
+		assert.doesNotMatch(call.args.join("\n"), /## Acceptance Contract/);
+	});
+
+	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
+		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
+		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
+
+		const result = await runSync(tempDir, agents, "worker", "Summarize the fix", {
+			runId: "v1-acceptance-reject",
+			agentContract: { version: 1 },
+			acceptance: { level: "checked", criteria: ["Return required proof"] },
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(result.execution?.status, "completed");
+		assert.equal(result.execution?.success, true);
+		assert.equal(result.acceptance?.status, "rejected");
+		assert.match(result.acceptance.runtimeChecks?.[0]?.message ?? "", /not-satisfied/);
+	});
+
+	it("agent contract v1 records explicit completion guard as an effect", async () => {
+		mockPi.onCall({ output: "Plan only" });
+		const agents = [makeAgent("worker", { tools: ["read", "write"], completionGuard: true })];
+
+		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "v1-completion-effect",
+			agentContract: { version: 1 },
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.execution?.status, "completed");
+		assert.equal(result.effects?.fileMutation?.status, "missing");
+		assert.equal(result.effects?.fileMutation?.expected, true);
+		assert.equal(result.effects?.fileMutation?.attempted, false);
+	});
+
+	it("direct single tool calls support outputSchema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "structured", structuredOutput: { ok: true, note: "captured" } });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-schema",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" }, note: { type: "string" } } }, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { ok: true, note: "captured" });
 	});
 
 	it("returns captured output when the foreground executor fails an implementation run", async () => {

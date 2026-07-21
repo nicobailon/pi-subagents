@@ -42,9 +42,11 @@ export interface RunnerSubagentStep {
 		outputPath: string;
 	};
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
+	agentContract?: import("../../shared/types.ts").AgentContract;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
+	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 	toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
 }
 
@@ -68,6 +70,8 @@ export interface DynamicRunnerGroup {
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
+	agentContract?: import("../../shared/types.ts").AgentContract;
+	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;

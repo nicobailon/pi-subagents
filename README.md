@@ -1203,10 +1203,12 @@ Agent definitions are not loaded into context by default. Management actions let
 | `outputMode` | `"inline" \| "file-only"` | `inline` | Return saved output inline or as a concise saved-file reference. `file-only` requires an `output` path. |
 | `skill` | `string \| string[] \| false` | agent default | Override skills or disable all. |
 | `model` | string | agent default | Override model. |
-| `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, `toolBudget`, and `acceptance`. |
+| `outputSchema` | object | - | Require schema-valid structured output for a direct single-agent run. |
+| `agentContract` | `{ version: 1 }` | - | Opt into generic agent contract v1. Omit to keep the current/default contract. |
+| `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `outputSchema`, `reads`, `progress`, `skill`, `model`, `toolBudget`, `acceptance`, and `agentContract`. |
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
-| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, and `acceptance` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
+| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, `oracle`, and `advisor` default to `fork`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
@@ -1223,7 +1225,9 @@ Agent definitions are not loaded into context by default. Management actions let
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Override inferred gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. `reviewed` is inferred-only; explicit requests fail preflight. `false` is a deprecated shorthand for disabling gates. |
+| `acceptance` | string/object/false | inferred | Override inferred gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. `reviewed` is inferred-only; explicit requests fail preflight. `false` disables gates. With `agentContract: { version: 1 }`, omitted, `"auto"`, and `false` mean no acceptance request for that run; explicit acceptance is reported separately from execution. |
+
+`agentContract: { version: 1 }` keeps existing fields and artifacts but adds derived `execution`, `acceptance`, `review`, and `effects` projections. In v1, acceptance failures do not rewrite execution success, and an explicit completion guard reports `effects.fileMutation` instead of failing the run by itself. Chain steps default to advancing on execution under v1; set `gateOn: "acceptance"` on a v1 step or parallel task when rejected acceptance should stop the chain.
 
 As a conservative orchestration policy, do not set `turnBudget` or a hard `toolBudget` on implementation workers, fix workers, reviewers with edit authority, or other mutation-capable children. A default tool budget blocks read/search tools rather than mutation tools, but neither assistant turns nor tool-call counts measure whether a delivery slice is buildable or safe to hand off. Hard count caps remain appropriate for explicitly read-only scouts, reviewers, and validators.
 
@@ -1233,7 +1237,7 @@ Bound writer work with a narrow task and an outer `timeoutMs` or `maxRuntimeMs` 
 
 Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging. In chains, relative `output` paths are resolved inside the chain artifact directory, not the caller's CWD; later `{previous}` steps receive the same compact reference when the prior step used file-only mode. To persist chain outputs outside the temp artifact area, pass a persistent `chainDir` or use an absolute `output` path. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
 
-Sequential and parallel chain tasks accept `agent`, `task`, `phase`, `label`, `as`, `outputSchema`, `cwd`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, and `toolBudget`. Parallel tasks also accept `count`. Parallel step groups accept `parallel`, `concurrency`, `failFast`, and `worktree`. If `outputSchema` is present, the child must call `structured_output` with schema-valid JSON; prose-only completion or invalid JSON fails the step. Validated structured values are preserved on the step result, and `as` also exposes a compact text representation through `{outputs.name}`.
+Sequential and parallel chain tasks accept `agent`, `task`, `phase`, `label`, `as`, `outputSchema`, `cwd`, `output`, `outputMode`, `reads`, `progress`, `skill`, `model`, `toolBudget`, `acceptance`, `agentContract`, and v1-only `gateOn`. Parallel tasks also accept `count`. Parallel step groups accept `parallel`, `concurrency`, `failFast`, and `worktree`. If `outputSchema` is present, the child must call `structured_output` with schema-valid JSON; prose-only completion or invalid JSON fails the step. Validated structured values are preserved on the step result, and `as` also exposes a compact text representation through `{outputs.name}`.
 
 Status and control actions:
 

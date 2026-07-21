@@ -278,9 +278,9 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': expected an object.`);
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
-		"version", "sourceRunId", "agent", "sessionFile", "cwd", "model", "fallbackModels", "thinking", "tools", "extensions",
+		"version", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "fallbackModels", "thinking", "tools", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
-		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "acceptance", "sessionDir", "artifactConfig",
+		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share",
 	]);
 	for (const field of Object.keys(parsed)) {
@@ -291,6 +291,11 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (typeof parsed[field] !== "string" || !(parsed[field] as string).trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.version !== 1) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': version must be 1.`);
+	if (parsed.agentContract !== undefined) {
+		if (!parsed.agentContract || typeof parsed.agentContract !== "object" || Array.isArray(parsed.agentContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract must be an object.`);
+		const contract = parsed.agentContract as Record<string, unknown>;
+		if (contract.version !== 1 || Object.keys(contract).some((key) => key !== "version")) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': agentContract must be { version: 1 }.`);
+	}
 	if (parsed.systemPromptMode !== "append" && parsed.systemPromptMode !== "replace") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPromptMode is invalid.`);
 	if (parsed.outputMode !== "inline" && parsed.outputMode !== "file-only") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': outputMode is invalid.`);
 	for (const field of ["inheritProjectContext", "inheritSkills", "share"] as const) {
@@ -306,6 +311,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (parsed[field] !== undefined && (typeof parsed[field] !== "string" || !(parsed[field] as string).trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.completionGuard !== undefined && typeof parsed.completionGuard !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': completionGuard must be a boolean.`);
+	if (parsed.structuredOutputSchema !== undefined && (!parsed.structuredOutputSchema || typeof parsed.structuredOutputSchema !== "object" || Array.isArray(parsed.structuredOutputSchema))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': structuredOutputSchema must be an object.`);
 	if (parsed.memory !== undefined) {
 		if (!parsed.memory || typeof parsed.memory !== "object" || Array.isArray(parsed.memory)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory must be an object.`);
 		const memory = parsed.memory as Record<string, unknown>;

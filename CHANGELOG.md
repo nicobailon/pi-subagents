@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added opt-in `agentContract: { version: 1 }` runs with explicit execution, acceptance, review, and effects projections, report-optional acceptance, observational file-mutation effects, generic `outputSchema` plumbing, and `gateOn` chain controls while keeping the current/default contract unchanged. Thanks to mapleluv (@mapleluvr) for #499.
 - Added `advisor` as an `oracle`-compatible bundled agent alias for users switching between Claude Code and Pi naming. Thanks to Serhii Chernenko (@serhii-chernenko) for #552.
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 

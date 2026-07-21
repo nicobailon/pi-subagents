@@ -1,12 +1,16 @@
 import {
 	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 	type SubagentDelegationAcceptanceResult,
+	type SubagentDelegationEffectsResult,
+	type SubagentDelegationExecutionResult,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
+	type SubagentDelegationReviewResult,
 	type SubagentDelegationStatus,
 	type SubagentDelegationUpdate,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import { isAgentContractV1 } from "../runs/shared/agent-contract.ts";
 
 export interface PromptTemplateDelegationTask {
 	agent: string;
@@ -93,7 +97,11 @@ export interface PromptTemplateBridgeResult {
 			toolBudgetBlocked?: boolean;
 			savedOutputPath?: string;
 			sessionFile?: string;
+			agentContract?: AgentContract;
+			execution?: ExecutionProjection;
 			acceptance?: SubagentDelegationAcceptanceResult;
+			review?: ReviewProjection;
+			effects?: EffectsProjection;
 			usage?: { turns?: number };
 			progressSummary?: { toolCount?: number; durationMs?: number; tokens?: number };
 			skillsWarning?: string;
@@ -129,6 +137,8 @@ export interface DelegatedSubagentExecutionParams {
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
+	outputSchema?: JsonSchemaObject;
+	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
 	artifacts?: boolean;
 	async: false;
@@ -347,6 +357,8 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		skill: request.skill,
 		output: request.output,
 		outputMode: request.outputMode,
+		outputSchema: request.outputSchema,
+		agentContract: request.agentContract,
 		acceptance: request.acceptance,
 		artifacts: request.artifacts,
 		async: false,
@@ -383,7 +395,7 @@ function resolveSubagentDelegationStatus(
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
+	if (!isAgentContractV1(child.agentContract) && child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";
@@ -410,10 +422,13 @@ export function toSubagentDelegationResponse(
 		...(child?.agent ? { agent: child.agent } : {}),
 		...(child?.model ? { model: child.model } : {}),
 		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
+		...(child?.execution ? { execution: child.execution as SubagentDelegationExecutionResult } : {}),
 		...(child?.finalOutput ? { output: child.finalOutput } : {}),
 		...(child?.savedOutputPath ? { outputPath: child.savedOutputPath } : {}),
 		...(child?.sessionFile ? { sessionFile: child.sessionFile } : {}),
 		...(child?.acceptance ? { acceptance: { status: child.acceptance.status, explicit: child.acceptance.explicit } } : {}),
+		...(child?.review ? { review: child.review as SubagentDelegationReviewResult } : {}),
+		...(child?.effects ? { effects: child.effects as SubagentDelegationEffectsResult } : {}),
 		...(typeof child?.usage?.turns === "number" ? { turns: child.usage.turns } : {}),
 		...(typeof progress?.toolCount === "number" ? { toolCount: progress.toolCount } : {}),
 		...(typeof progress?.durationMs === "number" ? { durationMs: progress.durationMs } : {}),

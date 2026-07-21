@@ -247,6 +247,32 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
 	});
 
+	it("top-level parallel tasks support outputSchema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "First structured", output: "first", structuredOutput: { ok: true, item: "first" } });
+		mockPi.onCall({ matchArgIncludes: "Second structured", output: "second", structuredOutput: { ok: true, item: "second" } });
+		const executor = makeExecutor();
+
+		const result = await executor.execute(
+			"parallel-schema",
+			{
+				tasks: [
+					{ agent: "echo", task: "First structured", outputSchema: { type: "object", required: ["ok", "item"], properties: { ok: { type: "boolean" }, item: { type: "string" } } } },
+					{ agent: "echo", task: "Second structured", outputSchema: { type: "object", required: ["ok", "item"], properties: { ok: { type: "boolean" }, item: { type: "string" } } } },
+				],
+				acceptance: false,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details?.results?.map((item: { structuredOutput?: unknown }) => item.structuredOutput), [
+			{ ok: true, item: "first" },
+			{ ok: true, item: "second" },
+		]);
+	});
+
 	it("top-level parallel preserves completed siblings and marks timed-out children", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Slow review", delay: 10000 });
 		mockPi.onCall({ matchArgIncludes: "Fast review", output: "fast done" });

@@ -6,6 +6,7 @@ import type {
 	AcceptanceConfig,
 	AcceptanceEvidenceKind,
 	AcceptanceInput,
+	AgentContract,
 	AcceptanceLedger,
 	AcceptanceLevel,
 	AcceptanceReport,
@@ -20,6 +21,7 @@ import type {
 	SingleResult,
 	SubagentRunMode,
 } from "../../shared/types.ts";
+import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
@@ -324,10 +326,32 @@ export function resolveEffectiveAcceptance(input: {
 	async?: boolean;
 	dynamic?: boolean;
 	dynamicGroup?: boolean;
+	agentContract?: AgentContract;
 }): ResolvedAcceptanceConfig {
 	const explicit = normalizeAcceptanceInput(input.explicit);
-	const inferred = inferLevel(input);
 	const explicitLevel = normalizeLevel(explicit.level);
+	if (isAgentContractV1(input.agentContract)) {
+		const level = explicitAcceptanceCanDisable(explicit) || explicitLevel === "auto"
+			? "none"
+			: explicitLevel;
+		const evidence = unique(explicit.evidence ?? []);
+		const criteria = normalizeCriteria(
+			explicit.criteria as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined,
+			evidence,
+		);
+		return {
+			level,
+			explicit: input.explicit !== undefined,
+			inferredReason: [],
+			criteria,
+			evidence,
+			verify: explicit.verify ?? [],
+			review: explicit.review,
+			stopRules: explicit.stopRules ?? [],
+			reason: explicit.reason,
+		};
+	}
+	const inferred = inferLevel(input);
 	const level = explicitAcceptanceCanDisable(explicit)
 		? "none"
 		: explicitLevel === "auto"
@@ -355,8 +379,13 @@ export function resolveEffectiveAcceptance(input: {
 	};
 }
 
-export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): string {
+function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): boolean {
+	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
+}
+
+export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean } = {}): string {
 	if (acceptance.level === "none") return "";
+	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
 	const lines = [
 		"",
 		"## Acceptance Contract",
@@ -1029,6 +1058,7 @@ export async function evaluateAcceptance(input: {
 	reviewResult?: AcceptanceReviewResult;
 	signal?: AbortSignal;
 	abortMessage?: string;
+	reportOptional?: boolean;
 }): Promise<AcceptanceLedger> {
 	const acceptance = input.acceptance;
 	const ledger: AcceptanceLedger = {
@@ -1050,26 +1080,30 @@ export async function evaluateAcceptance(input: {
 				: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
 		})()
 		: parseAcceptanceReportSources(input.output, input.fileOutput);
+	const needsReport = acceptanceRequiresChildReport(acceptance);
 	if (parsed.report) {
 		ledger.childReport = parsed.report;
 		ledger.status = "attested";
-	} else {
+	} else if (!input.reportOptional || needsReport || parsed.error !== ACCEPTANCE_REPORT_NOT_FOUND) {
 		ledger.childReportParseError = parsed.error;
 		ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
-		ledger.status = "rejected";
-		return ledger;
-	}
-
-	if (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.checked) {
-		ledger.runtimeChecks = [
-			...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
-			...runStructuralChecks(acceptance, parsed.report, input.cwd),
-		];
-		if (ledger.runtimeChecks.some((check) => check.status === "failed")) {
+		if (!input.reportOptional) {
 			ledger.status = "rejected";
 			return ledger;
 		}
-		ledger.status = "checked";
+	} else {
+		ledger.childReportParseError = parsed.error;
+	}
+
+	if (parsed.report && LEVEL_RANK[acceptance.level] >= LEVEL_RANK.checked) {
+		ledger.runtimeChecks = [
+			...ledger.runtimeChecks,
+			...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
+			...runStructuralChecks(acceptance, parsed.report, input.cwd),
+		];
+		if (!ledger.runtimeChecks.some((check) => check.status === "failed")) {
+			ledger.status = "checked";
+		}
 	}
 
 	if (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.verified && (acceptance.level === "verified" || acceptance.verify.length > 0)) {
@@ -1087,7 +1121,15 @@ export async function evaluateAcceptance(input: {
 			ledger.status = "rejected";
 			return ledger;
 		}
-		ledger.status = "verified";
+		if (!ledger.runtimeChecks.some((check) => check.status === "failed")) ledger.status = "verified";
+	}
+
+	if (ledger.runtimeChecks.some((check) => check.status === "failed")) {
+		ledger.status = "rejected";
+		return ledger;
+	}
+	if (ledger.status === "claimed" && acceptance.level !== "reviewed") {
+		ledger.status = acceptance.level === "verified" ? "verified" : acceptance.level;
 	}
 
 	if (acceptance.level === "reviewed") {
