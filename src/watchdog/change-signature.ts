@@ -5,15 +5,29 @@ import * as path from "node:path";
 
 const IGNORED_CHANGE_PREFIXES = [".pi-subagents/", "tmp/", "node_modules/"];
 const IGNORED_CHANGE_PATHS = new Set([".pi-subagents", "tmp", "node_modules"]);
+const IGNORED_CHANGE_SEGMENTS = new Set([".git", ".pi-subagents", "node_modules"]);
 
 const DEFAULT_MAX_HASH_FILE_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_HASH_TOTAL_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_HASH_ENTRIES = 2_000;
 
-// Read at call time (not module load) so PI_SUBAGENTS_MAX_HASH_FILE_BYTES can be
-// overridden by tests after this module is imported. Falls back to the 64 MiB
-// default when the env value is missing, non-numeric, non-finite, or <= 0.
+function positiveEnvNumber(name: string, fallback: number): number {
+	const parsed = Number(process.env[name]);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+// Read at call time (not module load) so tests can override env guards after
+// this module is imported.
 function maxHashFileBytes(): number {
-	const parsed = Number(process.env.PI_SUBAGENTS_MAX_HASH_FILE_BYTES);
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_HASH_FILE_BYTES;
+	return positiveEnvNumber("PI_SUBAGENTS_MAX_HASH_FILE_BYTES", DEFAULT_MAX_HASH_FILE_BYTES);
+}
+
+function maxHashTotalBytes(): number {
+	return positiveEnvNumber("PI_SUBAGENTS_MAX_HASH_TOTAL_BYTES", DEFAULT_MAX_HASH_TOTAL_BYTES);
+}
+
+function maxHashEntries(): number {
+	return positiveEnvNumber("PI_SUBAGENTS_MAX_HASH_ENTRIES", DEFAULT_MAX_HASH_ENTRIES);
 }
 
 export interface WatchdogRepoChangeSignature {
@@ -34,7 +48,22 @@ function normalizeRelPath(value: string): string {
 
 function ignoredRelPath(relPath: string): boolean {
 	const normalized = normalizeRelPath(relPath);
-	return IGNORED_CHANGE_PATHS.has(normalized) || IGNORED_CHANGE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+	return IGNORED_CHANGE_PATHS.has(normalized)
+		|| IGNORED_CHANGE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+		|| normalized.split("/").some((segment) => IGNORED_CHANGE_SEGMENTS.has(segment));
+}
+
+interface HashBudget {
+	entries: number;
+	bytes: number;
+	maxEntries: number;
+	maxBytes: number;
+}
+
+function useHashEntryBudget(budget: HashBudget): boolean {
+	if (budget.entries >= budget.maxEntries) return false;
+	budget.entries++;
+	return true;
 }
 
 function hashFile(filePath: string): string {
@@ -45,13 +74,14 @@ function largeFileHash(stat: fs.Stats): string {
 	return "large:" + stat.size + ":" + Math.floor(stat.mtimeMs);
 }
 
-function hashFileEntry(normalized: string, fullPath: string, stat: fs.Stats): unknown {
+function hashFileEntry(normalized: string, fullPath: string, stat: fs.Stats, budget: HashBudget): unknown {
 	let hash: string;
-	if (stat.size > maxHashFileBytes()) {
+	if (stat.size > maxHashFileBytes() || budget.bytes + stat.size > budget.maxBytes) {
 		hash = largeFileHash(stat);
 	} else {
 		try {
 			hash = hashFile(fullPath);
+			budget.bytes += stat.size;
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			// A file racing away between lstat and read: mirror the lstat ENOENT path.
@@ -67,8 +97,20 @@ function hashFileEntry(normalized: string, fullPath: string, stat: fs.Stats): un
 	return { path: normalized, state: "file", mode: stat.mode & 0o777, size: stat.size, hash };
 }
 
-function hashPath(root: string, relPath: string): unknown {
+function gitWorktreeEntry(normalized: string, fullPath: string): unknown {
+	const status = git(fullPath, ["status", "--porcelain=v1", "-z", "--untracked-files=no"]);
+	return {
+		path: normalized,
+		state: "git-worktree",
+		head: git(fullPath, ["rev-parse", "HEAD"])?.trim(),
+		dirty: Boolean(status),
+		statusKey: status ? createHash("sha256").update(status).digest("hex") : undefined,
+	};
+}
+
+function hashPath(root: string, relPath: string, budget: HashBudget): unknown {
 	const normalized = normalizeRelPath(relPath);
+	if (!useHashEntryBudget(budget)) return { path: normalized, state: "skipped", reason: "entry-limit" };
 	const fullPath = path.join(root, normalized);
 	let stat: fs.Stats;
 	try {
@@ -81,22 +123,20 @@ function hashPath(root: string, relPath: string): unknown {
 		return { path: normalized, state: "symlink", target: fs.readlinkSync(fullPath) };
 	}
 	if (stat.isDirectory()) {
-		if (fs.existsSync(path.join(fullPath, ".git"))) {
-			const changes = computeWatchdogRepoChangeSignature(fullPath);
-			return {
-				path: normalized,
-				state: "git-worktree",
-				head: git(fullPath, ["rev-parse", "HEAD"])?.trim(),
-				changes: changes ? { key: changes.key, changedPaths: changes.changedPaths } : undefined,
-			};
-		}
+		if (fs.existsSync(path.join(fullPath, ".git"))) return gitWorktreeEntry(normalized, fullPath);
 		const entries = fs.readdirSync(fullPath)
 			.map((entry) => normalizeRelPath(path.posix.join(normalized, entry)))
 			.filter((entry) => !ignoredRelPath(entry))
 			.sort();
-		return { path: normalized, state: "dir", entries: entries.map((entry) => hashPath(root, entry)) };
+		const remainingEntries = Math.max(0, budget.maxEntries - budget.entries);
+		const selectedEntries = entries.slice(0, remainingEntries);
+		const childEntries = selectedEntries.map((entry) => hashPath(root, entry, budget));
+		if (selectedEntries.length < entries.length) {
+			childEntries.push({ path: normalized, state: "skipped-children", reason: "entry-limit", count: entries.length - selectedEntries.length });
+		}
+		return { path: normalized, state: "dir", entries: childEntries };
 	}
-	if (stat.isFile()) return hashFileEntry(normalized, fullPath, stat);
+	if (stat.isFile()) return hashFileEntry(normalized, fullPath, stat, budget);
 	return { path: normalized, state: "other", mode: stat.mode };
 }
 
@@ -127,10 +167,11 @@ function buildRepoChangeSignature(root: string, statusOutput: string): WatchdogR
 		.filter((entry) => entry.paths.length > 0)
 		.sort((a, b) => `${a.status} ${a.paths.join("\0")}`.localeCompare(`${b.status} ${b.paths.join("\0")}`));
 	const changedPaths = [...new Set(entries.flatMap((entry) => entry.paths))].sort();
+	const budget: HashBudget = { entries: 0, bytes: 0, maxEntries: maxHashEntries(), maxBytes: maxHashTotalBytes() };
 	const payload = entries.map((entry) => ({
 		status: entry.status,
 		paths: entry.paths,
-		content: entry.paths.map((relPath) => hashPath(root, relPath)),
+		content: entry.paths.map((relPath) => hashPath(root, relPath, budget)),
 	}));
 	const key = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 	return { root, key, changedPaths };

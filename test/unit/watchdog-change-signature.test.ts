@@ -57,7 +57,7 @@ function createRepo(prefix: string): string {
 }
 
 describe("watchdog change signature", () => {
-	it("hashes modified submodules through Git without traversing ignored dependencies", (t) => {
+	it("summarizes modified submodules as opaque Git worktrees", (t) => {
 		const childSource = createRepo("watchdog-child-");
 		const parent = createRepo("watchdog-parent-");
 		const checkout = path.join(parent, "vendor", "child");
@@ -74,6 +74,8 @@ describe("watchdog change signature", () => {
 
 		git(parent, ["-c", "protocol.file.allow=always", "submodule", "add", childSource, "vendor/child"]);
 		git(parent, ["commit", "-am", "add submodule"]);
+		git(checkout, ["config", "user.email", "watchdog@example.com"]);
+		git(checkout, ["config", "user.name", "Watchdog Tests"]);
 
 		fs.mkdirSync(path.dirname(ignoredFile), { recursive: true });
 		fs.writeFileSync(ignoredFile, "ignored one\n", "utf-8");
@@ -87,8 +89,13 @@ describe("watchdog change signature", () => {
 		assert.equal(ignoredOnly?.key, first?.key);
 
 		fs.writeFileSync(path.join(checkout, "tracked.txt"), "three\n", "utf-8");
-		const trackedChange = computeWatchdogRepoChangeSignature(parent);
-		assert.notEqual(trackedChange?.key, first?.key);
+		const stillDirty = computeWatchdogRepoChangeSignature(parent);
+		assert.equal(stillDirty?.key, first?.key, "dirty submodule content is intentionally opaque");
+
+		git(checkout, ["add", "tracked.txt"]);
+		git(checkout, ["commit", "-m", "update tracked"]);
+		const headChange = computeWatchdogRepoChangeSignature(parent);
+		assert.notEqual(headChange?.key, first?.key, "submodule HEAD changes remain visible");
 	});
 
 	function setThreshold(bytes: number, t: { after: (fn: () => void) => void }): void {
@@ -97,6 +104,24 @@ describe("watchdog change signature", () => {
 		t.after(() => {
 			if (previous === undefined) delete process.env.PI_SUBAGENTS_MAX_HASH_FILE_BYTES;
 			else process.env.PI_SUBAGENTS_MAX_HASH_FILE_BYTES = previous;
+		});
+	}
+
+	function setTotalThreshold(bytes: number, t: { after: (fn: () => void) => void }): void {
+		const previous = process.env.PI_SUBAGENTS_MAX_HASH_TOTAL_BYTES;
+		process.env.PI_SUBAGENTS_MAX_HASH_TOTAL_BYTES = String(bytes);
+		t.after(() => {
+			if (previous === undefined) delete process.env.PI_SUBAGENTS_MAX_HASH_TOTAL_BYTES;
+			else process.env.PI_SUBAGENTS_MAX_HASH_TOTAL_BYTES = previous;
+		});
+	}
+
+	function setEntryThreshold(entries: number, t: { after: (fn: () => void) => void }): void {
+		const previous = process.env.PI_SUBAGENTS_MAX_HASH_ENTRIES;
+		process.env.PI_SUBAGENTS_MAX_HASH_ENTRIES = String(entries);
+		t.after(() => {
+			if (previous === undefined) delete process.env.PI_SUBAGENTS_MAX_HASH_ENTRIES;
+			else process.env.PI_SUBAGENTS_MAX_HASH_ENTRIES = previous;
 		});
 	}
 
@@ -123,6 +148,52 @@ describe("watchdog change signature", () => {
 		fs.utimesSync(filePath, laterMtime, laterMtime);
 		const afterMtime = computeWatchdogRepoChangeSignature(repo);
 		assert.notEqual(afterMtime?.key, sig?.key, "mtime-only change must alter the key for large files");
+	});
+
+	it("uses metadata markers after the total content hash budget", (t) => {
+		const repo = createRepo("watchdog-total-budget-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+		setTotalThreshold(10, t);
+
+		const aPath = path.join(repo, "a.txt");
+		const bPath = path.join(repo, "b.txt");
+		const mtime = new Date(1_600_000_000_000);
+		fs.writeFileSync(aPath, "aaaaaaaa");
+		fs.writeFileSync(bPath, "bbbbbbbb");
+		fs.utimesSync(aPath, mtime, mtime);
+		fs.utimesSync(bPath, mtime, mtime);
+
+		const first = computeWatchdogRepoChangeSignature(repo);
+		assert.ok(first, "expected a signature");
+
+		fs.writeFileSync(bPath, "cccccccc");
+		fs.utimesSync(bPath, mtime, mtime);
+		assert.equal(computeWatchdogRepoChangeSignature(repo)?.key, first?.key, "over-budget files use size+mtime metadata instead of content");
+
+		fs.writeFileSync(aPath, "dddddddd");
+		fs.utimesSync(aPath, mtime, mtime);
+		assert.notEqual(computeWatchdogRepoChangeSignature(repo)?.key, first?.key, "within-budget files are still content hashed");
+	});
+
+	it("uses skipped markers after the entry budget", (t) => {
+		const repo = createRepo("watchdog-entry-budget-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+		setEntryThreshold(3, t);
+
+		const dir = path.join(repo, "files");
+		fs.mkdirSync(dir);
+		for (const name of ["a.txt", "b.txt", "c.txt", "d.txt"]) {
+			fs.writeFileSync(path.join(dir, name), `${name}\n`, "utf-8");
+		}
+
+		const first = computeWatchdogRepoChangeSignature(repo);
+		assert.ok(first, "expected a signature");
+
+		fs.writeFileSync(path.join(dir, "d.txt"), "changed d\n", "utf-8");
+		assert.equal(computeWatchdogRepoChangeSignature(repo)?.key, first?.key, "over-budget entries are summarized instead of hashed individually");
+
+		fs.writeFileSync(path.join(dir, "a.txt"), "changed a\n", "utf-8");
+		assert.notEqual(computeWatchdogRepoChangeSignature(repo)?.key, first?.key, "within-budget entries are still content hashed");
 	});
 
 	it("produces deterministic keys keyed on size and mtime for large files", (t) => {
@@ -165,6 +236,26 @@ describe("watchdog change signature", () => {
 		const sig = computeWatchdogRepoChangeSignature(repo);
 		assert.ok(sig, "expected a signature");
 		assert.ok(sig?.changedPaths.includes("huge.bin"));
+	});
+
+	it("ignores node_modules below changed directories", (t) => {
+		const repo = createRepo("watchdog-nested-ignored-");
+		t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+		const subdir = path.join(repo, "nested");
+		fs.mkdirSync(path.join(subdir, "node_modules"), { recursive: true });
+		fs.writeFileSync(path.join(subdir, "keep.txt"), "one\n", "utf-8");
+		fs.writeFileSync(path.join(subdir, "node_modules", "cache.bin"), "ignored one\n", "utf-8");
+
+		const first = computeWatchdogRepoChangeSignature(repo);
+		assert.ok(first?.changedPaths.includes("nested/keep.txt"));
+		assert.ok(!first?.changedPaths.some((relPath) => relPath.includes("node_modules")));
+
+		fs.writeFileSync(path.join(subdir, "node_modules", "cache.bin"), "ignored two\n", "utf-8");
+		assert.equal(computeWatchdogRepoChangeSignature(repo)?.key, first?.key);
+
+		fs.writeFileSync(path.join(subdir, "keep.txt"), "two\n", "utf-8");
+		assert.notEqual(computeWatchdogRepoChangeSignature(repo)?.key, first?.key);
 	});
 
 	it("applies the threshold guard recursively into untracked subdirectories", (t) => {
