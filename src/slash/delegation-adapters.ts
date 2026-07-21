@@ -387,9 +387,9 @@ function resolveSubagentDelegationStatus(
 	const child = result.details?.results?.[0];
 	if (!child) return "failed";
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
-	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
 	if (child?.structuredOutputFailed) return "structured_output_failed";
+	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";

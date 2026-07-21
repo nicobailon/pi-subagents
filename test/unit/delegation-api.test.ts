@@ -355,6 +355,7 @@ describe("public subagent delegation contract", () => {
 			[{ stopped: true }, "interrupted"],
 			[{ turnBudgetExceeded: true }, "turn_budget_exhausted"],
 			[{ toolBudgetBlocked: true }, "tool_budget_exhausted"],
+			[{ turnBudgetExceeded: true, structuredOutputFailed: true }, "structured_output_failed"],
 			[{ acceptance: { status: "rejected", explicit: true } }, "acceptance_failed"],
 			[{ acceptance: { status: "rejected", explicit: false } }, "completed"],
 			[{ exitCode: 1, error: "failed" }, "failed"],

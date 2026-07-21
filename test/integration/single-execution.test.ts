@@ -2471,6 +2471,54 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(mixed.turnBudgetExceeded, true);
 		assert.equal(mixed.turnBudget?.outcome, "exceeded");
+
+		fs.rmSync(outputPath, { force: true });
+		mockPi.onCall({
+			steps: [
+				{
+					jsonl: [
+						{
+							type: "message_end",
+							message: {
+								role: "assistant",
+								content: [{ type: "toolCall", name: "structured_output", arguments: { value: { status: "wrong" } } }],
+								model: "mock/test-model",
+								stopReason: "toolUse",
+								usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+							},
+						},
+						{ type: "tool_execution_start", toolName: "structured_output", args: { value: { status: "wrong" } } },
+					],
+				},
+				{
+					jsonl: [
+						{
+							type: "tool_result_end",
+							message: {
+								role: "toolResult",
+								toolName: "structured_output",
+								isError: true,
+								content: [{ type: "text", text: "Structured output validation failed: status must be ok" }],
+							},
+						},
+						{ type: "tool_execution_end", toolName: "structured_output" },
+					],
+				},
+				{ delay: 500, jsonl: [{ type: "message_end", message: mockAssistantMessage("The structured output was rejected.", "stop") }] },
+			],
+		});
+
+		const invalid = await runSync(tempDir, agents, "reviewer", "Return a valid structured result at the boundary.", {
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			enforceHardTurnLimit: true,
+			structuredOutput: { schema, schemaPath, outputPath },
+			runId: "foreground-invalid-structured-output-hard-boundary",
+		});
+
+		assert.equal(invalid.structuredOutputFailed, true);
+		assert.equal(invalid.turnBudgetExceeded, undefined);
+		assert.equal(invalid.usage.turns, 1);
+		assert.match(invalid.error ?? "", /Structured output validation failed/);
 	});
 
 	it("preserves a hard tool-budget block delivered as a Pi message_end tool result", async () => {

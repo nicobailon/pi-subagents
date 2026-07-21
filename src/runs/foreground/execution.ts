@@ -338,6 +338,8 @@ async function runSingleAttempt(
 		let turnBudgetSoftReached = false;
 		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
 		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
+		let contractFailureTerminationTimer: NodeJS.Timeout | undefined;
+		let contractFailureHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
 		const clearTurnBudgetTimers = () => {
 			if (turnBudgetTerminationTimer) {
@@ -361,6 +363,16 @@ async function runSingleAttempt(
 			if (timeoutHardKillTimer) {
 				clearTimeout(timeoutHardKillTimer);
 				timeoutHardKillTimer = undefined;
+			}
+		};
+		const clearContractFailureTimers = () => {
+			if (contractFailureTerminationTimer) {
+				clearTimeout(contractFailureTerminationTimer);
+				contractFailureTerminationTimer = undefined;
+			}
+			if (contractFailureHardKillTimer) {
+				clearTimeout(contractFailureHardKillTimer);
+				contractFailureHardKillTimer = undefined;
 			}
 		};
 
@@ -484,6 +496,7 @@ async function runSingleAttempt(
 			clearStdioGuard();
 			clearTimeoutTimers();
 			clearTurnBudgetTimers();
+			clearContractFailureTimers();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
@@ -585,6 +598,29 @@ async function runSingleAttempt(
 				trySignalChild(proc, "SIGKILL");
 			}, 4000);
 			turnBudgetHardKillTimer.unref?.();
+		};
+		const requestStructuredOutputFailure = (message: string) => {
+			if (!options.structuredOutput || result.structuredOutputFailed || processClosed || settled || detached) return;
+			result.structuredOutputFailed = true;
+			result.error = message || "Structured output validation failed.";
+			result.finalOutput = result.error;
+			result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
+			result.structuredOutputPath = options.structuredOutput.outputPath;
+			progress.status = "failed";
+			progress.error = result.error;
+			progress.durationMs = Date.now() - startTime;
+			fireUpdate();
+			trySignalChild(proc, "SIGINT");
+			contractFailureTerminationTimer = setTimeout(() => {
+				if (processClosed || settled || detached) return;
+				trySignalChild(proc, "SIGTERM");
+			}, 1000);
+			contractFailureTerminationTimer.unref?.();
+			contractFailureHardKillTimer = setTimeout(() => {
+				if (processClosed || settled || detached) return;
+				trySignalChild(proc, "SIGKILL");
+			}, 4000);
+			contractFailureHardKillTimer.unref?.();
 		};
 
 		const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean, toolWorkActiveOrStarting: boolean) => {
@@ -743,6 +779,10 @@ async function runSingleAttempt(
 						result.toolBudgetBlocked = true;
 						result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, pendingToolResult.tool);
 					}
+					if (pendingToolResult?.tool === "structured_output"
+						&& ((evt.message as { isError?: boolean }).isError === true || resultText.includes("Structured output validation failed"))) {
+						requestStructuredOutputFailure(resultText);
+					}
 					pendingToolResult = undefined;
 				}
 				if (evt.message.role === "assistant") {
@@ -796,6 +836,10 @@ async function runSingleAttempt(
 				appendRecentOutput(progress, resultText.split("\n").slice(-10));
 				const toolSnapshot = pendingToolResult;
 				pendingToolResult = undefined;
+				if (toolSnapshot?.tool === "structured_output"
+					&& ((evt.message as { isError?: boolean }).isError === true || resultText.includes("Structured output validation failed"))) {
+					requestStructuredOutputFailure(resultText);
+				}
 				if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
 					recordMutatingFailure(mutatingFailures, {
 						tool: toolSnapshot.tool,
