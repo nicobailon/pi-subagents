@@ -357,13 +357,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		mockPi.onCall({ output: "Structured output captured.", structuredOutput: { status: "ok" } });
 		const valid = await executor.execute(
 			"structured-valid",
-			{ agent: "echo", task: "Return the contract result", outputSchema: schema },
+			{ agent: "echo", task: "Return the contract result", outputSchema: schema, artifacts: false },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 		assert.equal(valid.isError, undefined);
 		assert.deepEqual(valid.details?.results?.[0]?.structuredOutput, { status: "ok" });
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents")), false, "artifacts:false must not leave structured-output files in the repository");
 
 		mockPi.onCall({ output: "prose only" });
 		const missing = await executor.execute(

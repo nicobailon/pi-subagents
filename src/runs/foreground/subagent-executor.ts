@@ -46,7 +46,7 @@ import { formatControlIntercomMessage, formatControlNoticeMessage, resolveContro
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
+import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -3155,50 +3155,55 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	const structuredOutput = params.outputSchema
-		? createStructuredOutputRuntime(params.outputSchema, path.join(artifactsDir, "structured-output"))
+		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output") : undefined)
 		: undefined;
-	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
-		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
-		context: data.contextPolicy.contextForAgent(params.agent!),
-		cwd: effectiveCwd,
-		signal,
-		interruptSignal: interruptController.signal,
-		allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
-		intercomEvents: deps.pi.events,
-		runId,
-		sessionDir: sessionDirForIndex(0),
-		sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
-		share: shareEnabled,
-		artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-		artifactConfig,
-		maxOutput: params.maxOutput,
-		outputPath,
-		outputMode: effectiveOutputMode,
-		maxSubagentDepth,
-		waitToolEnabled: deps.waitToolEnabled,
-		onUpdate: forwardSingleUpdate,
-		controlConfig,
-		onControlEvent,
-		intercomSessionName: childIntercomTarget,
-		orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-		nestedRoute: foregroundControl?.nestedRoute,
-		index: 0,
-		modelOverride,
-		thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
-		availableModels,
-		preferredModelProvider: currentProvider,
-		modelScope: data.modelScope,
-		skills: effectiveSkills,
-		acceptance: params.acceptance,
-		acceptanceContext: { mode: "single" },
-		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
-		timeoutMs: data.timeoutMs,
-		deadlineAt,
-		turnBudget: data.turnBudget,
-		enforceHardTurnLimit: params.enforceHardTurnLimit,
-		toolBudget: effectiveToolBudget.toolBudget,
-		structuredOutput,
-	});
+	let r: Awaited<ReturnType<typeof runSync>>;
+	try {
+		r = await runSync(ctx.cwd, agents, params.agent!, task, {
+			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			context: data.contextPolicy.contextForAgent(params.agent!),
+			cwd: effectiveCwd,
+			signal,
+			interruptSignal: interruptController.signal,
+			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
+			intercomEvents: deps.pi.events,
+			runId,
+			sessionDir: sessionDirForIndex(0),
+			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
+			share: shareEnabled,
+			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+			artifactConfig,
+			maxOutput: params.maxOutput,
+			outputPath,
+			outputMode: effectiveOutputMode,
+			maxSubagentDepth,
+			waitToolEnabled: deps.waitToolEnabled,
+			onUpdate: forwardSingleUpdate,
+			controlConfig,
+			onControlEvent,
+			intercomSessionName: childIntercomTarget,
+			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
+			nestedRoute: foregroundControl?.nestedRoute,
+			index: 0,
+			modelOverride,
+			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
+			availableModels,
+			preferredModelProvider: currentProvider,
+			modelScope: data.modelScope,
+			skills: effectiveSkills,
+			acceptance: params.acceptance,
+			acceptanceContext: { mode: "single" },
+			onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
+			timeoutMs: data.timeoutMs,
+			deadlineAt,
+			turnBudget: data.turnBudget,
+			enforceHardTurnLimit: params.enforceHardTurnLimit,
+			toolBudget: effectiveToolBudget.toolBudget,
+			structuredOutput,
+		});
+	} finally {
+		if (!artifactConfig.enabled) cleanupStructuredOutputRuntime(structuredOutput);
+	}
 	if (foregroundControl?.currentIndex === 0) {
 		foregroundControl.interrupt = undefined;
 		foregroundControl.currentActivityState = r.progress?.activityState;
