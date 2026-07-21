@@ -341,6 +341,7 @@ async function runSingleAttempt(
 		let contractFailureTerminationTimer: NodeJS.Timeout | undefined;
 		let contractFailureHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
+		let abortHardKillTimer: NodeJS.Timeout | undefined;
 		const clearTurnBudgetTimers = () => {
 			if (turnBudgetTerminationTimer) {
 				clearTimeout(turnBudgetTerminationTimer);
@@ -373,6 +374,12 @@ async function runSingleAttempt(
 			if (contractFailureHardKillTimer) {
 				clearTimeout(contractFailureHardKillTimer);
 				contractFailureHardKillTimer = undefined;
+			}
+		};
+		const clearAbortHardKillTimer = () => {
+			if (abortHardKillTimer) {
+				clearTimeout(abortHardKillTimer);
+				abortHardKillTimer = undefined;
 			}
 		};
 
@@ -497,6 +504,7 @@ async function runSingleAttempt(
 			clearTimeoutTimers();
 			clearTurnBudgetTimers();
 			clearContractFailureTimers();
+			clearAbortHardKillTimer();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
@@ -579,6 +587,7 @@ async function runSingleAttempt(
 			if (!budget || result.timedOut || result.turnBudgetExceeded || interruptedByControl || processClosed || settled || detached) return;
 			const message = turnBudgetExceededMessage(budget, turnCount);
 			result.turnBudgetExceeded = true;
+			clearTimeoutTimers();
 			result.wrapUpRequested = true;
 			result.turnBudget = turnBudgetState(budget, turnCount, true);
 			result.error = message;
@@ -600,8 +609,9 @@ async function runSingleAttempt(
 			turnBudgetHardKillTimer.unref?.();
 		};
 		const requestStructuredOutputFailure = (message: string) => {
-			if (!options.structuredOutput || result.structuredOutputFailed || processClosed || settled || detached) return;
+			if (!options.structuredOutput || result.structuredOutputFailed || result.timedOut || processClosed || settled || detached) return;
 			result.structuredOutputFailed = true;
+			clearTimeoutTimers();
 			result.error = message || "Structured output validation failed.";
 			result.finalOutput = result.error;
 			result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
@@ -878,7 +888,7 @@ async function runSingleAttempt(
 
 		if (attemptTimeout) {
 			timeoutTimer = setTimeout(() => {
-				if (processClosed || settled || detached || interruptedByControl) return;
+				if (processClosed || settled || detached || interruptedByControl || result.structuredOutputFailed || result.turnBudgetExceeded) return;
 				result.timedOut = true;
 				result.error = attemptTimeout.message;
 				result.finalOutput = attemptTimeout.message;
@@ -935,6 +945,7 @@ async function runSingleAttempt(
 		proc.on("exit", () => {
 			childExited = true;
 			clearFinalDrainTimers();
+			clearAbortHardKillTimer();
 		});
 		proc.on("close", (code, signal) => {
 			clearFinalDrainTimers();
@@ -1024,8 +1035,13 @@ async function runSingleAttempt(
 		if (options.signal) {
 			const kill = () => {
 				if (processClosed || detached) return;
-				proc.kill("SIGTERM");
-				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
+				trySignalChild(proc, "SIGTERM");
+				if (abortHardKillTimer) return;
+				abortHardKillTimer = setTimeout(() => {
+					if (childExited || processClosed || settled || detached) return;
+					trySignalChild(proc, "SIGKILL");
+				}, 3000);
+				abortHardKillTimer.unref?.();
 			};
 			if (options.signal.aborted) kill();
 			else {

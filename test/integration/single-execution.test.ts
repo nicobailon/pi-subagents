@@ -12,6 +12,7 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -26,6 +27,14 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import {
+	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_STARTED_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+} from "../../src/api/delegation.ts";
+import { registerPromptTemplateDelegationBridge } from "../../src/slash/prompt-template-bridge.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
@@ -437,6 +446,65 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { status: "ok" });
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents")), false, "cleanup must run after the attached child exits");
+	});
+
+	it("force-kills a cancelled schema-bound public child that ignores SIGTERM and emits one terminal response", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const eventBus = createEventBus();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), eventBus);
+		const structuredTempDirs = () => new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith("pi-subagent-structured-")));
+		const beforeDirs = structuredTempDirs();
+		const started: unknown[] = [];
+		const terminals: unknown[] = [];
+		let executionResult: ExecutorToolResult | undefined;
+		let cancelEmitted = false;
+		eventBus.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => started.push(payload));
+		eventBus.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
+			if (cancelEmitted || (payload as { currentTool?: unknown }).currentTool !== "read") return;
+			cancelEmitted = true;
+			eventBus.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, { version: 1, requestId: "cancel-stubborn-structured" });
+		});
+		const terminalPromise = new Promise<unknown>((resolve) => {
+			eventBus.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+				terminals.push(payload);
+				resolve(payload);
+			});
+		});
+		const bridge = registerPromptTemplateDelegationBridge({
+			events: eventBus,
+			getContext: () => makeMinimalCtx(tempDir),
+			execute: async (requestId, params, signal, _ctx, onUpdate) => {
+				executionResult = await executor.execute(requestId, params, signal, onUpdate, makeMinimalCtx(tempDir));
+				return executionResult;
+			},
+		});
+		mockPi.onCall({
+			ignoreSigterm: true,
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "package.json" })] },
+				{ delay: 10_000 },
+			],
+		});
+		eventBus.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
+			version: 1,
+			requestId: "cancel-stubborn-structured",
+			agent: "echo",
+			task: "Wait until cancelled",
+			context: "fresh",
+			cwd: tempDir,
+			timeoutMs: 6_000,
+			outputSchema: { type: "object", properties: { status: { const: "ok" } }, required: ["status"] },
+			artifacts: false,
+		});
+		const terminal = await terminalPromise as { status?: string };
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		bridge.dispose();
+
+		assert.equal(cancelEmitted, true, "test must cancel only after the stubborn child is running");
+		assert.deepEqual(started, [{ version: 1, requestId: "cancel-stubborn-structured" }]);
+		assert.equal(terminals.length, 1);
+		assert.equal(terminal.status, "cancelled");
+		assert.equal((executionResult?.details?.results?.[0] as { timedOut?: boolean } | undefined)?.timedOut, undefined);
+		assert.deepEqual(structuredTempDirs(), beforeDirs, "ephemeral schema runtime must be removed after cancellation");
 	});
 
 	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2567,6 +2635,58 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(invalid.turnBudgetExceeded, undefined);
 		assert.equal(invalid.usage.turns, 1);
 		assert.match(invalid.error ?? "", /Structured output validation failed/);
+	});
+
+	it("preserves structured_output_failed when timeout races delayed child termination", async () => {
+		const schema = {
+			type: "object",
+			properties: { status: { type: "string", enum: ["ok"] } },
+			required: ["status"],
+			additionalProperties: false,
+		};
+		const structuredDir = path.join(tempDir, "structured-timeout-race");
+		const schemaPath = path.join(structuredDir, "schema.json");
+		const outputPath = path.join(structuredDir, "output.json");
+		fs.mkdirSync(structuredDir, { recursive: true });
+		fs.writeFileSync(schemaPath, JSON.stringify(schema), "utf-8");
+		mockPi.onCall({
+			ignoreSigint: true,
+			steps: [
+				{ jsonl: [
+					{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "toolCall", name: "structured_output", arguments: { value: { status: "wrong" } } }],
+							model: "mock/test-model",
+							stopReason: "toolUse",
+							usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+						},
+					},
+					{ type: "tool_execution_start", toolName: "structured_output", args: { value: { status: "wrong" } } },
+					{
+						type: "tool_result_end",
+						message: {
+							role: "toolResult",
+							toolName: "structured_output",
+							isError: true,
+							content: [{ type: "text", text: "Structured output validation failed: status must be ok" }],
+						},
+					},
+				] },
+				{ delay: 10_000 },
+			],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["reviewer"]), "reviewer", "Return structured output.", {
+			timeoutMs: 150,
+			structuredOutput: { schema, schemaPath, outputPath },
+			runId: "structured-failure-timeout-race",
+		});
+
+		assert.equal(result.structuredOutputFailed, true);
+		assert.equal(result.timedOut, undefined);
+		assert.match(result.error ?? "", /Structured output validation failed: status must be ok/);
 	});
 
 	it("preserves a hard tool-budget block delivered as a Pi message_end tool result", async () => {

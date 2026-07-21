@@ -260,11 +260,15 @@ function validateJsonSchemaKeywords(schema: unknown, pathLabel: string): void {
 			else validateJsonSchemaKeywords(entry, `${pathLabel}.dependencies.${name}`);
 		}
 	}
-	for (const keyword of ["allOf", "anyOf", "oneOf", "prefixItems"] as const) {
+	for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
 		const nested = value[keyword];
 		if (nested === undefined) continue;
 		if (!Array.isArray(nested) || nested.length === 0) throw new Error(`${pathLabel}.${keyword} must be a non-empty array of schemas.`);
 		nested.forEach((entry, index) => validateJsonSchemaKeywords(entry, `${pathLabel}.${keyword}[${index}]`));
+	}
+	if (value.prefixItems !== undefined) {
+		if (!Array.isArray(value.prefixItems)) throw new Error(`${pathLabel}.prefixItems must be an array of schemas.`);
+		value.prefixItems.forEach((entry, index) => validateJsonSchemaKeywords(entry, `${pathLabel}.prefixItems[${index}]`));
 	}
 }
 

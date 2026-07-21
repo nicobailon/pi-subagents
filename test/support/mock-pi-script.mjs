@@ -314,6 +314,9 @@ async function main() {
 	const args = process.argv.slice(2);
 	const jsonMode = isJsonMode(args);
 	const response = claimNextResponse(queueDir, args) ?? defaultResponse();
+	if (response.ignoreSigint === true) {
+		process.on("SIGINT", () => {});
+	}
 	if (response.ignoreSigterm === true) {
 		process.on("SIGTERM", () => {});
 	}

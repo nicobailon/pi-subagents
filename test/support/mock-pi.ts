@@ -10,6 +10,7 @@ interface MockPiResponse {
 	delay?: number;
 	waitForPath?: string;
 	keepAliveAfterFinalMessageMs?: number;
+	ignoreSigint?: boolean;
 	ignoreSigterm?: boolean;
 	jsonl?: unknown[];
 	stdoutRaw?: string;

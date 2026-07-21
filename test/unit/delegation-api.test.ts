@@ -13,6 +13,7 @@ import {
 	type SubagentDelegationResponse,
 } from "../../src/api/delegation.ts";
 import { parseSubagentDelegationRequest } from "../../src/slash/delegation-request.ts";
+import { validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import {
 	registerPromptTemplateDelegationBridge,
 	type PromptTemplateBridgeEvents,
@@ -106,6 +107,13 @@ describe("public subagent delegation contract", () => {
 			ok: true,
 			request: structuredRequest,
 		});
+	});
+
+	it("accepts an empty prefixItems array and validates an empty tuple", async () => {
+		const schema = { type: "array", prefixItems: [] };
+		const structuredRequest = { ...request, outputSchema: schema };
+		assert.deepEqual(parseSubagentDelegationRequest(structuredRequest), { ok: true, request: structuredRequest });
+		assert.deepEqual(await validateStructuredOutputValue(schema, []), { status: "valid" });
 	});
 
 	it("rejects unsupported versions, unknown fields, aliases, and malformed controls", () => {
