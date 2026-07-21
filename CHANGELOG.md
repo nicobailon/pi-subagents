@@ -8,7 +8,7 @@
 
 ### Fixed
 - Added caller-owned JSON Schema enforcement to the public foreground delegation API, returning the runtime-validated value or the dedicated `structured_output_failed` terminal status.
-- Preserved public usage, output, session, and warning evidence while mapping hard turn and tool-call budget exhaustion to dedicated terminal statuses. The public foreground contract no longer extends its hard turn limit when every boundary response starts more tool work; existing tool and async launch semantics remain unchanged.
+- Preserved public usage, output, session, and warning evidence while mapping hard turn and tool-call budget exhaustion to dedicated terminal statuses. The public foreground contract no longer extends its hard turn limit when every boundary response starts more ordinary tool work, while still allowing its runtime-owned terminating `structured_output` call at the exact boundary; existing tool and async launch semantics remain unchanged.
 - Documented that relative chain `output` paths are chain-artifact paths under `{chain_dir}`, with persistent `chainDir` and absolute `output` paths as the supported ways to keep artifacts outside the temp run directory. Thanks to @dougEfresh for #529.
 - Bounded main-watchdog repository signatures so startup and agent-end checks no longer recurse through nested Git worktrees or generated dependency trees, reducing slow starts in large repos. Thanks to @pompanonb for #551 and @markg85 for #555.
 - Raised the child stdout line limit above Pi’s resized-image payload range so image OCR subagents no longer fail with `protocol_output_limit` on valid `read` tool image events. Thanks to @zmarty for #538.

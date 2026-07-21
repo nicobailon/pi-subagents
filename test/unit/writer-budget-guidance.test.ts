@@ -25,6 +25,8 @@ describe("writer budget guidance", () => {
 	it("documents the hard model-turn boundary for tool-using responses", () => {
 		const readme = readProjectFile("README.md");
 		assert.match(readme, /hard model-turn limit/);
-		assert.match(readme, /tries to start more tool work is aborted at that assistant boundary/);
+		assert.match(readme, /tries to start ordinary tool work is aborted at that assistant boundary/);
+		assert.match(readme, /sole exception is one runtime-owned `structured_output` call/);
+		assert.match(readme, /still counts as the boundary turn/);
 	});
 });

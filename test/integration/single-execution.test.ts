@@ -91,6 +91,8 @@ interface RunSyncResult {
 	wrapUpRequested?: boolean;
 	toolBudget?: { hard: number; outcome: string; toolCount: number; blockedTool?: string };
 	toolBudgetBlocked?: boolean;
+	structuredOutput?: unknown;
+	structuredOutputFailed?: boolean;
 	detached?: boolean;
 	detachedReason?: string;
 	savedOutputPath?: string;
@@ -2400,6 +2402,74 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.turnBudget?.turnCount, 1);
 		assert.match(result.finalOutput ?? "", /Subagent exceeded turn budget after 1 assistant turn/);
 		assert.equal(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")), false);
+	});
+
+	it("allows only the runtime-owned structured_output call at the exact hard turn boundary", async () => {
+		const schema = {
+			type: "object",
+			properties: { status: { type: "string", enum: ["ok"] } },
+			required: ["status"],
+			additionalProperties: false,
+		};
+		const structuredDir = path.join(tempDir, "structured-output");
+		const schemaPath = path.join(structuredDir, "schema.json");
+		const outputPath = path.join(structuredDir, "output.json");
+		fs.mkdirSync(structuredDir, { recursive: true });
+		fs.writeFileSync(schemaPath, JSON.stringify(schema), "utf-8");
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", name: "structured_output", arguments: { value: { status: "ok" } } }],
+					model: "mock/test-model",
+					stopReason: "toolUse",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+				},
+			}],
+			structuredOutput: { status: "ok" },
+		});
+		const agents = makeAgentConfigs(["reviewer"]);
+
+		const result = await runSync(tempDir, agents, "reviewer", "Return the structured result.", {
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			enforceHardTurnLimit: true,
+			structuredOutput: { schema, schemaPath, outputPath },
+			runId: "foreground-structured-output-hard-boundary",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.turnBudgetExceeded, undefined);
+		assert.equal(result.turnBudget?.turnCount, 1);
+		assert.deepEqual(result.structuredOutput, { status: "ok" });
+
+		fs.rmSync(outputPath, { force: true });
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", name: "structured_output", arguments: { value: { status: "ok" } } },
+						{ type: "toolCall", name: "bash", arguments: { command: "echo extra work" } },
+					],
+					model: "mock/test-model",
+					stopReason: "toolUse",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+				},
+			}],
+			structuredOutput: { status: "ok" },
+		});
+
+		const mixed = await runSync(tempDir, agents, "reviewer", "Do not start extra work at the boundary.", {
+			turnBudget: { maxTurns: 1, graceTurns: 0 },
+			enforceHardTurnLimit: true,
+			structuredOutput: { schema, schemaPath, outputPath },
+			runId: "foreground-mixed-tool-hard-boundary",
+		});
+
+		assert.equal(mixed.turnBudgetExceeded, true);
+		assert.equal(mixed.turnBudget?.outcome, "exceeded");
 	});
 
 	it("preserves a hard tool-budget block delivered as a Pi message_end tool result", async () => {

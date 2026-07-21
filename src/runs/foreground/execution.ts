@@ -749,10 +749,19 @@ async function runSingleAttempt(
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
 					const stopReason = (evt.message as { stopReason?: string }).stopReason;
-					const hasToolCall = Array.isArray(evt.message.content)
-						&& evt.message.content.some((part) => (part as { type?: string }).type === "toolCall");
+					const toolCalls = Array.isArray(evt.message.content)
+						? evt.message.content.filter((part) => (part as { type?: string }).type === "toolCall")
+						: [];
+					const hasToolCall = toolCalls.length > 0;
 					const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-					updateTurnBudget(result.usage.turns, terminalAssistantStop, hasToolCall || Boolean(progress.currentTool));
+					const terminalStructuredOutputCall = Boolean(options.structuredOutput)
+						&& toolCalls.length === 1
+						&& (toolCalls[0] as { name?: string }).name === "structured_output";
+					updateTurnBudget(
+						result.usage.turns,
+						terminalAssistantStop || terminalStructuredOutputCall,
+						hasToolCall || Boolean(progress.currentTool),
+					);
 					const u = evt.message.usage;
 					if (u) {
 						result.usage.input += u.input || 0;
