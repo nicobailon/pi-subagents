@@ -749,6 +749,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(first.isError, undefined);
 			const firstRevivedId = first.details?.asyncId;
 			assert.ok(firstRevivedId);
+			await readMockCallArgs(0);
 
 			const blocked = await executor.execute(
 				"resume-lease-async-blocked",
