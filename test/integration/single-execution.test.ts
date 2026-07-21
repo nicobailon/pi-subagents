@@ -30,6 +30,7 @@ import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts"
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
+import { INTERCOM_BRIDGE_MARKER } from "../../src/intercom/intercom-bridge.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -292,9 +293,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		initialSpawnState?: NonNullable<SubagentState["subagentSpawns"]>,
 		allowMutatingManagementActions = true,
 		initialAsyncJobs: SubagentState["asyncJobs"] = new Map(),
+		piEvents = createEventBus(),
 	) {
 		return createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
+			pi: { events: piEvents, getSessionName: () => undefined },
 			state: {
 				baseCwd: tempDir,
 				currentSessionId: initialSpawnState?.sessionId ?? null,
@@ -389,6 +391,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(invalid.isError, true);
 		assert.equal(invalid.details?.results?.[0]?.structuredOutputFailed, true);
 		assert.match(invalid.details?.results?.[0]?.error ?? "", /Structured output validation failed/);
+	});
+
+	it("keeps schema-bound foreground execution attached until structured validation completes", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const schema = {
+			type: "object",
+			properties: { status: { type: "string", enum: ["ok"] } },
+			required: ["status"],
+			additionalProperties: false,
+		};
+		const eventBus = createEventBus();
+		let detachAccepted = false;
+		eventBus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
+			if (!payload || typeof payload !== "object") return;
+			detachAccepted = (payload as { accepted?: unknown }).accepted === true;
+		});
+		const executor = makeExecutor([
+			makeAgent("echo", { systemPrompt: `${INTERCOM_BRIDGE_MARKER}\nUse contact_supervisor when needed.` }),
+		], {}, false, undefined, true, new Map(), eventBus);
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 100, jsonl: [events.assistantMessage("Structured output captured.")] },
+			],
+			structuredOutput: { status: "ok" },
+		});
+
+		let detachEmitted = false;
+		const result = await executor.execute(
+			"structured-intercom-attached",
+			{ agent: "echo", task: "Coordinate, then return the contract result", outputSchema: schema, artifacts: false },
+			new AbortController().signal,
+			(update: unknown) => {
+				if (detachEmitted) return;
+				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
+				if (!Array.isArray(progress) || !progress.some((item) => item.currentTool === "contact_supervisor")) return;
+				detachEmitted = true;
+				eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "structured-detach-request" });
+			},
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(detachEmitted, true, "test must exercise the detach request path");
+		assert.equal(detachAccepted, false, "schema-bound execution must reject foreground detachment");
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { status: "ok" });
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents")), false, "cleanup must run after the attached child exits");
 	});
 
 	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

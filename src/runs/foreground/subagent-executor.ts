@@ -3165,7 +3165,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			cwd: effectiveCwd,
 			signal,
 			interruptSignal: interruptController.signal,
-			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
+			// Schema-bound foreground calls promise a validated terminal result. Keep the
+			// child attached so its runtime schema remains available until process exit.
+			allowIntercomDetach: !structuredOutput && agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 			intercomEvents: deps.pi.events,
 			runId,
 			sessionDir: sessionDirForIndex(0),
