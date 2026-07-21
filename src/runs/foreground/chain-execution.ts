@@ -666,6 +666,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let prev = "";
 	let globalTaskIndex = 0;
 	let progressCreated = false;
+	const collectedOutputPaths: string[] = [];
 
 	for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
 		const step = chainSteps[stepIndex]!;
@@ -708,6 +709,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						: undefined;
 					const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Parallel chain step ${stepIndex + 1} task ${taskIndex + 1} (${step.parallel[taskIndex]!.agent})`);
 					if (validationError) return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex + taskIndex }));
+				}
+				for (const pb of parallelBehaviors) {
+					if (typeof pb.output === "string" && !path.isAbsolute(pb.output)) {
+						collectedOutputPaths.push(pb.output);
+					}
 				}
 				progressCreated = ensureParallelProgressFile(chainDir, progressCreated, parallelBehaviors);
 				createParallelDirs(chainDir, stepIndex, step.parallel.length, agentNames);
@@ -931,6 +937,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					return buildChainExecutionErrorResult(validationError, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex + taskIndex }));
 				}
 			}
+			for (const pb of parallelBehaviors) {
+				if (typeof pb.output === "string" && !path.isAbsolute(pb.output)) {
+					collectedOutputPaths.push(pb.output);
+				}
+			}
 
 			progressCreated = ensureParallelProgressFile(chainDir, progressCreated, parallelBehaviors);
 			createParallelDirs(chainDir, stepIndex, dynamicParallelStep.parallel.length, dynamicParallelStep.parallel.map((task) => task.agent));
@@ -1144,6 +1155,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
 				: undefined;
+			if (typeof behavior.output === "string" && !path.isAbsolute(behavior.output)) {
+				collectedOutputPaths.push(behavior.output);
+			}
 			stepTask = injectSingleOutputInstruction(stepTask, outputPath, agentConfig);
 			const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Chain step ${stepIndex + 1} (${seqStep.agent})`);
 			if (validationError) {
@@ -1326,6 +1340,20 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 
 			if (seqStep.as) outputs[seqStep.as] = outputEntryFromResult(r, stepIndex);
 			prev = getSingleResultOutput(r);
+		}
+	}
+
+	// Persist chain outputs from chainDir back to CWD
+	const outputCwd = cwd ?? ctx.cwd;
+	for (const relPath of collectedOutputPaths) {
+		try {
+			const src = path.join(chainDir, relPath);
+			if (!fs.existsSync(src)) continue;
+			const dest = path.join(outputCwd, relPath);
+			fs.mkdirSync(path.dirname(dest), { recursive: true });
+			fs.copyFileSync(src, dest);
+		} catch {
+			// Best effort: don't fail the chain over a copy error
 		}
 	}
 

@@ -1217,6 +1217,61 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			else process.env.PI_SUBAGENT_MAX_DEPTH = originalMaxDepth;
 		}
 	});
+
+	it("persists chain output files from chainDir to CWD after completion", async () => {
+		const outputContent = "Report content";
+		mockPi.onCall({ output: outputContent });
+		const chainCwd = path.join(tempDir, "project");
+		fs.mkdirSync(chainCwd, { recursive: true });
+		const agents = [makeAgent("analyst", { tools: ["read", "grep", "find", "ls"] })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "analyst", task: "Write report", output: "reports/analysis.md" }],
+				agents,
+				{ cwd: chainCwd },
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const expectedCwdFile = path.join(chainCwd, "reports", "analysis.md");
+		assert.ok(fs.existsSync(expectedCwdFile), `output should be persisted to CWD: ${expectedCwdFile}`);
+		assert.equal(fs.readFileSync(expectedCwdFile, "utf-8"), outputContent);
+	});
+
+	it("does not persist absolute output paths outside chainDir", async () => {
+		mockPi.onCall({ output: "Abs path content" });
+		const agents = [makeAgent("analyst", { tools: ["read", "grep", "find", "ls"] })];
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "analyst", task: "Write report", output: "/tmp/absolute-output.md" }],
+				agents,
+			),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		const cwdCopy = path.join(tempDir, "absolute-output.md");
+		assert.ok(!fs.existsSync(cwdCopy), "absolute output paths should not be copied to CWD");
+	});
+
+	it("survives missing output files without failing the chain", async () => {
+		mockPi.onCall({ output: "Content without file" });
+		const chainCwd = path.join(tempDir, "project");
+		fs.mkdirSync(chainCwd, { recursive: true });
+		const agents = [makeAgent("analyst")];
+
+		const result = await executeChain(
+			makeChainParams(
+				[{ agent: "analyst", task: "Write report", output: "reports/missing.md" }],
+				agents,
+				{ cwd: chainCwd },
+			),
+		);
+
+		// Chain should still succeed even if the output file wasn't created
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+	});
 });
 
 describe("chain execution — parallel steps", { skip: !available ? "pi packages not available" : undefined }, () => {
