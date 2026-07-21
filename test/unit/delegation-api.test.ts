@@ -119,6 +119,12 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, toolBudget: { hard: 1, soft: 2 } }, /toolBudget.soft must be <=/],
 			[{ ...request, toolBudget: { hard: 1, extra: true } }, /toolBudget.extra is not supported/],
 			[{ ...request, outputSchema: { type: "not-a-json-schema-type" } }, /invalid outputSchema/],
+			[{ ...request, outputSchema: { type: "string", enum: "ok" } }, /outputSchema\.enum must be a non-empty array/],
+			[{ ...request, outputSchema: { type: "object", required: "id" } }, /outputSchema\.required must be an array of unique strings/],
+			[{ ...request, outputSchema: { type: "array", minItems: -1 } }, /outputSchema\.minItems must be a non-negative integer/],
+			[{ ...request, outputSchema: { type: "array", uniqueItems: "yes" } }, /outputSchema\.uniqueItems must be a boolean/],
+			[{ ...request, outputSchema: { type: "string", pattern: "[" } }, /outputSchema\.pattern must be a valid regular expression/],
+			[{ ...request, outputSchema: { type: "object", properties: { value: { type: "string", enum: "ok" } } } }, /outputSchema\.properties\.value\.enum/],
 			[{ ...request, skill: [] }, /skill must/],
 			[{ ...request, output: "" }, /output must/],
 			[{ ...request, output: false, outputMode: "file-only" }, /outputMode.*output.*path/],
@@ -307,6 +313,8 @@ describe("public subagent delegation contract", () => {
 	it("returns correlated invalid-request and unavailable-context statuses without executing", async () => {
 		const events = new FakeEvents();
 		let executeCalls = 0;
+		let startedCount = 0;
+		events.on(SUBAGENT_DELEGATION_STARTED_EVENT, () => { startedCount++; });
 		const bridge = registerPromptTemplateDelegationBridge({
 			events,
 			getContext: () => null,
@@ -324,11 +332,19 @@ describe("public subagent delegation contract", () => {
 			error: "Unsupported delegation protocol version: 2.",
 		});
 
+		for (const [index, outputSchema] of [{ type: "string", enum: "ok" }, { type: "object", required: "id" }].entries()) {
+			const malformedPromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
+			events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: `malformed-schema-${index}`, outputSchema });
+			const malformed = await malformedPromise as SubagentDelegationResponse;
+			assert.equal(malformed.status, "invalid_request");
+		}
+
 		const unavailablePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
 		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "unavailable-1" });
 		const unavailable = await unavailablePromise as SubagentDelegationResponse;
 		assert.equal(unavailable.status, "unavailable_context");
 		assert.equal(executeCalls, 0);
+		assert.equal(startedCount, 0);
 		bridge.dispose();
 	});
 

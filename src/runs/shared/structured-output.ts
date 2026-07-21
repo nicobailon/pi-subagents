@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { pathToFileURL } from "node:url";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
@@ -74,7 +75,8 @@ export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"):
 export function validateStructuredOutputSchema(schema: unknown, label = "outputSchema"): { status: "valid" } | { status: "invalid"; message: string } {
 	try {
 		assertJsonSchemaObject(schema, label);
-		validateJsonSchemaTypeKeywords(schema, label);
+		validateJsonValue(schema, label, new WeakSet());
+		validateJsonSchemaKeywords(schema, label);
 		return { status: "valid" };
 	} catch (error) {
 		return { status: "invalid", message: `invalid ${label}: ${error instanceof Error ? error.message : String(error)}` };
@@ -83,15 +85,90 @@ export function validateStructuredOutputSchema(schema: unknown, label = "outputS
 
 const JSON_SCHEMA_TYPES = new Set(["null", "boolean", "object", "array", "number", "string", "integer"]);
 
-function validateJsonSchemaTypeKeywords(schema: unknown, pathLabel: string): void {
+function validateJsonValue(value: unknown, pathLabel: string, ancestors: WeakSet<object>): void {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return;
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) throw new Error(`${pathLabel} must contain only finite JSON numbers.`);
+		return;
+	}
+	if (!value || typeof value !== "object") throw new Error(`${pathLabel} must contain only JSON values.`);
+	if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+		throw new Error(`${pathLabel} must contain only plain JSON objects.`);
+	}
+	if (ancestors.has(value)) throw new Error(`${pathLabel} must not contain circular references.`);
+	ancestors.add(value);
+	if (Array.isArray(value)) {
+		value.forEach((entry, index) => validateJsonValue(entry, `${pathLabel}[${index}]`, ancestors));
+	} else {
+		for (const [key, entry] of Object.entries(value)) validateJsonValue(entry, `${pathLabel}.${key}`, ancestors);
+	}
+	ancestors.delete(value);
+}
+
+function validateStringArray(value: unknown, pathLabel: string): void {
+	if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string") || new Set(value).size !== value.length) {
+		throw new Error(`${pathLabel} must be an array of unique strings.`);
+	}
+}
+
+function validateJsonSchemaKeywordShapes(value: Record<string, unknown>, pathLabel: string): void {
+	for (const keyword of ["$id", "$schema", "$ref", "$anchor", "$dynamicRef", "$dynamicAnchor", "$comment", "title", "description", "format", "pattern", "contentEncoding", "contentMediaType"] as const) {
+		if (value[keyword] !== undefined && typeof value[keyword] !== "string") throw new Error(`${pathLabel}.${keyword} must be a string.`);
+	}
+	if (typeof value.pattern === "string") {
+		try {
+			new RegExp(value.pattern, "u");
+		} catch {
+			throw new Error(`${pathLabel}.pattern must be a valid regular expression.`);
+		}
+	}
+	for (const keyword of ["deprecated", "readOnly", "writeOnly", "uniqueItems"] as const) {
+		if (value[keyword] !== undefined && typeof value[keyword] !== "boolean") throw new Error(`${pathLabel}.${keyword} must be a boolean.`);
+	}
+	for (const keyword of ["minLength", "maxLength", "minItems", "maxItems", "minContains", "maxContains", "minProperties", "maxProperties"] as const) {
+		const entry = value[keyword];
+		if (entry !== undefined && (typeof entry !== "number" || !Number.isInteger(entry) || entry < 0)) throw new Error(`${pathLabel}.${keyword} must be a non-negative integer.`);
+	}
+	for (const keyword of ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"] as const) {
+		const entry = value[keyword];
+		if (entry !== undefined && (typeof entry !== "number" || !Number.isFinite(entry))) throw new Error(`${pathLabel}.${keyword} must be a finite number.`);
+	}
+	if (value.multipleOf !== undefined && (typeof value.multipleOf !== "number" || !Number.isFinite(value.multipleOf) || value.multipleOf <= 0)) {
+		throw new Error(`${pathLabel}.multipleOf must be a finite number greater than zero.`);
+	}
+	const enumValues = value.enum;
+	if (enumValues !== undefined && (!Array.isArray(enumValues) || enumValues.length === 0)) {
+		throw new Error(`${pathLabel}.enum must be a non-empty array.`);
+	}
+	if (Array.isArray(enumValues) && enumValues.some((entry, index) => enumValues.slice(0, index).some((prior) => isDeepStrictEqual(prior, entry)))) {
+		throw new Error(`${pathLabel}.enum values must be unique.`);
+	}
+	if (value.required !== undefined) validateStringArray(value.required, `${pathLabel}.required`);
+	if (value.examples !== undefined && !Array.isArray(value.examples)) throw new Error(`${pathLabel}.examples must be an array.`);
+	if (value.$vocabulary !== undefined) {
+		if (!value.$vocabulary || typeof value.$vocabulary !== "object" || Array.isArray(value.$vocabulary)
+			|| !Object.values(value.$vocabulary).every((entry) => typeof entry === "boolean")) {
+			throw new Error(`${pathLabel}.$vocabulary must be an object of boolean values.`);
+		}
+	}
+	if (value.dependentRequired !== undefined) {
+		if (!value.dependentRequired || typeof value.dependentRequired !== "object" || Array.isArray(value.dependentRequired)) {
+			throw new Error(`${pathLabel}.dependentRequired must be an object of string arrays.`);
+		}
+		for (const [name, entry] of Object.entries(value.dependentRequired)) validateStringArray(entry, `${pathLabel}.dependentRequired.${name}`);
+	}
+}
+
+function validateJsonSchemaKeywords(schema: unknown, pathLabel: string): void {
 	if (typeof schema === "boolean") return;
 	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
 		throw new Error(`${pathLabel} must be a JSON Schema object or boolean.`);
 	}
 	const value = schema as Record<string, unknown>;
+	validateJsonSchemaKeywordShapes(value, pathLabel);
 	if (Object.hasOwn(value, "type")) {
 		const types = typeof value.type === "string" ? [value.type] : value.type;
-		if (!Array.isArray(types) || types.length === 0 || !types.every((entry) => typeof entry === "string" && JSON_SCHEMA_TYPES.has(entry))) {
+		if (!Array.isArray(types) || types.length === 0 || new Set(types).size !== types.length || !types.every((entry) => typeof entry === "string" && JSON_SCHEMA_TYPES.has(entry))) {
 			throw new Error(`${pathLabel}.type must be a JSON Schema type or non-empty array of JSON Schema types.`);
 		}
 	}
@@ -102,23 +179,40 @@ function validateJsonSchemaTypeKeywords(schema: unknown, pathLabel: string): voi
 			throw new Error(`${pathLabel}.${keyword} must be an object of schemas.`);
 		}
 		for (const [name, nested] of Object.entries(entries)) {
-			validateJsonSchemaTypeKeywords(nested, `${pathLabel}.${keyword}.${name}`);
+			if (keyword === "patternProperties") {
+				try {
+					new RegExp(name, "u");
+				} catch {
+					throw new Error(`${pathLabel}.patternProperties key ${JSON.stringify(name)} must be a valid regular expression.`);
+				}
+			}
+			validateJsonSchemaKeywords(nested, `${pathLabel}.${keyword}.${name}`);
 		}
 	}
 	for (const keyword of ["items", "additionalItems", "additionalProperties", "contains", "not", "propertyNames", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties"] as const) {
 		const nested = value[keyword];
 		if (nested === undefined) continue;
 		if (keyword === "items" && Array.isArray(nested)) {
-			nested.forEach((entry, index) => validateJsonSchemaTypeKeywords(entry, `${pathLabel}.items[${index}]`));
+			nested.forEach((entry, index) => validateJsonSchemaKeywords(entry, `${pathLabel}.items[${index}]`));
 			continue;
 		}
-		validateJsonSchemaTypeKeywords(nested, `${pathLabel}.${keyword}`);
+		validateJsonSchemaKeywords(nested, `${pathLabel}.${keyword}`);
+	}
+	if (value.contentSchema !== undefined) validateJsonSchemaKeywords(value.contentSchema, `${pathLabel}.contentSchema`);
+	if (value.dependencies !== undefined) {
+		if (!value.dependencies || typeof value.dependencies !== "object" || Array.isArray(value.dependencies)) {
+			throw new Error(`${pathLabel}.dependencies must be an object of schemas or string arrays.`);
+		}
+		for (const [name, entry] of Object.entries(value.dependencies)) {
+			if (Array.isArray(entry)) validateStringArray(entry, `${pathLabel}.dependencies.${name}`);
+			else validateJsonSchemaKeywords(entry, `${pathLabel}.dependencies.${name}`);
+		}
 	}
 	for (const keyword of ["allOf", "anyOf", "oneOf", "prefixItems"] as const) {
 		const nested = value[keyword];
 		if (nested === undefined) continue;
 		if (!Array.isArray(nested) || nested.length === 0) throw new Error(`${pathLabel}.${keyword} must be a non-empty array of schemas.`);
-		nested.forEach((entry, index) => validateJsonSchemaTypeKeywords(entry, `${pathLabel}.${keyword}[${index}]`));
+		nested.forEach((entry, index) => validateJsonSchemaKeywords(entry, `${pathLabel}.${keyword}[${index}]`));
 	}
 }
 
