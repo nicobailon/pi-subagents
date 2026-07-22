@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionConfig } from "../shared/types.ts";
+import type { ArtifactDirPreference, ExtensionConfig } from "../shared/types.ts";
 import { getAgentDir } from "../shared/utils.ts";
+
+const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 
 export function getConfigPath(): string {
 	return path.join(getAgentDir(), "extensions", "subagent", "config.json");
@@ -12,6 +14,10 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 		throw new Error(`Subagent config at '${configPath}' must be a JSON object`);
+	}
+	const config = parsed as Record<string, unknown>;
+	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
+		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
 	return parsed as ExtensionConfig;
 }

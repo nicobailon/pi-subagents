@@ -742,8 +742,11 @@ export interface ArtifactPaths {
 	metadataPath: string;
 }
 
+export type ArtifactDirPreference = "project" | "session" | "temp";
+
 export interface ArtifactConfig {
 	enabled: boolean;
+	dir?: ArtifactDirPreference;
 	includeInput: boolean;
 	includeOutput: boolean;
 	includeJsonl: boolean;
@@ -1269,6 +1272,8 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	/** Where to store subagent artifact files. Defaults to "project" (cwd/.pi-subagents). Set to "session" for pi session dir, or "temp" for OS temp. */
+	artifactDir?: ArtifactDirPreference;
 	intercomBridge?: IntercomBridgeConfig;
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
 	scheduledRuns?: ScheduledRunsConfig;
@@ -1285,6 +1290,7 @@ export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 
 export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	enabled: true,
+	dir: "project",
 	includeInput: true,
 	includeOutput: true,
 	includeJsonl: false,
