@@ -16,14 +16,12 @@ const hostPeerPackages = [
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
-	"typebox",
 ] as const;
 const expectedHostDevVersions = {
 	"@earendil-works/pi-agent-core": "0.81.0",
 	"@earendil-works/pi-ai": "0.81.0",
 	"@earendil-works/pi-coding-agent": "0.81.0",
 	"@earendil-works/pi-tui": "0.81.0",
-	typebox: "1.1.38",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;
 
 function collectSourceFiles(dir: string): string[] {
@@ -101,6 +99,14 @@ test("host-owned packages are optional wildcard peers, not production dependenci
 		assert.equal(packageJson.dependencies?.[name], undefined, `${name} should not be a production dependency`);
 		assert.deepEqual(packageJson.peerDependenciesMeta?.[name], { optional: true }, `${name} should be an optional peer`);
 	}
+});
+test("typebox is a bundled runtime dependency", () => {
+	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
+
+	assert.equal(packageJson.dependencies?.typebox, "1.1.38");
+	assert.equal(packageJson.peerDependencies?.typebox, undefined);
+	assert.equal(packageJson.peerDependenciesMeta?.typebox, undefined);
+	assert.equal(packageJson.devDependencies?.typebox, undefined);
 });
 
 test("host-owned development packages use the supported SDK baseline", () => {
