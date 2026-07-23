@@ -369,7 +369,9 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 	});
 
 	for (const outputOverride of [undefined, true] as const) {
-		it(`rejects foreground inherited output collisions (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		it(`isolates foreground inherited output (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			mockPi.onCall({ matchArgIncludes: "Write A", output: "first foreground report" });
+			mockPi.onCall({ matchArgIncludes: "Write B", output: "second foreground report" });
 			const executor = makeExecutor([makeAgent("echo", { output: "context.md" })]);
 			const tasks = [
 				{ agent: "echo", task: "Write A", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
@@ -384,9 +386,17 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /resolve output to the same path/);
-			assert.equal(mockPi.callCount(), 0);
+			const runId = result.details?.runId;
+			assert.ok(runId, "expected run id in details");
+			const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId);
+			const firstOutputPath = path.join(outputDir, "parallel-0", "0-echo", "context.md");
+			const secondOutputPath = path.join(outputDir, "parallel-0", "1-echo", "context.md");
+			assert.equal(result.isError, undefined);
+			assert.equal(mockPi.callCount(), 2);
+			assert.equal(fs.readFileSync(firstOutputPath, "utf-8"), "first foreground report");
+			assert.equal(fs.readFileSync(secondOutputPath, "utf-8"), "second foreground report");
+			assert.equal(result.details?.results?.[0]?.savedOutputPath, firstOutputPath);
+			assert.equal(result.details?.results?.[1]?.savedOutputPath, secondOutputPath);
 		});
 	}
 
