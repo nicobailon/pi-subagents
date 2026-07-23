@@ -398,10 +398,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		state.asyncJobs.set(info.id, {
 			asyncId: info.id,
 			asyncDir,
+			...(typeof info.cwd === "string" ? { cwd: path.resolve(info.cwd) } : {}),
 			status: "queued",
 			pid: typeof info.pid === "number" ? info.pid : undefined,
 			...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
 			mode: info.mode ?? (info.chain ? "chain" : "single"),
+			description: info.goal ?? info.task,
 			agents,
 			chainStepCount: info.chainStepCount,
 			parallelGroups: validParallelGroups,

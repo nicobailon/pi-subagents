@@ -8,6 +8,7 @@ import { getArtifactsDir, getProjectChainRunsDir } from "../../shared/artifacts.
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
+import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "./foreground-control.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
@@ -91,6 +92,7 @@ import {
 	type ControlEvent,
 	type Details,
 	type ExtensionConfig,
+	type ForegroundRunControl,
 	type IntercomEventBus,
 	type JsonSchemaObject,
 	type MaxOutputConfig,
@@ -2343,6 +2345,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 interface ForegroundParallelRunInput {
 	tasks: TaskParam[];
 	taskTexts: string[];
+	taskDescriptions: string[];
 	agents: AgentConfig[];
 	ctx: ExtensionContext;
 	state: SubagentState;
@@ -2519,17 +2522,16 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		);
 		const interruptController = new AbortController();
 		if (input.foregroundControl) {
-			input.foregroundControl.currentAgent = task.agent;
-			input.foregroundControl.currentIndex = index;
-			input.foregroundControl.currentActivityState = undefined;
-			input.foregroundControl.updatedAt = Date.now();
-			input.foregroundControl.interrupt = () => {
-				if (interruptController.signal.aborted) return false;
-				interruptController.abort();
-				input.foregroundControl!.currentActivityState = undefined;
-				input.foregroundControl!.updatedAt = Date.now();
-				return true;
-			};
+			beginForegroundChild(input.foregroundControl, {
+				index,
+				agent: task.agent,
+				description: input.taskDescriptions[index],
+				interrupt: () => {
+					if (interruptController.signal.aborted) return false;
+					interruptController.abort();
+					return true;
+				},
+			});
 		}
 		const structuredRuntime = task.outputSchema
 			? createStructuredOutputRuntime(task.outputSchema, path.join(input.artifactsDir, "structured-output", input.runId))
@@ -2579,18 +2581,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 					const stepResults = progressUpdate.details?.results || [];
 					const stepProgress = progressUpdate.details?.progress || [];
 					if (input.foregroundControl && stepProgress.length > 0) {
-						const current = stepProgress[0];
-						input.foregroundControl.currentAgent = task.agent;
-						input.foregroundControl.currentIndex = index;
-						input.foregroundControl.currentActivityState = current?.activityState;
-						input.foregroundControl.lastActivityAt = current?.lastActivityAt;
-						input.foregroundControl.currentTool = current?.currentTool;
-						input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
-						input.foregroundControl.currentPath = current?.currentPath;
-						input.foregroundControl.turnCount = current?.turnCount;
-						input.foregroundControl.tokens = current?.tokens;
-						input.foregroundControl.toolCount = current?.toolCount;
-						input.foregroundControl.updatedAt = Date.now();
+						updateForegroundChild(input.foregroundControl, index, stepProgress[0]);
 					}
 					if (stepResults.length > 0) input.liveResults[index] = stepResults[0];
 					if (stepProgress.length > 0) input.liveProgress[index] = stepProgress[0];
@@ -2609,10 +2600,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				}
 				: undefined,
 		}).finally(() => {
-			if (input.foregroundControl?.currentIndex === index) {
-				input.foregroundControl.interrupt = undefined;
-				input.foregroundControl.updatedAt = Date.now();
-			}
+			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
 		});
 	}, input.globalSemaphore);
 }
@@ -2862,6 +2850,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const parallelProgressDir = path.join(artifactsDir, "progress", runId);
 		if (parallelProgressPrecreated) writeInitialProgressFile(parallelProgressDir);
 
+		const taskDescriptions = taskTexts.map((taskText) => taskText.trim());
 		for (let i = 0; i < taskTexts.length; i++) {
 			if (shouldForkAgent(contextPolicy, tasks[i]!.agent)) taskTexts[i] = wrapForkTask(taskTexts[i]!);
 		}
@@ -2870,6 +2859,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const results = await runForegroundParallelTasks({
 			tasks,
 			taskTexts,
+			taskDescriptions,
 			agents,
 			ctx,
 			state: deps.state,
@@ -3163,35 +3153,21 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const interruptController = new AbortController();
 	const foregroundControl = deps.state.foregroundControls.get(runId);
 	if (foregroundControl) {
-		foregroundControl.currentAgent = params.agent;
-		foregroundControl.currentIndex = 0;
-		foregroundControl.currentActivityState = undefined;
-		foregroundControl.updatedAt = Date.now();
-		foregroundControl.interrupt = () => {
-			if (interruptController.signal.aborted) return false;
-			interruptController.abort();
-			foregroundControl.currentActivityState = undefined;
-			foregroundControl.updatedAt = Date.now();
-			return true;
-		};
+		beginForegroundChild(foregroundControl, {
+			index: 0,
+			agent: params.agent!,
+			description: foregroundControl.description,
+			interrupt: () => {
+				if (interruptController.signal.aborted) return false;
+				interruptController.abort();
+				return true;
+			},
+		});
 	}
 
 	const forwardSingleUpdate = onUpdate
 		? (update: AgentToolResult<Details>) => {
-			if (foregroundControl) {
-				const firstProgress = update.details?.progress?.[0];
-				foregroundControl.currentAgent = params.agent;
-				foregroundControl.currentIndex = firstProgress?.index ?? 0;
-				foregroundControl.currentActivityState = firstProgress?.activityState;
-				foregroundControl.lastActivityAt = firstProgress?.lastActivityAt;
-				foregroundControl.currentTool = firstProgress?.currentTool;
-				foregroundControl.currentToolStartedAt = firstProgress?.currentToolStartedAt;
-				foregroundControl.currentPath = firstProgress?.currentPath;
-				foregroundControl.turnCount = firstProgress?.turnCount;
-				foregroundControl.tokens = firstProgress?.tokens;
-				foregroundControl.toolCount = firstProgress?.toolCount;
-				foregroundControl.updatedAt = Date.now();
-			}
+			if (foregroundControl) updateForegroundChild(foregroundControl, 0, update.details?.progress?.[0]);
 			onUpdate(update);
 		}
 		: undefined;
@@ -3239,18 +3215,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		turnBudget: data.turnBudget,
 		toolBudget: effectiveToolBudget.toolBudget,
 	});
-	if (foregroundControl?.currentIndex === 0) {
-		foregroundControl.interrupt = undefined;
-		foregroundControl.currentActivityState = r.progress?.activityState;
-		foregroundControl.lastActivityAt = r.progress?.lastActivityAt;
-		foregroundControl.currentTool = r.progress?.currentTool;
-		foregroundControl.currentToolStartedAt = r.progress?.currentToolStartedAt;
-		foregroundControl.currentPath = r.progress?.currentPath;
-		foregroundControl.turnCount = r.progress?.turnCount;
-		foregroundControl.tokens = r.progress?.tokens;
-		foregroundControl.toolCount = r.progress?.toolCount;
-		foregroundControl.updatedAt = Date.now();
-	}
+	if (foregroundControl) finishForegroundChild(foregroundControl, 0);
 	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 
 	if (r.progress) allProgress.push(r.progress);
@@ -3907,16 +3872,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			parentSessionId: deps.state.currentSessionId,
 		};
 
-		const foregroundControl = effectiveAsync
+		const foregroundDescription = effectiveParams.task?.trim()
+			|| effectiveParams.tasks?.[0]?.task?.trim()
+			|| (effectiveParams.chain ? firstRawChainTask(effectiveParams.chain)?.trim() : undefined);
+		const foregroundControl: ForegroundRunControl | undefined = effectiveAsync
 			? undefined
 			: {
 				runId,
 				mode: foregroundMode,
 				startedAt: Date.now(),
 				updatedAt: Date.now(),
+				cwd: effectiveCwd,
 				currentAgent: undefined,
 				currentIndex: undefined,
+				description: foregroundDescription,
 				currentActivityState: undefined,
+				activeChildren: new Map(),
 				nestedRoute,
 				interrupt: undefined,
 			};

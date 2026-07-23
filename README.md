@@ -244,9 +244,11 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
 
 Foreground runs stream progress in the conversation while they run.
 
-Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`. `/subagents-fleet` opens a live, inspection-only fleet with current-session foreground work, recent async children, transcript tails, and completed output/session paths. Use `↑`/`↓` or `j`/`k` to select a child, `PgUp`/`PgDn` to scroll its transcript, `r` to refresh immediately, and `Esc` to close. `Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued. Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback. Mutations stay in explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id. To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
+Background runs keep working after control returns to you. Inspect active runs with `subagent({ action: "status" })`, or a specific run with `subagent({ action: "status", id: "..." })`. In the TUI, a persistent FleetView below the editor shows `main` plus active children with task, elapsed time, and token totals. When the focused editor is empty, use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it; normal editor input is never intercepted.
 
-They also show a compact async widget and send completion notifications. Parallel background runs show per-agent progress instead of fake chain steps. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
+`/subagents-fleet` opens the live, inspection-only fleet inspector with current-session foreground work, recent async children, structured Markdown/tool transcripts, and completed output/session paths. Use `↑`/`↓` or `j`/`k` to select a child, `Shift+K`/`Shift+J` to scroll one line, `PgUp`/`PgDn` to scroll one page, `x`/`Ctrl+O` to toggle tool details, `r` to refresh, and `Esc` to close. `Ctrl+Alt+F` opens the same inspector even while a foreground turn is active and slash input is queued. Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback. Mutations stay in explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id. To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
+
+FleetView replaces the legacy above-editor async widget by default, while completion notifications remain enabled. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
 You can also ask naturally:
 
@@ -1323,13 +1325,21 @@ Controls the parent-facing `subagent` tool description registered at startup. `f
 
 Makes top-level calls use background execution when the request does not explicitly set `async`. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
+### `fleetView`
+
+```json
+{ "fleetView": false }
+```
+
+Controls the persistent, navigable FleetView below the editor. The default is `true`. Set it to `false` to hide FleetView without disabling status tracking, completion notifications, `/subagents-fleet`, or lifecycle events.
+
 ### `asyncWidget`
 
 ```json
-{ "asyncWidget": false }
+{ "asyncWidget": true }
 ```
 
-Controls the above-editor widget for background runs. The default is `true`. Set it to `false` when another extension renders async lifecycle data in a custom footer, status line, or dashboard; status tracking, completion notifications, `/subagents-fleet`, and lifecycle events continue to work.
+Controls the legacy above-editor widget for background runs. It defaults to `false` while FleetView is enabled and `true` when FleetView is disabled. Set it explicitly to show both surfaces or hide the legacy widget entirely.
 
 ### `waitTool`
 

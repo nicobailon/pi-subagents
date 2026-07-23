@@ -112,10 +112,13 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		removeTempDir(tempDir);
 	});
 
-	function makeExecutor(agents = [makeAgent("echo")]) {
+	function makeExecutor(
+		agents = [makeAgent("echo")],
+		state = { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+	) {
 		return createSubagentExecutor({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			state,
 			config: {},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -169,6 +172,50 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(results[1].agent, "b");
 		const ok = results.filter((r: any) => r.exitCode === 0).length;
 		assert.equal(ok, 2);
+	});
+
+	it("tracks every concurrently running foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		for (let index = 0; index < 3; index++) mockPi.onCall({ output: `Review ${index} complete`, delay: 250 });
+		const agents = [makeAgent("reviewer")];
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = makeExecutor(agents, state);
+		const executionPromise = executor.execute(
+			"parallel-foreground-fleet",
+			{
+				tasks: [
+					{ agent: "reviewer", task: "Review correctness" },
+					{ agent: "reviewer", task: "Review quality" },
+					{ agent: "reviewer", task: "Review tests" },
+				],
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		for (let attempt = 0; attempt < 40; attempt++) {
+			const active = [...state.foregroundControls.values()][0]?.activeChildren;
+			if (active?.size === 3) break;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		const control = [...state.foregroundControls.values()][0];
+		assert.ok(control);
+		assert.deepEqual([...control.activeChildren.values()].map((child) => child.description), [
+			"Review correctness",
+			"Review quality",
+			"Review tests",
+		]);
+		assert.equal(control.activeChildren.size, 3);
+
+		const result = await executionPromise;
+		assert.equal(result.isError, undefined);
+		assert.equal(state.foregroundControls.size, 0);
 	});
 
 	it("treats parallel action aliases with tasks as top-level parallel execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

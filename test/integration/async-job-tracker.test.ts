@@ -329,6 +329,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({
 				id: "run-parallel-start",
 				asyncDir: path.join(asyncRoot, "run-parallel-start"),
+				cwd: path.join(asyncRoot, "custom-cwd"),
 				agent: "scout",
 				agents: ["scout", "reviewer", "worker", "writer"],
 				chain: ["[scout+reviewer+worker]", "writer"],
@@ -338,6 +339,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 
 			const job = state.asyncJobs.get("run-parallel-start");
 			assert.deepEqual(job?.agents, ["scout", "reviewer", "worker"]);
+			assert.equal(job?.cwd, path.join(asyncRoot, "custom-cwd"));
 			assert.equal(job?.chainStepCount, 2);
 			assert.deepEqual(job?.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
 			assert.equal(job?.stepsTotal, 3);

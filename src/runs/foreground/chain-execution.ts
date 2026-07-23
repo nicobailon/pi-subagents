@@ -33,6 +33,7 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
+import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "./foreground-control.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -54,6 +55,7 @@ import {
 	type ArtifactPaths,
 	type ControlEvent,
 	type Details,
+	type ForegroundRunControl,
 	type IntercomEventBus,
 	type NestedRouteInfo,
 	type ResolvedControlConfig,
@@ -125,20 +127,7 @@ interface ParallelChainRunInput {
 	agentContract?: AgentContract;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
-	foregroundControl?: {
-		updatedAt: number;
-		currentAgent?: string;
-		currentIndex?: number;
-		currentActivityState?: ActivityState;
-		lastActivityAt?: number;
-		currentTool?: string;
-		currentToolStartedAt?: number;
-		currentPath?: string;
-		turnCount?: number;
-		tokens?: number;
-		toolCount?: number;
-		interrupt?: () => boolean;
-	};
+	foregroundControl?: ForegroundRunControl;
 	results: SingleResult[];
 	allProgress: AgentProgress[];
 	outputs: ChainOutputMap;
@@ -299,18 +288,18 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				: undefined;
 			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
+			const childIndex = input.globalTaskIndex + taskIndex;
 			if (input.foregroundControl) {
-				input.foregroundControl.currentAgent = task.agent;
-				input.foregroundControl.currentIndex = input.globalTaskIndex + taskIndex;
-				input.foregroundControl.currentActivityState = undefined;
-				input.foregroundControl.updatedAt = Date.now();
-				input.foregroundControl.interrupt = () => {
-					if (interruptController.signal.aborted) return false;
-					interruptController.abort();
-					input.foregroundControl!.currentActivityState = undefined;
-					input.foregroundControl!.updatedAt = Date.now();
-					return true;
-				};
+				beginForegroundChild(input.foregroundControl, {
+					index: childIndex,
+					agent: task.agent,
+					description: cleanTask.trim(),
+					interrupt: () => {
+						if (interruptController.signal.aborted) return false;
+						interruptController.abort();
+						return true;
+					},
+				});
 			}
 
 			const structuredRuntime = task.outputSchema
@@ -326,11 +315,11 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				allowIntercomDetach: taskAgentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 				intercomEvents: input.intercomEvents,
 				runId: input.runId,
-				index: input.globalTaskIndex + taskIndex,
-				sessionDir: input.sessionDirForIndex(input.globalTaskIndex + taskIndex),
-				sessionFile: input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModel)
-					?? input.sessionFileForIndex?.(input.globalTaskIndex + taskIndex),
-				thinkingOverride: input.thinkingOverrideForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModel),
+				index: childIndex,
+				sessionDir: input.sessionDirForIndex(childIndex),
+				sessionFile: input.sessionFileForTask?.(task.agent, childIndex, effectiveModel)
+					?? input.sessionFileForIndex?.(childIndex),
+				thinkingOverride: input.thinkingOverrideForTask?.(task.agent, childIndex, effectiveModel),
 				share: input.shareEnabled,
 				artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
 				artifactConfig: input.artifactConfig,
@@ -339,7 +328,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				maxSubagentDepth,
 				controlConfig: input.controlConfig,
 				onControlEvent: input.onControlEvent,
-				intercomSessionName: input.childIntercomTarget?.(task.agent, input.globalTaskIndex + taskIndex),
+				intercomSessionName: input.childIntercomTarget?.(task.agent, childIndex),
 				orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 				nestedRoute: input.nestedRoute,
 				modelOverride: effectiveModel,
@@ -355,7 +344,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
 				onDetachedExit: input.onDetachedExit
-					? (result) => input.onDetachedExit?.(input.globalTaskIndex + taskIndex, result)
+					? (result) => input.onDetachedExit?.(childIndex, result)
 					: undefined,
 				toolBudget: toolBudget.toolBudget,
 				onUpdate: input.onUpdate
@@ -363,18 +352,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 						const stepResults = progressUpdate.details?.results || [];
 						const stepProgress = progressUpdate.details?.progress || [];
 						if (input.foregroundControl && stepProgress.length > 0) {
-							const current = stepProgress[0];
-							input.foregroundControl.currentAgent = task.agent;
-							input.foregroundControl.currentIndex = input.globalTaskIndex + taskIndex;
-							input.foregroundControl.currentActivityState = current?.activityState;
-							input.foregroundControl.lastActivityAt = current?.lastActivityAt;
-							input.foregroundControl.currentTool = current?.currentTool;
-							input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
-							input.foregroundControl.currentPath = current?.currentPath;
-							input.foregroundControl.turnCount = current?.turnCount;
-							input.foregroundControl.tokens = current?.tokens;
-							input.foregroundControl.toolCount = current?.toolCount;
-							input.foregroundControl.updatedAt = Date.now();
+							updateForegroundChild(input.foregroundControl, childIndex, stepProgress[0]);
 						}
 						input.onUpdate?.({
 							...progressUpdate,
@@ -393,7 +371,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 									steps: input.chainSteps,
 									results: input.results.concat(stepResults),
 									currentStepIndex: input.stepIndex,
-									currentFlatIndex: input.globalTaskIndex + taskIndex,
+									currentFlatIndex: childIndex,
 									dynamicChildren: input.dynamicChildren,
 									dynamicGroupStatuses: input.dynamicGroupStatuses,
 								}),
@@ -402,10 +380,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 					}
 					: undefined,
 			});
-			if (input.foregroundControl?.currentIndex === input.globalTaskIndex + taskIndex) {
-				input.foregroundControl.interrupt = undefined;
-				input.foregroundControl.updatedAt = Date.now();
-			}
+			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
 
 			if (result.exitCode !== 0 && failFast) {
 				aborted = true;
@@ -445,20 +420,7 @@ interface ChainExecutionParams {
 	agentContract?: AgentContract;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	orchestratorIntercomTarget?: string;
-	foregroundControl?: {
-		updatedAt: number;
-		currentAgent?: string;
-		currentIndex?: number;
-		currentActivityState?: ActivityState;
-		lastActivityAt?: number;
-		currentTool?: string;
-		currentToolStartedAt?: number;
-		currentPath?: string;
-		turnCount?: number;
-		tokens?: number;
-		toolCount?: number;
-		interrupt?: () => boolean;
-	};
+	foregroundControl?: ForegroundRunControl;
 	chainSkills?: string[];
 	chainDir?: string;
 	dynamicFanoutMaxItems?: number;
@@ -1202,17 +1164,16 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			const childIndex = globalTaskIndex;
 			const interruptController = new AbortController();
 			if (foregroundControl) {
-				foregroundControl.currentAgent = seqStep.agent;
-				foregroundControl.currentIndex = childIndex;
-				foregroundControl.currentActivityState = undefined;
-				foregroundControl.updatedAt = Date.now();
-				foregroundControl.interrupt = () => {
-					if (interruptController.signal.aborted) return false;
-					interruptController.abort();
-					foregroundControl.currentActivityState = undefined;
-					foregroundControl.updatedAt = Date.now();
-					return true;
-				};
+				beginForegroundChild(foregroundControl, {
+					index: childIndex,
+					agent: seqStep.agent,
+					description: cleanTask.trim(),
+					interrupt: () => {
+						if (interruptController.signal.aborted) return false;
+						interruptController.abort();
+						return true;
+					},
+				});
 			}
 
 			const structuredRuntime = seqStep.outputSchema
@@ -1282,18 +1243,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						const stepResults = p.details?.results || [];
 						const stepProgress = p.details?.progress || [];
 						if (foregroundControl && stepProgress.length > 0) {
-							const current = stepProgress[0];
-							foregroundControl.currentAgent = seqStep.agent;
-							foregroundControl.currentIndex = childIndex;
-							foregroundControl.currentActivityState = current?.activityState;
-							foregroundControl.lastActivityAt = current?.lastActivityAt;
-							foregroundControl.currentTool = current?.currentTool;
-							foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
-							foregroundControl.currentPath = current?.currentPath;
-							foregroundControl.turnCount = current?.turnCount;
-							foregroundControl.tokens = current?.tokens;
-							foregroundControl.toolCount = current?.toolCount;
-							foregroundControl.updatedAt = Date.now();
+							updateForegroundChild(foregroundControl, childIndex, stepProgress[0]);
 						}
 						onUpdate({
 							...p,
@@ -1321,10 +1271,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					}
 					: undefined,
 			});
-			if (foregroundControl?.currentIndex === childIndex) {
-				foregroundControl.interrupt = undefined;
-				foregroundControl.updatedAt = Date.now();
-			}
+			if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
 			recordRun(seqStep.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 
 			globalTaskIndex++;

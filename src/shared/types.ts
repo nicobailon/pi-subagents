@@ -859,6 +859,8 @@ export interface AsyncStartedEvent {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	id?: string;
 	asyncDir?: string;
+	/** Parent-resolved launch directory, used as a trusted artifact root while this session is live. */
+	cwd?: string;
 	pid?: number;
 	sessionId?: string;
 	mode?: SubagentRunMode;
@@ -981,7 +983,11 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 export interface AsyncJobState {
 	asyncId: string;
 	asyncDir: string;
+	/** Parent-resolved launch directory retained for trusted live artifact lookup. */
+	cwd?: string;
 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
+	/** Short caller-facing task/goal shown in fleet surfaces when available. */
+	description?: string;
 	pid?: number;
 	sessionId?: string;
 	activityState?: ActivityState;
@@ -1067,6 +1073,49 @@ export interface ForegroundResumeRun {
 	children: ForegroundResumeChild[];
 }
 
+export interface ForegroundChildControl {
+	index: number;
+	agent: string;
+	description?: string;
+	startedAt: number;
+	updatedAt: number;
+	currentActivityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	currentPath?: string;
+	turnCount?: number;
+	tokens?: number;
+	toolCount?: number;
+	interrupt?: () => boolean;
+}
+
+export interface ForegroundRunControl {
+	runId: string;
+	mode: SubagentRunMode;
+	startedAt: number;
+	updatedAt: number;
+	/** Effective working directory used to resolve live transcript artifacts. */
+	cwd?: string;
+	currentAgent?: string;
+	currentIndex?: number;
+	/** Short caller-facing task/goal shown in fleet surfaces when available. */
+	description?: string;
+	currentActivityState?: ActivityState;
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolStartedAt?: number;
+	currentPath?: string;
+	turnCount?: number;
+	tokens?: number;
+	toolCount?: number;
+	/** Independently tracked children for foreground parallel work and fleet inspection. */
+	activeChildren?: Map<number, ForegroundChildControl>;
+	nestedRoute?: NestedRouteInfo;
+	nestedChildren?: NestedRunSummary[];
+	interrupt?: () => boolean;
+}
+
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
@@ -1082,25 +1131,7 @@ export interface SubagentState {
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
 	foregroundRuns?: Map<string, ForegroundResumeRun>;
-	foregroundControls: Map<string, {
-		runId: string;
-		mode: SubagentRunMode;
-		startedAt: number;
-		updatedAt: number;
-		currentAgent?: string;
-		currentIndex?: number;
-		currentActivityState?: ActivityState;
-		lastActivityAt?: number;
-		currentTool?: string;
-		currentToolStartedAt?: number;
-		currentPath?: string;
-		turnCount?: number;
-		tokens?: number;
-		toolCount?: number;
-		nestedRoute?: NestedRouteInfo;
-		nestedChildren?: NestedRunSummary[];
-		interrupt?: () => boolean;
-	}>;
+	foregroundControls: Map<string, ForegroundRunControl>;
 	lastForegroundControlId: string | null;
 	pendingForegroundControlNotices?: Map<string, ReturnType<typeof setTimeout>>;
 	cleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
@@ -1250,7 +1281,9 @@ export interface ScheduledRunsConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
-	/** Show the above-editor async runs widget. Defaults to true. */
+	/** Show the Claude Code-style navigable fleet below the editor. Defaults to true. */
+	fleetView?: boolean;
+	/** Show the legacy above-editor async runs widget. Defaults to true only when fleetView is disabled. */
 	asyncWidget?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
