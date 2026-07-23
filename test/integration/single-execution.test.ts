@@ -206,6 +206,7 @@ interface ExecutorToolResult {
 		asyncId?: string;
 		timeoutMs?: number;
 		turnBudget?: { maxTurns: number; graceTurns: number };
+		artifacts?: { dir: string; files: ArtifactPaths[] };
 	};
 }
 
@@ -1571,6 +1572,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(transcript.at(-1)?.text ?? "", /^Result text/);
 		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
+	});
+
+	it("routes foreground artifacts to the configured session directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "session artifact result" });
+		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionFile = () => sessionFile;
+		const executor = makeExecutor([makeAgent("echo")], { artifactDir: "session" });
+
+		const result = await executor.execute(
+			"session-artifact-dir",
+			{ agent: "echo", task: "Write session-scoped artifacts", runId: "session-artifacts" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		const expectedDir = path.join(path.dirname(sessionFile), "subagent-artifacts");
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.artifacts?.dir, expectedDir);
+		assert.ok(result.details?.artifacts?.files[0]?.outputPath.startsWith(`${expectedDir}${path.sep}`));
+		assert.equal(fs.readFileSync(result.details.artifacts.files[0].outputPath, "utf-8"), "session artifact result");
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 	});
 
 	it("writes a failure stub to foreground output artifacts when no output was produced", async () => {

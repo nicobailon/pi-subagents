@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TEMP_ARTIFACTS_DIR, type ArtifactPaths } from "./types.ts";
+import { TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
@@ -17,13 +17,30 @@ export function getProjectChainRunsDir(cwd: string): string {
 	return path.join(getProjectSubagentsDir(cwd), "chain-runs");
 }
 
-export function getArtifactsDir(sessionFile: string | null, projectCwd?: string): string {
-	if (projectCwd) return getProjectArtifactsDir(projectCwd);
-	if (sessionFile) {
-		const sessionDir = path.dirname(sessionFile);
-		return path.join(sessionDir, "subagent-artifacts");
+export function getArtifactsDir(
+	sessionFile: string | null,
+	projectCwd?: string,
+	dirPreference: ArtifactDirPreference = "project",
+): string {
+	switch (dirPreference) {
+		case "session":
+			if (sessionFile) {
+				const sessionDir = path.dirname(sessionFile);
+				return path.join(sessionDir, "subagent-artifacts");
+			}
+			return TEMP_ARTIFACTS_DIR;
+		case "temp":
+			return TEMP_ARTIFACTS_DIR;
+		case "project":
+			if (projectCwd) return getProjectArtifactsDir(projectCwd);
+			if (sessionFile) {
+				const sessionDir = path.dirname(sessionFile);
+				return path.join(sessionDir, "subagent-artifacts");
+			}
+			return TEMP_ARTIFACTS_DIR;
+		default:
+			throw new Error(`Unsupported artifactDir ${JSON.stringify(dirPreference)}; expected "project", "session", or "temp".`);
 	}
-	return TEMP_ARTIFACTS_DIR;
 }
 
 export function getArtifactPaths(artifactsDir: string, runId: string, agent: string, index?: number): ArtifactPaths {

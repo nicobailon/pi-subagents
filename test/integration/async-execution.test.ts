@@ -24,7 +24,7 @@ import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } fro
 interface AsyncExecutionResult {
 	content: Array<{ text?: string }>;
 	isError?: boolean;
-	details: { asyncId?: string };
+	details: { asyncId?: string; asyncDir?: string };
 }
 
 interface AsyncResultPayload {
@@ -371,11 +371,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		removeTempDir(tempDir);
 	});
 
-	function makeAsyncExecutor(agents: ReturnType<typeof makeAgent>[]) {
+	function makeAsyncExecutor(agents: ReturnType<typeof makeAgent>[], config: Record<string, unknown> = {}) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
+			config,
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
@@ -428,6 +428,35 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.protocolError?.code, "protocol_output_limit");
 		assert.equal(payload.results[0]?.protocolError?.stream, "stdout");
 		assert.match(payload.results[0]?.error ?? "", /protocol_output_limit/);
+	});
+
+	it("routes async artifacts to the configured session directory", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "async session artifact" });
+		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionFile = () => sessionFile;
+		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })], { artifactDir: "session" });
+
+		const launch = await executor.execute(
+			"async-session-artifact-dir",
+			{ agent: "worker", task: "Write async session artifacts", async: true, runId: "async-session-artifacts", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+
+		const expectedDir = path.join(path.dirname(sessionFile), "subagent-artifacts");
+		assert.equal(launch.isError, undefined);
+		assert.ok(launch.details.asyncId);
+		const descriptor = JSON.parse(fs.readFileSync(path.join(launch.details.asyncDir!, "recovery-descriptor.json"), "utf-8"));
+		assert.equal(descriptor.artifactsDir, expectedDir);
+		assert.equal(descriptor.artifactConfig.dir, "session");
+
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		const outputPath = payload.results[0]?.artifactPaths?.outputPath;
+		assert.ok(outputPath?.startsWith(`${expectedDir}${path.sep}`));
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async session artifact");
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 	});
 
 	it("background writes a failure stub to output artifacts when no output was produced", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
