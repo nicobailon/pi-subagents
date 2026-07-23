@@ -193,11 +193,15 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 		].filter((line): line is string => Boolean(line)).join("\n");
 	}
 
+	const supervisorHint = event.reason === "supervisor_request"
+		? "Supervisor request: reply to the pending request. If subagent_supervisor pending is empty, check intercom pending because an external intercom tool may own the request."
+		: undefined;
 	return [
 		`Subagent needs attention: ${event.agent}`,
 		`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
 		`Signal: ${event.message}`,
 		event.recentFailureSummary ? `Recent failures: ${event.recentFailureSummary}` : undefined,
+		supervisorHint,
 		"Hint: Inspect status first unless the run is clearly blocked. Use steer for a top-level live async child, routed resume for a live nested child, or resume to revive a paused/completed/failed child.",
 		`Top-level live async nudge: ${steerCommand}`,
 		`Routed live nested nudge: ${nestedResumeCommand}`,

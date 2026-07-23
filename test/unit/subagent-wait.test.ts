@@ -208,6 +208,31 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("reports step-level attention even when the aggregate flag has not caught up", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-step-attn-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-step-blocked", "running", {
+				sessionId: "sess-1",
+				pid: 999999,
+				steps: [{ agent: "worker", status: "running", activityState: "needs_attention" }],
+			});
+
+			let polls = 0;
+			const result = await waitForSubagents({}, undefined, baseDeps(root, state, {
+				sleep: async () => { polls += 1; },
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /need attention/i);
+			assert.match(textOf(result), /run-step-blocked/);
+			assert.equal(polls, 0, "step-level attention should return without polling");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("by default returns as soon as the FIRST run finishes, leaving the rest in flight", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-first-"));
 		try {

@@ -230,7 +230,13 @@ function formatForegroundAttention(run: ForegroundResumeRun, children: ReturnTyp
 
 /** A running run that has flagged it needs the parent's attention. */
 function needsAttention(run: AsyncRunSummary): boolean {
-	return run.activityState === "needs_attention";
+	return run.activityState === "needs_attention" || run.steps.some((step) => step.activityState === "needs_attention");
+}
+
+function hasSupervisorTool(run: AsyncRunSummary): boolean {
+	return run.currentTool === "contact_supervisor"
+		|| run.currentTool === "intercom"
+		|| run.steps.some((step) => step.currentTool === "contact_supervisor" || step.currentTool === "intercom");
 }
 
 function backgroundWorkIdentity(item: RegisteredBackgroundWorkItem): string {
@@ -559,8 +565,11 @@ export async function waitForSubagents(
 	}
 
 	const relevantAttention = attention.filter((run) => initialAsyncIds.has(run.id));
+	const supervisorAttentionHint = relevantAttention.some(hasSupervisorTool)
+		? " Reply to any pending supervisor request. If subagent_supervisor({ action: \"pending\" }) is empty, check intercom({ action: \"pending\" }) because an external intercom tool may own the request."
+		: "";
 	const attentionNote = relevantAttention.length > 0
-		? ` ${relevantAttention.length} run(s) need attention: ${relevantAttention.map((run) => run.id).join(", ")} — inspect with subagent({ action: "status" }) then steer a top-level live async child, resume a paused/completed/failed child, or interrupt explicitly.`
+		? ` ${relevantAttention.length} run(s) need attention: ${relevantAttention.map((run) => run.id).join(", ")} —${supervisorAttentionHint} inspect with subagent({ action: "status" }) then steer a top-level live async child, resume a paused/completed/failed child, or interrupt explicitly.`
 		: "";
 	const stillRunning = active.filter((run) => initialAsyncIds.has(run.id)).length
 		+ providerActive.filter((item) => initialProviderIds.has(backgroundWorkIdentity(item))).length;

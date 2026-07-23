@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
+import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
@@ -3863,6 +3864,90 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
+	});
+
+	it("subagent_wait wakes when an async child is waiting on contact_supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 5_000, jsonl: [events.toolEnd("contact_supervisor"), events.toolResult("contact_supervisor", "**Reply from supervisor:**\nProceed")] },
+				{ delay: 2_500, jsonl: [events.assistantMessage("Done")] },
+			],
+		});
+
+		const id = `async-supervisor-attention-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const eventsPath = path.join(asyncDir, "events.jsonl");
+		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+		const statusPath = path.join(asyncDir, "status.json");
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Ask the supervisor for a blocking decision",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			controlConfig: {
+				enabled: true,
+				needsAttentionAfterMs: 999_999,
+				activeNoticeAfterMs: 999_999,
+				failedToolAttemptsBeforeAttention: 3,
+				notifyOn: ["active_long_running", "needs_attention"],
+				notifyChannels: ["event", "async", "intercom"],
+			},
+		});
+
+		const attentionDeadline = Date.now() + 10_000;
+		let statusDuringAttention: AsyncStatusPayload | undefined;
+		while (Date.now() < attentionDeadline && !fs.existsSync(resultPath)) {
+			if (fs.existsSync(statusPath)) {
+				const nextStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+				if (nextStatus.currentTool === "contact_supervisor" && nextStatus.activityState === "needs_attention") {
+					statusDuringAttention = nextStatus;
+					break;
+				}
+			}
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.ok(statusDuringAttention, "expected status.json to expose the blocking supervisor request");
+
+		const waitResult = await waitForSubagents({ id, timeoutMs: 3_500 }, undefined, {
+			state: { currentSessionId: "session-1", foregroundRuns: new Map(), asyncJobs: new Map(), cleanupTimers: new Map(), resultFileCoalescer: new Map() },
+			pollIntervalMs: 100,
+			events: createEventBus(),
+		});
+		const waitText = waitResult.content[0]?.text ?? "";
+		assert.equal(waitResult.isError, undefined);
+		assert.match(waitText, /attention required/i);
+		assert.match(waitText, new RegExp(id));
+		assert.match(waitText, /intercom\(\{ action: "pending" \}\)/);
+		assert.equal(fs.existsSync(resultPath), false, "wait should return before the child completes");
+
+		const eventText = fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, "utf-8") : "";
+		assert.match(eventText, /"type":"needs_attention"/);
+		assert.match(eventText, /"reason":"supervisor_request"/);
+		assert.equal(statusDuringAttention.activityState, "needs_attention");
+		assert.equal(statusDuringAttention.steps?.[0]?.activityState, "needs_attention");
+		assert.equal(statusDuringAttention.currentTool, "contact_supervisor");
+		assert.equal(statusDuringAttention.steps?.[0]?.currentTool, "contact_supervisor");
+
+		const clearDeadline = Date.now() + 10_000;
+		let statusAfterReply: AsyncStatusPayload | undefined;
+		while (Date.now() < clearDeadline && !fs.existsSync(resultPath)) {
+			const nextStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+			if (nextStatus.state === "running" && !nextStatus.currentTool && !nextStatus.steps?.[0]?.currentTool) {
+				statusAfterReply = nextStatus;
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.ok(statusAfterReply, "expected the child to keep running after the supervisor reply");
+		assert.equal(statusAfterReply.activityState, undefined);
+		assert.equal(statusAfterReply.steps?.[0]?.activityState, undefined);
+
+		await waitForAsyncResultFile(id);
 	});
 
 	it("background runs escalate repeated mutating tool failures", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
