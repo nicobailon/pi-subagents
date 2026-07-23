@@ -8,7 +8,7 @@
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
-- Updated the Pi development SDK to 0.81.0 and passed the watchdog stream through the renamed `Agent.streamFunction` option, preventing watchdog reviews from terminating with `streamFunction is not a function`.
+- Updated the Pi development SDK to 0.81.0 and passed the watchdog stream through the renamed `Agent.streamFunction` option, preventing watchdog reviews from terminating with `streamFunction is not a function`. Thanks to Wang Zixiong (@XWIlluDelu) for #574.
 - Documented that relative chain `output` paths are chain-artifact paths under `{chain_dir}`, with persistent `chainDir` and absolute `output` paths as the supported ways to keep artifacts outside the temp run directory. Thanks to @dougEfresh for #529.
 - Bounded main-watchdog repository signatures so startup and agent-end checks no longer recurse through nested Git worktrees or generated dependency trees, reducing slow starts in large repos. Thanks to @pompanonb for #551 and @markg85 for #555.
 - Raised the child stdout line limit above Pi’s resized-image payload range so image OCR subagents no longer fail with `protocol_output_limit` on valid `read` tool image events. Thanks to @zmarty for #538.
