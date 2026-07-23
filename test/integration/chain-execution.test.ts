@@ -1554,6 +1554,53 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		assert.equal(result.details.results.some((entry) => entry.detached === true && entry.exitCode === -2), true);
 	});
 
+	it("continues a sequential chain after a blocking supervisor interview reply", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "interview_request", message: "Need approval", interview: { questions: [] } })] },
+				{ delay: 25, jsonl: [events.assistantMessage("MOCK_INPUT_RECEIVED: approve")] },
+			],
+		});
+		mockPi.onCall({ output: "second step completed" });
+		const agents = [
+			makeAgent("a", { systemPrompt: "Intercom orchestration channel:" }),
+			makeAgent("b"),
+		];
+		const intercomEvents = createEventBus();
+		let supervisorReplySupplied = false;
+
+		const result = await executeChain(
+			makeChainParams(
+				[
+					{ agent: "a", task: "Request supervisor interview" },
+					{ agent: "b", task: "Continue with {previous}" },
+				],
+				agents,
+				{
+					intercomEvents,
+					onUpdate(update: { details?: { progress?: Array<{ currentTool?: string }> } }) {
+						if (supervisorReplySupplied) return;
+						if (!update.details?.progress?.some((entry) => entry.currentTool === "contact_supervisor")) return;
+						supervisorReplySupplied = true;
+						intercomEvents.emit(INTERCOM_DETACH_REQUEST_EVENT, {
+							requestId: "chain-supervisor-interview",
+							agent: "a",
+							childIndex: 0,
+							reason: "interview_request",
+						});
+					},
+				},
+			),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(supervisorReplySupplied, true);
+		assert.equal(mockPi.callCount(), 2);
+		assert.match(result.details.results[0]?.finalOutput ?? "", /MOCK_INPUT_RECEIVED: approve/);
+		assert.match(readCallArgs(1).at(-1) ?? "", /MOCK_INPUT_RECEIVED: approve/);
+		assert.equal(result.details.results[1]?.finalOutput, "second step completed");
+	});
+
 	it("stops a sequential chain when a child detaches for intercom coordination", async () => {
 		mockPi.onCall({
 			steps: [

@@ -1167,6 +1167,8 @@ export interface RunSyncOptions {
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	allowIntercomDetach?: boolean;
+	/** In foreground chains, keep blocking supervisor requests pending until the child completes after a reply. */
+	waitForSupervisorReply?: boolean;
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
 	onControlEvent?: (event: ControlEvent) => void;

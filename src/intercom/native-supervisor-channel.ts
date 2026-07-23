@@ -652,6 +652,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					runId: request.runId,
 					agent: request.agent,
 					childIndex: request.childIndex,
+					reason: request.reason,
 				});
 			}
 		}

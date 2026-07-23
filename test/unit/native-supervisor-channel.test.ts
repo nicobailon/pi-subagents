@@ -206,7 +206,7 @@ describe("native supervisor channel", () => {
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId: currentSessionId, runId, agent: "worker", index: 2 });
 		const log: string[] = [];
-		const emitted: Array<{ channel: string; payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number } }> = [];
+		const emitted: Array<{ channel: string; payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number; reason?: string } }> = [];
 		const ctx = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -221,7 +221,7 @@ describe("native supervisor channel", () => {
 			registerTool: () => {},
 			sendMessage: () => { log.push("send"); },
 			events: {
-				emit: (channel: string, payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number }) => {
+				emit: (channel: string, payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number; reason?: string }) => {
 					log.push("emit");
 					emitted.push({ channel, payload });
 				},
@@ -235,7 +235,7 @@ describe("native supervisor channel", () => {
 			assert.deepEqual(log, ["send", "emit"]);
 			assert.deepEqual(emitted, [{
 				channel: INTERCOM_DETACH_REQUEST_EVENT,
-				payload: { requestId, runId, agent: "worker", childIndex: 2 },
+				payload: { requestId, runId, agent: "worker", childIndex: 2, reason: "need_decision" },
 			}]);
 			assert.equal(channel.pending.has(requestId), true);
 		} finally {

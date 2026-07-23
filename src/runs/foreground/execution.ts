@@ -465,7 +465,7 @@ async function runSingleAttempt(
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || detached || processClosed) return;
 			if (!payload || typeof payload !== "object") return;
-			const event = payload as { requestId?: unknown; runId?: unknown; agent?: unknown; childIndex?: unknown };
+			const event = payload as { requestId?: unknown; runId?: unknown; agent?: unknown; childIndex?: unknown; reason?: unknown };
 			const requestId = event.requestId;
 			if (typeof requestId !== "string" || requestId.length === 0) return;
 			const hasRoute = event.runId !== undefined || event.agent !== undefined || event.childIndex !== undefined;
@@ -474,6 +474,7 @@ async function runSingleAttempt(
 				if (typeof event.agent === "string" && event.agent !== agent.name) return;
 				if (typeof event.childIndex === "number" && event.childIndex !== (options.index ?? 0)) return;
 			} else if (!intercomStarted) return;
+			if (options.waitForSupervisorReply && (event.reason === "need_decision" || event.reason === "interview_request")) return;
 			options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
 			detachForIntercom();
 		});
