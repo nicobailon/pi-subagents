@@ -143,6 +143,7 @@ function createCommandContext(
 		notify: (message: string, type?: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
 		select: (title: string, choices: string[]) => Promise<string | undefined>;
+		editor: (title: string, prefill: string) => Promise<string | undefined>;
 		setStatus: (key: string, text: string | undefined) => void;
 		setToolsExpanded: (expanded: boolean) => void;
 		sessionManager: unknown;
@@ -163,6 +164,7 @@ function createCommandContext(
 			notify: overrides.notify ?? ((_message: string) => {}),
 			confirm: overrides.confirm ?? (async () => false),
 			select: overrides.select ?? (async () => undefined),
+			editor: overrides.editor ?? (async () => undefined),
 			setStatus: overrides.setStatus ?? ((_key: string, _text: string | undefined) => {}),
 			setToolsExpanded: overrides.setToolsExpanded ?? ((_expanded: boolean) => {}),
 			onTerminalInput: () => () => {},
@@ -1883,130 +1885,67 @@ describe("subagents admin slash command", { skip: !available ? "slash-commands.t
 		});
 	});
 
-	it("round-trips a system prompt through a quoted external editor command", async () => {
+	it("edits a system prompt through Pi's native editor", async () => {
 		await withIsolatedHome(async () => {
 			await withTempProject("pi-subagents-admin-prompt-", async (root) => {
-			const agentPath = path.join(root, ".pi", "agents", "worker.md");
-			fs.writeFileSync(agentPath, `---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n`, "utf-8");
-			const editorDir = path.join(root, "editor fixtures");
-			const editorPath = path.join(editorDir, "edit prompt.cjs");
-			fs.mkdirSync(editorDir, { recursive: true });
-			fs.writeFileSync(editorPath, `const fs = require("node:fs");\nfs.appendFileSync(process.argv[2], "\\nEdited by test.");\n`);
-			const previousEditor = process.env.EDITOR;
-			const previousVisual = process.env.VISUAL;
-			process.env.EDITOR = `"${process.execPath}" "${editorPath}"`;
-			delete process.env.VISUAL;
-			try {
+				const agentPath = path.join(root, ".pi", "agents", "worker.md");
+				fs.writeFileSync(agentPath, `---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n`, "utf-8");
+				const status: Array<[string, string | undefined]> = [];
+				let editorArgs: [string, string] | undefined;
 				const commands = registerAdmin([]);
 				await commands.get("subagents")!.handler("worker prompt", createCommandContext({
 					cwd: root,
 					hasUI: true,
 					select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+					editor: async (title, prefill) => {
+						editorArgs = [title, prefill];
+						return "Edited prompt.\n";
+					},
+					setStatus: (key, text) => status.push([key, text]),
 				}));
-				assert.match(fs.readFileSync(agentPath, "utf-8"), /Original prompt\.\nEdited by test\./);
-			} finally {
-				if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
-				if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
-			}
+				assert.deepEqual(editorArgs, ["Edit 'worker' system prompt", "Original prompt."]);
+				assert.match(fs.readFileSync(agentPath, "utf-8"), /Edited prompt\./);
+				assert.deepEqual(status, []);
 			});
 		});
 	});
 
-	it("launches a quoted Windows .cmd editor", { skip: process.platform !== "win32" }, async () => {
+	it("cancels native system-prompt editing without mutation", async () => {
 		await withIsolatedHome(async () => {
-			await withTempProject("pi-subagents-admin-cmd-editor-", async (root) => {
+			await withTempProject("pi-subagents-admin-prompt-cancel-", async (root) => {
 				const agentPath = path.join(root, ".pi", "agents", "worker.md");
-				fs.writeFileSync(agentPath, "---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n", "utf-8");
-				const editorDir = path.join(root, "editor fixtures");
-				const editorPath = path.join(editorDir, "edit prompt.cmd");
-				fs.mkdirSync(editorDir, { recursive: true });
-				fs.writeFileSync(editorPath, "@echo off\r\n>>\"%~1\" echo(\r\n>>\"%~1\" echo Edited by cmd.\r\n", "utf-8");
-				const previousEditor = process.env.EDITOR;
-				const previousVisual = process.env.VISUAL;
-				process.env.EDITOR = `"${editorPath}"`;
-				delete process.env.VISUAL;
-				try {
-					const commands = registerAdmin([]);
-					await commands.get("subagents")!.handler("worker prompt", createCommandContext({
-						cwd: root,
-						hasUI: true,
-						select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
-					}));
-					assert.match(fs.readFileSync(agentPath, "utf-8"), /Original prompt\.\r?\nEdited by cmd\./);
-				} finally {
-					if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
-					if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
-				}
+				const original = `---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n`;
+				fs.writeFileSync(agentPath, original, "utf-8");
+				const sent: unknown[] = [];
+				const commands = registerAdmin(sent);
+				await commands.get("subagents")!.handler("worker prompt", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+					editor: async () => undefined,
+				}));
+				assert.equal(fs.readFileSync(agentPath, "utf-8"), original);
+				assert.deepEqual(sent, []);
 			});
 		});
 	});
 
-	it("resolves a bare Windows .bat editor and preserves editor arguments", { skip: process.platform !== "win32" }, async () => {
-		await withIsolatedHome(async () => {
-			await withTempProject("pi-subagents-admin-bare-editor-", async (root) => {
-				const agentPath = path.join(root, ".pi", "agents", "worker.md");
-				fs.writeFileSync(agentPath, "---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n", "utf-8");
-				const editorDir = path.join(root, "editor-bin");
-				fs.mkdirSync(editorDir, { recursive: true });
-				fs.writeFileSync(path.join(editorDir, "bare-editor.bat"), [
-					"@echo off",
-					"if not \"%~1\"==\"--append\" exit /b 9",
-					">>\"%~2\" echo(",
-					">>\"%~2\" echo Edited by bare bat.",
-					"",
-				].join("\r\n"), "utf-8");
-				const previousEditor = process.env.EDITOR;
-				const previousVisual = process.env.VISUAL;
-				const previousPath = process.env.PATH;
-				const previousPathExt = process.env.PATHEXT;
-				process.env.EDITOR = "bare-editor --append";
-				delete process.env.VISUAL;
-				process.env.PATH = `${editorDir}${path.delimiter}${previousPath ?? ""}`;
-				process.env.PATHEXT = previousPathExt || ".COM;.EXE;.BAT;.CMD";
-				try {
-					const commands = registerAdmin([]);
-					await commands.get("subagents")!.handler("worker prompt", createCommandContext({
-						cwd: root,
-						hasUI: true,
-						select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
-					}));
-					assert.match(fs.readFileSync(agentPath, "utf-8"), /Original prompt\.\r?\nEdited by bare bat\./);
-				} finally {
-					if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
-					if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
-					if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
-					if (previousPathExt === undefined) delete process.env.PATHEXT; else process.env.PATHEXT = previousPathExt;
-				}
-			});
-		});
-	});
-
-	it("reports a nonzero external editor exit without rewriting the agent", async () => {
+	it("reports native-editor failures without rewriting the agent", async () => {
 		await withIsolatedHome(async () => {
 			await withTempProject("pi-subagents-admin-editor-failure-", async (root) => {
 				const agentPath = path.join(root, ".pi", "agents", "worker.md");
 				const original = `---\nname: worker\ndescription: Test worker\n---\n\nOriginal prompt.\n`;
 				fs.writeFileSync(agentPath, original, "utf-8");
-				const editorPath = path.join(root, "failed-editor.cjs");
-				fs.writeFileSync(editorPath, "process.exitCode = 7;\n", "utf-8");
-				const previousEditor = process.env.EDITOR;
-				const previousVisual = process.env.VISUAL;
-				process.env.EDITOR = `${process.execPath} ${editorPath}`;
-				delete process.env.VISUAL;
-				try {
-					const sent: unknown[] = [];
-					const commands = registerAdmin(sent);
-					await commands.get("subagents")!.handler("worker prompt", createCommandContext({
-						cwd: root,
-						hasUI: true,
-						select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
-					}));
-					assert.equal(fs.readFileSync(agentPath, "utf-8"), original);
-					assert.match((sent.at(-1) as { content?: string }).content ?? "", /Failed to update 'worker'.*exited with code 7/);
-				} finally {
-					if (previousEditor === undefined) delete process.env.EDITOR; else process.env.EDITOR = previousEditor;
-					if (previousVisual === undefined) delete process.env.VISUAL; else process.env.VISUAL = previousVisual;
-				}
+				const sent: unknown[] = [];
+				const commands = registerAdmin(sent);
+				await commands.get("subagents")!.handler("worker prompt", createCommandContext({
+					cwd: root,
+					hasUI: true,
+					select: async (_title, choices) => choices.find((choice) => choice.startsWith("worker [project]")),
+					editor: async () => { throw new Error("editor unavailable"); },
+				}));
+				assert.equal(fs.readFileSync(agentPath, "utf-8"), original);
+				assert.match((sent.at(-1) as { content?: string }).content ?? "", /Failed to update 'worker': editor unavailable/);
 			});
 		});
 	});

@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -15,7 +14,6 @@ import {
 import { serializeAgent } from "../agents/agent-serializer.ts";
 import { editableAgentConfig, preservedAgentFrontmatterFields } from "../agents/agent-management.ts";
 import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";
-import { editorLabel, resolveEditorCommand, runEditorAndWait } from "./subagents-editor.ts";
 
 const ADMIN_MESSAGE_TYPE = "subagents-admin";
 const INHERIT_MODEL_CHOICE = "Default / inherit session model";
@@ -327,38 +325,17 @@ async function saveAgentSystemPrompt(ctx: ExtensionContext, agent: AgentConfig, 
 	return `Updated '${agent.name}' system prompt in ${updated.filePath}.`;
 }
 
-/**
- * Round-trip the agent's system prompt through the user's external editor: write it to a
- * temp .md file, open the editor and wait for it to close, then persist the result.
- * Returns the status message, or null when nothing should be posted.
- */
 async function editSystemPrompt(ctx: ExtensionContext, agent: AgentConfig): Promise<string | null> {
 	if (!savesThroughSettings(agent, "systemPrompt")) {
 		const readOnlyMessage = readOnlyAgentMessage(agent, "systemPrompt");
 		if (readOnlyMessage) return readOnlyMessage;
 	}
-	const editor = resolveEditorCommand();
-	if (!editor) {
-		return "No editor configured. Set $VISUAL or $EDITOR (e.g. 'open -W -n -a MarkEdit').";
+	const edited = await ctx.ui.editor(`Edit '${agent.name}' system prompt`, agent.systemPrompt ?? "");
+	if (edited === undefined) return null;
+	if (edited.replace(/\s+$/, "") === (agent.systemPrompt ?? "").replace(/\s+$/, "")) {
+		return `System prompt for '${agent.name}' left unchanged.`;
 	}
-	const label = editorLabel(editor);
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-prompt-"));
-	const safeName = path.basename(agent.name.replace(/[^a-z0-9._-]/gi, "_")) || "agent";
-	const tmpPath = path.join(dir, `${safeName}.md`);
-	try {
-		fs.writeFileSync(tmpPath, agent.systemPrompt ?? "", "utf-8");
-		ctx.ui.notify(`Editing '${agent.name}' system prompt in ${label}. Save and close the editor window to apply.`, "info");
-		ctx.ui.setStatus("subagents-edit", `Waiting for ${label} to close…`);
-		await runEditorAndWait(editor, tmpPath);
-		const edited = fs.readFileSync(tmpPath, "utf-8");
-		if (edited.replace(/\s+$/, "") === (agent.systemPrompt ?? "").replace(/\s+$/, "")) {
-			return `System prompt for '${agent.name}' left unchanged.`;
-		}
-		return await saveAgentSystemPrompt(ctx, agent, edited);
-	} finally {
-		ctx.ui.setStatus("subagents-edit", undefined);
-		try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort cleanup */ }
-	}
+	return saveAgentSystemPrompt(ctx, agent, edited);
 }
 
 export async function openSubagentsAdmin(pi: ExtensionAPI, ctx: ExtensionContext, args = ""): Promise<void> {
