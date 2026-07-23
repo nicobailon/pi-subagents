@@ -108,12 +108,15 @@ afterEach(() => {
 });
 
 describe("native supervisor channel", () => {
-	it("delivers requests only to the exact current session id", () => {
+	it("delivers requests only to the exact current session id and wakes the parent", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const otherSessionId = `session-${randomUUID()}`;
 		const matchingId = writeRequest({ sessionId: currentSessionId, runId: `run-${randomUUID()}` });
 		const otherId = writeRequest({ sessionId: otherSessionId, runId: `run-${randomUUID()}` });
-		const sent: Array<{ content?: string; details?: { id?: string } }> = [];
+		const sent: Array<{
+			message: { content?: string; details?: { id?: string } };
+			options?: { triggerTurn?: boolean };
+		}> = [];
 		const registeredTools: string[] = [];
 		const ctx = {
 			cwd: process.cwd(),
@@ -127,7 +130,10 @@ describe("native supervisor channel", () => {
 		const pi = {
 			getAllTools: () => [],
 			registerTool: (tool: { name: string }) => { registeredTools.push(tool.name); },
-			sendMessage: (message: { content?: string; details?: { id?: string } }) => { sent.push(message); },
+			sendMessage: (
+				message: { content?: string; details?: { id?: string } },
+				options?: { triggerTurn?: boolean },
+			) => { sent.push({ message, options }); },
 			getSessionName: () => "shared-name",
 		};
 		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
@@ -137,9 +143,10 @@ describe("native supervisor channel", () => {
 		channel.dispose();
 
 		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME, "intercom"]);
-		assert.deepEqual(sent.map((message) => message.details?.id), [matchingId]);
+		assert.deepEqual(sent.map(({ message }) => message.details?.id), [matchingId]);
+		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
-		assert.equal(sent.some((message) => message.details?.id === otherId), false);
+		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
 	});
 
 	it("prunes stale empty supervisor channel directories before polling", () => {

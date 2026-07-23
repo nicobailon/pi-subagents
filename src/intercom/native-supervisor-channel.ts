@@ -645,7 +645,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					agent: request.agent,
 					childIndex: request.childIndex,
 				},
-			});
+			}, { triggerTurn: true });
 			if (request.expectsReply) {
 				(pi as { events?: IntercomEventBus }).events?.emit(INTERCOM_DETACH_REQUEST_EVENT, {
 					requestId: request.id,
