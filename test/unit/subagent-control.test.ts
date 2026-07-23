@@ -172,6 +172,22 @@ describe("subagent control attention state", () => {
 		assert.doesNotMatch(message, /Wait:/);
 	});
 
+	it("formats supervisor-request notices with pending-channel guidance", () => {
+		const event = buildControlEvent({
+			to: "needs_attention",
+			runId: "78f659a3",
+			agent: "worker",
+			reason: "supervisor_request",
+			currentTool: "contact_supervisor",
+		});
+
+		const message = formatControlNoticeMessage(event, "subagent-worker-78f659a3");
+
+		assert.match(message, /Supervisor request: reply to the pending request/);
+		assert.match(message, /subagent_supervisor pending/);
+		assert.match(message, /intercom pending/);
+	});
+
 	it("formats active-long-running notices as informational", () => {
 		const event = buildControlEvent({
 			type: "active_long_running",

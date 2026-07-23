@@ -262,6 +262,15 @@ function shouldPersistChildEvent(event: Record<string, unknown>): boolean {
 	return event.type !== "message_update";
 }
 
+function isBlockingSupervisorTool(toolName: string | undefined, args: unknown): boolean {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return false;
+	if (toolName === "contact_supervisor") {
+		const reason = (args as Record<string, unknown>).reason;
+		return reason === "need_decision" || reason === "interview_request";
+	}
+	return toolName === "intercom" && (args as Record<string, unknown>).action === "ask";
+}
+
 function findLatestSessionFile(sessionDir: string): string | null {
 	try {
 		const files = fs
@@ -2019,6 +2028,7 @@ async function runSubagent(
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
 	const pendingToolResults: Array<{ tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined> = initialStatusSteps.map(() => undefined);
+	const supervisorAttentionSteps = new Map<number, ActivityState | undefined>();
 	const mutatingFailureWindowMs = 5 * 60_000;
 	const appendControlEvent = (event: ReturnType<typeof buildControlEvent>) => {
 		if (!controlConfig.enabled) return;
@@ -2048,6 +2058,15 @@ async function runSubagent(
 		statusPayload.currentTool = activeStep?.currentTool;
 		statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
 		statusPayload.currentPath = activeStep?.currentPath;
+	};
+	const syncAggregateActivityState = (): void => {
+		const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
+			? "needs_attention"
+			: statusPayload.steps.some((step) => step.activityState === "active_long_running")
+				? "active_long_running"
+				: undefined;
+		currentActivityState = nextRunState;
+		statusPayload.activityState = nextRunState;
 	};
 	const maybeEmitActiveLongRunning = (flatIndex: number, now: number): boolean => {
 		if (!controlConfig.enabled || activeLongRunningSteps.has(flatIndex)) return false;
@@ -2319,15 +2338,45 @@ async function runSubagent(
 			pendingToolResults[flatIndex] = { tool: event.toolName, path: currentPath, mutates, startedAt: now };
 			statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
 			syncTopLevelCurrentTool();
+			if (controlConfig.enabled && isBlockingSupervisorTool(event.toolName, event.args) && step.activityState !== "needs_attention") {
+				const previous = step.activityState;
+				step.activityState = "needs_attention";
+				supervisorAttentionSteps.set(flatIndex, previous);
+				currentActivityState = "needs_attention";
+				statusPayload.activityState = "needs_attention";
+				appendControlEvent(buildControlEvent({
+					type: "needs_attention",
+					from: previous,
+					to: "needs_attention",
+					runId: id,
+					agent: step.agent,
+					index: flatIndex,
+					ts: now,
+					message: `${step.agent} is waiting for a supervisor reply`,
+					reason: "supervisor_request",
+					turns: step.turnCount,
+					tokens: step.tokens?.total,
+					toolCount: step.toolCount,
+					currentTool: step.currentTool,
+					currentToolDurationMs: 0,
+					currentPath: step.currentPath,
+				}));
+			}
 		} else if (event.type === "tool_execution_end") {
 			if (step.currentTool) {
 				step.recentTools ??= [];
 				step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
 			}
+			const supervisorPreviousActivity = supervisorAttentionSteps.get(flatIndex);
+			const clearedSupervisorAttention = supervisorAttentionSteps.delete(flatIndex);
 			step.currentTool = undefined;
 			step.currentToolArgs = undefined;
 			step.currentToolStartedAt = undefined;
 			step.currentPath = undefined;
+			if (clearedSupervisorAttention && step.activityState === "needs_attention") {
+				step.activityState = supervisorPreviousActivity;
+				syncAggregateActivityState();
+			}
 			syncTopLevelCurrentTool();
 		} else if (event.type === "tool_result_end" && event.message) {
 			const toolSnapshot = pendingToolResults[flatIndex];
