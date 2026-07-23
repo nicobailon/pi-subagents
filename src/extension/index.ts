@@ -244,20 +244,20 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
-	let disposeSubagentNotify = () => {};
+	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
 		RESULTS_DIR,
 		10 * 60 * 1000,
+		{ notifier: completionNotifier },
 	);
-	startResultWatcher();
-	primeExistingResults();
 
 	const runtimeCleanup = () => {
-		disposeSubagentNotify();
-		mainWatchdog.dispose();
 		stopResultWatcher();
+		state.currentSessionId = null;
+		completionNotifier.dispose();
+		mainWatchdog.dispose();
 		scheduledRunManager.stop();
 		supervisorChannel.dispose();
 		clearPendingForegroundControlNotices(state);
@@ -472,8 +472,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		}
 	}
-	disposeSubagentNotify = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
-
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
 	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
@@ -518,7 +516,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	};
 
-	const resetSessionState = (ctx: ExtensionContext) => {
+	const resetSessionState = (ctx: ExtensionContext, recovering: boolean) => {
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.subagentSpawns = {
@@ -546,17 +544,21 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		restoreActiveJobs(ctx);
 		scheduledRunManager.bindSession(ctx);
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
-		primeExistingResults();
+		startResultWatcher();
+		primeExistingResults({ triggerTurn: !recovering });
 	};
 
-	pi.on("session_start", (_event, ctx) => {
-		resetSessionState(ctx);
+	pi.on("session_start", (event, ctx) => {
+		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
+		resetSessionState(ctx, recovering);
 		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
 	});
 
 	pi.on("session_shutdown", () => {
-		disposeSubagentNotify();
+		stopResultWatcher();
+		state.currentSessionId = null;
+		completionNotifier.dispose();
 		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {
 			try {
@@ -568,7 +570,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (globalStore[eventUnsubscribeStoreKey] === eventUnsubscribes) {
 			delete globalStore[eventUnsubscribeStoreKey];
 		}
-		stopResultWatcher();
 		scheduledRunManager.stop();
 		if (state.poller) clearInterval(state.poller);
 		state.poller = null;

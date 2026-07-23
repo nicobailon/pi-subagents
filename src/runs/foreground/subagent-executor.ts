@@ -473,6 +473,9 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	const summary = !success && input.result.error
 		? `${input.result.error}${output ? `\n\nOutput:\n${output}` : ""}`
 		: output || input.result.error || "Detached child exited without final output.";
+	// A detached callback may outlive its extension runtime. Stale sessions are
+	// intentionally dropped rather than routed through a replacement runtime.
+	if (!input.sessionId || input.sessionId !== state.currentSessionId) return;
 	input.events.emit(SUBAGENT_FOREGROUND_COMPLETE_EVENT, {
 		id: `${input.runId}:${input.index}`,
 		runId: input.runId,

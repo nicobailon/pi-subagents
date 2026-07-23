@@ -20,9 +20,9 @@ function asFiniteNumber(value: unknown): number | undefined {
 }
 
 export function buildCompletionKey(data: CompletionDataLike, fallback: string): string {
-	const id = asNonEmptyString(data.id);
-	if (id) return `id:${id}`;
 	const sessionId = asNonEmptyString(data.sessionId) ?? "no-session";
+	const id = asNonEmptyString(data.id);
+	if (id) return `session:${sessionId}:id:${id}`;
 	const agent = asNonEmptyString(data.agent) ?? "unknown";
 	const timestamp = asFiniteNumber(data.timestamp);
 	const taskIndex = asFiniteNumber(data.taskIndex);
@@ -51,13 +51,4 @@ export function markSeenWithTtl(seen: Map<string, number>, key: string, now: num
 	if (seen.has(key)) return true;
 	seen.set(key, now);
 	return false;
-}
-
-export function getGlobalSeenMap(storeKey: string): Map<string, number> {
-	const globalStore = globalThis as Record<string, unknown>;
-	const existing = globalStore[storeKey];
-	if (existing instanceof Map) return existing as Map<string, number>;
-	const map = new Map<string, number>();
-	globalStore[storeKey] = map;
-	return map;
 }

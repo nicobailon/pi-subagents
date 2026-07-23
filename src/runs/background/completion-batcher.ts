@@ -89,8 +89,8 @@ export interface CompletionBatcher<T> {
 	push(item: T): void;
 	/** Emit any held items immediately as a single group. */
 	flush(): void;
-	/** Clear timers without emitting. */
-	dispose(): void;
+	/** Clear timers and return items that were never emitted. */
+	dispose(): T[];
 }
 
 /**
@@ -109,7 +109,7 @@ export function createCompletionBatcher<T>(options: CompletionBatcherOptions<T>)
 				options.emit([item]);
 			},
 			flush() {},
-			dispose() {},
+			dispose() { return []; },
 		};
 	}
 
@@ -160,7 +160,9 @@ export function createCompletionBatcher<T>(options: CompletionBatcherOptions<T>)
 		flush: emitGroup,
 		dispose() {
 			clearTimers();
+			const abandoned = pending;
 			pending = [];
-		},
+			return abandoned;
+		}
 	};
 }

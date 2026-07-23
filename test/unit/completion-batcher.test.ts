@@ -170,7 +170,9 @@ describe("createCompletionBatcher", () => {
 		});
 
 		batcher.push(item("a"));
-		batcher.dispose();
+		const abandoned = batcher.dispose();
+		assert.deepEqual(abandoned.map((entry) => entry.label), ["a"]);
+		assert.deepEqual(batcher.dispose(), []);
 		assert.deepEqual(emitted, []);
 		assert.equal(clock.pendingCount(), 0);
 		clock.advance(1000);

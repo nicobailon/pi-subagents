@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "../../src/runs/background/completion-dedupe.ts";
+import { buildCompletionKey, markSeenWithTtl } from "../../src/runs/background/completion-dedupe.ts";
 
 describe("buildCompletionKey", () => {
-	it("uses id as canonical key when present", () => {
-		const key = buildCompletionKey({ id: "run-123", agent: "reviewer", timestamp: 123 }, "fallback");
-		assert.equal(key, "id:run-123");
+	it("scopes ids to their owning session", () => {
+		const first = buildCompletionKey({ id: "run-123", sessionId: "session-a" }, "fallback");
+		const second = buildCompletionKey({ id: "run-123", sessionId: "session-b" }, "fallback");
+		assert.equal(first, "session:session-a:id:run-123");
+		assert.notEqual(first, second);
 	});
 
 	it("builds deterministic fallback key when id is missing", () => {
-		const a = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
-		const b = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
-		assert.equal(a, b);
+		const first = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
+		const second = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
+		assert.equal(first, second);
 	});
 });
 
@@ -22,15 +24,5 @@ describe("markSeenWithTtl", () => {
 		assert.equal(markSeenWithTtl(seen, "k", 100, ttlMs), false);
 		assert.equal(markSeenWithTtl(seen, "k", 200, ttlMs), true);
 		assert.equal(markSeenWithTtl(seen, "k", 1201, ttlMs), false);
-	});
-});
-
-describe("getGlobalSeenMap", () => {
-	it("returns the same map for the same global store key", () => {
-		const a = getGlobalSeenMap("__test_seen_key__");
-		a.set("x", 1);
-		const b = getGlobalSeenMap("__test_seen_key__");
-		assert.equal(b.get("x"), 1);
-		assert.equal(a, b);
 	});
 });

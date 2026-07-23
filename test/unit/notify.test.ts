@@ -39,9 +39,9 @@ function createPi(currentSessionId = "session-1", registerOptions: RegisterSubag
 
 	// Formatting-focused tests run with batching disabled so single completions
 	// emit synchronously. Batching behavior is covered by the dedicated suite below.
-	const dispose = registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
 
-	return { events, sent, dispose };
+	return { events, sent, notifier, dispose: () => notifier.dispose() };
 }
 
 function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSessionId = "session-a") {
@@ -53,12 +53,12 @@ function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSess
 			sent.push({ message, options });
 		},
 	};
-	const dispose = registerSubagentNotify(pi as never, { currentSessionId }, {
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId }, {
 		batchConfig: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
 		timers: clock.api,
 		now: clock.now,
 	});
-	return { events, sent, dispose };
+	return { events, sent, notifier, dispose: () => notifier.dispose() };
 }
 
 interface FakeJob {
@@ -132,6 +132,22 @@ describe("registerSubagentNotify", () => {
 			},
 			options: { triggerTurn: true },
 		});
+	});
+
+	it("acknowledges direct delivery only after sendMessage accepts it", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver(completionResult({ id: "direct-accepted" })), true);
+		assert.equal(sent.length, 1);
+	});
+
+	it("rejects a pending batch when the notifier is disposed", async () => {
+		const clock = createFakeClock();
+		const { notifier, sent } = createBatchingPi(clock);
+		const pending = notifier.deliver(completionResult({ id: "dispose-pending" }));
+		notifier.dispose();
+		assert.equal(await pending, false);
+		clock.advance(1000);
+		assert.equal(sent.length, 0);
 	});
 
 	it("wakes the originating session with recovered detached foreground output", () => {
@@ -353,25 +369,16 @@ describe("registerSubagentNotify", () => {
 		assert.equal(sent.length, 0);
 	});
 
-	it("does not let an older disposer clear a newer registration", () => {
-		const globalStore = globalThis as Record<string, unknown>;
+	it("does not let a disposed notifier affect another runtime", () => {
 		const oldClock = createFakeClock();
 		const oldRegistration = createBatchingPi(oldClock);
 		oldRegistration.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "old-owner-held-1" }));
 
-		// Simulate a runtime ownership handoff without invoking the old disposer,
-		// so its later call exercises the identity guards rather than idempotency.
-		delete globalStore.__pi_subagents_notify_unsubscribe__;
-		delete globalStore.__pi_subagents_notify_batcher__;
 		const newClock = createFakeClock();
 		const newRegistration = createBatchingPi(newClock);
-		const newerBatcherRegistration = globalStore.__pi_subagents_notify_batcher__;
-
 		oldRegistration.dispose();
 		oldClock.advance(1000);
 		assert.equal(oldRegistration.sent.length, 0);
-		assert.equal(globalStore.__pi_subagents_notify_unsubscribe__, newRegistration.dispose);
-		assert.equal(globalStore.__pi_subagents_notify_batcher__, newerBatcherRegistration);
 
 		newRegistration.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completionResult({ id: "new-owner-1" }));
 		newClock.advance(150);
@@ -423,6 +430,13 @@ describe("completion formatting helpers", () => {
 			+ "1. alpha\nalpha done\n\n"
 			+ "2. beta (1/2)\n(no output)\nSession: https://share/abc",
 		);
+	});
+
+	it("reports false when Pi rejects sendMessage synchronously", async () => {
+		const pi = { events: createEventBus(), sendMessage() { throw new Error("runtime inactive"); } };
+		const notifier = registerSubagentNotify(pi as never, { currentSessionId: "session-a" }, { batchConfig: { enabled: false } });
+		assert.equal(await notifier.deliver(completionResult({ id: "direct-rejected" })), false);
+		notifier.dispose();
 	});
 
 	it("buildCompletionDetails derives paused status from state and summary", () => {

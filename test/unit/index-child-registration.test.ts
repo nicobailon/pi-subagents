@@ -392,10 +392,6 @@ describe("subagent extension child mode", () => {
 			if (oldRuntime.sent.length !== 0) throw new Error("old completion was not queued before reload");
 			const oldCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeOldCompletion.has(token));
 			if (oldCompletionTimers.length === 0) throw new Error("old completion did not schedule a timer");
-			// Remove the notifier's registration-time fallback hooks so this test
-			// proves previousRuntimeCleanup owns and cancels the old timer.
-			delete globalThis.__pi_subagents_notify_unsubscribe__;
-			delete globalThis.__pi_subagents_notify_batcher__;
 
 			const newRuntime = createRuntime("notify-reload-new");
 			registerSubagentExtension(newRuntime.pi);

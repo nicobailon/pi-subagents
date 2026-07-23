@@ -18,9 +18,11 @@ import {
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
+import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
+const RETRY_DELAY_MS = 100;
 
 type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "watch">;
 
@@ -34,6 +36,7 @@ type ResultWatcherTimers = {
 type ResultWatcherDeps = {
 	fs?: ResultWatcherFs;
 	timers?: ResultWatcherTimers;
+	notifier?: Pick<CompletionNotifier, "deliver">;
 };
 
 type ResultFileChild = {
@@ -49,19 +52,11 @@ type ResultFileChild = {
 	children?: unknown;
 };
 
-type ResultFileData = {
-	id?: string;
+type ResultFileData = CompletionNotification & {
 	runId?: string;
-	agent?: string;
-	success?: boolean;
-	state?: string;
 	mode?: string;
-	summary?: string;
 	results?: ResultFileChild[];
 	nestedChildren?: unknown;
-	sessionId?: string;
-	cwd?: string;
-	sessionFile?: string;
 	asyncDir?: string;
 	intercomTarget?: string;
 };
@@ -79,22 +74,24 @@ function sanitizeNestedResultChildren(value: unknown, resultPath: string, label:
 	return children.length ? children : undefined;
 }
 
-function getErrorCode(error: unknown): string | undefined {
-	return typeof error === "object" && error !== null && "code" in error
-		? (error as NodeJS.ErrnoException).code
-		: undefined;
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 }
 
-function isNotFoundError(error: unknown): boolean {
-	return getErrorCode(error) === "ENOENT";
+function isNotFound(error: unknown): boolean {
+	return errorCode(error) === "ENOENT";
 }
 
-function shouldFallBackToPolling(error: unknown): boolean {
-	const code = getErrorCode(error);
+function shouldPoll(error: unknown): boolean {
+	const code = errorCode(error);
 	return code === "EMFILE" || code === "ENOSPC";
 }
 
-
+/**
+ * Watches persisted async results for the session currently owned by this
+ * runtime. `stopResultWatcher()` revokes ownership before closing resources,
+ * so old callbacks can never emit or delete after reload/session replacement.
+ */
 export function createResultWatcher(
 	pi: { events: IntercomEventBus },
 	state: SubagentState,
@@ -103,18 +100,41 @@ export function createResultWatcher(
 	deps: ResultWatcherDeps = {},
 ): {
 	startResultWatcher: () => void;
-	primeExistingResults: () => void;
+	primeExistingResults: (options?: { triggerTurn?: boolean }) => void;
 	stopResultWatcher: () => void;
 } {
 	const fsApi = deps.fs ?? fs;
 	const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
+	const notifier = deps.notifier ?? { deliver: async () => true };
+	const pendingTriggerTurn = new Map<string, boolean>();
+	const processing = new Set<string>();
+	let deliveryActive = true;
+	let deliveryEpoch = 0;
+	// The sole in-memory ownership lease. It is acquired for one active session
+	// and revoked before the watcher, queues, or callbacks are torn down.
+	let activeSessionId: string | null = null;
 
-	const handleResult = async (file: string) => {
+	const ownsSession = (sessionId: string, epoch: number) => {
+		if (!deliveryActive || epoch !== deliveryEpoch) return false;
+		if (!activeSessionId && state.currentSessionId) activeSessionId = state.currentSessionId;
+		return activeSessionId === sessionId && state.currentSessionId === sessionId;
+	};
+
+	const scheduleResult = (file: string, triggerTurn: boolean, delayMs = 0) => {
+		const pendingMode = pendingTriggerTurn.get(file);
+		pendingTriggerTurn.set(file, pendingMode === false || !triggerTurn ? false : true);
+		state.resultFileCoalescer.schedule(file, delayMs);
+	};
+
+	const handleResult = async (file: string, triggerTurn: boolean) => {
 		const resultPath = path.join(resultsDir, file);
-		if (!fsApi.existsSync(resultPath)) return;
+		if (processing.has(file) || !fsApi.existsSync(resultPath)) return;
+		processing.add(file);
 		try {
 			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
-			if (typeof data.sessionId !== "string" || data.sessionId !== state.currentSessionId) return;
+			if (typeof data.sessionId !== "string" || !data.sessionId) return;
+			const epoch = deliveryEpoch;
+			if (!ownsSession(data.sessionId, epoch)) return;
 
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 			const hasExplicitNestedChildren = data.nestedChildren !== undefined;
@@ -124,24 +144,29 @@ export function createResultWatcher(
 					nestedChildren = compactNestedResultChildren(projectNestedRegistryForRoot(runId)?.children);
 				} catch (error) {
 					console.error(`Failed to enrich subagent result file '${resultPath}' with nested registry children; will retry later:`, error);
+					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
 			}
-			const now = Date.now();
+
 			const completionKey = buildCompletionKey(data, `result:${file}`);
-			if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
-				fsApi.unlinkSync(resultPath);
+			if (state.completionSeen.has(completionKey)) {
+				if (!ownsSession(data.sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
+				try {
+					fsApi.unlinkSync(resultPath);
+				} catch (error) {
+					if (!isNotFound(error)) {
+						console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
+						scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+					}
+				}
 				return;
 			}
 
 			const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
-			const resultChildren = hasResultChildren
+			const resultChildren: ResultFileChild[] = hasResultChildren
 				? data.results!
-				: [{
-					agent: data.agent,
-					output: data.summary,
-					success: data.success,
-				}];
+				: [{ agent: data.agent ?? undefined, output: data.summary, success: data.success }];
 			const normalizedChildren = attachNestedChildrenToResultChildren(runId, resultChildren.map((result = {}, index): SubagentResultIntercomChild => {
 				const baseOutput = result.output ?? data.summary;
 				const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
@@ -160,10 +185,7 @@ export function createResultWatcher(
 							: undefined;
 				return {
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
-					status: resolveSubagentResultStatus({
-						success: result.success,
-						state: childState,
-					}),
+					status: resolveSubagentResultStatus({ success: result.success, state: childState }),
 					summary,
 					index,
 					artifactPath: result.artifactPaths?.outputPath,
@@ -174,11 +196,11 @@ export function createResultWatcher(
 			}), nestedChildren);
 
 			const intercomTarget = data.intercomTarget?.trim();
-			if (intercomTarget) {
+			if (intercomTarget && triggerTurn) {
 				const mode = data.mode === "single" || data.mode === "parallel" || data.mode === "chain"
 					? data.mode
 					: resultChildren.length > 1 ? "chain" : "single";
-				const payload = buildSubagentResultIntercomPayload({
+				const delivered = await deliverSubagentResultIntercomEvent(pi.events, buildSubagentResultIntercomPayload({
 					to: intercomTarget,
 					runId,
 					mode,
@@ -186,20 +208,44 @@ export function createResultWatcher(
 					children: normalizedChildren,
 					asyncId: data.id,
 					asyncDir: data.asyncDir,
-				});
-				const delivered = await deliverSubagentResultIntercomEvent(pi.events, payload);
-				if (!delivered) {
-					console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
-				}
+				}));
+				if (!ownsSession(data.sessionId, epoch)) return;
+				if (!delivered) console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 			}
 
-			pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			const accepted = await notifier.deliver({
 				...data,
+				id: data.id ?? runId,
 				runId,
+				triggerTurn,
 				...(nestedChildren?.length ? { nestedChildren } : {}),
 				...(Array.isArray(data.results) ? {
-					results: hasResultChildren
-						? normalizedChildren.map((child, index) => ({
+					results: hasResultChildren ? normalizedChildren.map((child, index) => ({
+						...data.results![index],
+						agent: child.agent,
+						status: child.status,
+						summary: child.summary,
+						index: child.index,
+						artifactPath: child.artifactPath,
+						sessionPath: child.sessionPath,
+						children: child.children,
+					})) : [],
+				} : {}),
+			});
+			if (!ownsSession(data.sessionId, epoch)) return;
+			if (!accepted) {
+				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+				return;
+			}
+			markSeenWithTtl(state.completionSeen, completionKey, Date.now(), completionTtlMs);
+			try {
+				pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+					...data,
+					runId,
+					triggerTurn,
+					...(nestedChildren?.length ? { nestedChildren } : {}),
+					...(Array.isArray(data.results) ? {
+						results: hasResultChildren ? normalizedChildren.map((child, index) => ({
 							...data.results![index],
 							agent: child.agent,
 							status: child.status,
@@ -208,40 +254,50 @@ export function createResultWatcher(
 							artifactPath: child.artifactPath,
 							sessionPath: child.sessionPath,
 							children: child.children,
-						}))
-						: [],
-				} : {}),
-			});
-			fsApi.unlinkSync(resultPath);
+						})) : [],
+					} : {}),
+				});
+			} catch (error) {
+				console.error(`Completion observer failed for '${resultPath}':`, error);
+			}
+			if (!ownsSession(data.sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
+			try {
+				fsApi.unlinkSync(resultPath);
+			} catch (error) {
+				if (!isNotFound(error)) {
+					console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
+					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+				}
+			}
 		} catch (error) {
-			if (isNotFoundError(error)) return;
-			console.error(`Failed to process subagent result file '${resultPath}':`, error);
+			if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
+		} finally {
+			processing.delete(file);
 		}
 	};
 
 	state.resultFileCoalescer = createFileCoalescer((file) => {
-		void handleResult(file);
+		const triggerTurn = pendingTriggerTurn.get(file) !== false;
+		pendingTriggerTurn.delete(file);
+		void handleResult(file, triggerTurn);
 	}, 50);
 
-	const primeExistingResults = () => {
+	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		try {
+			const triggerTurn = options.triggerTurn !== false;
 			fsApi.readdirSync(resultsDir)
 				.filter((f) => f.endsWith(".json"))
-				.forEach((file) => state.resultFileCoalescer.schedule(file, 0));
+				.forEach((file) => scheduleResult(file, triggerTurn));
 		} catch (error) {
-			if (isNotFoundError(error)) return;
-			console.error(`Failed to scan subagent result directory '${resultsDir}':`, error);
+			if (!isNotFound(error)) console.error(`Failed to scan subagent result directory '${resultsDir}':`, error);
 		}
 	};
 
-	const startPollingFallback = (reason: unknown) => {
+	const startPolling = (reason: unknown) => {
 		state.watcher?.close();
 		state.watcher = null;
 		if (state.watcherRestartTimer) return;
-
-		console.error(
-			`Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${getErrorCode(reason) ?? "unknown error"}).`,
-		);
+		console.error(`Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${errorCode(reason) ?? "unknown error"}).`);
 		primeExistingResults();
 		state.watcherRestartTimer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
 		state.watcherRestartTimer.unref?.();
@@ -255,10 +311,7 @@ export function createResultWatcher(
 				fsApi.mkdirSync(resultsDir, { recursive: true });
 				startResultWatcher();
 			} catch (error) {
-				if (shouldFallBackToPolling(error)) {
-					startPollingFallback(error);
-					return;
-				}
+				if (shouldPoll(error)) return startPolling(error);
 				console.error(`Failed to restart subagent result watcher for '${resultsDir}':`, error);
 				scheduleRestart();
 			}
@@ -268,6 +321,9 @@ export function createResultWatcher(
 
 	const startResultWatcher = () => {
 		if (state.watcher) return;
+		activeSessionId = state.currentSessionId;
+		deliveryActive = true;
+		deliveryEpoch += 1;
 		if (state.watcherRestartTimer) {
 			timers.clearTimeout(state.watcherRestartTimer);
 			timers.clearInterval(state.watcherRestartTimer);
@@ -275,17 +331,13 @@ export function createResultWatcher(
 		}
 		try {
 			const watchDir = resolveWatchPath(resultsDir, fsApi.realpathSync.native);
-			state.watcher = fsApi.watch(watchDir, (ev, file) => {
-				if (ev !== "rename" || !file) return;
+			state.watcher = fsApi.watch(watchDir, (event, file) => {
+				if (event !== "rename" || !file) return;
 				const fileName = file.toString();
-				if (!fileName.endsWith(".json")) return;
-				state.resultFileCoalescer.schedule(fileName);
+				if (fileName.endsWith(".json")) scheduleResult(fileName, true);
 			});
 			state.watcher.on("error", (error) => {
-				if (shouldFallBackToPolling(error)) {
-					startPollingFallback(error);
-					return;
-				}
+				if (shouldPoll(error)) return startPolling(error);
 				console.error(`Subagent result watcher failed for '${resultsDir}':`, error);
 				state.watcher?.close();
 				state.watcher = null;
@@ -293,10 +345,7 @@ export function createResultWatcher(
 			});
 			state.watcher.unref?.();
 		} catch (error) {
-			if (shouldFallBackToPolling(error)) {
-				startPollingFallback(error);
-				return;
-			}
+			if (shouldPoll(error)) return startPolling(error);
 			console.error(`Failed to start subagent result watcher for '${resultsDir}':`, error);
 			state.watcher = null;
 			scheduleRestart();
@@ -304,6 +353,9 @@ export function createResultWatcher(
 	};
 
 	const stopResultWatcher = () => {
+		deliveryActive = false;
+		activeSessionId = null;
+		deliveryEpoch += 1;
 		state.watcher?.close();
 		state.watcher = null;
 		if (state.watcherRestartTimer) {
@@ -312,6 +364,8 @@ export function createResultWatcher(
 		}
 		state.watcherRestartTimer = null;
 		state.resultFileCoalescer.clear();
+		pendingTriggerTurn.clear();
+		processing.clear();
 	};
 
 	return { startResultWatcher, primeExistingResults, stopResultWatcher };
