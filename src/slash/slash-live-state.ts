@@ -193,8 +193,8 @@ function cloneResultsWithProgress(
 	progress: NonNullable<Details["progress"]> | undefined,
 ): SingleResult[] {
 	return results.map((result, index) => {
-		const nextProgress = progress?.find((entry) => entry.index === index)
-			?? progress?.[index]
+		const nextProgress = progress?.find((entry) => entry.index === index
+			|| (entry.index === undefined && entry.agent === result.agent))
 			?? result.progress;
 		return nextProgress ? { ...result, progress: nextProgress } : result;
 	});
