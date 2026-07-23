@@ -521,6 +521,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		const ctx = createCommandContext({ sessionManager });
 		registerSlashCommands!(pi, createState(process.cwd()));
 		await commands.get("run")!.handler("scout", ctx);
+		await new Promise<void>((resolve) => setImmediate(resolve));
 
 		assert.deepEqual(requestedParams, { agent: "scout", task: "", clarify: false, agentScope: "both" });
 		assert.equal(requestedCtx, ctx);
@@ -570,6 +571,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 				log.push(`status:${text ?? "clear"}`);
 			},
 		}));
+		await new Promise<void>((resolve) => setImmediate(resolve));
 
 		assert.equal(sent.length, 2);
 		assert.equal((sent[0] as { customType?: string; display?: boolean }).customType, SLASH_RESULT_TYPE);
@@ -659,6 +661,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 				log.push(`status:${text ?? "clear"}`);
 			},
 		}));
+		await new Promise<void>((resolve) => setImmediate(resolve));
 
 		assert.equal(sent.length, 2);
 		assert.equal((sent[0] as { customType?: string; display?: boolean }).customType, SLASH_RESULT_TYPE);
@@ -745,6 +748,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		registerSlashCommands!(pi, createState(process.cwd()));
 		const args = Array.from({ length: 9 }, (_, index) => `scout \"task ${index + 1}\"`).join(" -> ");
 		await commands.get("parallel")!.handler(args, createCommandContext());
+		await new Promise<void>((resolve) => setImmediate(resolve));
 
 		assert.equal(requestedTasks, 9);
 		assert.equal(sent.length, 2);
@@ -850,6 +854,47 @@ Review {previous}
 			assert.equal(runParams.agentScope, "both");
 			assert.equal(runParams.async, undefined);
 			assert.equal(runParams.context, undefined);
+		});
+	});
+
+	it("/run-chain returns while its foreground subagent is still running", async () => {
+		await withTempProject("pi-run-chain-nonblocking-", async (root) => {
+			writeProjectChain(root, "slow.chain.md", `---
+name: slow
+description: Slow chain
+---
+
+## scout
+
+Think for a long time about {task}
+`);
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const events = createEventBus();
+			let requestId: string | undefined;
+			events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+				const payload = data as { requestId: string };
+				requestId = payload.requestId;
+				events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId });
+			});
+			const pi = {
+				events,
+				registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+				registerShortcut() {},
+				sendMessage(_message: unknown) {},
+			};
+			registerSlashCommands!(pi, createState(root));
+
+			const returned = await Promise.race([
+				commands.get("run-chain")!.handler("slow -- test UI responsiveness", createCommandContext({ cwd: root })).then(() => true),
+				new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 25)),
+			]);
+			assert.equal(returned, true, "the slash command should not hold the UI while the child runs");
+			assert.ok(requestId);
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
+				requestId,
+				result: { content: [{ type: "text", text: "done" }], details: { mode: "chain", results: [] } },
+				isError: false,
+			});
 		});
 	});
 
