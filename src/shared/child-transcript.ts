@@ -3,6 +3,30 @@ import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { extractTextFromContent, extractToolArgsPreview } from "./utils.ts";
 
+const MAX_TOOL_PAYLOAD_BYTES = 32 * 1024;
+const TOOL_PAYLOAD_TRUNCATION_MARKER = "\n\n… payload truncated";
+
+function boundedPayload(value: unknown, maxBytes = MAX_TOOL_PAYLOAD_BYTES): string | undefined {
+	let text: string;
+	if (typeof value === "string") text = value;
+	else {
+		try {
+			const serialized = JSON.stringify(value, null, 2);
+			if (serialized === undefined) return undefined;
+			text = serialized;
+		} catch {
+			return undefined;
+		}
+	}
+	if (!text.trim()) return undefined;
+	const payload = Buffer.from(text, "utf-8");
+	if (payload.length <= maxBytes) return text;
+	const markerBytes = Buffer.byteLength(TOOL_PAYLOAD_TRUNCATION_MARKER, "utf-8");
+	let end = Math.max(0, maxBytes - markerBytes);
+	while (end > 0 && (payload[end]! & 0xc0) === 0x80) end--;
+	return `${payload.subarray(0, end).toString("utf-8")}${TOOL_PAYLOAD_TRUNCATION_MARKER}`;
+}
+
 export const CHILD_TRANSCRIPT_ARTIFACT_VERSION = 1;
 const DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
 
@@ -19,8 +43,10 @@ type ChildTranscriptMessage = Message & {
 interface ChildTranscriptEvent {
 	type?: string;
 	message?: ChildTranscriptMessage;
+	toolCallId?: string;
 	toolName?: string;
 	args?: unknown;
+	isError?: boolean;
 }
 
 interface ChildTranscriptWriterInput {
@@ -147,6 +173,27 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 
 	const writeMessage = (sourceEventType: string, message: ChildTranscriptMessage) => {
 		const text = extractTextFromContent(message.content);
+		if (message.role === "toolResult") {
+			const output = boundedPayload(text);
+			writeRecord({
+				...baseRecord("message"),
+				sourceEventType,
+				role: message.role,
+				toolCallId: message.toolCallId,
+				toolName: message.toolName,
+				isError: message.isError,
+				...(output ? { text: output, outputTruncated: output.includes("… payload truncated") } : {}),
+				message: {
+					role: message.role,
+					toolCallId: message.toolCallId,
+					toolName: message.toolName,
+					isError: message.isError,
+					content: output ? [{ type: "text", text: output }] : [],
+					...(message.timestamp !== undefined ? { timestamp: message.timestamp } : {}),
+				},
+			});
+			return;
+		}
 		writeRecord({
 			...baseRecord("message"),
 			sourceEventType,
@@ -178,11 +225,14 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 			}
 			if (event.type === "tool_execution_start" && event.toolName) {
 				const args = eventArgs(event);
+				const argsPayload = boundedPayload(args);
 				writeRecord({
 					...baseRecord("tool_start"),
 					sourceEventType: event.type,
+					...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
 					toolName: event.toolName,
 					...(Object.keys(args).length > 0 ? { argsPreview: extractToolArgsPreview(args) } : {}),
+					...(argsPayload ? { argsPayload } : {}),
 				});
 				return;
 			}
@@ -190,7 +240,9 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 				writeRecord({
 					...baseRecord("tool_end"),
 					sourceEventType: event.type,
+					...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
 					...(event.toolName ? { toolName: event.toolName } : {}),
+					...(typeof event.isError === "boolean" ? { isError: event.isError } : {}),
 				});
 			}
 		},

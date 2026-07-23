@@ -25,6 +25,8 @@ import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "..
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
+import { openSubagentFleet } from "../tui/fleet.ts";
+import { SubagentFleetStatus } from "../tui/fleet-status.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
@@ -189,6 +191,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const config = loadConfig();
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = config.asyncByDefault === true;
+	const fleetViewEnabled = config.fleetView !== false;
+	const asyncWidgetEnabled = config.asyncWidget === true || (!fleetViewEnabled && config.asyncWidget !== false);
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
 
@@ -224,6 +228,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	const fleetStatus = fleetViewEnabled
+		? new SubagentFleetStatus(state, async (itemKey) => {
+			const ctx = state.lastUiContext;
+			if (!ctx?.hasUI) return;
+			await openSubagentFleet(ctx, state, { initialKey: itemKey });
+		})
+		: undefined;
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
@@ -239,6 +250,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		mainWatchdog.dispose();
 		scheduledRunManager.stop();
 		supervisorChannel.dispose();
+		fleetStatus?.dispose();
 		clearPendingForegroundControlNotices(state);
 		if (state.poller) {
 			clearInterval(state.poller);
@@ -248,7 +260,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR, {
-		widgetEnabled: config.asyncWidget !== false,
+		widgetEnabled: asyncWidgetEnabled,
 	});
 	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	const scheduledRunManager = createScheduledRunManager({
@@ -465,9 +477,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const steeringNoticeHandler = (payload: unknown) => {
 		handleSubagentSteeringNotice({ pi, state, details: payload as SubagentSteeringMessageDetails });
 	};
+	const asyncStartedHandler = (payload: unknown) => {
+		handleStarted(payload);
+		fleetStatus?.refresh();
+	};
+	const asyncCompleteHandler = (payload: unknown) => {
+		handleComplete(payload);
+		fleetStatus?.refresh();
+	};
 	const eventUnsubscribes = [
-		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
-		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
+		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
+		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
 		rpcBridge.dispose,
@@ -478,6 +498,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.toolName !== "subagent") return;
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
+		fleetStatus?.setContext(ctx);
+		fleetStatus?.refresh();
 		if (state.asyncJobs.size > 0) {
 			refreshWidget(ctx);
 			ensurePoller();
@@ -525,6 +547,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 		startResultWatcher();
 		primeExistingResults({ triggerTurn: !recovering });
+		fleetStatus?.setContext(ctx);
 	};
 
 	pi.on("session_start", (event, ctx) => {
@@ -564,6 +587,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		promptTemplateBridge.cancelAll();
 		promptTemplateBridge.dispose();
 		supervisorChannel.dispose();
+		fleetStatus?.dispose();
 		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
 			delete globalStore[runtimeCleanupStoreKey];
 		}

@@ -242,7 +242,7 @@ describe("subagent extension child mode", () => {
 				const widgets = [];
 				const ctx = {
 					cwd: process.cwd(), hasUI: true,
-					ui: { setWidget(_key, value) { widgets.push(value); }, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					ui: { setWidget(key, value) { widgets.push({ key, value }); }, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
 					sessionManager: { getSessionId() { return "session-widget"; }, getSessionFile() { return null; }, getEntries() { return []; } },
 					modelRegistry: { getAvailable() { return []; } },
 				};
@@ -251,7 +251,8 @@ describe("subagent extension child mode", () => {
 				widgets.length = 0;
 				eventHandlers.get("subagent:async-started")({ id: "widget-run", pid: 1, sessionId: "session-widget", mode: "single", agent: "worker", asyncDir: "/tmp/widget-run" });
 				handlers.get("tool_result")({ toolName: "subagent" }, ctx);
-				if (widgets.length < 2 || widgets.some((value) => value !== undefined)) throw new Error("async widget rendered despite disabled config: " + JSON.stringify(widgets));
+				const asyncWidgets = widgets.filter((entry) => entry.key === "subagent-async");
+				if (asyncWidgets.length < 2 || asyncWidgets.some((entry) => entry.value !== undefined)) throw new Error("async widget rendered despite disabled config: " + JSON.stringify(asyncWidgets));
 				handlers.get("session_shutdown")();
 			`;
 			const env = parentToolEnv();

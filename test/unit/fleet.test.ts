@@ -3,8 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { collectFleetSnapshot, SubagentFleetComponent } from "../../src/tui/fleet.ts";
+import { getArtifactPaths, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function stateForTest(): SubagentState {
@@ -32,11 +33,14 @@ function writeAsyncRun(root: string, input: {
 	agents?: string[];
 	contexts?: Array<"fresh" | "fork">;
 	output?: string;
+	transcript?: Array<Record<string, unknown>>;
 }): string {
 	const asyncDir = path.join(root, input.id);
 	fs.mkdirSync(asyncDir, { recursive: true });
 	const agents = input.agents ?? ["worker"];
 	if (input.output !== undefined) fs.writeFileSync(path.join(asyncDir, "output-0.log"), input.output, "utf-8");
+	const transcriptPath = input.transcript ? path.join(asyncDir, "transcript-0.jsonl") : undefined;
+	if (transcriptPath && input.transcript) fs.writeFileSync(transcriptPath, `${input.transcript.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf-8");
 	fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 		runId: input.id,
 		sessionId: input.sessionId ?? "session-current",
@@ -50,7 +54,7 @@ function writeAsyncRun(root: string, input: {
 			...(input.contexts?.[index] ? { context: input.contexts[index] } : {}),
 			status: input.state === "complete" ? "complete" : index === 0 ? "running" : "pending",
 			startedAt: 100,
-			...(index === 0 ? { sessionFile: path.join(asyncDir, `${agent}.jsonl`) } : {}),
+			...(index === 0 ? { sessionFile: path.join(asyncDir, `${agent}.jsonl`), ...(transcriptPath ? { transcriptPath } : {}) } : {}),
 		})),
 		...(input.output !== undefined ? { outputFile: "output-0.log" } : {}),
 	}, null, 2));
@@ -60,6 +64,23 @@ function writeAsyncRun(root: string, input: {
 const theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
+};
+
+const markdownTheme: MarkdownTheme = {
+	heading: (text) => text,
+	link: (text) => text,
+	linkUrl: (text) => text,
+	code: (text) => text,
+	codeBlock: (text) => text,
+	codeBlockBorder: (text) => text,
+	quote: (text) => text,
+	quoteBorder: (text) => text,
+	hr: (text) => text,
+	listBullet: (text) => text,
+	bold: (text) => text,
+	italic: (text) => text,
+	strikethrough: (text) => text,
+	underline: (text) => text,
 };
 
 describe("native subagent fleet", () => {
@@ -174,6 +195,232 @@ describe("native subagent fleet", () => {
 			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders structured tool activity and assistant Markdown when a child transcript is available", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-structured-"));
+		try {
+			const longResponse = `## Finding\n\n${Array.from({ length: 40 }, (_, index) => `detail ${index}`).join("\n")}\n\n\`\`\`ts\nconst fleet = true;\n\`\`\``;
+			writeAsyncRun(root, {
+				id: "async-structured",
+				state: "complete",
+				output: "RAW FALLBACK SHOULD NOT RENDER",
+				transcript: [
+					{ recordType: "message", sourceEventType: "initial_prompt", role: "user", text: "injected task" },
+					{ recordType: "tool_start", toolName: "read", argsPreview: "src/tui/fleet.ts" },
+					{ recordType: "tool_end", toolName: "read" },
+					{ recordType: "message", role: "toolResult", text: "very large tool payload", message: { toolName: "read", isError: false } },
+					{ recordType: "message", role: "assistant", model: "test-model", text: longResponse },
+				],
+			});
+			const state = stateForTest();
+			state.baseCwd = root;
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, markdownTheme },
+			);
+			try {
+				let lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("Conversation") && line.includes("assistant response")));
+				assert.ok(lines.some((line) => line.includes("const fleet = true;")));
+				assert.ok(!lines.some((line) => line.includes("very large tool payload")));
+				assert.ok(!lines.some((line) => line.includes("RAW FALLBACK SHOULD NOT RENDER")));
+				const bottomLines = lines;
+				component.handleInput("K");
+				lines = component.render(100);
+				assert.notDeepEqual(lines, bottomLines, "Shift+K should scroll the conversation up by one line");
+				component.handleInput("J");
+				lines = component.render(100);
+				assert.deepEqual(lines, bottomLines, "Shift+J should scroll the conversation back down by one line");
+				for (let page = 0; page < 4; page++) component.handleInput("\x1b[5~");
+				lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("Conversation") && line.includes("assistant response")), "the conversation header should remain pinned while scrolling");
+				assert.ok(lines.some((line) => line.includes("✓ read") && line.includes("src/tui/fleet.ts")), "page up should reveal compact tool activity");
+				assert.ok(lines.some((line) => line.includes("Assistant") && line.includes("test-model")), "page up should reveal the rendered assistant message header");
+				for (const renderWidth of [60, 80, 100]) {
+					for (const line of component.render(renderWidth)) {
+						assert.ok(visibleWidth(line) <= renderWidth, `line exceeded ${renderWidth} columns: ${line}`);
+					}
+				}
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses parent-tracked async state and cwd without rescanning status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-async-cwd-"));
+		try {
+			const asyncDir = path.join(root, "async-custom-cwd");
+			const customCwd = path.join(root, "custom-cwd");
+			const artifactsRoot = getProjectArtifactsDir(customCwd);
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(artifactsRoot, { recursive: true });
+			const transcriptPath = path.join(artifactsRoot, "async-custom-cwd_worker_transcript.jsonl");
+			fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", text: "Custom cwd async result" })}\n`, "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), "{in-flight status", "utf-8");
+			const state = stateForTest();
+			state.baseCwd = path.join(root, "parent-cwd");
+			state.asyncJobs.set("async-custom-cwd", {
+				asyncId: "async-custom-cwd",
+				asyncDir,
+				cwd: customCwd,
+				sessionId: "session-current",
+				status: "running",
+				mode: "single",
+				startedAt: 100,
+				updatedAt: 200,
+				steps: [{ agent: "worker", index: 0, status: "running", transcriptPath }],
+			});
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ refreshMs: 60_000, markdownTheme },
+			);
+			try {
+				assert.ok(component.render(100).some((line) => line.includes("Custom cwd async result")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("toggles bounded tool output expansion with x and Ctrl+O", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-tool-toggle-"));
+		try {
+			writeAsyncRun(root, {
+				id: "async-tools",
+				state: "complete",
+				transcript: [
+					{ recordType: "tool_start", toolCallId: "read-1", toolName: "read", argsPreview: "src/a.ts", argsPayload: JSON.stringify({ path: "src/a.ts" }), ts: 1 },
+					{ recordType: "tool_end", toolCallId: "read-1", toolName: "read", ts: 2 },
+					{ recordType: "message", role: "toolResult", toolCallId: "read-1", toolName: "read", text: "alpha\nbeta\ngamma", isError: false, ts: 3 },
+				],
+			});
+			const state = stateForTest();
+			state.baseCwd = root;
+			let renderRequests = 0;
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 100 }, requestRender() { renderRequests++; } } as never,
+				theme as never,
+				state,
+				() => {},
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, markdownTheme },
+			);
+			try {
+				let lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("alpha beta gamma") && line.includes("x to expand")));
+				component.handleInput("x");
+				lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("alpha") && !line.includes("beta")));
+				assert.ok(lines.some((line) => line.includes("x to collapse")));
+				component.handleInput("\x0f");
+				lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("alpha beta gamma") && line.includes("x to expand")));
+				fs.appendFileSync(
+					path.join(root, "async-tools", "transcript-0.jsonl"),
+					`${JSON.stringify({ recordType: "message", role: "assistant", text: "Cache refreshed after append", ts: 4 })}\n`,
+					"utf-8",
+				);
+				lines = component.render(100);
+				assert.ok(lines.some((line) => line.includes("Cache refreshed after append")));
+				assert.equal(renderRequests, 2);
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders the selected foreground parallel child's structured transcript", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-foreground-"));
+		try {
+			const state = stateForTest();
+			state.baseCwd = path.join(root, "parent-cwd");
+			const effectiveCwd = path.join(root, "effective-cwd");
+			const now = Date.now();
+			state.foregroundControls.set("foreground-live", {
+				runId: "foreground-live",
+				mode: "parallel",
+				startedAt: now - 1_000,
+				updatedAt: now,
+				cwd: effectiveCwd,
+				currentAgent: "reviewer",
+				currentIndex: 1,
+				description: "Review the active task",
+				activeChildren: new Map([
+					[0, { index: 0, agent: "worker", description: "Implement the active task", startedAt: now - 900, updatedAt: now - 100, tokens: 120 }],
+					[1, { index: 1, agent: "reviewer", description: "Review the active task", startedAt: now - 800, updatedAt: now, tokens: 240 }],
+				]),
+			});
+			const artifactsRoot = getProjectArtifactsDir(effectiveCwd);
+			fs.mkdirSync(artifactsRoot, { recursive: true });
+			const transcriptPath = getArtifactPaths(artifactsRoot, "foreground-live", "worker", 0).transcriptPath;
+			fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", model: "test-model", text: "**Worker live result**" })}\n`, "utf-8");
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 90 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ initialKey: "foreground-active:foreground-live:0", refreshMs: 60_000, markdownTheme },
+			);
+			try {
+				const lines = component.render(90);
+				assert.ok(lines.some((line) => line.includes("worker")));
+				assert.ok(lines.some((line) => line.includes("reviewer")));
+				assert.ok(lines.some((line) => line.includes("foreground · live")));
+				assert.ok(lines.some((line) => line.includes("Task") && line.includes("Implement the active task")));
+				assert.ok(lines.some((line) => line.includes("Conversation") && line.includes("assistant response")));
+				assert.ok(lines.some((line) => line.includes("Worker live result")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("opens the inspector with the FleetView-selected child focused", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+			currentIndex: 0,
+		});
+		state.foregroundControls.set("run-reviewer", {
+			runId: "run-reviewer",
+			mode: "single",
+			startedAt: 11,
+			updatedAt: 21,
+			currentAgent: "reviewer",
+			currentIndex: 0,
+		});
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 90 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{ initialKey: "foreground-active:run-worker:0", refreshMs: 60_000 },
+		);
+		try {
+			const selectedLine = component.render(90).find((line) => line.includes("›"));
+			assert.ok(selectedLine?.includes("run-work"), `unexpected selected row: ${selectedLine}`);
+		} finally {
+			component.dispose();
 		}
 	});
 
