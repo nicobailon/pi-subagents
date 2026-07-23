@@ -624,6 +624,83 @@ Agent prompt
 		assert.equal(packageAgents.some((agent) => agent.name === "package-skill"), false);
 	}));
 
+	it("prunes repo internals and nested project roots from broad package discovery", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-broad-package-prune-"));
+		tempDirs.push(dir);
+		writeJson(path.join(dir, "package.json"), {
+			name: "repo-root-workflow",
+			pi: {
+				subagents: {
+					agents: ["."],
+					chains: ["."],
+				},
+			},
+		});
+		writeAgent(path.join(dir, "root-agent.md"), `---
+name: root-agent
+description: Root package agent
+---
+
+Root prompt
+`);
+		writeAgent(path.join(dir, "root.chain.md"), `---
+name: root-chain
+description: Root package chain
+---
+
+## root-agent
+
+Run root agent
+`);
+		writeAgent(path.join(dir, "node_modules", "bad-agent.md"), `---
+name: node-modules-agent
+description: Should not be discovered
+---
+
+Ignored
+`);
+		writeAgent(path.join(dir, ".git", "hooks", "bad-agent.md"), `---
+name: git-agent
+description: Should not be discovered
+---
+
+Ignored
+`);
+		writeAgent(path.join(dir, "vendor", "submodule", "submodule-agent.md"), `---
+name: submodule-agent
+description: Should not be discovered
+---
+
+Ignored
+`);
+		fs.writeFileSync(path.join(dir, "vendor", "submodule", ".git"), "gitdir: ../.git/modules/submodule\n", "utf-8");
+		writeAgent(path.join(dir, "packages", "app", "local-agent.md"), `---
+name: nested-project-agent
+description: Should not be discovered
+---
+
+Ignored
+`);
+		fs.mkdirSync(path.join(dir, "packages", "app", ".pi"), { recursive: true });
+		writeAgent(path.join(dir, "node_modules", "bad.chain.md"), `---
+name: node-modules-chain
+description: Should not be discovered
+---
+
+## root-agent
+
+Ignored
+`);
+
+		const all = discoverAgentsAll(dir);
+		assert.ok(all.package.find((agent) => agent.name === "root-agent" && agent.filePath === path.join(dir, "root-agent.md")));
+		for (const name of ["node-modules-agent", "git-agent", "submodule-agent", "nested-project-agent"]) {
+			assert.equal(all.package.some((agent) => agent.name === name), false, `${name} should be pruned`);
+		}
+		assert.ok(all.chains.find((chain) => chain.name === "root-chain" && chain.filePath === path.join(dir, "root.chain.md")));
+		assert.equal(all.chains.some((chain) => chain.name === "node-modules-chain"), false);
+	}));
+
 	it("keeps package definitions below user and project overrides", () => withTempHome((home) => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-precedence-"));
 		tempDirs.push(dir);

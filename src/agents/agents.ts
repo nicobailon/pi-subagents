@@ -1160,7 +1160,19 @@ export function removeBuiltinAgentOverrideFields(
 	return { path: filePath, removed: true };
 }
 
-function listFilesRecursive(dir: string, predicate: (fileName: string) => boolean): string[] {
+const DISCOVERY_PRUNED_DIR_NAMES = new Set([".git", "node_modules"]);
+
+function isDiscoveryNestedProjectRoot(dir: string): boolean {
+	return isDirectory(getProjectConfigDir(dir)) || isDirectory(path.join(dir, ".agents"));
+}
+
+function shouldPruneDiscoveryDir(rootDir: string, dir: string, dirName: string): boolean {
+	if (DISCOVERY_PRUNED_DIR_NAMES.has(dirName)) return true;
+	if (fs.existsSync(path.join(dir, ".git"))) return true;
+	return path.resolve(dir) !== path.resolve(rootDir) && isDiscoveryNestedProjectRoot(dir);
+}
+
+function listFilesRecursive(dir: string, predicate: (fileName: string) => boolean, rootDir = dir): string[] {
 	const files: string[] = [];
 	if (!fs.existsSync(dir)) return files;
 
@@ -1174,7 +1186,9 @@ function listFilesRecursive(dir: string, predicate: (fileName: string) => boolea
 	for (const entry of entries) {
 		const filePath = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
-			files.push(...listFilesRecursive(filePath, predicate));
+			if (!shouldPruneDiscoveryDir(rootDir, filePath, entry.name)) {
+				files.push(...listFilesRecursive(filePath, predicate, rootDir));
+			}
 			continue;
 		}
 		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
