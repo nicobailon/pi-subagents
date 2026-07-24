@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
+import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { writePrivateAtomicJson } from "./atomic-json.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
@@ -18,6 +18,16 @@ export function getProjectArtifactsDir(cwd: string): string {
 
 export function getProjectChainRunsDir(cwd: string): string {
 	return path.join(getProjectSubagentsDir(cwd), "chain-runs");
+}
+
+export function getChainRunsDir(
+	sessionFile: string | null,
+	projectCwd: string,
+	dirPreference: ArtifactDirPreference = "project",
+): string {
+	if (dirPreference === "session") return sessionFile ? path.join(path.dirname(sessionFile), "subagent-chain-runs") : CHAIN_RUNS_DIR;
+	if (dirPreference === "temp") return CHAIN_RUNS_DIR;
+	return getProjectChainRunsDir(projectCwd);
 }
 
 export function getArtifactsDir(
@@ -60,8 +70,13 @@ export function getArtifactPaths(artifactsDir: string, runId: string, agent: str
 }
 
 export function ensureArtifactsDir(dir: string): void {
-	const parent = path.dirname(dir);
-	if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink()) throw new Error(`Artifact parent must not be a symlink: ${parent}`);
+	let existingParent = path.dirname(dir);
+	while (!fs.existsSync(existingParent)) {
+		const next = path.dirname(existingParent);
+		if (next === existingParent) break;
+		existingParent = next;
+	}
+	if (fs.existsSync(existingParent) && fs.lstatSync(existingParent).isSymbolicLink()) throw new Error(`Artifact parent must not be a symlink: ${existingParent}`);
 	fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
 	const stat = fs.lstatSync(dir);
 	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Artifact path must be a real directory: ${dir}`);

@@ -3,11 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { CHAIN_RUNS_DIR } from "../../src/shared/types.ts";
 import {
 	appendJsonl,
 	cleanupOldArtifacts,
 	ensureArtifactsDir,
 	getArtifactsDir,
+	getChainRunsDir,
 	getProjectArtifactsDir,
 	getProjectChainRunsDir,
 	getProjectSubagentsDir,
@@ -27,6 +29,15 @@ describe("project-local artifact paths", () => {
 	it("keeps the session artifact fallback when no project cwd is available", () => {
 		const sessionFile = path.join("tmp", "sessions", "parent.jsonl");
 		assert.equal(getArtifactsDir(sessionFile), path.join("tmp", "sessions", "subagent-artifacts"));
+	});
+
+	it("routes chain runs with the configured artifact preference", () => {
+		const cwd = path.join("tmp", "repo");
+		const sessionFile = path.join("tmp", "sessions", "parent.jsonl");
+		assert.equal(getChainRunsDir(sessionFile, cwd, "project"), path.join(cwd, ".pi-subagents", "chain-runs"));
+		assert.equal(getChainRunsDir(sessionFile, cwd, "session"), path.join("tmp", "sessions", "subagent-chain-runs"));
+		assert.equal(getChainRunsDir(null, cwd, "session"), CHAIN_RUNS_DIR);
+		assert.equal(getChainRunsDir(sessionFile, cwd, "temp"), CHAIN_RUNS_DIR);
 	});
 
 	it("writes private artifacts atomically where required", { skip: process.platform === "win32" }, () => {

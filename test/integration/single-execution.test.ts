@@ -1635,6 +1635,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 	});
 
+	it("routes foreground chain working directories with the session artifact scope", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "chain session result" });
+		const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionFile = () => sessionFile;
+		const executor = makeExecutor([makeAgent("echo")], { artifactDir: "session" });
+
+		const result = await executor.execute(
+			"session-chain-dir",
+			{ chain: [{ agent: "echo", task: "Use session chain scope" }], context: "fresh" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+
+		const expectedBase = path.join(path.dirname(sessionFile), "subagent-chain-runs");
+		assert.equal(result.isError, undefined);
+		assert.equal(fs.readdirSync(expectedBase).length, 1);
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "chain-runs")), false);
+		if (process.platform !== "win32") {
+			const chainDir = path.join(expectedBase, fs.readdirSync(expectedBase)[0]!);
+			assert.equal(fs.statSync(chainDir).mode & 0o777, 0o700);
+		}
+	});
+
 	it("writes a failure stub to foreground output artifacts when no output was produced", async () => {
 		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });
 		const artifactsDir = path.join(tempDir, "artifacts-failed-output");
