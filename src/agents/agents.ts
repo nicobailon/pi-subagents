@@ -152,6 +152,7 @@ export interface AgentConfig {
 interface SubagentSettings {
 	overrides: Record<string, BuiltinAgentOverrideConfig>;
 	defaultModel?: string;
+	defaultThinking?: string;
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
 	modelScope?: ModelScopeConfig;
@@ -754,18 +755,26 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 			throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultModel'; expected a non-empty string.`);
 		}
 	}
+	let defaultThinking: string | undefined;
+	if ("defaultThinking" in subagentsObject) {
+		if (typeof subagentsObject.defaultThinking === "string" && subagentsObject.defaultThinking.trim()) {
+			defaultThinking = subagentsObject.defaultThinking.trim();
+		} else {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultThinking'; expected a non-empty string.`);
+		}
+	}
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
 	const agentOverrides = subagentsObject.agentOverrides;
 	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-		return { overrides: parsed, defaultModel, disableBuiltins, disableThinking, modelScope };
+		return { overrides: parsed, defaultModel, defaultThinking, disableBuiltins, disableThinking, modelScope };
 	}
 	for (const [name, value] of Object.entries(agentOverrides)) {
 		const override = parseBuiltinOverrideEntry(name, value, filePath);
 		if (override) parsed[name] = override;
 	}
-	return { overrides: parsed, defaultModel, disableBuiltins, disableThinking, modelScope };
+	return { overrides: parsed, defaultModel, defaultThinking, disableBuiltins, disableThinking, modelScope };
 }
 
 function resolveSubagentDefaultModel(
@@ -787,6 +796,26 @@ function applySubagentDefaultModel(agents: AgentConfig[], defaultModel: AgentMod
 	return agents.map((agent) => {
 		if (agent.model !== undefined) return agent;
 		const next = { ...agent, model: defaultModel.model, modelSource: defaultModel };
+		const frontmatterFields = agentFrontmatterFields.get(agent);
+		if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
+		return next;
+	});
+}
+
+function resolveSubagentDefaultThinking(
+	userSettings: SubagentSettings,
+	projectSettings: SubagentSettings,
+	projectSettingsPath: string | null,
+): string | undefined {
+	if (projectSettingsPath && projectSettings.defaultThinking !== undefined) return projectSettings.defaultThinking;
+	return userSettings.defaultThinking;
+}
+
+function applySubagentDefaultThinking(agents: AgentConfig[], defaultThinking: string | undefined): AgentConfig[] {
+	if (defaultThinking === undefined) return agents;
+	return agents.map((agent) => {
+		if (agent.thinking !== undefined) return agent;
+		const next = { ...agent, thinking: defaultThinking };
 		const frontmatterFields = agentFrontmatterFields.get(agent);
 		if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 		return next;
@@ -1460,6 +1489,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userSettings = scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath);
 	const projectSettings = scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
+	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
 	const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
 		includeUser: scope !== "project",
@@ -1467,7 +1497,10 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	});
 
 	const builtinAgents = applyBuiltinOverrides(
-		applySubagentDefaultModel(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"), defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"), defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
@@ -1478,7 +1511,10 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user");
 	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user");
 	const userAgents = applyCustomAgentOverrides(
-		applySubagentDefaultModel([...userAgentsExtra, ...userAgentsOld, ...userAgentsNew], defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel([...userAgentsExtra, ...userAgentsOld, ...userAgentsNew], defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
@@ -1486,14 +1522,20 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	);
 
 	const projectAgents = applyCustomAgentOverrides(
-		applySubagentDefaultModel(scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project")), defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel(scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project")), defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
 	const packageAgents = applyCustomAgentOverrides(
-		applySubagentDefaultModel(packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package")), defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel(packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package")), defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
@@ -1529,21 +1571,28 @@ export function discoverAgentsAll(cwd: string): {
 	const userSettings = readSubagentSettings(userSettingsPath);
 	const projectSettings = readSubagentSettings(projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
+	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd);
 
 	const builtin = applyBuiltinOverrides(
-		applySubagentDefaultModel(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"), defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"), defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
 	const user = applyCustomAgentOverrides(
-		applySubagentDefaultModel([
-			...extraUserAgentDirs().flatMap((dir) => loadAgentsFromDir(dir, "user")),
-			...loadAgentsFromDir(userDirOld, "user"),
-			...loadAgentsFromDir(userDirNew, "user"),
-		], defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel([
+				...extraUserAgentDirs().flatMap((dir) => loadAgentsFromDir(dir, "user")),
+				...loadAgentsFromDir(userDirOld, "user"),
+				...loadAgentsFromDir(userDirNew, "user"),
+			], defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
@@ -1556,7 +1605,10 @@ export function discoverAgentsAll(cwd: string): {
 		}
 	}
 	const packageAgents = applyCustomAgentOverrides(
-		applySubagentDefaultModel(Array.from(packageMap.values()), defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel(Array.from(packageMap.values()), defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
@@ -1569,7 +1621,10 @@ export function discoverAgentsAll(cwd: string): {
 		}
 	}
 	const project = applyCustomAgentOverrides(
-		applySubagentDefaultModel(Array.from(projectMap.values()), defaultModel),
+		applySubagentDefaultThinking(
+			applySubagentDefaultModel(Array.from(projectMap.values()), defaultModel),
+			defaultThinking,
+		),
 		userSettings,
 		projectSettings,
 		userSettingsPath,

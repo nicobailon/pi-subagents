@@ -195,6 +195,16 @@ and user/project agents override builtins with the same name.
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
 
+Set `subagents.defaultThinking` to apply a shared thinking level to builtin, package, user, and project agents whose frontmatter leaves `thinking` unset. Project settings win over user settings; explicit frontmatter (including `thinking: false`), `agentOverrides.<name>.thinking`, and per-run overrides remain more specific. This setting affects child agents only and does not change the parent session's default thinking level.
+
+```json
+{
+  "subagents": {
+    "defaultThinking": "medium"
+  }
+}
+```
+
 For one run, use inline config:
 
 ```text
@@ -254,7 +264,7 @@ agent with the same name only when you want a substantially different agent.
 If a provider rejects model IDs with thinking suffixes, use
 `subagents.disableThinking: true` in user or project settings to clear bundled
 builtin thinking defaults globally. A higher-precedence per-agent `thinking`
-override can opt one builtin back in.
+override can opt one builtin back in. Existing custom-agent frontmatter remains authoritative.
 
 Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. Set `toolDescriptionMode` to `compact` to reduce tool-description prompt cost while keeping the execution, async/`subagent_wait`, child-safety, one-writer, management/action, and artifact/status guardrails. Set it to `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.
 
