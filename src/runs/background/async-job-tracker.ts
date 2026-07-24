@@ -170,6 +170,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					return;
 				}
 				if (!parsed || typeof parsed !== "object") return;
+				if ((parsed as { subagentSource?: unknown }).subagentSource === "child") return;
 				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {
 					const notice = parsed as Partial<SteeringNotice>;
 					if (typeof notice.requestId !== "string" || notice.runId !== job.asyncId || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string") return;
