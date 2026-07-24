@@ -1119,6 +1119,9 @@ export interface ForegroundRunControl {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
+	artifactDirPreference?: ArtifactDirPreference;
+	parentSessionFile?: string | null;
 	subagentInProgress?: boolean;
 	subagentSpawns?: {
 		sessionId: string | null;

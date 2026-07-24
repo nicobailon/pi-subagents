@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
-import { getArtifactPaths, getProjectArtifactsDir } from "../shared/artifacts.ts";
+import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { RESULTS_DIR, type AsyncJobState, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
@@ -286,9 +286,17 @@ function uniquePaths(values: Array<string | undefined>): string[] {
 	return [...new Set(values.filter((value): value is string => Boolean(value)).map((value) => path.resolve(value)))];
 }
 
+function fleetArtifactsRoot(state: SubagentState, cwd: string): string {
+	return getArtifactsDir(
+		state.parentSessionFile ?? null,
+		cwd,
+		state.artifactDirPreference ?? "project",
+	);
+}
+
 function transcriptTarget(item: FleetItem, state: SubagentState): { path: string; trustedRoots: string[] } | undefined {
 	if (item.kind === "foreground-active") {
-		const artifactsRoot = getProjectArtifactsDir(item.control.cwd ?? state.baseCwd);
+		const artifactsRoot = fleetArtifactsRoot(state, item.control.cwd ?? state.baseCwd);
 		return {
 			path: getArtifactPaths(artifactsRoot, item.runId, item.agent, item.index ?? 0).transcriptPath,
 			trustedRoots: [artifactsRoot],
@@ -302,8 +310,8 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 		return {
 			path: transcriptPath,
 			trustedRoots: uniquePaths([
-				getProjectArtifactsDir(item.run.cwd),
-				getProjectArtifactsDir(state.baseCwd),
+				fleetArtifactsRoot(state, item.run.cwd),
+				fleetArtifactsRoot(state, state.baseCwd),
 			]),
 		};
 	}
@@ -317,8 +325,8 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 		path: transcriptPath,
 		trustedRoots: uniquePaths([
 			item.run.asyncDir,
-			getProjectArtifactsDir(state.baseCwd),
-			trackedJob?.cwd ? getProjectArtifactsDir(trackedJob.cwd) : undefined,
+			fleetArtifactsRoot(state, state.baseCwd),
+			trackedJob?.cwd ? fleetArtifactsRoot(state, trackedJob.cwd) : undefined,
 		]),
 	};
 }

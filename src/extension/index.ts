@@ -199,6 +199,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const state: SubagentState = {
 		baseCwd: "",
 		currentSessionId: null,
+		artifactDirPreference: config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
+		parentSessionFile: null,
 		subagentInProgress: false,
 		subagentSpawns: {
 			sessionId: null,
@@ -520,6 +522,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const resetSessionState = (ctx: ExtensionContext, recovering: boolean) => {
 		state.baseCwd = ctx.cwd;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		state.parentSessionFile = ctx.sessionManager.getSessionFile();
 		state.subagentSpawns = {
 			sessionId: state.currentSessionId,
 			count: 0,
@@ -560,6 +563,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
 		stopResultWatcher();
 		state.currentSessionId = null;
+		state.parentSessionFile = null;
 		completionNotifier.dispose();
 		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
 		for (const unsubscribe of eventUnsubscribes) {

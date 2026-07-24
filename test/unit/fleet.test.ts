@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { collectFleetSnapshot, openSubagentFleet, SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
-import { getArtifactPaths, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
+import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function stateForTest(): SubagentState {
@@ -388,6 +388,88 @@ describe("native subagent fleet", () => {
 				component.dispose();
 			}
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders configured session and temp transcripts for active foreground, completed foreground, and async children", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-artifact-roots-"));
+		const createdTranscriptPaths: string[] = [];
+		try {
+			for (const preference of ["session", "temp"] as const) {
+				const baseCwd = path.join(root, `${preference}-cwd`);
+				const sessionFile = path.join(root, `${preference}-session`, "session.jsonl");
+				const artifactsRoot = getArtifactsDir(sessionFile, baseCwd, preference);
+				const prefix = `${path.basename(root)}-${preference}`;
+				fs.mkdirSync(artifactsRoot, { recursive: true });
+				const transcript = (runId: string, agent: string, index: number, text: string) => {
+					const transcriptPath = getArtifactPaths(artifactsRoot, runId, agent, index).transcriptPath;
+					fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", text })}\n`, "utf-8");
+					createdTranscriptPaths.push(transcriptPath);
+					return transcriptPath;
+				};
+
+				const activeId = `${prefix}-active`;
+				const recentId = `${prefix}-recent`;
+				const asyncId = `${prefix}-async`;
+				transcript(activeId, "worker", 0, `${preference} active foreground transcript`);
+				const recentTranscript = transcript(recentId, "reviewer", 0, `${preference} completed foreground transcript`);
+				const asyncTranscript = transcript(asyncId, "scout", 0, `${preference} async transcript`);
+
+				const state = stateForTest();
+				state.baseCwd = baseCwd;
+				state.artifactDirPreference = preference;
+				state.parentSessionFile = sessionFile;
+				state.foregroundControls.set(activeId, {
+					runId: activeId,
+					mode: "single",
+					cwd: baseCwd,
+					startedAt: 100,
+					updatedAt: 300,
+					currentAgent: "worker",
+					currentIndex: 0,
+				});
+				state.foregroundRuns!.set(recentId, {
+					runId: recentId,
+					mode: "single",
+					cwd: baseCwd,
+					sessionId: "session-current",
+					updatedAt: 200,
+					children: [{ agent: "reviewer", index: 0, status: "completed", transcriptPath: recentTranscript }],
+				});
+				state.asyncJobs.set(asyncId, {
+					asyncId,
+					asyncDir: path.join(root, `${preference}-async-run`),
+					cwd: baseCwd,
+					sessionId: "session-current",
+					status: "complete",
+					mode: "single",
+					startedAt: 100,
+					updatedAt: 250,
+					steps: [{ agent: "scout", index: 0, status: "complete", transcriptPath: asyncTranscript }],
+				});
+
+				for (const [initialKey, expected] of [
+					[`foreground-active:${activeId}:0`, `${preference} active foreground transcript`],
+					[`foreground-recent:${recentId}:0`, `${preference} completed foreground transcript`],
+					[`async:${asyncId}:0`, `${preference} async transcript`],
+				] as const) {
+					const component = new SubagentFleetComponent(
+						{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+						theme as never,
+						state,
+						() => {},
+						{ initialKey, refreshMs: 60_000, markdownTheme },
+					);
+					try {
+						assert.ok(component.render(100).some((line) => line.includes(expected)), `missing ${expected}`);
+					} finally {
+						component.dispose();
+					}
+				}
+			}
+		} finally {
+			for (const transcriptPath of createdTranscriptPaths) fs.rmSync(transcriptPath, { force: true });
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
