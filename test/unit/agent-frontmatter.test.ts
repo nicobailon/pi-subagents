@@ -197,6 +197,24 @@ Do work
 		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
 	});
 
+	it("preserves MCP-only tools as an explicit empty builtin allowlist", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-mcp-only-frontmatter-"));
+		tempDirs.push(dir);
+		writeAgent(path.join(dir, ".pi", "agents", "mcp-only.md"), `---
+name: mcp-only
+description: MCP only
+tools: mcp:github/search_repositories
+---
+
+Do MCP work
+`);
+
+		const agent = discoverAgents(dir, "project").agents.find((candidate) => candidate.name === "mcp-only");
+		assert.deepEqual(agent?.tools, []);
+		assert.deepEqual(agent?.mcpDirectTools, ["github/search_repositories"]);
+		assert.match(serializeAgent(agent!), /^tools: mcp:github\/search_repositories$/m);
+	});
+
 	it("preserves comma-separated syntax across all list fields", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-comma-list-frontmatter-"));
 		tempDirs.push(dir);

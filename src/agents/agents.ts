@@ -477,7 +477,7 @@ function splitToolList(rawTools: string[] | undefined): { tools?: string[]; mcpD
 		}
 	}
 	return {
-		...(tools.length > 0 ? { tools } : {}),
+		...(rawTools !== undefined ? { tools } : {}),
 		...(mcpDirectTools.length > 0 ? { mcpDirectTools } : {}),
 	};
 }
@@ -1248,7 +1248,9 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		const runtimeName = buildRuntimeName(localName, packageName);
 
 		const rawTools = parseFrontmatterList(frontmatter.tools);
-		const { tools = [], mcpDirectTools = [] } = splitToolList(rawTools);
+		const parsedTools = splitToolList(rawTools);
+		const tools = parsedTools.tools ?? [];
+		const mcpDirectTools = parsedTools.mcpDirectTools ?? [];
 		const defaultReads = parseFrontmatterList(frontmatter.defaultReads);
 		const skillStr = frontmatter.skill || frontmatter.skills;
 		const skills = parseFrontmatterList(skillStr);
@@ -1330,7 +1332,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			localName,
 			packageName,
 			description: frontmatter.description,
-			tools: tools.length > 0 ? tools : undefined,
+			tools: rawTools !== undefined ? tools : undefined,
 			mcpDirectTools: mcpDirectTools.length > 0 ? mcpDirectTools : undefined,
 			model: frontmatter.model,
 			fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,

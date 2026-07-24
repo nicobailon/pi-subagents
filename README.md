@@ -786,12 +786,12 @@ Project-scoped memory resolves under `<project>/.pi/agent-memory/<path>` and tra
 
 ### Tool and extension selection
 
-If `tools` is omitted, `pi-subagents` does not pass `--tools`, so the child gets Pi’s normal builtin tools. If `tools` is present, regular tool names become an explicit allowlist. An allowlisted name does not load the extension that registers it: load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry. `mcp:` entries are split out and forwarded as direct MCP selections. Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names. Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active. Agents that declare only known read-only builtin tools skip the implementation completion guard, but `bash`, unknown tools, and MCP tools stay mutation-capable. Use `completionGuard: false` for bash-enabled validators or advisors that should never be judged as implementation agents.
+If `tools` is omitted, `pi-subagents` does not pass `--tools`, so the child gets Pi’s normal builtin tools. If `tools` is present, regular tool names become an explicit allowlist; an empty `tools:` field emits `--no-tools`. An allowlisted name does not load the extension that registers it: load that provider through normal Pi extension discovery, `extensions`, `subagentOnlyExtensions`, or a path-like `tools` entry. `mcp:` entries are split out and forwarded as direct MCP selections without granting normal builtins unless those builtins are also listed. Path-like `tools` entries, such as extension paths or `.ts`/`.js` files, are treated as tool-extension paths rather than tool names. Internal runtime tools such as `structured_output` are added to an explicit allowlist only when their contract is active. Agents that declare only known read-only builtin tools skip the implementation completion guard, but `bash`, unknown tools, and MCP tools stay mutation-capable. Use `completionGuard: false` for bash-enabled validators or advisors that should never be judged as implementation agents.
 
 Examples:
 
 - `tools` omitted and `extensions` omitted: normal builtins and normal extensions.
-- `tools: mcp:chrome-devtools`: normal builtins plus direct Chrome DevTools MCP tools.
+- `tools: mcp:chrome-devtools`: only the resolved direct Chrome DevTools MCP tools.
 - `tools: read, bash, mcp:chrome-devtools`: only `read` and `bash` as builtins, plus direct Chrome DevTools MCP tools.
 - `tools: subagent, read`: a child-safe `subagent` tool is available inside that child so it can run explicitly assigned nested fanout.
 - `tools: read, fixture_search` plus `subagentOnlyExtensions: ./tools/fixture-search.ts`: the provider loads only in this agent's child process, and the registered `fixture_search` name survives the strict allowlist.

@@ -170,4 +170,15 @@ describe("applyIntercomBridgeToAgent", () => {
 		assert.deepEqual(updated.tools, ["read", "intercom", "contact_supervisor"]);
 		assert.match(updated.systemPrompt, /contact_supervisor/);
 	});
+
+	it("does not widen explicit empty or MCP-only builtin allowlists", () => {
+		const emptyTools = applyIntercomBridgeToAgent(makeAgent({ tools: [] }), activeBridge);
+		assert.deepEqual(emptyTools.tools, []);
+		assert.match(emptyTools.systemPrompt, /contact_supervisor/);
+
+		const mcpOnly = applyIntercomBridgeToAgent(makeAgent({ tools: [], mcpDirectTools: ["github/search_repositories"] }), activeBridge);
+		assert.deepEqual(mcpOnly.tools, []);
+		assert.deepEqual(mcpOnly.mcpDirectTools, ["github/search_repositories"]);
+		assert.match(mcpOnly.systemPrompt, /contact_supervisor/);
+	});
 });

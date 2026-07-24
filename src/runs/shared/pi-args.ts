@@ -130,27 +130,30 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		args.push("--model", modelArg);
 	}
 
+	const explicitToolAllowlist = input.tools !== undefined || (input.mcpDirectTools?.length ?? 0) > 0;
 	const declaredBuiltinToolsBase = input.tools?.filter((tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) ?? [];
-	const declaredBuiltinTools = input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
+	const declaredBuiltinTools = input.requireReadTool && declaredBuiltinToolsBase.length > 0 && !declaredBuiltinToolsBase.includes("read")
 		? ["read", ...declaredBuiltinToolsBase]
 		: declaredBuiltinToolsBase;
 	const fanoutAuthorized = declaredBuiltinTools.includes("subagent");
 	const toolExtensionPaths: string[] = [];
 	let requiredChildTools: string[] = [];
-	if (input.tools?.length) {
-		const allowedTools = [...declaredBuiltinTools];
-		for (const tool of input.tools) {
-			if (!declaredBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
-				toolExtensionPaths.push(tool);
-			}
+	for (const tool of input.tools ?? []) {
+		if (!declaredBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
+			toolExtensionPaths.push(tool);
 		}
-		if (allowedTools.length > 0) {
-			if (input.mcpDirectTools?.length) {
-				allowedTools.push(...resolveMcpDirectToolNames(input.mcpDirectTools, input.cwd));
-			}
-			if (input.structuredOutput) allowedTools.push("structured_output");
-			requiredChildTools = [...new Set(allowedTools)];
+	}
+	if (explicitToolAllowlist) {
+		const allowedTools = [
+			...declaredBuiltinTools,
+			...resolveMcpDirectToolNames(input.mcpDirectTools, input.cwd),
+			...(input.structuredOutput ? ["structured_output"] : []),
+		];
+		requiredChildTools = [...new Set(allowedTools)];
+		if (requiredChildTools.length > 0) {
 			args.push("--tools", requiredChildTools.join(","));
+		} else {
+			args.push("--no-tools");
 		}
 	}
 

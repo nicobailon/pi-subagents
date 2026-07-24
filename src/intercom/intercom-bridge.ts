@@ -161,7 +161,7 @@ export function applyIntercomBridgeToAgent(agent: AgentConfig, bridge: IntercomB
 	if (!bridge.active || !bridge.orchestratorTarget) return agent;
 
 	const bridgeTools = ["intercom", "contact_supervisor"];
-	const tools = agent.tools
+	const tools = agent.tools && agent.tools.length > 0
 		? [...agent.tools, ...bridgeTools.filter((tool) => !agent.tools?.includes(tool))]
 		: agent.tools;
 	const instruction = bridge.instruction;

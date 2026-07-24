@@ -37,7 +37,8 @@ interface CompletionMutationGuardResult {
 }
 
 export function hasMutationToolCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {
-	if (tools === undefined || tools.length === 0 || (mcpDirectTools?.length ?? 0) > 0) return true;
+	if ((mcpDirectTools?.length ?? 0) > 0) return true;
+	if (tools === undefined) return true;
 	return !tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
 }
 

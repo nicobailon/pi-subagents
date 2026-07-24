@@ -593,21 +593,65 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
 	});
 
-	it("preserves no --tools for MCP-only agents", () => {
-		const fixture = createMcpFixture();
-		writeMcpFixture(fixture);
+	it("emits --no-tools for explicit empty tool allowlists", () => {
+		for (const requireReadTool of [false, true]) {
+			const { args, env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				requireReadTool,
+				tools: [],
+			});
 
-		const { args, env } = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-			mcpDirectTools: ["chrome-devtools"],
-		});
+			assert.ok(args.includes("--no-tools"));
+			assert.equal(args.includes("--tools"), false);
+			assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+		}
+	});
 
-		assert.equal(args.includes("--tools"), false);
-		assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+	it("restricts MCP-only agents to selected direct MCP tool names", () => {
+		for (const requireReadTool of [false, true]) {
+			const fixture = createMcpFixture();
+			writeMcpFixture(fixture);
+
+			const { args, env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				requireReadTool,
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			assert.equal(args[args.indexOf("--tools") + 1], "chrome_devtools_take_screenshot,chrome_devtools_click");
+			assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+		}
+	});
+
+	it("fails closed with --no-tools when MCP-only names cannot be resolved", () => {
+		for (const requireReadTool of [false, true]) {
+			const fixture = createMcpFixture();
+			writeJson(path.join(fixture.agentDir, "mcp.json"), {
+				mcpServers: { "chrome-devtools": { command: "npx", args: ["chrome-devtools-mcp"] } },
+			});
+
+			const { args, env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				requireReadTool,
+				mcpDirectTools: ["chrome-devtools"],
+			});
+
+			assert.ok(args.includes("--no-tools"));
+			assert.equal(args.includes("--tools"), false);
+			assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+		}
 	});
 
 	it("supports direct MCP server/tool filters", () => {
