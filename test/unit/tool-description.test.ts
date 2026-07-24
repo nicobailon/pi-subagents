@@ -229,9 +229,8 @@ describe("registered subagent tool description", () => {
 		const output = execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,

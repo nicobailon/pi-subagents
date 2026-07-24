@@ -285,9 +285,8 @@ describe("registered subagent tool prepareArguments", { skip: !schemasAvailable 
 		const output = execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,

@@ -60,9 +60,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -104,9 +103,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -155,9 +153,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -207,9 +204,8 @@ describe("subagent extension child mode", () => {
 			const output = execFileSync(
 				process.execPath,
 				[
-					"--experimental-transform-types",
 					"--import",
-					"./test/support/register-loader.mjs",
+					"tsx",
 					"--input-type=module",
 					"--eval",
 					script,
@@ -257,7 +253,7 @@ describe("subagent extension child mode", () => {
 			`;
 			const env = parentToolEnv();
 			env.PI_CODING_AGENT_DIR = agentDir;
-			execFileSync(process.execPath, ["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+			execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
 		} finally {
 			fs.rmSync(agentDir, { recursive: true, force: true });
 		}
@@ -328,7 +324,7 @@ describe("subagent extension child mode", () => {
 			env.PI_CODING_AGENT_DIR = agentDir;
 			execFileSync(
 				process.execPath,
-				["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				["--import", "tsx", "--input-type=module", "--eval", script],
 				{ cwd: projectRoot, env, stdio: "pipe" },
 			);
 		} finally {
@@ -422,7 +418,7 @@ describe("subagent extension child mode", () => {
 			env.PI_CODING_AGENT_DIR = agentDir;
 			execFileSync(
 				process.execPath,
-				["--experimental-transform-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				["--import", "tsx", "--input-type=module", "--eval", script],
 				{ cwd: projectRoot, env, stdio: "pipe" },
 			);
 		} finally {
@@ -458,9 +454,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -493,9 +488,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -529,9 +523,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -574,9 +567,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
@@ -620,9 +612,8 @@ describe("subagent extension child mode", () => {
 		execFileSync(
 			process.execPath,
 			[
-				"--experimental-transform-types",
 				"--import",
-				"./test/support/register-loader.mjs",
+				"tsx",
 				"--input-type=module",
 				"--eval",
 				script,
