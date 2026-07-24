@@ -1070,6 +1070,47 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("does not delete a replacement result written while delivery is pending", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-replacement-"));
+		try {
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const delivered: string[] = [];
+			let releaseOld!: () => void;
+			let sawOld!: () => void;
+			const oldStarted = new Promise<void>((resolve) => { sawOld = resolve; });
+			const oldReleased = new Promise<void>((resolve) => { releaseOld = resolve; });
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				notifier: { async deliver(result) {
+					delivered.push(String(result.id));
+					if (result.id === "old-result") {
+						sawOld();
+						await oldReleased;
+					}
+					return true;
+				} },
+			});
+			const resultPath = path.join(resultsDir, "replace.json");
+			fs.writeFileSync(resultPath, JSON.stringify({ id: "old-result", sessionId: "session-1", agent: "worker", success: true, summary: "old" }), "utf-8");
+			try {
+				watcher.primeExistingResults();
+				await oldStarted;
+				const replacementPath = path.join(resultsDir, "replacement.tmp");
+				fs.writeFileSync(replacementPath, JSON.stringify({ id: "new-result", sessionId: "session-1", agent: "worker", success: true, summary: "new" }), "utf-8");
+				fs.renameSync(replacementPath, resultPath);
+				releaseOld();
+				const deadline = Date.now() + 1500;
+				while (!delivered.includes("new-result") && Date.now() <= deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+			assert.deepEqual(delivered, ["old-result", "new-result"]);
+			assert.equal(fs.existsSync(resultPath), false);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("drops stale watcher authority without emitting or deleting", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-stale-"));
 		try {

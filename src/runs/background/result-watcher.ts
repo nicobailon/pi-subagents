@@ -24,7 +24,9 @@ const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
 const RETRY_DELAY_MS = 100;
 
-type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "watch">;
+type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "renameSync" | "lstatSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "watch">;
+
+type ResultFileIdentity = Pick<fs.Stats, "dev" | "ino" | "size" | "mtimeMs">;
 
 type ResultWatcherTimers = {
 	setTimeout: typeof setTimeout;
@@ -127,12 +129,59 @@ export function createResultWatcher(
 		state.resultFileCoalescer.schedule(file, delayMs);
 	};
 
+	const sameResultFile = (left: ResultFileIdentity, right: ResultFileIdentity) =>
+		left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+
+	let claimSequence = 0;
+	const removeReadResult = (resultPath: string, file: string, identity: ResultFileIdentity, triggerTurn: boolean): void => {
+		const claimPath = `${resultPath}.${process.pid}.${++claimSequence}.processing`;
+		const preserveClaim = () => {
+			if (!fsApi.existsSync(claimPath)) {
+				if (fsApi.existsSync(resultPath)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+				return;
+			}
+			if (!fsApi.existsSync(resultPath)) {
+				fsApi.renameSync(claimPath, resultPath);
+				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+				return;
+			}
+			const retryFile = file.replace(/\.json$/i, `.replacement-${process.pid}-${claimSequence}.json`);
+			fsApi.renameSync(claimPath, path.join(resultsDir, retryFile));
+			scheduleResult(retryFile, triggerTurn, RETRY_DELAY_MS);
+			scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+		};
+		try {
+			fsApi.renameSync(resultPath, claimPath);
+			const claimedIdentity = fsApi.lstatSync(claimPath);
+			if (sameResultFile(identity, claimedIdentity)) {
+				fsApi.unlinkSync(claimPath);
+				return;
+			}
+			preserveClaim();
+		} catch (error) {
+			if (!isNotFound(error)) console.error(`Failed to remove delivered subagent result '${resultPath}' safely; will retry:`, error);
+			try {
+				preserveClaim();
+			} catch (preserveError) {
+				console.error(`Failed to preserve claimed subagent result '${claimPath}':`, preserveError);
+			}
+		}
+	};
+
 	const handleResult = async (file: string, triggerTurn: boolean) => {
 		const resultPath = path.join(resultsDir, file);
 		if (processing.has(file) || !fsApi.existsSync(resultPath)) return;
 		processing.add(file);
 		try {
-			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
+			const beforeRead = fsApi.lstatSync(resultPath);
+			if (!beforeRead.isFile() || beforeRead.isSymbolicLink()) throw new Error(`Subagent result path must be a real file: ${resultPath}`);
+			const rawResult = fsApi.readFileSync(resultPath, "utf-8");
+			const readIdentity = fsApi.lstatSync(resultPath);
+			if (!sameResultFile(beforeRead, readIdentity)) {
+				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+				return;
+			}
+			const data = JSON.parse(rawResult) as ResultFileData;
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const epoch = deliveryEpoch;
 			if (!ownsSession(data.sessionId, epoch)) return;
@@ -156,14 +205,7 @@ export function createResultWatcher(
 				state.completionSeen.delete(completionKey);
 			} else if (lastSeenAt !== undefined) {
 				if (!ownsSession(data.sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
-				try {
-					fsApi.unlinkSync(resultPath);
-				} catch (error) {
-					if (!isNotFound(error)) {
-						console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
-						scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-					}
-				}
+				removeReadResult(resultPath, file, readIdentity, triggerTurn);
 				return;
 			}
 
@@ -265,14 +307,7 @@ export function createResultWatcher(
 				console.error(`Completion observer failed for '${resultPath}':`, error);
 			}
 			if (!ownsSession(data.sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
-			try {
-				fsApi.unlinkSync(resultPath);
-			} catch (error) {
-				if (!isNotFound(error)) {
-					console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
-					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-				}
-			}
+			removeReadResult(resultPath, file, readIdentity, triggerTurn);
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
 		} finally {
