@@ -737,6 +737,13 @@ async function runSlashSubagent(
 	}
 }
 
+function launchSlashSubagent(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	params: SubagentParamsLike,
+): void {
+	void runSlashSubagent(pi, ctx, params);
+}
 
 export interface GroupConfig { concurrency?: number; failFast?: boolean; worktree?: boolean }
 export interface ParsedStep { kind: "step"; name: string; config: InlineConfig; task?: string }
@@ -1189,7 +1196,7 @@ export function registerSlashCommands(
 			if (inline.model) params.model = inline.model;
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			launchSlashSubagent(pi, ctx, params);
 		},
 	});
 
@@ -1203,7 +1210,7 @@ export function registerSlashCommands(
 			const params: SubagentParamsLike = { chain: built.chain, task: built.task, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			launchSlashSubagent(pi, ctx, params);
 		},
 	});
 
@@ -1233,7 +1240,7 @@ export function registerSlashCommands(
 			const params: SubagentParamsLike = { chain: mapSavedChainSteps(chain), task, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			launchSlashSubagent(pi, ctx, params);
 		},
 	});
 
@@ -1257,7 +1264,7 @@ export function registerSlashCommands(
 			const params: SubagentParamsLike = { tasks, clarify: false, agentScope: "both" };
 			if (bg) params.async = true;
 			if (fork) params.context = "fork";
-			await runSlashSubagent(pi, ctx, params);
+			launchSlashSubagent(pi, ctx, params);
 		},
 	});
 
@@ -1331,7 +1338,9 @@ export function registerSlashCommands(
 
 	registerPromptWorkflowCommands({
 		pi,
-		run: (params, ctx) => runSlashSubagent(pi, ctx, params),
+		run: async (params, ctx) => {
+			launchSlashSubagent(pi, ctx, params);
+		},
 	});
 
 	pi.registerCommand("subagents-models", {
