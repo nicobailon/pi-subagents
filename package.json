@@ -43,8 +43,8 @@
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --test test/unit/*.test.ts",
-    "test:integration": "node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:e2e": "node --experimental-transform-types --import ./test/support/register-loader.mjs --test test/e2e/*.test.ts",
+    "test:integration": "node --import tsx --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
+    "test:e2e": "node --import tsx --import ./test/support/register-loader.mjs --test test/e2e/*.test.ts",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e"
   },
   "pi": {
@@ -87,6 +87,7 @@
     "@earendil-works/pi-agent-core": "0.81.0",
     "@earendil-works/pi-ai": "0.81.0",
     "@earendil-works/pi-coding-agent": "0.81.0",
-    "@earendil-works/pi-tui": "0.81.0"
+    "@earendil-works/pi-tui": "0.81.0",
+    "tsx": "4.23.1"
   }
 }
