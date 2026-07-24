@@ -17,6 +17,12 @@ const hostPeerPackages = [
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
 ] as const;
+const expectedHostPeerRanges = {
+	"@earendil-works/pi-agent-core": "*",
+	"@earendil-works/pi-ai": ">=0.80.0",
+	"@earendil-works/pi-coding-agent": "*",
+	"@earendil-works/pi-tui": "*",
+} satisfies Record<(typeof hostPeerPackages)[number], string>;
 const expectedHostDevVersions = {
 	"@earendil-works/pi-agent-core": "0.81.0",
 	"@earendil-works/pi-ai": "0.81.0",
@@ -92,11 +98,11 @@ test("direct dependency declarations are exact version pins", () => {
 	}
 });
 
-test("host-owned packages are optional wildcard peers, not production dependencies", () => {
+test("host-owned packages are optional peers with supported ranges, not production dependencies", () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
 
 	for (const name of hostPeerPackages) {
-		assert.equal(packageJson.peerDependencies?.[name], "*", `${name} should be a wildcard peer`);
+		assert.equal(packageJson.peerDependencies?.[name], expectedHostPeerRanges[name], `${name} should use its supported peer range`);
 		assert.equal(packageJson.dependencies?.[name], undefined, `${name} should not be a production dependency`);
 		assert.deepEqual(packageJson.peerDependenciesMeta?.[name], { optional: true }, `${name} should be an optional peer`);
 	}

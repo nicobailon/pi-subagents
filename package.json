@@ -60,7 +60,7 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-ai": ">=0.80.0",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },

@@ -14,6 +14,7 @@
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
+- Required `@earendil-works/pi-ai` 0.80.0 or newer because watchdog reviews import its `./compat` entrypoint, preventing background runs from loading on older hosts. Thanks to @donwellsav for #599.
 - Re-derived foreground delegation structured-output hardening on current main: schema-bound runs now require the runtime-owned `structured_output` tool call, report `structured_output_failed`, preserve strict versioned hard-turn boundaries, and clean temporary protocol files when artifacts are disabled. Thanks to @dimahike for #571.
 - Kept foreground slash execution commands responsive while their live result finalization continues asynchronously. Thanks to Eli Stark (@white-hat) for #594.
 - Re-armed remembered detached foreground children on every blocking `contact_supervisor` request so targeted `subagent_wait` calls wake for repeated supervisor decisions.
