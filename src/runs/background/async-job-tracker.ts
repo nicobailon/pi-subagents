@@ -149,10 +149,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 		try {
 			const stat = fs.fstatSync(fd);
+			const fileId = `${stat.dev}:${stat.ino}`;
+			const wasReplaced = job.controlEventFileId !== undefined && job.controlEventFileId !== fileId;
+			job.controlEventFileId = fileId;
 			const savedCursor = job.controlEventCursor;
-			const wasTruncated = stat.size < (savedCursor ?? 0);
-			if (wasTruncated) job.controlEventSkippingOversizedLine = false;
-			let cursor = wasTruncated ? 0 : (savedCursor ?? 0);
+			const wasReset = wasReplaced || stat.size < (savedCursor ?? 0);
+			if (wasReset) job.controlEventSkippingOversizedLine = false;
+			let cursor = wasReset ? 0 : (savedCursor ?? 0);
 			const startedFromTail = savedCursor === undefined && stat.size > CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (startedFromTail) cursor = stat.size - CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (stat.size <= cursor) return;
@@ -185,7 +188,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				}
 				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
 				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
-				if (!record.event || !Array.isArray(record.channels)) return;
+				if (!record.event || !Array.isArray(record.channels) || record.event.runId !== job.asyncId) return;
 				const payload = {
 					event: record.event,
 					source: "async" as const,

@@ -962,6 +962,84 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("resets the event cursor when a larger replacement file has a new identity", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		let tracker: { resetJobs(): void } | undefined;
+		try {
+			const runId = "run-rotated-control";
+			const runDir = path.join(asyncRoot, runId);
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId,
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const eventsPath = path.join(runDir, "events.jsonl");
+			fs.writeFileSync(eventsPath, JSON.stringify({ type: "entry_appended", entry: "x".repeat(2_200_000) }), "utf-8");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker" });
+			await waitForCondition(
+				() => state.asyncJobs.get(runId)?.controlEventSkippingOversizedLine === true,
+				"oversized-line skip state before rotation",
+			);
+
+			const controlEvent = JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 789,
+					runId,
+					agent: "worker",
+					message: "event after rotation",
+				},
+			});
+			fs.renameSync(eventsPath, `${eventsPath}.old`);
+			fs.writeFileSync(eventsPath, `${controlEvent}\n${JSON.stringify({ type: "entry_appended", entry: "y".repeat(2_200_000) })}`, "utf-8");
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				"control event after rotation",
+			);
+			assert.equal(recorder.events.filter((event) => event.channel === "subagent:control-event").length, 1);
+		} finally {
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("does not emit control events that claim a different run", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		let tracker: { resetJobs(): void } | undefined;
+		try {
+			const runId = "run-owned-control";
+			const runDir = path.join(asyncRoot, runId);
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({ runId, mode: "single", state: "running", startedAt: Date.now(), lastUpdate: Date.now(), steps: [{ agent: "worker", status: "running" }] }), "utf-8");
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+				type: "subagent.control",
+				channels: ["event", "intercom"],
+				event: { type: "needs_attention", to: "needs_attention", ts: 1, runId: "other-run", agent: "worker", message: "forged" },
+				intercom: { to: "other-session", message: "forged" },
+			})}\n`, "utf-8");
+			const state = createState();
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker" });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event" || event.channel === "subagent:control-intercom"), false);
+		} finally {
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("does not tail-skip control events for newly tracked large logs", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {

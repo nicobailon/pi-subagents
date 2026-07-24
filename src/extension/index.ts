@@ -20,8 +20,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.ts";
-import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, ensureArtifactsDir, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
@@ -56,6 +55,7 @@ import {
 	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
 	RESULTS_DIR,
+	TEMP_ROOT_DIR,
 	SLASH_RESULT_TYPE,
 	SLASH_TEXT_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -184,8 +184,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	ensureAccessibleDir(RESULTS_DIR);
-	ensureAccessibleDir(ASYNC_DIR);
+	ensureArtifactsDir(TEMP_ROOT_DIR);
+	ensureArtifactsDir(RESULTS_DIR);
+	ensureArtifactsDir(ASYNC_DIR);
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
@@ -242,7 +243,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state,
 		RESULTS_DIR,
 		10 * 60 * 1000,
-		{ notifier: completionNotifier, resultIntercom: config.resultIntercom !== false },
+		{ notifier: completionNotifier, resultIntercom: config.resultIntercom === true },
 	);
 
 	const runtimeCleanup = () => {

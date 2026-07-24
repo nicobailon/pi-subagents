@@ -1458,7 +1458,7 @@ The default injected guidance tells children to use `contact_supervisor` with `r
 { "resultIntercom": false }
 ```
 
-Controls whether full foreground and async results are offered to an external intercom adapter. It defaults to `true` for compatibility. Set it to `false` when no trusted adapter is installed; native `contact_supervisor` / `subagent_supervisor` coordination remains enabled and normal tool results stay unchanged.
+Controls whether full foreground and async results are offered to an external intercom adapter. It defaults to `false`; enable it only with a trusted adapter that acknowledges durable receipt. Native `contact_supervisor` / `subagent_supervisor` coordination remains enabled and normal tool results stay unchanged.
 
 ### `worktreeBaseDir`
 
