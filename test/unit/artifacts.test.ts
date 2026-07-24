@@ -71,7 +71,7 @@ describe("project-local artifact paths", () => {
 			const link = path.join(root, "artifacts");
 			fs.mkdirSync(target);
 			fs.symlinkSync(target, link);
-			assert.throws(() => ensureArtifactsDir(link), /must be a real directory/);
+			assert.throws(() => ensureArtifactsDir(link), /must not contain a symlink/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -84,10 +84,25 @@ describe("project-local artifact paths", () => {
 			const parent = path.join(root, ".pi-subagents");
 			fs.mkdirSync(outside);
 			fs.symlinkSync(outside, parent);
-			assert.throws(() => ensureArtifactsDir(path.join(parent, "artifacts")), /parent must not be a symlink/);
+			assert.throws(() => ensureArtifactsDir(path.join(parent, "artifacts")), /must not contain a symlink/);
 			assert.equal(fs.existsSync(path.join(outside, "artifacts")), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a symlink in any artifact path ancestor", { skip: process.platform === "win32" }, () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifact-ancestor-"));
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifact-outside-"));
+		try {
+			fs.mkdirSync(path.join(outside, "existing"));
+			fs.symlinkSync(outside, path.join(root, "link"), "dir");
+			const escaped = path.join(root, "link", "existing", "artifacts");
+			assert.throws(() => ensureArtifactsDir(escaped), /must not contain a symlink/);
+			assert.equal(fs.existsSync(path.join(outside, "existing", "artifacts")), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(outside, { recursive: true, force: true });
 		}
 	});
 

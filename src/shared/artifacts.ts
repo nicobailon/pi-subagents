@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { writePrivateAtomicJson } from "./atomic-json.ts";
@@ -70,19 +71,35 @@ export function getArtifactPaths(artifactsDir: string, runId: string, agent: str
 	};
 }
 
-export function ensureArtifactsDir(dir: string): void {
-	let existingParent = path.dirname(dir);
-	while (!fs.existsSync(existingParent)) {
-		const next = path.dirname(existingParent);
-		if (next === existingParent) break;
-		existingParent = next;
+function artifactTrustAnchor(dir: string): string {
+	const resolved = path.resolve(dir);
+	const candidates = [process.cwd(), getAgentDir(), os.tmpdir()]
+		.map((candidate) => path.resolve(candidate))
+		.filter((candidate) => {
+			const relative = path.relative(candidate, resolved);
+			return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+		});
+	return candidates.sort((left, right) => right.length - left.length)[0] ?? path.parse(resolved).root;
+}
+
+function assertNoArtifactSymlinkComponents(dir: string): void {
+	const resolved = path.resolve(dir);
+	const anchor = artifactTrustAnchor(resolved);
+	let current = anchor;
+	for (const component of path.relative(anchor, resolved).split(path.sep).filter(Boolean)) {
+		current = path.join(current, component);
+		if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) throw new Error(`Artifact path must not contain a symlink: ${current}`);
 	}
-	if (fs.existsSync(existingParent) && fs.lstatSync(existingParent).isSymbolicLink()) throw new Error(`Artifact parent must not be a symlink: ${existingParent}`);
+}
+
+export function ensureArtifactsDir(dir: string): void {
+	assertNoArtifactSymlinkComponents(dir);
 	const retryDelaysMs = process.platform === "win32" ? DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS : [];
 	runFileSystemOperationWithRetry(() => fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE }), { retryDelaysMs, wait: waitForFileSystemRetry });
 	runFileSystemOperationWithRetry(() => {
+		assertNoArtifactSymlinkComponents(dir);
 		const stat = fs.lstatSync(dir);
-		if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Artifact path must be a real directory: ${dir}`);
+		if (!stat.isDirectory()) throw new Error(`Artifact path must be a real directory: ${dir}`);
 		if (process.platform !== "win32") fs.chmodSync(dir, PRIVATE_DIR_MODE);
 	}, { retryDelaysMs, wait: waitForFileSystemRetry });
 }
