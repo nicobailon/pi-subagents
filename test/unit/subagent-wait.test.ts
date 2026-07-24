@@ -504,6 +504,39 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("rejects symlinked prefix entries during foreign exact-id fallback", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-session-prefix-symlink-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const outsideRoot = path.join(root, "outside");
+			const outsideRun = path.join(outsideRoot, "run-alpha");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run", "running", { sessionId: "sess-2", pid: 999998 });
+			writeStatus(outsideRoot, "run-alpha", "running", { sessionId: "sess-1", pid: 999999 });
+			fs.symlinkSync(outsideRun, path.join(asyncRoot, "run-alpha"), "dir");
+			const reconciledPids: number[] = [];
+			let sleeps = 0;
+
+			const result = await waitForSubagents({ id: "run" }, undefined, baseDeps(root, state, {
+				kill: (pid) => {
+					reconciledPids.push(pid);
+					return true;
+				},
+				sleep: async () => {
+					sleeps += 1;
+					writeStatus(outsideRoot, "run-alpha", "complete", { sessionId: "sess-1" });
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /No active run matched "run"/);
+			assert.equal(reconciledPids.includes(999999), false, "outside symlink target must not be reconciled");
+			assert.equal(sleeps, 0, "outside symlink target must not be returned as active");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects symlinked targeted run directories before reconciliation", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-symlink-id-"));
 		try {

@@ -328,7 +328,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			entries = resolution.kind === "exact"
 				? [resolution.id]
 				: resolution.kind === "scan"
-					? fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry))
+					? fs.readdirSync(asyncDirRoot).filter((entry) => resolveTargetedAsyncRun(asyncDirRoot, entry).kind === "exact")
 					: [];
 		} else {
 			entries = fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry));
