@@ -105,6 +105,44 @@ Review $1 with $ARGUMENTS
 		assert.equal(runs[0]?.tasks?.[0]?.task, "Review target with target");
 	});
 
+	it("rejects worktree flags for sequential prompt chains before execution", async () => {
+		writePrompt(path.join(cwd, ".pi", "prompts"), "chain-a", `---
+description: A
+subagent: scout
+---
+A
+`);
+		writePrompt(path.join(cwd, ".pi", "prompts"), "chain-b", `---
+description: B
+subagent: worker
+---
+B
+`);
+		writePrompt(path.join(cwd, ".pi", "prompts"), "declared-chain", `---
+description: Declared chain
+chain: chain-a -> chain-b
+worktree: true
+---
+Chain
+`);
+		const commands = new Map<string, { handler: (args: string, ctx: never) => Promise<void> }>();
+		const runs: SubagentParamsLike[] = [];
+		registerPromptWorkflowCommands({
+			pi: {
+				registerCommand: (name: string, command: { handler: (args: string, ctx: never) => Promise<void> }) => commands.set(name, command),
+				sendMessage: () => {},
+			} as never,
+			run: async (params) => { runs.push(params); },
+		});
+		const chainCtx = makeCtx(cwd) as unknown as { ui: { notifications: Array<{ message: string }> } };
+		await commands.get("chain-prompts")!.handler("chain-a -> chain-b -- --worktree", chainCtx as never);
+		await commands.get("prompt-workflow")!.handler("declared-chain", chainCtx as never);
+
+		assert.equal(runs.length, 0);
+		assert.equal(chainCtx.ui.notifications.length, 2);
+		assert.ok(chainCtx.ui.notifications.every(({ message }) => /not supported for sequential prompt chains/.test(message)));
+	});
+
 	it("runs prompt templates as a native chain", async () => {
 		writePrompt(path.join(cwd, ".pi", "prompts"), "native-analyze", `---
 description: Analyze

@@ -258,6 +258,7 @@ function workflowRunParams(workflow: PromptWorkflow, args: string[], runtime: Re
 }
 
 function workflowChainStep(workflow: PromptWorkflow, args: string[], runtime: ReturnType<typeof parseRuntimeOptions>): ChainStep {
+	if (runtime.worktree || workflow.worktree) throw new Error("Worktree isolation is not supported for sequential prompt chains; run an individual prompt workflow or use a native parallel chain step.");
 	const params = workflowParams(workflow, args, runtime);
 	return {
 		agent: params.agent ?? "delegate",
@@ -304,6 +305,7 @@ export function registerPromptWorkflowCommands(input: {
 			const runtime = parseRuntimeOptions(words);
 			try {
 				if (workflow.chain) {
+					if (workflow.worktree) throw new Error("Worktree isolation is not supported for sequential prompt chains; run an individual prompt workflow or use a native parallel chain step.");
 					const chainNames = splitPromptChain(workflow.chain);
 					const chain = chainNames.map((stepName) => {
 						const step = findWorkflow(workflows, stepName);
