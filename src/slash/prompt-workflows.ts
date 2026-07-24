@@ -237,6 +237,26 @@ function workflowParams(workflow: PromptWorkflow, args: string[], runtime: Retur
 	};
 }
 
+function workflowRunParams(workflow: PromptWorkflow, args: string[], runtime: ReturnType<typeof parseRuntimeOptions>): SubagentParamsLike {
+	const params = workflowParams(workflow, args, runtime);
+	if (!params.worktree) return params;
+	return {
+		tasks: [{
+			agent: params.agent ?? "delegate",
+			task: params.task ?? "",
+			...(params.model ? { model: params.model } : {}),
+			...(params.skill !== undefined ? { skill: params.skill } : {}),
+			...(params.cwd ? { cwd: params.cwd } : {}),
+		}],
+		concurrency: 1,
+		worktree: true,
+		clarify: false,
+		agentScope: "both",
+		...(params.context ? { context: params.context } : {}),
+		...(params.async !== undefined ? { async: params.async } : {}),
+	};
+}
+
 function workflowChainStep(workflow: PromptWorkflow, args: string[], runtime: ReturnType<typeof parseRuntimeOptions>): ChainStep {
 	const params = workflowParams(workflow, args, runtime);
 	return {
@@ -293,7 +313,7 @@ export function registerPromptWorkflowCommands(input: {
 					await run({ chain, task: runtime.args.join(" "), clarify: false, agentScope: "both", ...(runtime.bg ? { async: true } : {}) }, ctx);
 					return;
 				}
-				await run(workflowParams(workflow, runtime.args, runtime), ctx);
+				await run(workflowRunParams(workflow, runtime.args, runtime), ctx);
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 			}

@@ -91,12 +91,15 @@ Review $1 with $ARGUMENTS
 
 		assert.equal(sent.length, 0);
 		assert.equal(runs.length, 1);
-		assert.equal(runs[0]?.agent, "reviewer");
-		assert.equal(runs[0]?.model, "anthropic/claude-sonnet-4");
-		assert.deepEqual(runs[0]?.skill, ["deslop", "typescript-code"]);
+		assert.equal(runs[0]?.agent, undefined);
+		assert.equal(runs[0]?.tasks?.length, 1);
+		assert.equal(runs[0]?.tasks?.[0]?.agent, "reviewer");
+		assert.equal(runs[0]?.tasks?.[0]?.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(runs[0]?.tasks?.[0]?.skill, ["deslop", "typescript-code"]);
 		assert.equal(runs[0]?.context, "fork");
+		assert.equal(runs[0]?.concurrency, 1);
 		assert.equal(runs[0]?.worktree, true);
-		assert.equal(runs[0]?.task, "Review target with target");
+		assert.equal(runs[0]?.tasks?.[0]?.task, "Review target with target");
 	});
 
 	it("runs prompt templates as a native chain", async () => {
