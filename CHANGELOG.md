@@ -9,6 +9,7 @@
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
+- Pruned broad agent and chain discovery roots so package-declared `.` scans no longer descend into `node_modules`, `.git`, Git submodules, or nested project roots during startup. Thanks to tupe12334 (@tupe12334) for #570 and shoehn (@shoehn) for narrowing the startup trace.
 - Made `subagent_wait({ id })` wake when an async child is blocked in `contact_supervisor` for a supervisor decision, instead of waiting for completion or timeout. Thanks to @DrunkenDonkey80 for #581.
 - Scoped async result delivery to the active session lease so stale watchers and recovered result files cannot wake or redeliver completions after reload, while retaining unaccepted result files for retry. Thanks to KawaiiNahida (@KawaiiNahida) for #588.
 - Namespaced inherited relative agent output paths for foreground top-level parallel tasks so repeated builtin agents no longer collide before launch. Thanks to Artem Timofeev (@atimofeev) for #580.
