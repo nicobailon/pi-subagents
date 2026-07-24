@@ -1,4 +1,5 @@
 export const SUBAGENT_DELEGATION_PROTOCOL_VERSION = 1 as const;
+export const SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION = 2 as const;
 
 // This is the established extension-to-extension transport. The public API
 // intentionally reuses it instead of adding a second event protocol.
@@ -192,3 +193,90 @@ export interface SubagentDelegationResponse extends SubagentDelegationStarted {
 }
 
 export interface SubagentDelegationCancel extends SubagentDelegationStarted {}
+
+export type SubagentDelegationV2Thinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export type SubagentDelegationV2ResultRequest =
+	| { kind: "text" }
+	| { kind: "structured"; schema: SubagentDelegationJsonSchemaObject };
+
+export interface SubagentDelegationV2Request {
+	version: typeof SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION;
+	requestId: string;
+	ownerRunId: string;
+	nodeId: string;
+	agent: string;
+	task: string;
+	context: "fresh" | "fork";
+	cwd: string;
+	model?: string;
+	thinking?: SubagentDelegationV2Thinking;
+	timeoutMs?: number;
+	turnBudget?: SubagentDelegationTurnBudget;
+	toolBudget?: SubagentDelegationToolBudget;
+	skill?: string | string[] | boolean;
+	artifacts?: boolean;
+	result: SubagentDelegationV2ResultRequest;
+}
+
+export interface SubagentDelegationV2Started {
+	version: typeof SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION;
+	requestId: string;
+	ownerRunId: string;
+	nodeId: string;
+}
+
+export interface SubagentDelegationV2Update extends SubagentDelegationV2Started {
+	currentTool?: string;
+	currentToolArgs?: string;
+	recentOutput?: string;
+	recentOutputLines?: string[];
+	recentTools?: Array<{ tool: string; args: string }>;
+	model?: string;
+	toolCount?: number;
+	durationMs?: number;
+	tokens?: number;
+}
+
+export type SubagentDelegationV2Status = SubagentDelegationStatus | "duplicate_node";
+
+export type SubagentDelegationV2Value =
+	| { kind: "text"; text: string }
+	| { kind: "structured"; value: unknown };
+
+export interface SubagentDelegationV2Usage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	turns: number;
+	toolCalls: number;
+	durationMs: number;
+}
+
+export interface SubagentDelegationV2TerminalResponse extends SubagentDelegationV2Started {
+	status: Exclude<SubagentDelegationV2Status, "invalid_request">;
+	error?: string;
+	runId?: string;
+	agent?: string;
+	model?: string;
+	thinking?: string;
+	exitCode?: number;
+	result?: SubagentDelegationV2Value;
+	usage?: SubagentDelegationV2Usage;
+}
+
+/** A malformed V2 request can only be correlated by the valid identity fields it supplied. */
+export interface SubagentDelegationV2InvalidResponse {
+	version: typeof SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION;
+	requestId: string;
+	ownerRunId?: string;
+	nodeId?: string;
+	status: "invalid_request";
+	error?: string;
+}
+
+export type SubagentDelegationV2Response = SubagentDelegationV2TerminalResponse | SubagentDelegationV2InvalidResponse;
+
+export interface SubagentDelegationV2Cancel extends SubagentDelegationV2Started {}

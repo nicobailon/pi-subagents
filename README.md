@@ -984,7 +984,12 @@ If you are writing an agent that orchestrates subagents, the bundled skill helps
 
 ## Extension delegation API
 
-Pi extensions can request one configured foreground agent through the typed v1 event contract:
+Pi extensions can request configured foreground agents through the public event
+contract exported by `pi-subagents/delegation`.
+
+### Delegation v1
+
+The compatibility v1 contract runs one configured foreground agent per request:
 
 ```ts
 import {
@@ -1016,11 +1021,85 @@ pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
 
 The contract uses the established `prompt-template:subagent:*` event transport and the same executor as the `subagent` tool; it does not add another launcher. New integrations must send `version: 1`. Requests are strict and single-agent only. They can set fresh or fork context, model, cwd, timeout, turn and tool-call budgets, skills, output behavior, acceptance, and artifact capture. Unknown or malformed fields return `invalid_request` before execution.
 
-Responses distinguish completion, failure, timeout, cancellation, interruption, turn or tool-budget exhaustion, explicit acceptance failure, invalid requests, and unavailable active context. Optional run, model, output, session, acceptance, usage, progress, and warning fields are omitted when unavailable. Request IDs must be unique while active; duplicate active IDs are ignored so the original request keeps ownership of its terminal response. Emit `SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel queued or active work.
+Responses distinguish completion, failure, timeout, cancellation, interruption,
+turn or tool-budget exhaustion, explicit acceptance failure, invalid requests,
+and unavailable active context. Optional metadata is omitted when unavailable.
+Request IDs must be unique while active; duplicate active IDs are ignored so the
+original request keeps ownership of its terminal response. Emit
+`SUBAGENT_DELEGATION_CANCEL_EVENT` with the same version and request ID to cancel
+queued or active work.
+
+### Delegation v2
+
+V2 is the owned-leaf contract for workflow supervisors. Independent requests
+can overlap through the delegated executor without weakening the ordinary
+model-facing tool's one-foreground-call-per-turn guard.
+
+```ts
+import {
+  SUBAGENT_DELEGATION_REQUEST_EVENT,
+  SUBAGENT_DELEGATION_RESPONSE_EVENT,
+  type SubagentDelegationV2Request,
+  type SubagentDelegationV2Response,
+} from "pi-subagents/delegation";
+
+const request: SubagentDelegationV2Request = {
+  version: 2,
+  requestId: crypto.randomUUID(),
+  ownerRunId: workflowRunId,
+  nodeId: "review-accuracy",
+  agent: "reviewer",
+  task: "Review the supplied evidence.",
+  context: "fresh",
+  cwd: ctx.cwd,
+  thinking: "high",
+  result: {
+    kind: "structured",
+    schema: {
+      type: "object",
+      properties: { verdict: { type: "string" } },
+      required: ["verdict"],
+      additionalProperties: false,
+    },
+  },
+};
+
+const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+  const response = payload as SubagentDelegationV2Response;
+  if (response.version !== 2 || response.requestId !== request.requestId) return;
+  if (response.ownerRunId !== request.ownerRunId || response.nodeId !== request.nodeId) return;
+  unsubscribe();
+  // Inspect response.status, response.result, response.usage, model, and thinking.
+});
+pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+```
+
+`ownerRunId` plus `nodeId` is the active logical identity; `requestId` identifies
+one attempt. A second active attempt for the same logical node receives
+`duplicate_node` without disturbing the original. Started, update, response,
+and cancellation payloads carry the full tuple. Cancellation affects only an
+exact tuple, including cancel-before-start races. Each attempt emits at most one
+terminal response.
+
+Result mode is explicit. Text remains literal even when it looks like JSON.
+Structured mode returns the separately captured, schema-validated JSON value.
+Terminal usage reports input, output, cache-read, cache-write, cost, turns, tool
+calls, and duration alongside the effective model and thinking level when
+known. Schemas are capped at 64 KiB; tasks and returned text/structured values
+are capped at 1 MiB, with smaller bounds on identity/configuration strings and
+a maximum v2 `timeoutMs` of 2,147,483,647. The foreground bridge retains up to
+8,192 exact pending-cancellation and settled-attempt identities per extension
+context. If either history fills, it fails closed with `unavailable_context`
+for later v2 starts rather than evicting identity facts; lifecycle reset clears
+the bounded history.
 
 Delegation requires an active extension context. Emit requests from a supported event callback or queued application step, not by recursively invoking the `subagent` tool inside another tool's `tool_call` hook. The caller selects a configured agent, but agent discovery and effective tools remain package-owned. A request cannot grant arbitrary tools, and tool restrictions are not an operating-system sandbox. The detached RPC remains async-only; this API is foreground-only.
 
-Existing prompt-template payloads continue over the same event family, including their parallel-only adapter. `pi-subagents/delegation` is the canonical contract for new extension integrations.
+Existing prompt-template payloads and delegation v1 continue over the same event
+family. V2 remains foreground-only and inherits the configured agent's current
+tools, skills, context, model policy, and workspace authority; it is not a
+sandbox or a durable task broker. `pi-subagents/delegation` is the canonical
+contract for extension integrations.
 
 ## Background-work provider API
 

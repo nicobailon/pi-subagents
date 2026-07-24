@@ -57,6 +57,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
 	const delegation = await import("pi-subagents/delegation");
 	assert.equal(delegation.SUBAGENT_DELEGATION_PROTOCOL_VERSION, 1);
+	assert.equal(delegation.SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION, 2);
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
 });
 

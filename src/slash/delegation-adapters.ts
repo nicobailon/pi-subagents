@@ -1,5 +1,6 @@
 import {
 	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+	SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 	type SubagentDelegationAcceptanceResult,
 	type SubagentDelegationEffectsResult,
 	type SubagentDelegationExecutionResult,
@@ -8,9 +9,15 @@ import {
 	type SubagentDelegationReviewResult,
 	type SubagentDelegationStatus,
 	type SubagentDelegationUpdate,
+	type SubagentDelegationV2Request,
+	type SubagentDelegationV2Response,
+	type SubagentDelegationV2Thinking,
+	type SubagentDelegationV2Value,
+	type SubagentDelegationV2Update,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
 import { isAgentContractV1 } from "../runs/shared/agent-contract.ts";
+import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
 export interface PromptTemplateDelegationTask {
 	agent: string;
@@ -90,6 +97,8 @@ export interface PromptTemplateBridgeResult {
 			exitCode?: number;
 			error?: string;
 			model?: string;
+			thinking?: string;
+			structuredOutput?: unknown;
 			interrupted?: boolean;
 			timedOut?: boolean;
 			stopped?: boolean;
@@ -102,7 +111,7 @@ export interface PromptTemplateBridgeResult {
 			acceptance?: SubagentDelegationAcceptanceResult;
 			review?: ReviewProjection;
 			effects?: EffectsProjection;
-			usage?: { turns?: number };
+			usage?: Usage;
 			progressSummary?: { toolCount?: number; durationMs?: number; tokens?: number };
 			skillsWarning?: string;
 			outputSaveError?: string;
@@ -141,6 +150,8 @@ export interface DelegatedSubagentExecutionParams {
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
 	artifacts?: boolean;
+	/** Internal-only thinking override accepted by executeDelegated. */
+	delegatedThinkingOverride?: SubagentDelegationV2Thinking;
 	async: false;
 	foregroundOnly: true;
 	clarify: false;
@@ -185,8 +196,8 @@ export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegat
 	const fallbackTask = tasks[0];
 	return {
 		requestId: value.requestId,
-		agent: hasSingle ? value.agent : fallbackTask!.agent,
-		task: hasSingle ? value.task : fallbackTask!.task,
+		agent: hasSingle ? value.agent! : fallbackTask!.agent,
+		task: hasSingle ? value.task! : fallbackTask!.task,
 		...(tasks.length > 0 ? { tasks } : {}),
 		context: value.context,
 		model: value.model,
@@ -367,12 +378,57 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 	};
 }
 
+export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegationV2Request): DelegatedSubagentExecutionParams {
+	return {
+		agent: request.agent,
+		task: request.task,
+		context: request.context,
+		cwd: request.cwd,
+		model: request.model,
+		timeoutMs: request.timeoutMs,
+		turnBudget: request.turnBudget,
+		toolBudget: request.toolBudget,
+		skill: request.skill,
+		output: false,
+		...(request.result.kind === "structured" ? { outputSchema: request.result.schema } : {}),
+		acceptance: false,
+		artifacts: request.artifacts,
+		delegatedThinkingOverride: request.thinking,
+		async: false,
+		foregroundOnly: true,
+		clarify: false,
+	};
+}
+
 export function toSubagentDelegationUpdate(requestId: string, result: PromptTemplateBridgeResult): SubagentDelegationUpdate | undefined {
 	const legacy = toDelegationUpdate(requestId, result);
 	if (!legacy) return undefined;
 	return {
 		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 		requestId,
+		...(legacy.currentTool ? { currentTool: legacy.currentTool } : {}),
+		...(legacy.currentToolArgs ? { currentToolArgs: legacy.currentToolArgs } : {}),
+		...(legacy.recentOutput ? { recentOutput: legacy.recentOutput } : {}),
+		...(legacy.recentOutputLines ? { recentOutputLines: legacy.recentOutputLines } : {}),
+		...(legacy.recentTools ? { recentTools: legacy.recentTools } : {}),
+		...(legacy.model ? { model: legacy.model } : {}),
+		...(typeof legacy.toolCount === "number" ? { toolCount: legacy.toolCount } : {}),
+		...(typeof legacy.durationMs === "number" ? { durationMs: legacy.durationMs } : {}),
+		...(typeof legacy.tokens === "number" ? { tokens: legacy.tokens } : {}),
+	};
+}
+
+export function toSubagentDelegationV2Update(
+	request: SubagentDelegationV2Request,
+	result: PromptTemplateBridgeResult,
+): SubagentDelegationV2Update | undefined {
+	const legacy = toDelegationUpdate(request.requestId, result);
+	if (!legacy) return undefined;
+	return {
+		version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
 		...(legacy.currentTool ? { currentTool: legacy.currentTool } : {}),
 		...(legacy.currentToolArgs ? { currentToolArgs: legacy.currentToolArgs } : {}),
 		...(legacy.recentOutput ? { recentOutput: legacy.recentOutput } : {}),
@@ -434,6 +490,73 @@ export function toSubagentDelegationResponse(
 		...(typeof progress?.durationMs === "number" ? { durationMs: progress.durationMs } : {}),
 		...(typeof progress?.tokens === "number" ? { tokens: progress.tokens } : {}),
 		...(warnings.length > 0 ? { warnings } : {}),
+	};
+}
+
+const MAX_V2_RESULT_BYTES = 1024 * 1024;
+
+export function toSubagentDelegationV2Response(
+	request: SubagentDelegationV2Request,
+	result: PromptTemplateBridgeResult,
+	aborted: boolean,
+): SubagentDelegationV2Response {
+	const child = result.details?.results?.[0];
+	const progress = child?.progressSummary ?? result.details?.progress?.[0];
+	let status = resolveSubagentDelegationStatus(result, aborted);
+	let error = child?.error ?? (status === "failed" ? firstTextContent(result.content) : undefined);
+	let projectedResult: SubagentDelegationV2Value | undefined;
+	if (status === "completed") {
+		if (request.result.kind === "text") {
+			if (typeof child?.finalOutput !== "string") {
+				status = "failed";
+				error = "Delegated subagent did not capture a text result.";
+			} else if (Buffer.byteLength(child.finalOutput, "utf8") > MAX_V2_RESULT_BYTES) {
+				status = "failed";
+				error = "Delegated text result exceeds 1 MiB when UTF-8 encoded.";
+			} else {
+				projectedResult = { kind: "text", text: child.finalOutput };
+			}
+		} else if (child?.structuredOutput === undefined) {
+			status = "failed";
+			error = "Delegated subagent did not capture the requested structured result.";
+		} else {
+			const inspected = cloneJsonWithinByteLimit(child.structuredOutput, MAX_V2_RESULT_BYTES);
+			if (!inspected.ok) {
+				status = "failed";
+				error = inspected.reason === "too_large"
+					? "Delegated structured result exceeds 1 MiB when encoded."
+					: "Delegated structured result is not plain JSON data.";
+			} else {
+				projectedResult = { kind: "structured", value: inspected.value };
+			}
+		}
+	}
+	const usage = child?.usage;
+	return {
+		version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+		status,
+		...(error ? { error } : {}),
+		...(result.details?.runId ? { runId: result.details.runId } : {}),
+		...(child?.agent ? { agent: child.agent } : {}),
+		...(child?.model ? { model: child.model } : {}),
+		...(child?.thinking ? { thinking: child.thinking } : {}),
+		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
+		...(projectedResult ? { result: projectedResult } : {}),
+		...(usage ? {
+			usage: {
+				input: usage.input,
+				output: usage.output,
+				cacheRead: usage.cacheRead,
+				cacheWrite: usage.cacheWrite,
+				cost: usage.cost,
+				turns: usage.turns,
+				toolCalls: progress?.toolCount ?? 0,
+				durationMs: progress?.durationMs ?? 0,
+			},
+		} : {}),
 	};
 }
 

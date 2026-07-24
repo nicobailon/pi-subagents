@@ -28,11 +28,16 @@ import {
 import registerSubagentExtension from "../../src/extension/index.ts";
 import {
 	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+	SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
 	type SubagentDelegationResponse,
 	type SubagentDelegationUpdate,
+	type SubagentDelegationV2Request,
+	type SubagentDelegationV2Response,
+	type SubagentDelegationV2Started,
 } from "../../src/api/delegation.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
@@ -499,7 +504,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		try {
 			registerSubagentExtension(fakePi as never);
-			for (const handler of runtimeHandlers.get("session_start") ?? []) handler({ reason: "startup" }, ctx);
+			for (const handler of runtimeHandlers.get("session_start") ?? []) {
+				await handler({ reason: "startup" }, ctx);
+			}
 			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
 				version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 				requestId: "registered-a",
@@ -531,11 +538,179 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			}
 			assert.deepEqual(responses.map((response) => response.requestId).sort(), ["registered-a", "registered-b"]);
 			assert.ok(responses.every((response) => response.status === "completed"));
-			assert.equal(responses.find((response) => response.requestId === "registered-a")?.output, "registered first delegated call");
-			assert.equal(responses.find((response) => response.requestId === "registered-b")?.output, "registered second delegated call");
-			assert.equal(updates.some((update) => update.requestId === "registered-a" && update.currentTool === "read"), true);
+			assert.deepEqual(responses.map((response) => response.output).sort(), [
+				"registered first delegated call",
+				"registered second delegated call",
+			]);
+			const toolResponse = responses.find((response) => response.output === "registered first delegated call");
+			assert.ok(toolResponse);
+			assert.equal(updates.some((update) => update.requestId === toolResponse.requestId && update.currentTool === "read"), true);
 		} finally {
-			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) handler({}, ctx);
+			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
+				await handler({}, ctx);
+			}
+		}
+	});
+
+	it("routes registered strict v2 text delegation through the concurrent executor", async () => {
+		const literalJsonText = '{"looks":"json"}';
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "package.json" })], delay: 20 },
+				{ jsonl: [events.toolEnd("read"), events.toolResult("read", "{}")], delay: 20 },
+				{
+					jsonl: [{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "text", text: literalJsonText }],
+							model: "mock/test-model",
+							stopReason: "stop",
+							usage: {
+								input: 11,
+								output: 7,
+								cacheRead: 3,
+								cacheWrite: 2,
+								cost: { total: 0.0125 },
+							},
+						},
+					}],
+					delay: 60,
+				},
+			],
+		});
+		mockPi.onCall({ output: "registered v2 second node", delay: 100 });
+		const extensionEvents = createEventBus();
+		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
+		const fakePi = new Proxy({
+			events: extensionEvents,
+			on(event: string, handler: (event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void) {
+				const handlers = runtimeHandlers.get(event) ?? [];
+				handlers.push(handler);
+				runtimeHandlers.set(event, handlers);
+				return () => runtimeHandlers.set(event, (runtimeHandlers.get(event) ?? []).filter((entry) => entry !== handler));
+			},
+			registerTool() {},
+			registerCommand() {},
+			registerShortcut() {},
+			registerMessageRenderer() {},
+			sendMessage() {},
+			getSessionName() { return undefined; },
+		}, {
+			get(target, prop) {
+				if (prop in target) return target[prop as keyof typeof target];
+				return () => undefined;
+			},
+		});
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			modelRegistry: {
+				getAvailable: () => [{ provider: "mock", id: "test-model", reasoning: true }],
+			},
+			sessionManager: {
+				getSessionId: () => "registered-delegation-v2-session",
+				getSessionFile: () => path.join(tempDir, "registered-delegation-v2-session.jsonl"),
+				getEntries: () => [],
+			},
+		};
+		const started: SubagentDelegationV2Started[] = [];
+		const responses: SubagentDelegationV2Response[] = [];
+		extensionEvents.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => {
+			if ((payload as { version?: unknown }).version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
+				started.push(payload as SubagentDelegationV2Started);
+			}
+		});
+		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+			if ((payload as { version?: unknown }).version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION) {
+				responses.push(payload as SubagentDelegationV2Response);
+			}
+		});
+
+		const firstRequest = {
+			version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			requestId: "registered-v2-a",
+			ownerRunId: "owner-v2",
+			nodeId: "node-a",
+			agent: "worker",
+			task: "Return literal JSON-looking text",
+			context: "fresh",
+			cwd: tempDir,
+			model: "mock/test-model",
+			thinking: "high",
+			result: { kind: "text" },
+		} satisfies SubagentDelegationV2Request;
+		const secondRequest = {
+			version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
+			requestId: "registered-v2-b",
+			ownerRunId: "owner-v2",
+			nodeId: "node-b",
+			agent: "reviewer",
+			task: "Run the second logical node",
+			context: "fresh",
+			cwd: tempDir,
+			model: "mock/test-model",
+			thinking: "high",
+			result: { kind: "text" },
+		} satisfies SubagentDelegationV2Request;
+
+		try {
+			registerSubagentExtension(fakePi as never);
+			for (const handler of runtimeHandlers.get("session_start") ?? []) {
+				await handler({ reason: "startup" }, ctx);
+			}
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, firstRequest);
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, secondRequest);
+
+			const callDeadlineAt = Date.now() + 30_000;
+			while (mockPi.callCount() < 2 && responses.length < 2 && Date.now() < callDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(mockPi.callCount(), 2, `different V2 logical nodes should use the concurrent delegated execution path: ${JSON.stringify(responses)}`);
+			assert.deepEqual(started.map(({ requestId, ownerRunId, nodeId }) => ({ requestId, ownerRunId, nodeId })).sort((a, b) => a.nodeId.localeCompare(b.nodeId)), [
+				{ requestId: "registered-v2-a", ownerRunId: "owner-v2", nodeId: "node-a" },
+				{ requestId: "registered-v2-b", ownerRunId: "owner-v2", nodeId: "node-b" },
+			]);
+
+			const responseDeadlineAt = Date.now() + 30_000;
+			while (responses.length < 2 && Date.now() < responseDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(responses.length, 2);
+			assert.ok(responses.every((response) => response.status === "completed"));
+			const terminalResponses = responses.filter((response) => response.status !== "invalid_request");
+			assert.equal(terminalResponses.length, 2);
+			for (const response of terminalResponses) {
+				assert.equal(response.ownerRunId, "owner-v2");
+				assert.equal(response.model, "mock/test-model:high");
+				assert.equal(response.thinking, "high");
+			}
+			const literalResponse = terminalResponses.find((response) => response.result?.kind === "text" && response.result.text === literalJsonText);
+			assert.ok(literalResponse);
+			assert.deepEqual(literalResponse.result, { kind: "text", text: literalJsonText });
+			assert.deepEqual(literalResponse.usage && {
+				input: literalResponse.usage.input,
+				output: literalResponse.usage.output,
+				cacheRead: literalResponse.usage.cacheRead,
+				cacheWrite: literalResponse.usage.cacheWrite,
+				cost: literalResponse.usage.cost,
+				turns: literalResponse.usage.turns,
+				toolCalls: literalResponse.usage.toolCalls,
+			}, {
+				input: 11,
+				output: 7,
+				cacheRead: 3,
+				cacheWrite: 2,
+				cost: 0.0125,
+				turns: 1,
+				toolCalls: 1,
+			});
+			assert.equal(typeof literalResponse.usage?.durationMs, "number");
+			const plainResponse = terminalResponses.find((response) => response.result?.kind === "text" && response.result.text === "registered v2 second node");
+			assert.ok(plainResponse);
+		} finally {
+			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
+				await handler({}, ctx);
+			}
 		}
 	});
 
