@@ -231,12 +231,19 @@ describe("native subagent fleet", () => {
 				assert.ok(!lines.some((line) => line.includes("very large tool payload")));
 				assert.ok(!lines.some((line) => line.includes("RAW FALLBACK SHOULD NOT RENDER")));
 				const bottomLines = lines;
-				component.handleInput("K");
-				lines = component.render(100);
-				assert.notDeepEqual(lines, bottomLines, "Shift+K should scroll the conversation up by one line");
-				component.handleInput("J");
-				lines = component.render(100);
-				assert.deepEqual(lines, bottomLines, "Shift+J should scroll the conversation back down by one line");
+				const realDateNow = Date.now;
+				const laterNow = realDateNow() + 2_000;
+				Date.now = () => laterNow;
+				try {
+					component.handleInput("K");
+					lines = component.render(100);
+					assert.notDeepEqual(lines, bottomLines, "Shift+K should scroll the conversation up by one line");
+					component.handleInput("J");
+					lines = component.render(100);
+					assert.deepEqual(lines, bottomLines, "Shift+J should scroll the conversation back down by one line");
+				} finally {
+					Date.now = realDateNow;
+				}
 				for (let page = 0; page < 4; page++) component.handleInput("\x1b[5~");
 				lines = component.render(100);
 				assert.ok(lines.some((line) => line.includes("Conversation") && line.includes("assistant response")), "the conversation header should remain pinned while scrolling");

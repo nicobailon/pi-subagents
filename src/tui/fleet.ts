@@ -363,8 +363,9 @@ function itemStats(item: FleetItem): string[] {
 		model = item.step?.model;
 		tokens = item.step?.tokens?.total ?? (item.index === undefined ? item.run.totalTokens?.total : undefined);
 		tools = item.step?.toolCount ?? (item.index === undefined ? item.run.toolCount : undefined);
-		durationMs = item.step?.durationMs
-			?? Math.max(0, (item.run.endedAt ?? Date.now()) - item.run.startedAt);
+		const terminalRun = item.state !== "queued" && item.state !== "running" && item.state !== "pending";
+		const endTime = item.run.endedAt ?? (terminalRun ? item.run.lastUpdate : undefined) ?? Date.now();
+		durationMs = item.step?.durationMs ?? Math.max(0, endTime - item.run.startedAt);
 	}
 	return [
 		model,
