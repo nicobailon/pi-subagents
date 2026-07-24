@@ -485,6 +485,51 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("preserves current-session prefix matches when a foreign exact id collides", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-session-prefix-collision-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-al", "running", { sessionId: "sess-2", pid: 999999 });
+			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "sess-1", pid: 999998 });
+
+			const result = await waitForSubagents({ id: "run-al" }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-alpha", "complete", { sessionId: "sess-1" }),
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /run "run-al".*done/is);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects symlinked targeted run directories before reconciliation", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-symlink-id-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const outsideRun = path.join(root, "outside-run");
+			const state = makeState("sess-1");
+			writeStatus(path.dirname(outsideRun), path.basename(outsideRun), "running", { sessionId: "sess-1", pid: 999999 });
+			fs.mkdirSync(asyncRoot, { recursive: true });
+			fs.symlinkSync(outsideRun, path.join(asyncRoot, "link"), "dir");
+			let reconciled = false;
+
+			const result = await waitForSubagents({ id: "link" }, undefined, baseDeps(root, state, {
+				kill: () => {
+					reconciled = true;
+					throw new Error("symlink target should not be reconciled");
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /No active run matched "link"/);
+			assert.equal(reconciled, false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("can target a single run by id prefix", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-id-"));
 		try {
@@ -563,28 +608,30 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
-	it("does not resolve dot-segment ids outside the async root", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-dot-id-"));
-		try {
-			const asyncRoot = path.join(root, "runs");
-			const state = makeState("sess-1");
-			fs.writeFileSync(path.join(root, "status.json"), JSON.stringify({
-				runId: "..",
-				mode: "single",
-				state: "running",
-				startedAt: Date.now(),
-				lastUpdate: Date.now(),
-				sessionId: "sess-1",
-				steps: [{ agent: "outside", status: "running" }],
-			}), "utf-8");
+	it("rejects dot-segment ids before probing outside the async root", async () => {
+		for (const id of [".", ".."]) {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-dot-id-"));
+			try {
+				const asyncRoot = path.join(root, "runs");
+				const state = makeState("sess-1");
+				fs.writeFileSync(path.join(root, "status.json"), JSON.stringify({
+					runId: id,
+					mode: "single",
+					state: "running",
+					startedAt: Date.now(),
+					lastUpdate: Date.now(),
+					sessionId: "sess-1",
+					steps: [{ agent: "outside", status: "running" }],
+				}), "utf-8");
 
-			const result = await waitForSubagents({ id: ".." }, undefined, baseDeps(root, state));
+				const result = await waitForSubagents({ id }, undefined, baseDeps(root, state));
 
-			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /No active run matched "\.\."/);
-			assert.equal(fs.existsSync(path.join(asyncRoot, "status.json")), false);
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
+				assert.equal(result.isError, undefined);
+				assert.ok(textOf(result).includes(`No active run matched "${id}"`));
+				assert.equal(fs.existsSync(path.join(asyncRoot, "status.json")), false);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
 		}
 	});
 
