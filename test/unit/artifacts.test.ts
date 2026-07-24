@@ -115,7 +115,7 @@ describe("project-local artifact paths", () => {
 			const link = path.join(root, "output.md");
 			fs.writeFileSync(target, "keep");
 			fs.symlinkSync(target, link);
-			assert.throws(() => writeArtifact(link, "replace"), (error: unknown) => (error as NodeJS.ErrnoException).code === "ELOOP");
+			assert.throws(() => writeArtifact(link, "replace"), /must not be a symlink/);
 			assert.equal(fs.readFileSync(target, "utf-8"), "keep");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

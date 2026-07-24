@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { writePrivateAtomicJson } from "./atomic-json.ts";
+import { DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS, runFileSystemOperationWithRetry, waitForFileSystemRetry } from "./file-system-retry.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PRIVATE_DIR_MODE = 0o700;
@@ -77,13 +78,17 @@ export function ensureArtifactsDir(dir: string): void {
 		existingParent = next;
 	}
 	if (fs.existsSync(existingParent) && fs.lstatSync(existingParent).isSymbolicLink()) throw new Error(`Artifact parent must not be a symlink: ${existingParent}`);
-	fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
-	const stat = fs.lstatSync(dir);
-	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Artifact path must be a real directory: ${dir}`);
-	if (process.platform !== "win32") fs.chmodSync(dir, PRIVATE_DIR_MODE);
+	const retryDelaysMs = process.platform === "win32" ? DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS : [];
+	runFileSystemOperationWithRetry(() => fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE }), { retryDelaysMs, wait: waitForFileSystemRetry });
+	runFileSystemOperationWithRetry(() => {
+		const stat = fs.lstatSync(dir);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Artifact path must be a real directory: ${dir}`);
+		if (process.platform !== "win32") fs.chmodSync(dir, PRIVATE_DIR_MODE);
+	}, { retryDelaysMs, wait: waitForFileSystemRetry });
 }
 
 export function openPrivateArtifactFile(filePath: string, append: boolean): number {
+	if (fs.existsSync(filePath) && fs.lstatSync(filePath).isSymbolicLink()) throw new Error(`Artifact file must not be a symlink: ${filePath}`);
 	const noFollow = process.platform === "win32" ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
 	const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | (append ? fs.constants.O_APPEND : fs.constants.O_TRUNC) | noFollow;
 	const fd = fs.openSync(filePath, flags, PRIVATE_FILE_MODE);
