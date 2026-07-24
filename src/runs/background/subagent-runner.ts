@@ -1768,6 +1768,8 @@ async function runSubagent(
 	const refreshWorkflowGraph = (): void => {
 		if (!config.workflowGraph) return;
 		const graph = structuredClone(statusPayload.workflowGraph ?? config.workflowGraph);
+		delete graph.currentNodeId;
+		const hasCurrentNode = statusPayload.state === "queued" || statusPayload.state === "running" || statusPayload.state === "paused";
 		const normalize = (status: RunnerStatusStep["status"]): "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" => {
 			if (status === "complete" || status === "completed") return "completed";
 			if (status === "running" || status === "failed" || status === "paused" || status === "stopped" || status === "pending") return status;
@@ -1781,7 +1783,7 @@ async function runSubagent(
 					node.error = step.error;
 					node.acceptanceStatus = step.acceptance?.status;
 				}
-				if (statusPayload.currentStep === node.flatIndex) graph.currentNodeId = node.id;
+				if (hasCurrentNode && statusPayload.currentStep === node.flatIndex) graph.currentNodeId = node.id;
 			}
 			for (const child of node.children ?? []) updateNode(child);
 			if (node.children?.length) {

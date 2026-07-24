@@ -48,7 +48,7 @@ interface AsyncResultPayload {
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
-	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
+	workflowGraph?: { currentNodeId?: string; nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 }
 
 interface AsyncStatusPayload {
@@ -688,6 +688,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "paused");
 		assert.equal(payload.success, false);
+		assert.ok(payload.workflowGraph?.currentNodeId, "paused workflow should retain its resumable position");
 		assert.deepEqual(status.steps?.map((step) => step.status), ["paused", "paused", "paused"]);
 		assert.equal(mockPi.callCount(), 3);
 	});
@@ -988,6 +989,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.timedOut, true);
+		assert.equal(payload.workflowGraph?.currentNodeId, undefined);
 		assert.equal(payload.turnBudgetExceeded, undefined);
 		assert.match(payload.error ?? payload.summary ?? "", /timed out after 30000ms/);
 		assert.equal(payload.results[0]?.timedOut, true);
@@ -1029,6 +1031,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "stopped");
 		assert.equal(payload.stopped, true);
+		assert.equal(payload.workflowGraph?.currentNodeId, undefined);
 		assert.equal(payload.turnBudgetExceeded, undefined);
 		assert.match(payload.error ?? payload.summary ?? "", /stopped by user/i);
 		assert.equal(payload.results[0]?.stopped, true);
@@ -1567,6 +1570,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.workflowGraph?.nodes?.[0]?.outputName, "data");
 		assert.equal(payload.workflowGraph?.nodes?.[0]?.status, "completed");
 		assert.equal(payload.workflowGraph?.nodes?.[1]?.status, "completed");
+		assert.equal(payload.workflowGraph?.currentNodeId, undefined);
 	});
 
 	it("async chains can start parallel, funnel into one step, then fan back out", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
