@@ -168,7 +168,7 @@ function createCommandContext(
 			setStatus: overrides.setStatus ?? ((_key: string, _text: string | undefined) => {}),
 			setToolsExpanded: overrides.setToolsExpanded ?? ((_expanded: boolean) => {}),
 			onTerminalInput: () => () => {},
-			custom: overrides.custom ?? (async () => undefined),
+			...(overrides.custom ? { custom: overrides.custom } : {}),
 		},
 		model: overrides.model,
 		thinkingLevel: overrides.thinkingLevel,

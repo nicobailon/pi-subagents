@@ -5,7 +5,7 @@
 ### Added
 - Added `artifactDir` config to store subagent artifacts in the project, Pi session, or temp artifact directory while keeping project-local artifacts as the default. Thanks to WeZZard (@WeZZard) for #582.
 - Added opt-in `agentContract: { version: 1 }` runs with explicit execution, acceptance, review, and effects projections, report-optional acceptance, observational file-mutation effects, generic `outputSchema` plumbing, and `gateOn` chain controls while keeping the current/default contract unchanged. Thanks to mapleluv (@mapleluvr) for #499.
-- Replaced the flat `/subagents` admin model, thinking, and agent pickers with a searchable, bounded-scroll selector docked in place of the editor, matching Pi's built-in `/model` picker so the current selection no longer scrolls off screen when the option list is long.
+- Replaced the flat `/subagents` admin model, thinking, and agent pickers with a searchable, bounded-scroll selector docked in place of the editor, matching Pi's built-in `/model` picker so the current selection no longer scrolls off screen when the option list is long. Thanks to Chanyeong Lim (@asp345) for #568.
 - Added `advisor` as an `oracle`-compatible bundled agent alias for users switching between Claude Code and Pi naming. Thanks to Serhii Chernenko (@serhii-chernenko) for #552.
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 

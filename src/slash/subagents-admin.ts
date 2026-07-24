@@ -14,7 +14,6 @@ import {
 import { serializeAgent } from "../agents/agent-serializer.ts";
 import { editableAgentConfig, preservedAgentFrontmatterFields } from "../agents/agent-management.ts";
 import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";
-import { editorLabel, resolveEditorCommand, runEditorAndWait } from "./subagents-editor.ts";
 import { SelectorComponent, type SelectorItem, type SelectorResult } from "./selector.ts";
 
 const ADMIN_MESSAGE_TYPE = "subagents-admin";
@@ -212,8 +211,8 @@ async function selectFromList(ctx: ExtensionContext, title: string, subtitle: st
 	}
 	const flatTitle = subtitle ? `${title}\nCurrent: ${subtitle}` : title;
 	const labelToValue = new Map(items.map((item) => [item.label, item.value] as const));
-	const choice = await ctx.ui.select(flatTitle, items.map((item) => item.label));
-	return choice ? labelToValue.get(choice) : undefined;
+	const choice = await ctx.ui.select(flatTitle, items.map((item) => item.value));
+	return choice ? (items.find((item) => item.value === choice)?.value ?? labelToValue.get(choice)) : undefined;
 }
 
 async function chooseModel(ctx: ExtensionContext, agent: AgentConfig): Promise<string | undefined | null> {
