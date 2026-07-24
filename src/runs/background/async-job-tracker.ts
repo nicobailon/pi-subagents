@@ -92,6 +92,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			steering: run.steering,
 			mode: run.mode,
 			context: run.context,
+			cwd: run.cwd,
 			agents: visibleSteps.map((step) => step.agent),
 			currentStep: run.currentStep,
 			chainStepCount: run.chainStepCount,

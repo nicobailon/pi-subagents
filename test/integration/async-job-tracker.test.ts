@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
+import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
 interface AsyncJobTrackerModule {
@@ -35,6 +37,8 @@ function createState() {
 		currentSessionId: null,
 		asyncJobs: new Map(),
 		fleetJobs: new Map(),
+		foregroundRuns: new Map(),
+		foregroundControls: new Map(),
 		cleanupTimers: new Map(),
 		lastUiContext: null,
 		poller: null,
@@ -88,6 +92,7 @@ function createUiContext() {
 		ui: {
 			theme: {
 				fg: (_theme: string, text: string) => text,
+				bold: (text: string) => text,
 			},
 			setWidget: (_key: string, value: unknown) => {
 				widgets.push(value);
@@ -161,12 +166,18 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		const asyncRoot = createTempDir("pi-async-job-restore-");
 		try {
 			const runDir = path.join(asyncRoot, "run-restored");
+			const customCwd = path.join(asyncRoot, "custom-cwd");
+			const artifactsRoot = getProjectArtifactsDir(customCwd);
+			const transcriptPath = path.join(artifactsRoot, "run-restored_reviewer_transcript.jsonl");
 			fs.mkdirSync(runDir, { recursive: true });
+			fs.mkdirSync(artifactsRoot, { recursive: true });
+			fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", text: "Restored custom cwd transcript" })}\n`, "utf-8");
 			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
 				runId: "run-restored",
 				mode: "chain",
 				state: "running",
 				sessionId: "session-restored",
+				cwd: customCwd,
 				startedAt: 1000,
 				lastUpdate: 2000,
 				currentStep: 1,
@@ -174,7 +185,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
 				steps: [
 					{ agent: "scout", status: "complete" },
-					{ agent: "reviewer", status: "running", currentTool: "read" },
+					{ agent: "reviewer", status: "running", currentTool: "read", transcriptPath },
 					{ agent: "worker", status: "running" },
 					{ agent: "writer", status: "pending" },
 				],
@@ -206,6 +217,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(job);
 			assert.equal(job.status, "running");
 			assert.equal(job.sessionId, "session-restored");
+			assert.equal(job.cwd, customCwd);
 			assert.deepEqual(job.agents, ["reviewer", "worker"]);
 			assert.deepEqual(job.steps?.map((step: { index?: number }) => step.index), [1, 2]);
 			assert.equal(job.stepsTotal, 2);
@@ -215,6 +227,19 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.ok(state.poller, "expected restored active jobs to start polling");
 			assert.ok(ui.renderRequests >= 2, "expected reset and restore to request widget renders");
 			assert.equal(typeof ui.widgets.at(-1), "function", "expected restored jobs to render the widget");
+
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				ui.ctx.ui.theme as never,
+				state as never,
+				() => {},
+				{ refreshMs: 60_000 },
+			);
+			try {
+				assert.ok(component.render(100).some((line) => line.includes("Restored custom cwd transcript")));
+			} finally {
+				component.dispose();
+			}
 
 			await new Promise((resolve) => setTimeout(resolve, 30));
 			assert.equal(recorder.events.length, 0, "historical control events should not be replayed during restore");
