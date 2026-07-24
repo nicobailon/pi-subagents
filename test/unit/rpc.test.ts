@@ -83,6 +83,14 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(reply.success, true);
 		assert.equal(reply.method, "ping");
 		assert.equal((reply as { data: { version?: number } }).data.version, SUBAGENT_RPC_PROTOCOL_VERSION);
+		assert.equal(
+			(reply as { data: { events?: { asyncComplete?: string } } }).data.events?.asyncComplete,
+			"subagent:async-complete",
+		);
+		assert.equal(
+			(reply as { data: { capabilities?: { nonRecoveringSteer?: boolean } } }).data.capabilities?.nonRecoveringSteer,
+			true,
+		);
 
 		bridge.dispose();
 	});
@@ -207,6 +215,63 @@ describe("subagent extension RPC bridge", () => {
 		assert.match((management as { error: { message: string } }).error.message, /does not accept management/);
 		assert.equal(executeCalls, 0);
 
+		bridge.dispose();
+	});
+
+	it("delegates acknowledged steering through the existing async action", async () => {
+		const events = new FakeEvents();
+		let executedParams: unknown;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executedParams = params;
+				return {
+					content: [{ type: "text", text: "Steering delivered." }],
+					details: { mode: "management", results: [] },
+				} as any;
+			},
+		});
+
+		const reply = await request(events, "steer-1", "steer", {
+			id: "abc123",
+			index: 0,
+			message: " Focus on the failing test. ",
+		});
+
+		assert.equal(reply.success, true);
+		assert.deepEqual(executedParams, {
+			action: "steer",
+			id: "abc123",
+			index: 0,
+			message: "Focus on the failing test.",
+			steeringRecovery: false,
+		});
+		assert.equal((reply as { data: { text?: string } }).data.text, "Steering delivered.");
+
+		bridge.dispose();
+	});
+
+	it("rejects empty RPC steering before executor dispatch", async () => {
+		const events = new FakeEvents();
+		let executeCalls = 0;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async () => {
+				executeCalls++;
+				return { content: [], details: { mode: "management", results: [] } } as any;
+			},
+		});
+
+		const reply = await request(events, "steer-empty", "steer", {
+			id: "abc123",
+			message: "   ",
+		});
+
+		assert.equal(reply.success, false);
+		assert.equal((reply as { error: { code: string } }).error.code, "invalid_params");
+		assert.equal(executeCalls, 0);
 		bridge.dispose();
 	});
 

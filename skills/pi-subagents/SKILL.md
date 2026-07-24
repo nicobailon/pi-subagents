@@ -731,9 +731,9 @@ Additional user prompt templates can delegate into `pi-subagents` through the na
 
 ## Extension RPC
 
-Other Pi extensions can call `pi-subagents` through the in-process event bus. The stable v1 channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`.
+Other Pi extensions can call `pi-subagents` through the in-process event bus. The stable v1 channels are `subagents:rpc:v1:ready`, `subagents:rpc:v1:request`, and per-request replies at `subagents:rpc:v1:reply:<requestId>`. Envelopes use `{ version: 1, requestId, method, params }`, and replies use `{ version: 1, requestId, success, data | error }`. `ping` advertises the exact process-local async completion event as `events.asyncComplete` for RPC-spawn consumers.
 
-Methods: `ping`, `status`, `spawn`, `interrupt`, and `stop`. `spawn` is async-only and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status` and `interrupt` map to the normal control actions. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.
+Methods: `ping`, `status`, `spawn`, `steer`, `interrupt`, and `stop`. `spawn` is async-only and rejects management actions, `async: false`, or `clarify: true`; it reuses the normal executor, so discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status are shared with the `subagent` tool. `status`, acknowledged async `steer`, and `interrupt` map to the normal control actions. RPC steer disables pause-and-revive recovery and advertises `capabilities.nonRecoveringSteer`, preserving the caller's authority over the exact spawned child. `stop` targets running async runs through the existing timeout control channel. `pi.events` is process-local, so separate Pi processes and child subagents need lifecycle artifact files or `pi-intercom` instead.
 
 ## Important Constraints
 
