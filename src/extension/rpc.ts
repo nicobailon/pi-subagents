@@ -6,7 +6,12 @@ import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
 import { deliverStopRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { type Details, ASYNC_DIR, RESULTS_DIR } from "../shared/types.ts";
+import {
+	type Details,
+	ASYNC_DIR,
+	RESULTS_DIR,
+	SUBAGENT_ASYNC_COMPLETE_EVENT,
+} from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
@@ -16,7 +21,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "spawn", "interrupt", "stop"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "status", "spawn", "steer", "interrupt", "stop"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -172,6 +177,8 @@ function pingData(ctx: ExtensionContext | null) {
 		capabilities: {
 			status: true,
 			asyncSpawn: true,
+			steer: true,
+			nonRecoveringSteer: true,
 			interrupt: true,
 			stop: true,
 		},
@@ -179,6 +186,7 @@ function pingData(ctx: ExtensionContext | null) {
 			ready: SUBAGENT_RPC_READY_EVENT,
 			request: SUBAGENT_RPC_REQUEST_EVENT,
 			replyPrefix: SUBAGENT_RPC_REPLY_EVENT_PREFIX,
+			asyncComplete: SUBAGENT_ASYNC_COMPLETE_EVENT,
 		},
 		session: sessionData(ctx),
 	};
@@ -210,6 +218,18 @@ function spawnParams(params: unknown): SubagentParamsLike {
 		throw new SubagentRpcError("invalid_params", "RPC spawn cannot open the clarify UI; omit clarify or set clarify: false.");
 	}
 	return { ...(input as SubagentParamsLike), async: true, clarify: false };
+}
+
+function steerParams(params: unknown): SubagentParamsLike {
+	const input = assertRecordParams(params, "steer");
+	if (typeof input.message !== "string" || !input.message.trim())
+		throw new SubagentRpcError("invalid_params", "RPC steer requires a non-empty message.");
+	return {
+		action: "steer",
+		...normalizeTargetParams(input, "steer"),
+		message: input.message.trim(),
+		steeringRecovery: false,
+	};
 }
 
 function stopAsyncRun(
@@ -288,6 +308,9 @@ async function handleRequest(
 	}
 	if (request.method === "status") {
 		return executeChecked(options, ctx, request.requestId, request.method, { action: "status", ...normalizeTargetParams(request.params, "status") });
+	}
+	if (request.method === "steer") {
+		return executeChecked(options, ctx, request.requestId, request.method, steerParams(request.params));
 	}
 	if (request.method === "interrupt") {
 		return executeChecked(options, ctx, request.requestId, request.method, { action: "interrupt", ...normalizeTargetParams(request.params, "interrupt") });
