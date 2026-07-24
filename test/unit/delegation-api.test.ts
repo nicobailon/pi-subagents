@@ -217,6 +217,54 @@ describe("public subagent delegation contract", () => {
 		bridge.dispose();
 	});
 
+	it("routes independent v1 requests through the concurrent-safe delegated executor", async () => {
+		const events = new FakeEvents();
+		let ordinaryCalls = 0;
+		let active = 0;
+		let maxActive = 0;
+		let started = 0;
+		let release!: () => void;
+		const barrier = new Promise<void>((resolve) => { release = resolve; });
+		const responses: SubagentDelegationResponse[] = [];
+		events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (value) => responses.push(value as SubagentDelegationResponse));
+		const bridge = registerPromptTemplateDelegationBridge({
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async () => {
+				ordinaryCalls++;
+				return { details: { mode: "single", results: [] } };
+			},
+			executeVersioned: async (_id, params) => {
+				active++;
+				started++;
+				maxActive = Math.max(maxActive, active);
+				await barrier;
+				active--;
+				return {
+					details: {
+						mode: "single",
+						results: [{
+							agent: params.agent,
+							exitCode: 0,
+							finalOutput: params.task,
+							usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+						}],
+					},
+				};
+			},
+		});
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "parallel-a", task: "A" });
+		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "parallel-b", task: "B" });
+		while (started < 2) await tick();
+		assert.equal(maxActive, 2);
+		assert.equal(ordinaryCalls, 0);
+		release();
+		while (responses.length < 2) await tick();
+		assert.deepEqual(responses.map((response) => response.requestId).sort(), ["parallel-a", "parallel-b"]);
+		assert.ok(responses.every((response) => response.status === "completed"));
+		bridge.dispose();
+	});
+
 	it("returns correlated invalid-request and unavailable-context statuses without executing", async () => {
 		const events = new FakeEvents();
 		let executeCalls = 0;
@@ -287,7 +335,8 @@ describe("public subagent delegation contract", () => {
 		const bridge = registerPromptTemplateDelegationBridge({
 			events,
 			getContext: () => ({ cwd: "/repo" }),
-			execute: async (_id, _params, signal) => await new Promise((_resolve, reject) => {
+			execute: async () => { throw new Error("ordinary executor must not own a strict v1 request"); },
+			executeVersioned: async (_id, _params, signal) => await new Promise((_resolve, reject) => {
 				signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
 			}),
 		});

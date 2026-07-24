@@ -370,6 +370,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		getContext: () => state.lastUiContext,
 		execute: (requestId, params, signal, ctx, onUpdate) =>
 			executeSubagentCollapsed(requestId, params, signal, onUpdate, ctx),
+		executeVersioned: (requestId, params, signal, ctx, onUpdate) => {
+			if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
+			return executor.executeDelegated(requestId, params, signal, onUpdate, ctx);
+		},
 	});
 
 	const rpcBridge = registerSubagentRpcBridge({

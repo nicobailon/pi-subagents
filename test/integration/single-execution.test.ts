@@ -25,6 +25,15 @@ import {
 	events,
 	tryImport,
 } from "../support/helpers.ts";
+import registerSubagentExtension from "../../src/extension/index.ts";
+import {
+	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+	type SubagentDelegationResponse,
+	type SubagentDelegationUpdate,
+} from "../../src/api/delegation.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
@@ -213,6 +222,7 @@ interface ExecutorToolResult {
 interface ExecutorModule {
 	createSubagentExecutor?: (...args: unknown[]) => {
 		execute: (...args: unknown[]) => Promise<ExecutorToolResult>;
+		executeDelegated: (...args: unknown[]) => Promise<ExecutorToolResult>;
 	};
 }
 
@@ -425,6 +435,108 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(second.isError, true);
 		assert.match(second.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("allows concurrent delegated foreground execution calls", async () => {
+		mockPi.onCall({ output: "first delegated call", delay: 100 });
+		mockPi.onCall({ output: "second delegated call", delay: 100 });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+		const ctx = makeMinimalCtx(tempDir);
+
+		const [first, second] = await Promise.all([
+			executor.executeDelegated("first", { agent: "echo", task: "First delegated call" }, new AbortController().signal, undefined, ctx),
+			executor.executeDelegated("second", { agent: "second", task: "Second delegated call" }, new AbortController().signal, undefined, ctx),
+		]);
+
+		assert.equal(first.isError, undefined);
+		assert.equal(second.isError, undefined);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("routes registered strict v1 delegation through the concurrent executor", async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "package.json" })], delay: 20 },
+				{ jsonl: [events.toolEnd("read"), events.toolResult("read", "{}")], delay: 20 },
+				{ jsonl: [events.assistantMessage("registered first delegated call")] },
+			],
+		});
+		mockPi.onCall({ output: "registered second delegated call", delay: 100 });
+		const extensionEvents = createEventBus();
+		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
+		const fakePi = new Proxy({
+			events: extensionEvents,
+			on(event: string, handler: (event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void) {
+				const handlers = runtimeHandlers.get(event) ?? [];
+				handlers.push(handler);
+				runtimeHandlers.set(event, handlers);
+				return () => runtimeHandlers.set(event, (runtimeHandlers.get(event) ?? []).filter((entry) => entry !== handler));
+			},
+			registerTool() {},
+			registerCommand() {},
+			registerShortcut() {},
+			registerMessageRenderer() {},
+			sendMessage() {},
+			getSessionName() { return undefined; },
+		}, {
+			get(target, prop) {
+				if (prop in target) return target[prop as keyof typeof target];
+				return () => undefined;
+			},
+		});
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => "registered-delegation-session",
+				getSessionFile: () => path.join(tempDir, "registered-delegation-session.jsonl"),
+				getEntries: () => [],
+			},
+		};
+		const responses: SubagentDelegationResponse[] = [];
+		const updates: SubagentDelegationUpdate[] = [];
+		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => responses.push(payload as SubagentDelegationResponse));
+		extensionEvents.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
+
+		try {
+			registerSubagentExtension(fakePi as never);
+			for (const handler of runtimeHandlers.get("session_start") ?? []) handler({ reason: "startup" }, ctx);
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
+				version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+				requestId: "registered-a",
+				agent: "worker",
+				task: "First registered delegated call",
+				context: "fresh",
+				cwd: tempDir,
+				agentContract: { version: 1 },
+			});
+			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, {
+				version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
+				requestId: "registered-b",
+				agent: "reviewer",
+				task: "Second registered delegated call",
+				context: "fresh",
+				cwd: tempDir,
+				agentContract: { version: 1 },
+			});
+
+			const callDeadlineAt = Date.now() + 30_000;
+			while (mockPi.callCount() < 2 && Date.now() < callDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(mockPi.callCount(), 2, "registered strict v1 requests should bypass the ordinary one-call guard");
+
+			const responseDeadlineAt = Date.now() + 30_000;
+			while (responses.length < 2 && Date.now() < responseDeadlineAt) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.deepEqual(responses.map((response) => response.requestId).sort(), ["registered-a", "registered-b"]);
+			assert.ok(responses.every((response) => response.status === "completed"));
+			assert.equal(responses.find((response) => response.requestId === "registered-a")?.output, "registered first delegated call");
+			assert.equal(responses.find((response) => response.requestId === "registered-b")?.output, "registered second delegated call");
+			assert.equal(updates.some((update) => update.requestId === "registered-a" && update.currentTool === "read"), true);
+		} finally {
+			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) handler({}, ctx);
+		}
 	});
 
 	it("allows concurrent async launches in one turn", async () => {

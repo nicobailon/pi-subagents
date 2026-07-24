@@ -3335,6 +3335,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
+	/**
+	 * Correlated extension-to-extension delegation owns its request IDs and
+	 * cancellation controllers, so independent requests may execute concurrently.
+	 * The ordinary model-facing tool keeps the one-foreground-call-per-turn guard.
+	 */
+	executeDelegated: (
+		id: string,
+		params: SubagentParamsLike,
+		signal: AbortSignal,
+		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
+		ctx: ExtensionContext,
+	) => Promise<AgentToolResult<Details>>;
 } {
 	const execute = async (
 		_id: string,
@@ -4022,5 +4034,5 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 	};
 
-	return { execute: executeWithSingleDispatchGuard };
+	return { execute: executeWithSingleDispatchGuard, executeDelegated: execute };
 }

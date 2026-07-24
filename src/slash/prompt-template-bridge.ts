@@ -44,6 +44,17 @@ interface PromptTemplateBridgeOptions<Ctx extends { cwd?: string }> {
 		ctx: Ctx,
 		onUpdate: (result: PromptTemplateBridgeResult) => void,
 	) => Promise<PromptTemplateBridgeResult>;
+	/**
+	 * Concurrent-safe executor for strict versioned delegation requests.
+	 * Non-versioned prompt-template requests retain the ordinary single-dispatch guard.
+	 */
+	executeVersioned?: (
+		requestId: string,
+		params: DelegatedSubagentExecutionParams,
+		signal: AbortSignal,
+		ctx: Ctx,
+		onUpdate: (result: PromptTemplateBridgeResult) => void,
+	) => Promise<PromptTemplateBridgeResult>;
 }
 
 export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: string }>(
@@ -173,7 +184,10 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		);
 
 		try {
-			const result = await options.execute(
+			const executeRequest = versionedRequest && options.executeVersioned
+				? options.executeVersioned
+				: options.execute;
+			const result = await executeRequest(
 				requestId,
 				params,
 				controller.signal,
