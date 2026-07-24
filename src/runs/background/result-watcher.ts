@@ -200,7 +200,7 @@ export function createResultWatcher(
 			}), nestedChildren);
 
 			const intercomTarget = data.intercomTarget?.trim();
-			if (deps.resultIntercom !== false && intercomTarget && triggerTurn) {
+			if (deps.resultIntercom === true && intercomTarget && triggerTurn) {
 				const mode = data.mode === "single" || data.mode === "parallel" || data.mode === "chain"
 					? data.mode
 					: resultChildren.length > 1 ? "chain" : "single";

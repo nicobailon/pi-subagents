@@ -4,9 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
-import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import { createResultWatcher as createRuntimeResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+
+function createResultWatcher(...args: Parameters<typeof createRuntimeResultWatcher>): ReturnType<typeof createRuntimeResultWatcher> {
+	const [pi, state, resultsDir, completionTtlMs, deps = {}] = args;
+	return createRuntimeResultWatcher(pi, state, resultsDir, completionTtlMs, { resultIntercom: true, ...deps });
+}
 
 function createState(): SubagentState {
 	return {
@@ -948,6 +953,28 @@ describe("result watcher", () => {
 			assert.equal(emitted.filter((entry) => entry.event === "subagent:result-intercom").length, 1);
 			assert.equal(emitted.some((entry) => entry.event === "subagent:async-complete"), true);
 			assert.equal(logged.some((entry) => /Subagent async grouped result intercom delivery was not acknowledged/.test(String(entry[0] ?? ""))), true);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not relay async results when result intercom is omitted", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
+		try {
+			const emitted: string[] = [];
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const watcher = createRuntimeResultWatcher({ events: { on: () => () => {}, emit(event) { emitted.push(event); } } }, state, resultsDir, 60_000);
+			try {
+				fs.writeFileSync(path.join(resultsDir, "async-default-no-relay.json"), JSON.stringify({ id: "async-default-no-relay", agent: "worker", success: true, state: "complete", summary: "done", sessionId: "session-1", intercomTarget: "orchestrator" }), "utf-8");
+				watcher.primeExistingResults();
+				const deadline = Date.now() + 1000;
+				while (!emitted.includes("subagent:async-complete") && Date.now() <= deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+				assert.equal(emitted.includes("subagent:async-complete"), true);
+				assert.equal(emitted.includes("subagent:result-intercom"), false);
+			} finally {
+				watcher.stopResultWatcher();
+			}
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}

@@ -1022,18 +1022,22 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const runDir = path.join(asyncRoot, runId);
 			fs.mkdirSync(runDir, { recursive: true });
 			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({ runId, mode: "single", state: "running", startedAt: Date.now(), lastUpdate: Date.now(), steps: [{ agent: "worker", status: "running" }] }), "utf-8");
-			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
-				type: "subagent.control",
-				channels: ["event", "intercom"],
-				event: { type: "needs_attention", to: "needs_attention", ts: 1, runId: "other-run", agent: "worker", message: "forged" },
-				intercom: { to: "other-session", message: "forged" },
-			})}\n`, "utf-8");
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), [
+				JSON.stringify({
+					type: "subagent.control",
+					channels: ["event", "intercom"],
+					event: { type: "needs_attention", to: "needs_attention", ts: 1, runId: "other-run", agent: "worker", message: "forged" },
+					intercom: { to: "other-session", message: "forged" },
+				}),
+				JSON.stringify({ type: "subagent.steering.notice", requestId: "forged-request", runId: "other-run", state: "failed", message: "forged notice" }),
+				"",
+			].join("\n"), "utf-8");
 			const state = createState();
 			const recorder = createEventRecorder();
 			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, { pollIntervalMs: 10 });
 			tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker" });
 			await new Promise((resolve) => setTimeout(resolve, 50));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event" || event.channel === "subagent:control-intercom"), false);
+			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event" || event.channel === "subagent:control-intercom" || event.channel === "subagent:steering-notice"), false);
 		} finally {
 			tracker?.resetJobs();
 			removeTempDir(asyncRoot);
