@@ -152,6 +152,8 @@ export interface DelegatedSubagentExecutionParams {
 	artifacts?: boolean;
 	/** Internal-only thinking override accepted by executeDelegated. */
 	delegatedThinkingOverride?: SubagentDelegationV2Thinking;
+	/** Internal-only V2 capability accepted and stripped by executeDelegated. */
+	delegatedAllowZeroToolBudget?: true;
 	async: false;
 	foregroundOnly: true;
 	clarify: false;
@@ -394,6 +396,7 @@ export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegatio
 		acceptance: false,
 		artifacts: request.artifacts,
 		delegatedThinkingOverride: request.thinking,
+		delegatedAllowZeroToolBudget: true,
 		async: false,
 		foregroundOnly: true,
 		clarify: false,

@@ -1688,8 +1688,12 @@ function resolveForegroundTimeout(params: SubagentParamsLike): { timeoutMs?: num
 	return { timeoutMs: rawTimeout ?? rawMaxRuntime };
 }
 
-function resolveToolBudget(raw: unknown, label = "toolBudget"): { toolBudget?: ResolvedToolBudget; error?: string } {
-	const resolved = validateToolBudgetConfig(raw, label);
+function resolveToolBudget(
+	raw: unknown,
+	label = "toolBudget",
+	options?: { minimumHard?: 0 | 1 },
+): { toolBudget?: ResolvedToolBudget; error?: string } {
+	const resolved = validateToolBudgetConfig(raw, label, options);
 	return { toolBudget: resolved.budget, error: resolved.error };
 }
 
@@ -3350,6 +3354,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	) => Promise<AgentToolResult<Details>>;
 } {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
+	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const execute = async (
 		_id: string,
 		params: SubagentParamsLike,
@@ -3358,6 +3363,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
+		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		deps.state.baseCwd = ctx.cwd;
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
@@ -3725,7 +3731,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			depth,
 			deps.config.forceTopLevelAsync === true,
 		);
-		const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
+		const runToolBudget = resolveToolBudget(
+			effectiveParams.toolBudget,
+			"toolBudget",
+			allowZeroToolBudget ? { minimumHard: 0 } : undefined,
+		);
 		if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
 		const configToolBudget = resolveToolBudget(deps.config.toolBudget, "config.toolBudget");
 		if (configToolBudget.error) return buildRequestedModeError(effectiveParams, configToolBudget.error);
@@ -4081,10 +4091,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
 		const delegatedParams = { ...params };
-		const privateParams = delegatedParams as SubagentParamsLike & { delegatedThinkingOverride?: AgentConfig["thinking"] };
+		const privateParams = delegatedParams as SubagentParamsLike & {
+			delegatedThinkingOverride?: AgentConfig["thinking"];
+			delegatedAllowZeroToolBudget?: true;
+		};
 		const thinkingOverride = privateParams.delegatedThinkingOverride;
+		const allowZeroToolBudget = privateParams.delegatedAllowZeroToolBudget === true;
 		delete privateParams.delegatedThinkingOverride;
+		delete privateParams.delegatedAllowZeroToolBudget;
 		if (thinkingOverride !== undefined) delegatedThinkingOverrides.set(delegatedParams, thinkingOverride);
+		if (allowZeroToolBudget) delegatedZeroToolBudgets.add(delegatedParams);
 		return execute(id, delegatedParams, signal, onUpdate, ctx);
 	};
 

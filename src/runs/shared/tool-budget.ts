@@ -9,12 +9,17 @@ export function normalizeToolBudgetBlock(block: ToolBudgetConfig["block"] | unde
 	return [...new Set(block.map((tool) => tool.trim()).filter(Boolean))];
 }
 
-export function validateToolBudgetConfig(raw: unknown, label = "toolBudget"): { budget?: ResolvedToolBudget; error?: string } {
+export function validateToolBudgetConfig(
+	raw: unknown,
+	label = "toolBudget",
+	options: { minimumHard?: 0 | 1 } = {},
+): { budget?: ResolvedToolBudget; error?: string } {
 	if (raw === undefined) return {};
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: `${label} must be an object with hard and optional soft/block.` };
 	const value = raw as ToolBudgetConfig;
-	if (typeof value.hard !== "number" || !Number.isInteger(value.hard) || value.hard < 1) {
-		return { error: `${label}.hard must be an integer >= 1.` };
+	const minimumHard = options.minimumHard ?? 1;
+	if (typeof value.hard !== "number" || !Number.isInteger(value.hard) || value.hard < minimumHard) {
+		return { error: `${label}.hard must be an integer >= ${minimumHard}.` };
 	}
 	if (value.soft !== undefined && (typeof value.soft !== "number" || !Number.isInteger(value.soft) || value.soft < 1)) {
 		return { error: `${label}.soft must be an integer >= 1 when provided.` };
@@ -68,7 +73,7 @@ export function encodeToolBudgetEnv(budget: ResolvedToolBudget | undefined): str
 export function decodeToolBudgetEnv(value: string | undefined): ResolvedToolBudget | undefined {
 	if (!value?.trim()) return undefined;
 	const parsed = JSON.parse(value) as unknown;
-	const normalized = validateToolBudgetConfig(parsed, TOOL_BUDGET_ENV);
+	const normalized = validateToolBudgetConfig(parsed, TOOL_BUDGET_ENV, { minimumHard: 0 });
 	if (normalized.error) throw new Error(normalized.error);
 	return normalized.budget;
 }

@@ -42,6 +42,7 @@ import {
 import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
@@ -354,6 +355,66 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
+	});
+
+	it("admits a zero run-level tool budget only for marked v2 delegated execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const zeroBudget = { hard: 0, block: "*" as const };
+		const params = { agent: "echo", task: "Answer without tools", toolBudget: zeroBudget };
+		const ctx = makeMinimalCtx(tempDir);
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const ordinary = await executor.execute(
+			"ordinary-zero-budget",
+			{ ...params, delegatedAllowZeroToolBudget: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(ordinary.isError, true);
+		assert.match(ordinary.content[0]?.text ?? "", /toolBudget\.hard must be an integer >= 1/);
+
+		const v1Delegated = await executor.executeDelegated(
+			"v1-delegated-zero-budget",
+			params,
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(v1Delegated.isError, true);
+		assert.match(v1Delegated.content[0]?.text ?? "", /toolBudget\.hard must be an integer >= 1/);
+
+		mockPi.onCall({ echoEnv: [TOOL_BUDGET_ENV] });
+		const v2Delegated = await executor.executeDelegated(
+			"v2-delegated-zero-budget",
+			{ ...params, delegatedAllowZeroToolBudget: true },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(v2Delegated.isError, undefined);
+		const env = JSON.parse(v2Delegated.content[0]?.text ?? "{}") as Record<string, string>;
+		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "null"), zeroBudget);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("keeps delegated agent and config tool budgets at a minimum of one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const ctx = makeMinimalCtx(tempDir);
+		const cases = [
+			makeExecutor([makeAgent("echo", { toolBudget: { hard: 0 } })]),
+			makeExecutor([makeAgent("echo")], { toolBudget: { hard: 0 } }),
+		];
+		for (const [index, executor] of cases.entries()) {
+			const result = await executor.executeDelegated(
+				`delegated-default-zero-budget-${index}`,
+				{ agent: "echo", task: "Do work", delegatedAllowZeroToolBudget: true },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /(?:agent\.|config\.)?toolBudget\.hard must be an integer >= 1/);
+		}
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

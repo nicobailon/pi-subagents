@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Added delegation v2 for extension-owned concurrent foreground leaves, with logical run/node ownership, exact per-attempt cancellation, explicit duplicate-node outcomes, literal or structured values, effective model/thinking metadata, and detailed usage while preserving delegation v1 and the model-facing single-dispatch guard. Thanks to Jakub Neumann (@neumie) for #610.
+- Added delegation v2 for extension-owned concurrent foreground leaves, with logical run/node ownership, exact per-attempt cancellation, explicit duplicate-node outcomes, literal or structured values, effective model/thinking metadata, detailed usage, and an exact zero-tool budget while preserving delegation v1 and the model-facing single-dispatch guard. Thanks to Jakub Neumann (@neumie) for #610.
 - Added acknowledged `steer` support to the extension RPC for exact-child async orchestration without recovery replacement. Thanks to Daan Bosch (@daanbosch) for #607.
 - Added a persistent below-editor FleetView with safe empty-editor navigation and a structured inspector for Markdown, code, tool calls, and compact or expanded tool results. Thanks to Rui Pu (@Zeppelinpp) for #587.
 - Added `artifactDir` config to store subagent artifacts in the project, Pi session, or temp artifact directory while keeping project-local artifacts as the default. Thanks to WeZZard (@WeZZard) for #582.

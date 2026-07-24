@@ -96,7 +96,11 @@ function validateSharedFields(
 			return { ok: false, ...identity, error: `toolBudget.${unsupportedToolBudgetField} is not supported.` };
 		}
 	}
-	const toolBudget = validateToolBudgetConfig(value.toolBudget);
+	const toolBudget = validateToolBudgetConfig(
+		value.toolBudget,
+		"toolBudget",
+		identity.version === SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION ? { minimumHard: 0 } : undefined,
+	);
 	if (toolBudget.error) return { ok: false, ...identity, error: toolBudget.error };
 	if (value.skill !== undefined) {
 		const validSkill = typeof value.skill === "boolean"

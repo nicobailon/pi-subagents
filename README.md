@@ -1087,8 +1087,11 @@ Terminal usage reports input, output, cache-read, cache-write, cost, turns, tool
 calls, and duration alongside the effective model and thinking level when
 known. Schemas are capped at 64 KiB; tasks and returned text/structured values
 are capped at 1 MiB, with smaller bounds on identity/configuration strings and
-a maximum v2 `timeoutMs` of 2,147,483,647. The foreground bridge retains up to
-8,192 exact pending-cancellation and settled-attempt identities per extension
+a maximum v2 `timeoutMs` of 2,147,483,647. V2 alone accepts
+`toolBudget: { hard: 0, block: "*" }` to block the first tool call and run a
+zero-tool leaf; delegation v1 and ordinary model-facing/configured budgets keep
+their existing minimum of one. The foreground bridge retains up to 8,192 exact
+pending-cancellation and settled-attempt identities per extension
 context. If either history fills, it fails closed with `unavailable_context`
 for later v2 starts rather than evicting identity facts; lifecycle reset clears
 the bounded history.

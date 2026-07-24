@@ -139,6 +139,20 @@ describe("public subagent delegation contract", () => {
 		}
 	});
 
+	it("accepts an exact zero tool budget only for v2", () => {
+		const zeroBudget = { hard: 0, block: "*" as const };
+		const parsedV2 = parseSubagentDelegationRequest({ ...v2Request, toolBudget: zeroBudget });
+		assert.equal(parsedV2.ok, true);
+		if (parsedV2.ok) assert.deepEqual(parsedV2.request.toolBudget, zeroBudget);
+
+		const parsedV1 = parseSubagentDelegationRequest({ ...request, toolBudget: zeroBudget });
+		assert.equal(parsedV1.ok, false);
+		if (!parsedV1.ok) assert.equal(parsedV1.error, "toolBudget.hard must be an integer >= 1.");
+		for (const soft of [0, 1]) {
+			assert.equal(parseSubagentDelegationRequest({ ...v2Request, toolBudget: { ...zeroBudget, soft } }).ok, false);
+		}
+	});
+
 	it("rejects non-JSON v2 schemas without executing toJSON hooks", () => {
 		let calls = 0;
 		const parsed = parseSubagentDelegationRequest({
@@ -253,6 +267,7 @@ describe("public subagent delegation contract", () => {
 			acceptance: false,
 			artifacts: true,
 			delegatedThinkingOverride: "high",
+			delegatedAllowZeroToolBudget: true,
 			async: false,
 			foregroundOnly: true,
 			clarify: false,
