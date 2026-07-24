@@ -530,7 +530,7 @@ describe("subagent_wait tool", () => {
 
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /No active run matched "run"/);
-			assert.equal(reconciledPids.includes(999999), false, "outside symlink target must not be reconciled");
+			assert.deepEqual(reconciledPids, [], "foreign and outside runs must not be reconciled");
 			assert.equal(sleeps, 0, "outside symlink target must not be returned as active");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

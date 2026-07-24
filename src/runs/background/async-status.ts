@@ -328,7 +328,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			entries = resolution.kind === "exact"
 				? [resolution.id]
 				: resolution.kind === "scan"
-					? fs.readdirSync(asyncDirRoot).filter((entry) => resolveTargetedAsyncRun(asyncDirRoot, entry).kind === "exact")
+					? fs.readdirSync(asyncDirRoot).filter((entry) =>
+						(entry === options.runId || entry.startsWith(options.runId!))
+						&& resolveTargetedAsyncRun(asyncDirRoot, entry, options.sessionId).kind === "exact"
+					)
 					: [];
 		} else {
 			entries = fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry));
