@@ -102,6 +102,7 @@ interface AsyncRunListOptions {
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	reconcile?: boolean;
+	runId?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -283,7 +284,15 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}): AsyncRunSummary[] {
 	let entries: string[];
 	try {
-		entries = fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry));
+		if (options.runId !== undefined) {
+			entries = options.runId !== "." && options.runId !== ".."
+				&& path.basename(options.runId) === options.runId
+				&& isAsyncRunDir(asyncDirRoot, options.runId)
+				? [options.runId]
+				: [];
+		} else {
+			entries = fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry));
+		}
 	} catch (error) {
 		if (isNotFoundError(error)) return [];
 		throw new Error(`Failed to list async runs in '${asyncDirRoot}': ${getErrorMessage(error)}`, {

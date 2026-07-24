@@ -13,6 +13,7 @@
 ### Fixed
 - Suspended the persistent FleetView while its inspector overlay is open, preventing live status redraws from leaving repeated inspector frames in terminal scrollback.
 - Kept simultaneous foreground parallel children independently visible with stable descriptions, metrics, lifecycle state, and transcripts.
+- Avoided scanning and reconciling every historical async run when `subagent_wait({ id })` targets an exact run, preventing supervisor-attention waits from being delayed until the child completes.
 - Mapped sparse parallel slash progress updates by child index so one child’s live tool/output state no longer appears on another chain placeholder. Thanks to Eli Stark (@white-hat) for #595.
 - Retried transient Windows filesystem locks while creating async result directories and stopped destructively recreating shared async directories during startup access checks, so concurrent Pi instances are less likely to lose completed async results to `EPERM` directory handles. Thanks to AiraNadih (@AiraNadih) for #566.
 - Pruned broad agent and chain discovery roots so package-declared `.` scans no longer descend into `node_modules`, `.git`, Git submodules, or nested project roots during startup. Thanks to tupe12334 (@tupe12334) for #570 and shoehn (@shoehn) for narrowing the startup trace.

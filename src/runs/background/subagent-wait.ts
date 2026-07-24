@@ -39,6 +39,7 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	listBackgroundWorkWakeChannels,
@@ -197,6 +198,20 @@ function matchesId(run: AsyncRunSummary, id: string): boolean {
 	return run.id === id || run.id.startsWith(id);
 }
 
+function exactAsyncRunId(params: SubagentWaitParams, deps: SubagentWaitDeps): string | undefined {
+	const id = params.id;
+	if (!id || path.basename(id) !== id) return undefined;
+	const asyncDir = path.join(deps.asyncDirRoot ?? ASYNC_DIR, id);
+	try {
+		return fs.statSync(asyncDir).isDirectory() ? id : undefined;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw new Error(`Failed to inspect async run path '${asyncDir}': ${error instanceof Error ? error.message : String(error)}`, {
+			cause: error instanceof Error ? error : undefined,
+		});
+	}
+}
+
 function activeDetachedForegroundRuns(params: SubagentWaitParams, deps: SubagentWaitDeps): ForegroundResumeRun[] {
 	if (!params.id || !deps.state.foregroundRuns) return [];
 	const sessionId = deps.state.currentSessionId;
@@ -259,6 +274,7 @@ function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
+		runId: exactAsyncRunId(params, deps),
 	});
 	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
 }
@@ -277,6 +293,7 @@ function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): 
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
+		runId: exactAsyncRunId(params, deps),
 	});
 	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
 }
