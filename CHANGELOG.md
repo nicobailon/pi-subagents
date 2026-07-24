@@ -13,6 +13,7 @@
 - Show each subagent child’s resolved `[fresh]` or `[fork]` launch context in foreground results, async status, fleet, and widget surfaces, with `[mixed]` on aggregate headers when a run uses both modes.
 
 ### Fixed
+- Kept foreground slash execution commands responsive while their live result finalization continues asynchronously. Thanks to Eli Stark (@white-hat) for #594.
 - Re-armed remembered detached foreground children on every blocking `contact_supervisor` request so targeted `subagent_wait` calls wake for repeated supervisor decisions.
 - Suspended the persistent FleetView while its inspector overlay is open, preventing live status redraws from leaving repeated inspector frames in terminal scrollback.
 - Kept simultaneous foreground parallel children independently visible with stable descriptions, metrics, lifecycle state, and transcripts.
