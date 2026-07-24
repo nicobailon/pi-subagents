@@ -49,6 +49,7 @@ import {
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import {
 	ASYNC_DIR,
+	INTERCOM_DETACH_REQUEST_EVENT,
 	RESULTS_DIR,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
@@ -121,6 +122,7 @@ export interface SubagentWaitDeps {
 
 /** Bus channels that indicate a run changed state or needs attention. */
 const WAKE_CHANNELS = [
+	INTERCOM_DETACH_REQUEST_EVENT,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_CONTROL_EVENT,

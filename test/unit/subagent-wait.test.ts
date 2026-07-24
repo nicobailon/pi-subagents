@@ -384,6 +384,50 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("wakes a remembered foreground wait on a repeated supervisor request event", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-supervisor-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-repeated", {
+				runId: "foreground-repeated",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: 1,
+				children: [{ agent: "worker", index: 0, status: "detached", updatedAt: 1 }],
+			}]]);
+			const handlers = new Map<string, Array<(data: unknown) => void>>();
+			const events = {
+				on(channel: string, handler: (data: unknown) => void) {
+					const list = handlers.get(channel) ?? [];
+					list.push(handler);
+					handlers.set(channel, list);
+					return () => handlers.set(channel, (handlers.get(channel) ?? []).filter((candidate) => candidate !== handler));
+				},
+				emit(channel: string, data: unknown) {
+					for (const handler of handlers.get(channel) ?? []) handler(data);
+				},
+			};
+			const startedAt = Date.now();
+			const waiting = waitForSubagents({ id: "foreground-repeated", timeoutMs: 30_000 }, undefined, baseDeps(root, state, {
+				events,
+				pollIntervalMs: 10_000,
+			}));
+
+			setTimeout(() => {
+				const child = state.foregroundRuns!.get("foreground-repeated")!.children[0]!;
+				child.activityState = "needs_attention";
+				events.emit("pi-intercom:detach-request", { runId: "foreground-repeated", childIndex: 0 });
+			}, 15);
+
+			const result = await waiting;
+			assert.match(textOf(result), /attention required/i);
+			assert.ok(Date.now() - startedAt < 5_000, "supervisor request should wake wait before the poll interval");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("streams detached foreground transcript activity while waiting", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-progress-"));
 		try {
