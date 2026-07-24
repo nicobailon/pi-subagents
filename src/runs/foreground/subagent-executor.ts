@@ -3548,7 +3548,28 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index, signal });
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
-				return steerAsyncRun({ state: deps.state, runId: resolved.id, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location: resolved.location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: resolved!.id, message }, requestCwd, ctx, deps, absoluteDeadlineAt }) });
+				return steerAsyncRun({
+					state: deps.state,
+					runId: resolved.id,
+					message,
+					index: paramsWithResolvedCwd.index,
+					kill: deps.kill,
+					location: resolved.location,
+					signal,
+					...(paramsWithResolvedCwd.steeringRecovery === false
+						? {}
+						: {
+								recover: ({ absoluteDeadlineAt, ...limits }) =>
+									resumeAsyncRun({
+										params: { ...limits, action: "resume", id: resolved!.id, message },
+										requestCwd,
+										ctx,
+										deps,
+										absoluteDeadlineAt,
+									}),
+							},
+					}),
+				});
 			}
 			if (action === "append-step") {
 				return appendStepToAsyncChain({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
