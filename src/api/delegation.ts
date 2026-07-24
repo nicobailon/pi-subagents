@@ -150,6 +150,7 @@ export type SubagentDelegationStatus =
 	| "interrupted"
 	| "turn_budget_exhausted"
 	| "tool_budget_exhausted"
+	| "structured_output_failed"
 	| "acceptance_failed"
 	| "invalid_request"
 	| "unavailable_context";

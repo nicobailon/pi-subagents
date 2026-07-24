@@ -88,10 +88,11 @@ export function turnBudgetDecision(
 	turnCount: number,
 	terminalAssistantStop: boolean,
 	toolWorkActiveOrStarting: boolean,
+	enforceHardLimit = false,
 ): "continue" | "defer" | "abort" {
 	const hardLimit = budget.maxTurns + budget.graceTurns;
 	if (turnCount < hardLimit) return "continue";
-	if (toolWorkActiveOrStarting) return "defer";
+	if (toolWorkActiveOrStarting && !enforceHardLimit) return "defer";
 	if (turnCount === hardLimit && terminalAssistantStop) return "continue";
 	return "abort";
 }

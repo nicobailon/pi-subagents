@@ -1125,7 +1125,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("direct single tool calls support outputSchema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "structured", structuredOutput: { ok: true, note: "captured" } });
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true, note: "captured" } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true, note: "captured" },
+		});
 		const executor = makeExecutor([makeAgent("echo")]);
 
 		const result = await executor.execute(
@@ -1138,6 +1145,85 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { ok: true, note: "captured" });
+	});
+
+	it("rejects structured output capture files that were not produced by the structured_output tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "spoofed", structuredOutputCapture: { ok: true } });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-schema-spoof",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, acceptance: false, artifacts: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details?.results?.[0];
+		assert.equal(result.isError, true);
+		assert.equal(child?.structuredOutputFailed, true);
+		assert.match(child?.error ?? "", /Missing structured_output call/);
+		assert.ok(child?.structuredOutputPath);
+		assert.equal(fs.existsSync(path.dirname(child.structuredOutputPath)), false);
+	});
+
+	it("does not create a temporary structured output directory before file-only validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const previousTmpdir = process.env.TMPDIR;
+		process.env.TMPDIR = tempDir;
+		try {
+			const executor = makeExecutor([makeAgent("echo")]);
+
+			const result = await executor.execute(
+				"single-schema-file-only-missing-path",
+				{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, outputMode: "file-only", acceptance: false, artifacts: false },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /outputMode: "file-only"/);
+			assert.equal(mockPi.callCount(), 0);
+			assert.equal(fs.readdirSync(tempDir).some((name) => name.startsWith("pi-subagent-structured-")), false);
+		} finally {
+			if (previousTmpdir === undefined) delete process.env.TMPDIR;
+			else process.env.TMPDIR = previousTmpdir;
+		}
+	});
+
+	it("allows a structured_output tool call at the exact strict turn boundary", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			stdoutRaw: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "structured-1", name: "structured_output", arguments: { value: { ok: true } } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+					},
+				},
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-schema-strict-boundary",
+			{ agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, turnBudget: { maxTurns: 1, graceTurns: 0 }, enforceHardTurnLimit: true, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const child = result.details?.results?.[0];
+		assert.equal(result.isError, undefined);
+		assert.equal(child?.turnBudgetExceeded, undefined);
+		assert.deepEqual(child?.structuredOutput, { ok: true });
 	});
 
 	it("returns captured output when the foreground executor fails an implementation run", async () => {

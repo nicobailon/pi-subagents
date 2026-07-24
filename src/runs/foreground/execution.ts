@@ -53,7 +53,7 @@ import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
-import { readStructuredOutput } from "../shared/structured-output.ts";
+import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -320,6 +320,7 @@ async function runSingleAttempt(
 	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
+	let structuredOutputToolInvoked = false;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
@@ -605,7 +606,7 @@ async function runSingleAttempt(
 				result.wrapUpRequested = true;
 				appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
 			}
-			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting);
+			const decision = turnBudgetDecision(budget, turnCount, terminalAssistantStop, toolWorkActiveOrStarting, options.enforceHardTurnLimit);
 			if (decision === "defer") {
 				result.turnBudget = turnBudgetDeferredState(
 					budget,
@@ -709,6 +710,7 @@ async function runSingleAttempt(
 				const toolArgs = evt.args && typeof evt.args === "object" && !Array.isArray(evt.args)
 					? evt.args as Record<string, unknown>
 					: {};
+				if (options.structuredOutput && evt.toolName === "structured_output") structuredOutputToolInvoked = true;
 				if (options.allowIntercomDetach && (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
 					intercomStarted = true;
 				}
@@ -747,10 +749,15 @@ async function runSingleAttempt(
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
 					const stopReason = (evt.message as { stopReason?: string }).stopReason;
-					const hasToolCall = Array.isArray(evt.message.content)
-						&& evt.message.content.some((part) => (part as { type?: string }).type === "toolCall");
+					const toolCalls = Array.isArray(evt.message.content)
+						? evt.message.content.filter((part) => (part as { type?: string }).type === "toolCall")
+						: [];
+					const hasToolCall = toolCalls.length > 0;
 					const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-					updateTurnBudget(result.usage.turns, terminalAssistantStop, hasToolCall || Boolean(progress.currentTool));
+					const terminalStructuredOutputCall = Boolean(options.structuredOutput)
+						&& toolCalls.length === 1
+						&& (toolCalls[0] as { name?: string }).name === "structured_output";
+					updateTurnBudget(result.usage.turns, terminalAssistantStop || terminalStructuredOutputCall, hasToolCall || Boolean(progress.currentTool));
 					const u = evt.message.usage;
 					if (u) {
 						result.usage.input += u.input || 0;
@@ -1053,18 +1060,25 @@ async function runSingleAttempt(
 		}
 	}
 	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
-		const structured = await readStructuredOutput({
-			schema: options.structuredOutput.schema,
-			schemaPath: options.structuredOutput.schemaPath,
-			outputPath: options.structuredOutput.outputPath,
-		});
 		result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
 		result.structuredOutputPath = options.structuredOutput.outputPath;
-		if (structured.error) {
+		if (!structuredOutputToolInvoked) {
 			result.exitCode = 1;
-			result.error = structured.error;
+			result.error = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
+			result.structuredOutputFailed = true;
 		} else {
-			result.structuredOutput = structured.value;
+			const structured = await readStructuredOutput({
+				schema: options.structuredOutput.schema,
+				schemaPath: options.structuredOutput.schemaPath,
+				outputPath: options.structuredOutput.outputPath,
+			});
+			if (structured.error) {
+				result.exitCode = 1;
+				result.error = structured.error;
+				result.structuredOutputFailed = true;
+			} else {
+				result.structuredOutput = structured.value;
+			}
 		}
 	}
 

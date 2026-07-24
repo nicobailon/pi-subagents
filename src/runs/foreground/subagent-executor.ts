@@ -49,7 +49,7 @@ import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightS
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
-import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
+import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
@@ -163,6 +163,8 @@ export interface SubagentParamsLike {
 	timeoutMs?: number;
 	maxRuntimeMs?: number;
 	turnBudget?: TurnBudgetConfig;
+	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
+	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	clarify?: boolean;
 	share?: boolean;
@@ -3190,13 +3192,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
-	const structuredRuntime = params.outputSchema
-		? createStructuredOutputRuntime(params.outputSchema, path.join(artifactsDir, "structured-output", runId))
-		: undefined;
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
 	}
+	const structuredRuntime = params.outputSchema
+		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined)
+		: undefined;
 	task = injectSingleOutputInstruction(task, outputPath, agentConfig);
 
 	let effectiveSkills: string[] | undefined;
@@ -3228,49 +3230,55 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: undefined;
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
-	const r = await runSync(ctx.cwd, agents, params.agent!, task, {
-		parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
-		context: data.contextPolicy.contextForAgent(params.agent!),
-		cwd: effectiveCwd,
-		signal,
-		interruptSignal: interruptController.signal,
-		allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
-		intercomEvents: deps.pi.events,
-		runId,
-		sessionDir: sessionDirForIndex(0),
-		sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
-		share: shareEnabled,
-		artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
-		artifactConfig,
-		maxOutput: params.maxOutput,
-		outputPath,
-		outputMode: effectiveOutputMode,
-		maxSubagentDepth,
-		waitToolEnabled: deps.waitToolEnabled,
-		onUpdate: forwardSingleUpdate,
-		controlConfig,
-		onControlEvent,
-		intercomSessionName: childIntercomTarget,
-		orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
-		nestedRoute: foregroundControl?.nestedRoute,
-		index: 0,
-		modelOverride,
-		thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
-		availableModels,
-		preferredModelProvider: currentProvider,
-		modelScope: data.modelScope,
-		skills: effectiveSkills,
-		structuredOutput: structuredRuntime,
-		agentContract: params.agentContract,
-		acceptance: params.acceptance,
-		acceptanceContext: { mode: "single" },
-		onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
-		timeoutMs: data.timeoutMs,
-		deadlineAt,
-		turnBudget: data.turnBudget,
-		toolBudget: effectiveToolBudget.toolBudget,
-		allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
-	});
+	let r: Awaited<ReturnType<typeof runSync>>;
+	try {
+		r = await runSync(ctx.cwd, agents, params.agent!, task, {
+			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			context: data.contextPolicy.contextForAgent(params.agent!),
+			cwd: effectiveCwd,
+			signal,
+			interruptSignal: interruptController.signal,
+			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
+			intercomEvents: deps.pi.events,
+			runId,
+			sessionDir: sessionDirForIndex(0),
+			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride),
+			share: shareEnabled,
+			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+			artifactConfig,
+			maxOutput: params.maxOutput,
+			outputPath,
+			outputMode: effectiveOutputMode,
+			maxSubagentDepth,
+			waitToolEnabled: deps.waitToolEnabled,
+			onUpdate: forwardSingleUpdate,
+			controlConfig,
+			onControlEvent,
+			intercomSessionName: childIntercomTarget,
+			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
+			nestedRoute: foregroundControl?.nestedRoute,
+			index: 0,
+			modelOverride,
+			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
+			availableModels,
+			preferredModelProvider: currentProvider,
+			modelScope: data.modelScope,
+			skills: effectiveSkills,
+			structuredOutput: structuredRuntime,
+			agentContract: params.agentContract,
+			acceptance: params.acceptance,
+			acceptanceContext: { mode: "single" },
+			onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
+			timeoutMs: data.timeoutMs,
+			deadlineAt,
+			turnBudget: data.turnBudget,
+			enforceHardTurnLimit: params.enforceHardTurnLimit,
+			toolBudget: effectiveToolBudget.toolBudget,
+			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
+		});
+	} finally {
+		if (!artifactConfig.enabled) cleanupStructuredOutputRuntime(structuredRuntime);
+	}
 	if (foregroundControl) finishForegroundChild(foregroundControl, 0);
 	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 

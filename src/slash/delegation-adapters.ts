@@ -104,6 +104,7 @@ export interface PromptTemplateBridgeResult {
 			stopped?: boolean;
 			turnBudgetExceeded?: boolean;
 			toolBudgetBlocked?: boolean;
+			structuredOutputFailed?: boolean;
 			savedOutputPath?: string;
 			sessionFile?: string;
 			agentContract?: AgentContract;
@@ -142,6 +143,8 @@ export interface DelegatedSubagentExecutionParams {
 	worktree?: boolean;
 	timeoutMs?: number;
 	turnBudget?: TurnBudgetConfig;
+	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
+	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
@@ -366,6 +369,7 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		model: request.model,
 		timeoutMs: request.timeoutMs,
 		turnBudget: request.turnBudget,
+		enforceHardTurnLimit: true,
 		toolBudget: request.toolBudget,
 		skill: request.skill,
 		output: request.output,
@@ -389,6 +393,7 @@ export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegatio
 		model: request.model,
 		timeoutMs: request.timeoutMs,
 		turnBudget: request.turnBudget,
+		enforceHardTurnLimit: true,
 		toolBudget: request.toolBudget,
 		skill: request.skill,
 		output: false,
@@ -452,6 +457,7 @@ function resolveSubagentDelegationStatus(
 	const child = result.details?.results?.[0];
 	if (!child) return "failed";
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
+	if (child?.structuredOutputFailed) return "structured_output_failed";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
 	if (!isAgentContractV1(child.agentContract) && child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";

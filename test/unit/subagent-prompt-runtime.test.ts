@@ -342,18 +342,62 @@ describe("subagent prompt runtime", () => {
 			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
 			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
 			let execute: ((_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }>) | undefined;
+			let parameters: unknown;
 
 			registerSubagentPromptRuntime({
-				registerTool(tool: { name: string; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }) {
-					if (tool.name === "structured_output") execute = tool.execute;
+				registerTool(tool: { name: string; parameters: unknown; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }) {
+					if (tool.name === "structured_output") {
+						execute = tool.execute;
+						parameters = tool.parameters;
+					}
 				},
 				on() {},
-			} as { registerTool(tool: { name: string; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }): void; on(): void });
+			} as { registerTool(tool: { name: string; parameters: unknown; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }): void; on(): void });
 
 			assert.ok(execute, "structured_output tool should be registered");
+			assert.deepEqual(parameters, {
+				type: "object",
+				properties: { value: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } },
+				required: ["value"],
+				additionalProperties: false,
+			});
 			const result = await execute("tool-1", { value: { ok: true } });
 			assert.equal(result.terminate, true);
 			assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), { ok: true });
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("scopes local structured_output schema refs under the value parameter", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-refs-"));
+		try {
+			const schemaPath = path.join(dir, "schema.json");
+			const outputPath = path.join(dir, "output.json");
+			fs.writeFileSync(schemaPath, JSON.stringify({
+				$defs: { item: { type: "string" } },
+				type: "object",
+				properties: {
+					name: { $ref: "#/$defs/item" },
+					nested: {
+						type: "object",
+						properties: { label: { $ref: "#/$defs/item" } },
+					},
+				},
+			}), "utf-8");
+			process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
+			process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
+			let parameters = {} as { properties?: { value?: { properties?: { name?: { $ref?: string }; nested?: { properties?: { label?: { $ref?: string } } } } } } };
+
+			registerSubagentPromptRuntime({
+				registerTool(tool: { name: string; parameters: unknown }) {
+					if (tool.name === "structured_output") parameters = tool.parameters as typeof parameters;
+				},
+				on() {},
+			} as { registerTool(tool: { name: string; parameters: unknown }): void; on(): void });
+
+			assert.equal(parameters.properties?.value?.properties?.name?.$ref, "#/properties/value/$defs/item");
+			assert.equal(parameters.properties?.value?.properties?.nested?.properties?.label?.$ref, "#/properties/value/$defs/item");
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
