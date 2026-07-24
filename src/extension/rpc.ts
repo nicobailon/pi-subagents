@@ -224,9 +224,11 @@ function steerParams(params: unknown): SubagentParamsLike {
 	const input = assertRecordParams(params, "steer");
 	if (typeof input.message !== "string" || !input.message.trim())
 		throw new SubagentRpcError("invalid_params", "RPC steer requires a non-empty message.");
+	const target = normalizeTargetParams(input, "steer");
+	if (!target.id && !target.runId && !target.dir) throw new SubagentRpcError("invalid_params", "RPC steer requires id, runId, or dir.");
 	return {
 		action: "steer",
-		...normalizeTargetParams(input, "steer"),
+		...target,
 		message: input.message.trim(),
 		steeringRecovery: false,
 	};

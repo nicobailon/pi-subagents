@@ -151,6 +151,7 @@ export interface SubagentParamsLike {
 	agent?: string;
 	task?: string;
 	message?: string;
+	steeringRecovery?: boolean;
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
 	concurrency?: number;
@@ -3531,7 +3532,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
-						return steerAsyncRun({ state: deps.state, runId, message, index: paramsWithResolvedCwd.index, kill: deps.kill, location, signal, recover: ({ absoluteDeadlineAt, ...limits }) => resumeAsyncRun({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, absoluteDeadlineAt }) });
+						return steerAsyncRun({
+							state: deps.state,
+							runId,
+							message,
+							index: paramsWithResolvedCwd.index,
+							kill: deps.kill,
+							location,
+							signal,
+							...(paramsWithResolvedCwd.steeringRecovery === false
+								? {}
+								: {
+										recover: ({ absoluteDeadlineAt, ...limits }) =>
+											resumeAsyncRun({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, absoluteDeadlineAt }),
+									}
+							),
+						});
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };

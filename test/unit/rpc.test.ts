@@ -252,6 +252,29 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("rejects targetless RPC steering before executor dispatch", async () => {
+		const events = new FakeEvents();
+		let executeCalls = 0;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async () => {
+				executeCalls++;
+				return { content: [], details: { mode: "management", results: [] } } as any;
+			},
+		});
+
+		const reply = await request(events, "steer-no-target", "steer", {
+			message: "keep going",
+		});
+
+		assert.equal(reply.success, false);
+		assert.equal((reply as { error: { code: string } }).error.code, "invalid_params");
+		assert.match((reply as { error: { message: string } }).error.message, /requires id, runId, or dir/);
+		assert.equal(executeCalls, 0);
+		bridge.dispose();
+	});
+
 	it("rejects empty RPC steering before executor dispatch", async () => {
 		const events = new FakeEvents();
 		let executeCalls = 0;
