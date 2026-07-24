@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { appendJsonl } from "../../shared/artifacts.ts";
 import type { AsyncStatus, Details, SubagentState, ToolBudgetConfig, TurnBudgetConfig } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { consumeSteerAcks, deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
@@ -126,7 +127,7 @@ export async function steerAsyncRun(input: {
 	if (recoveryAllowed && finalResult?.state !== "scheduled" && input.recover) {
 		const appendSteeringNotice = (state: "failed" | "recovered", message: string): void => {
 			try {
-				fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: "subagent.steering.notice", ts: Date.now(), runId: status.runId, requestId, state, message, ...(status.sessionId ? { currentSessionId: status.sessionId } : {}) })}\n`);
+				appendJsonl(path.join(asyncDir, "events.jsonl"), JSON.stringify({ type: "subagent.steering.notice", ts: Date.now(), runId: status.runId, requestId, state, message, ...(status.sessionId ? { currentSessionId: status.sessionId } : {}) }));
 			} catch {
 				// The action result and status remain authoritative if diagnostic notification persistence fails.
 			}
@@ -172,7 +173,7 @@ export async function steerAsyncRun(input: {
 				if (stepSteering) updateSteeringTarget(stepSteering, ack.requestId, ack.index, state, ack.ts, { reason });
 				lateAckRecorded = true;
 				try {
-					fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: ack.state === "delivered" ? "subagent.steer.delivered" : "subagent.steer.failed", ts: ack.ts, runId: status.runId, requestId: ack.requestId, index: ack.index, late: true, message: ack.message })}\n`);
+					appendJsonl(path.join(asyncDir, "events.jsonl"), JSON.stringify({ type: ack.state === "delivered" ? "subagent.steer.delivered" : "subagent.steer.failed", ts: ack.ts, runId: status.runId, requestId: ack.requestId, index: ack.index, late: true, message: ack.message }));
 				} catch {
 					// Status remains authoritative when diagnostic event persistence fails.
 				}

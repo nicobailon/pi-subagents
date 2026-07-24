@@ -57,5 +57,5 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 	};
 }
 
-export const writeAtomicJson = createAtomicJsonWriter();
-export const writePrivateAtomicJson = createAtomicJsonWriter({ mode: 0o600 });
+export const writeAtomicJson = createAtomicJsonWriter({ mode: 0o600 });
+export const writePrivateAtomicJson = writeAtomicJson;

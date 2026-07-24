@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { ensureArtifactsDir, openPrivateArtifactFile } from "../../shared/artifacts.ts";
 import { applyThinkingSuffix } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
@@ -411,9 +412,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 		return { error: `cwd does not exist: ${cwd}` };
 	}
 
-	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
+	ensureArtifactsDir(TEMP_ROOT_DIR);
 	const cfgPath = getAsyncConfigPath(suffix);
-	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
+	writePrivateAtomicJson(cfgPath, cfg);
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
 	const startupPath = typeof (cfg as { revivalLease?: unknown; asyncDir?: unknown }).revivalLease === "object"
@@ -431,9 +432,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	let stderrFd: number | undefined;
 	try {
 		if (logPaths) {
-			fs.mkdirSync(path.dirname(logPaths.stdoutPath), { recursive: true });
-			stdoutFd = fs.openSync(logPaths.stdoutPath, "a");
-			stderrFd = fs.openSync(logPaths.stderrPath, "a");
+			ensureArtifactsDir(path.dirname(logPaths.stdoutPath));
+			stdoutFd = openPrivateArtifactFile(logPaths.stdoutPath, true);
+			stderrFd = openPrivateArtifactFile(logPaths.stderrPath, true);
 		}
 		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
 			cwd,
@@ -840,7 +841,7 @@ export function executeAsyncChain(
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(ASYNC_DIR, id);
 	try {
-		fs.mkdirSync(asyncDir, { recursive: true });
+		ensureArtifactsDir(asyncDir);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
@@ -1111,7 +1112,7 @@ export function executeAsyncSingle(
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(ASYNC_DIR, id);
 	try {
-		fs.mkdirSync(asyncDir, { recursive: true });
+		ensureArtifactsDir(asyncDir);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {

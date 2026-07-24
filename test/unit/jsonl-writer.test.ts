@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createJsonlWriter, type DrainableSource, type JsonlWriteStream } from "../../src/shared/jsonl-writer.ts";
 
@@ -100,6 +103,36 @@ describe("createJsonlWriter", () => {
 		assert.equal(stream.writes.length, 2);
 		assert.deepEqual(stream.writes, ['{"type":"a"}\n', '{"type":"b"}\n']);
 		assert.equal(source.paused, 0);
+	});
+
+	it("creates a private JSONL file", { skip: process.platform === "win32" }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-jsonl-writer-"));
+		try {
+			const file = path.join(dir, "child.jsonl");
+			const writer = createJsonlWriter(file, new MockSource());
+			writer.writeLine('{"type":"private"}');
+			await writer.close();
+			assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+			assert.equal(fs.readFileSync(file, "utf-8"), '{"type":"private"}\n');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not follow a JSONL symlink", { skip: process.platform === "win32" }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-jsonl-writer-"));
+		try {
+			const target = path.join(dir, "target.jsonl");
+			const link = path.join(dir, "child.jsonl");
+			fs.writeFileSync(target, "keep\n");
+			fs.symlinkSync(target, link);
+			const writer = createJsonlWriter(link, new MockSource());
+			writer.writeLine('{"type":"forged"}');
+			await writer.close();
+			assert.equal(fs.readFileSync(target, "utf-8"), "keep\n");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("allows writes up to exactly maxBytes", () => {

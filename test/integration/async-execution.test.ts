@@ -454,9 +454,21 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(descriptor.artifactConfig.dir, "session");
 
 		const payload = await readAsyncPayload(launch.details.asyncId);
-		const outputPath = payload.results[0]?.artifactPaths?.outputPath;
+		const artifactPaths = payload.results[0]?.artifactPaths;
+		const outputPath = artifactPaths?.outputPath;
 		assert.ok(outputPath?.startsWith(`${expectedDir}${path.sep}`));
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async session artifact");
+		if (process.platform !== "win32") {
+			assert.equal(fs.statSync(expectedDir).mode & 0o777, 0o700);
+			for (const artifactPath of Object.values(artifactPaths ?? {})) {
+				if (typeof artifactPath === "string" && fs.existsSync(artifactPath)) assert.equal(fs.statSync(artifactPath).mode & 0o777, 0o600);
+			}
+			assert.equal(fs.statSync(launch.details.asyncDir!).mode & 0o777, 0o700);
+			for (const entry of fs.readdirSync(launch.details.asyncDir!)) {
+				const entryPath = path.join(launch.details.asyncDir!, entry);
+				if (fs.lstatSync(entryPath).isFile()) assert.equal(fs.statSync(entryPath).mode & 0o777, 0o600, entry);
+			}
+		}
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 	});
 

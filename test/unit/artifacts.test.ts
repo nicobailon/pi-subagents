@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	appendJsonl,
+	cleanupOldArtifacts,
 	ensureArtifactsDir,
 	getArtifactsDir,
 	getProjectArtifactsDir,
@@ -60,6 +61,37 @@ describe("project-local artifact paths", () => {
 			fs.mkdirSync(target);
 			fs.symlinkSync(target, link);
 			assert.throws(() => ensureArtifactsDir(link), /must be a real directory/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a symlink artifact parent", { skip: process.platform === "win32" }, () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-"));
+		try {
+			const outside = path.join(root, "outside");
+			const parent = path.join(root, ".pi-subagents");
+			fs.mkdirSync(outside);
+			fs.symlinkSync(outside, parent);
+			assert.throws(() => ensureArtifactsDir(path.join(parent, "artifacts")), /parent must not be a symlink/);
+			assert.equal(fs.existsSync(path.join(outside, "artifacts")), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not clean through a symlink artifact root", { skip: process.platform === "win32" }, () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-"));
+		try {
+			const outside = path.join(root, "outside");
+			const link = path.join(root, "artifacts");
+			fs.mkdirSync(outside);
+			const sentinel = path.join(outside, "sentinel.txt");
+			fs.writeFileSync(sentinel, "keep");
+			fs.utimesSync(sentinel, new Date(0), new Date(0));
+			fs.symlinkSync(outside, link);
+			cleanupOldArtifacts(link, 0);
+			assert.equal(fs.readFileSync(sentinel, "utf-8"), "keep");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

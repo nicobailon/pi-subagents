@@ -3,10 +3,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest } from "./control-channel.ts";
-import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths } from "../../shared/artifacts.ts";
+import { appendJsonl as appendRawJsonl, createPrivateArtifactWriteStream, ensureArtifactsDir, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -418,7 +418,7 @@ function runPiStreaming(
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		onWriterProcess?.({ state: "spawning" });
-		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
+		const outputStream = createPrivateArtifactWriteStream(outputFile, false);
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
 		const spawnSpec = getPiSpawnCommand(args, {
 			...(piPackageRoot ? { piPackageRoot } : {}),
@@ -919,7 +919,7 @@ function writeRunLog(
 	}
 	lines.push(input.summary.trim() || "(no output)");
 	lines.push("");
-	fs.writeFileSync(logPath, lines.join("\n"), "utf-8");
+	writeArtifact(logPath, lines.join("\n"));
 }
 
 /** Context for running a single step */
@@ -1033,7 +1033,7 @@ async function runSingleStep(
 				timeoutMessage: importStopped || ctx.stopSignal?.aborted === true ? ctx.stopMessage : ctx.timeoutMessage,
 			});
 			try {
-				fs.writeFileSync(ctx.outputFile, imported.output, "utf-8");
+				writeArtifact(ctx.outputFile, imported.output);
 			} catch {
 				// Output files are observability only for imported roots.
 			}
@@ -1083,9 +1083,9 @@ async function runSingleStep(
 	if (ctx.artifactsDir && ctx.artifactConfig?.enabled !== false) {
 		const index = ctx.flatStepCount > 1 ? ctx.flatIndex : undefined;
 		artifactPaths = getArtifactPaths(ctx.artifactsDir, ctx.id, step.agent, index);
-		fs.mkdirSync(ctx.artifactsDir, { recursive: true });
+		ensureArtifactsDir(ctx.artifactsDir);
 		if (ctx.artifactConfig?.includeInput !== false) {
-			fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
+			writeArtifact(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`);
 		}
 		if (ctx.artifactConfig?.includeTranscript !== false) {
 			transcriptWriter = createChildTranscriptWriter({
@@ -1374,33 +1374,29 @@ async function runSingleStep(
 
 	if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
 		if (ctx.artifactConfig?.includeOutput !== false) {
-			fs.writeFileSync(artifactPaths.outputPath, formatOutputArtifactContent({
+			writeArtifact(artifactPaths.outputPath, formatOutputArtifactContent({
 				output,
 				error: effectiveFinalError,
 				transcriptPath: transcriptWriter ? artifactPaths.transcriptPath : undefined,
 				metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath,
-			}), "utf-8");
+			}));
 		}
 		if (ctx.artifactConfig?.includeMetadata !== false) {
-			fs.writeFileSync(
-				artifactPaths.metadataPath,
-				JSON.stringify({
-					runId: ctx.id,
-					agent: step.agent,
-					task,
-					exitCode: effectiveFinalExitCode,
-					model: finalResult?.model,
-					attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
-					modelAttempts,
-					error: effectiveFinalError,
-					acceptance: effectiveAcceptance,
-					...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
-					transcriptError: transcriptWriter?.getError(),
-					skills: step.skills,
-					timestamp: Date.now(),
-				}, null, 2),
-				"utf-8",
-			);
+			writeMetadata(artifactPaths.metadataPath, {
+				runId: ctx.id,
+				agent: step.agent,
+				task,
+				exitCode: effectiveFinalExitCode,
+				model: finalResult?.model,
+				attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
+				modelAttempts,
+				error: effectiveFinalError,
+				acceptance: effectiveAcceptance,
+				...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
+				transcriptError: transcriptWriter?.getError(),
+				skills: step.skills,
+				timestamp: Date.now(),
+			});
 		}
 	}
 
@@ -1484,7 +1480,7 @@ function markParallelGroupSetupFailure(input: {
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
 	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-	writeAtomicJson(input.statusPath, input.statusPayload);
+	writePrivateAtomicJson(input.statusPath, input.statusPayload);
 	appendJsonl(input.eventsPath, JSON.stringify({
 		type: "subagent.parallel.completed",
 		ts: input.failedAt,
@@ -1520,7 +1516,7 @@ function markParallelGroupRunning(input: {
 	input.statusPayload.lastActivityAt = input.groupStartTime;
 	input.statusPayload.lastUpdate = input.groupStartTime;
 	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-	writeAtomicJson(input.statusPath, input.statusPayload);
+	writePrivateAtomicJson(input.statusPath, input.statusPayload);
 	appendJsonl(input.eventsPath, JSON.stringify({
 		type: "subagent.parallel.started",
 		ts: input.groupStartTime,
@@ -1741,8 +1737,8 @@ async function runSubagent(
 		outputFile: path.join(asyncDir, "output-0.log"),
 	};
 
-	fs.mkdirSync(asyncDir, { recursive: true });
-	writeAtomicJson(statusPath, statusPayload);
+	ensureArtifactsDir(asyncDir);
+	writePrivateAtomicJson(statusPath, statusPayload);
 	const emitNestedSelfEvent = (type: "subagent.nested.updated" | "subagent.nested.completed"): void => {
 		if (!config.nestedRoute || !config.nestedSelf) return;
 		try {
@@ -1800,7 +1796,7 @@ async function runSubagent(
 	};
 	const writeStatusPayload = (): void => {
 		refreshWorkflowGraph();
-		writeAtomicJson(statusPath, statusPayload);
+		writePrivateAtomicJson(statusPath, statusPayload);
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
 	};
 	const registerStepInterrupt = (flatIndex: number, interrupt: (() => void) | undefined): void => {
@@ -3793,7 +3789,7 @@ async function runSubagent(
 	});
 
 	try {
-		writeAtomicJson(resultPath, {
+		writePrivateAtomicJson(resultPath, {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 			id,
 			agent: agentName,
@@ -3911,9 +3907,9 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 	try {
 		if (config.revivalLease) {
 			lease = acquireSessionLease(config.revivalLease);
-			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
+			writePrivateAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
 			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
-			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
+			writePrivateAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
 			await waitForStartupControl(startupProceedPath, lease.owner.token, "proceed");
 			startupCommitted = true;
 			for (const controlPath of [startupAckPath, startupProceedPath]) {
@@ -3928,7 +3924,7 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 	} catch (error) {
 		if (config.revivalLease && !startupCommitted) {
 			try {
-				writeAtomicJson(startupPath, { state: "error", pid: process.pid, error: error instanceof Error ? error.message : String(error) });
+				writePrivateAtomicJson(startupPath, { state: "error", pid: process.pid, error: error instanceof Error ? error.message : String(error) });
 			} catch {
 				// The parent will time out and terminate this runner if the handshake cannot be written.
 			}

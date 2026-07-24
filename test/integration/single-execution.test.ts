@@ -1604,6 +1604,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(transcript.at(-1)?.text ?? "", /^Result text/);
 		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
+		if (process.platform !== "win32") {
+			assert.equal(fs.statSync(artifactsDir).mode & 0o777, 0o700);
+			for (const artifactPath of Object.values(result.artifactPaths)) {
+				if (fs.existsSync(artifactPath)) assert.equal(fs.statSync(artifactPath).mode & 0o777, 0o600);
+			}
+		}
 	});
 
 	it("routes foreground artifacts to the configured session directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
