@@ -246,12 +246,12 @@ function workflowRunParams(workflow: PromptWorkflow, args: string[], runtime: Re
 			task: params.task ?? "",
 			...(params.model ? { model: params.model } : {}),
 			...(params.skill !== undefined ? { skill: params.skill } : {}),
-			...(params.cwd ? { cwd: params.cwd } : {}),
 		}],
 		concurrency: 1,
 		worktree: true,
 		clarify: false,
 		agentScope: "both",
+		...(params.cwd ? { cwd: params.cwd } : {}),
 		...(params.context ? { context: params.context } : {}),
 		...(params.async !== undefined ? { async: params.async } : {}),
 	};

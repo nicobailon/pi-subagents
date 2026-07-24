@@ -73,6 +73,7 @@ description: Run native prompt
 subagent: reviewer
 model: anthropic/claude-sonnet-4
 skill: deslop,typescript-code
+cwd: /tmp/workflow-repo
 ---
 Review $1 with $ARGUMENTS
 `);
@@ -96,6 +97,8 @@ Review $1 with $ARGUMENTS
 		assert.equal(runs[0]?.tasks?.[0]?.agent, "reviewer");
 		assert.equal(runs[0]?.tasks?.[0]?.model, "anthropic/claude-sonnet-4");
 		assert.deepEqual(runs[0]?.tasks?.[0]?.skill, ["deslop", "typescript-code"]);
+		assert.equal(runs[0]?.tasks?.[0]?.cwd, undefined);
+		assert.equal(runs[0]?.cwd, "/tmp/workflow-repo");
 		assert.equal(runs[0]?.context, "fork");
 		assert.equal(runs[0]?.concurrency, 1);
 		assert.equal(runs[0]?.worktree, true);
