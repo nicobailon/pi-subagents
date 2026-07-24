@@ -357,6 +357,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("rejects top-level worktree for single-agent mode before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"single-worktree",
+			{ agent: "echo", task: "Do work", worktree: true },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Top-level worktree is only supported for parallel tasks/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects top-level worktree for chain mode before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"chain-top-level-worktree",
+			{ chain: [{ agent: "echo", task: "Do work" }], worktree: true },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /set worktree on a chain parallel step/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects unknown action strings at runtime", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 

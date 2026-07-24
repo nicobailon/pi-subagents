@@ -1481,6 +1481,13 @@ function validateExecutionInput(
 			details: { mode: "single" as const, results: [] },
 		};
 	}
+	if (params.worktree === true && !hasTasks) {
+		return {
+			content: [{ type: "text", text: "Top-level worktree is only supported for parallel tasks; set worktree on a chain parallel step instead." }],
+			isError: true,
+			details: { mode: getRequestedModeLabel(params), results: [] },
+		};
+	}
 
 	const acceptanceErrors = validateExecutionAcceptance(params);
 	if (acceptanceErrors.length > 0) {
