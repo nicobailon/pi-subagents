@@ -150,7 +150,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		try {
 			const stat = fs.fstatSync(fd);
 			const savedCursor = job.controlEventCursor;
-			let cursor = stat.size < (savedCursor ?? 0) ? 0 : (savedCursor ?? 0);
+			const wasTruncated = stat.size < (savedCursor ?? 0);
+			if (wasTruncated) job.controlEventSkippingOversizedLine = false;
+			let cursor = wasTruncated ? 0 : (savedCursor ?? 0);
 			const startedFromTail = savedCursor === undefined && stat.size > CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (startedFromTail) cursor = stat.size - CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (stat.size <= cursor) return;
@@ -206,7 +208,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			let lastCompleteCursor = cursor;
 			let lineParts: Buffer[] = [];
 			let lineBytes = 0;
-			let skippingOversizedLine = startedFromTail;
+			let skippingOversizedLine = startedFromTail || job.controlEventSkippingOversizedLine === true;
 			const appendLineSegment = (segment: Buffer) => {
 				if (segment.length === 0 || skippingOversizedLine) return;
 				if (lineBytes + segment.length > MAX_CONTROL_EVENT_LINE_BYTES) {
@@ -234,6 +236,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					lineParts = [];
 					lineBytes = 0;
 					skippingOversizedLine = false;
+					job.controlEventSkippingOversizedLine = false;
 					lastCompleteCursor = readCursor + index + 1;
 					lineStart = index + 1;
 				}
@@ -241,7 +244,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				readCursor += bytesRead;
 				if (skippingOversizedLine) job.controlEventCursor = readCursor;
 			}
-			if (lastCompleteCursor > cursor) job.controlEventCursor = lastCompleteCursor;
+			if (skippingOversizedLine) {
+				job.controlEventSkippingOversizedLine = true;
+				job.controlEventCursor = readCursor;
+			} else if (lastCompleteCursor > cursor) job.controlEventCursor = lastCompleteCursor;
 			else if (scanEnd < stat.size || startedFromTail) job.controlEventCursor = scanEnd;
 		} catch (error) {
 			console.error(`Failed to read async control events for '${job.asyncDir}':`, error);
