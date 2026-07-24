@@ -2,6 +2,7 @@ import type { ResolvedToolBudget, ToolBudgetConfig, ToolBudgetState } from "../.
 
 export const DEFAULT_TOOL_BUDGET_BLOCK = ["read", "grep", "find", "ls"] as const;
 export const TOOL_BUDGET_ENV = "PI_SUBAGENT_TOOL_BUDGET";
+export const TOOL_BUDGET_ZERO_AUTH_ENV = "PI_SUBAGENT_TOOL_BUDGET_ZERO_AUTH";
 
 export function normalizeToolBudgetBlock(block: ToolBudgetConfig["block"] | undefined): "*" | string[] {
 	if (block === "*") return "*";
@@ -70,10 +71,10 @@ export function encodeToolBudgetEnv(budget: ResolvedToolBudget | undefined): str
 	return budget ? JSON.stringify(budget) : undefined;
 }
 
-export function decodeToolBudgetEnv(value: string | undefined): ResolvedToolBudget | undefined {
+export function decodeToolBudgetEnv(value: string | undefined, options: { allowZero?: boolean } = {}): ResolvedToolBudget | undefined {
 	if (!value?.trim()) return undefined;
 	const parsed = JSON.parse(value) as unknown;
-	const normalized = validateToolBudgetConfig(parsed, TOOL_BUDGET_ENV, { minimumHard: 0 });
+	const normalized = validateToolBudgetConfig(parsed, TOOL_BUDGET_ENV, options.allowZero ? { minimumHard: 0 } : undefined);
 	if (normalized.error) throw new Error(normalized.error);
 	return normalized.budget;
 }

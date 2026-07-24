@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
-import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
@@ -42,6 +42,7 @@ const originalEnv = {
 	PI_SUBAGENT_PARENT_CAPABILITY_TOKEN: process.env.PI_SUBAGENT_PARENT_CAPABILITY_TOKEN,
 	PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
 	PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
+	[TOOL_BUDGET_ZERO_AUTH_ENV]: process.env[TOOL_BUDGET_ZERO_AUTH_ENV],
 	[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV],
 };
 const originalCwd = process.cwd();
@@ -429,6 +430,31 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		});
 
 		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "{}"), { soft: 2, hard: 3, block: ["read"] });
+		assert.equal(env[TOOL_BUDGET_ZERO_AUTH_ENV], undefined);
+	});
+
+	it("clears inherited zero tool-budget authorization unless this launch owns it", () => {
+		process.env[TOOL_BUDGET_ZERO_AUTH_ENV] = "1";
+		const inherited = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			toolBudget: { hard: 1, block: ["read"] },
+		});
+		assert.equal(inherited.env[TOOL_BUDGET_ZERO_AUTH_ENV], undefined);
+
+		const owned = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			toolBudget: { hard: 0, block: "*" },
+			allowZeroToolBudget: true,
+		});
+		assert.equal(owned.env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
 	});
 
 	it("passes child intercom and orchestrator metadata through env", () => {

@@ -45,7 +45,8 @@ describe("tool-budget module", () => {
 		const budget = { soft: 2, hard: 4, block: ["read"] };
 		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(budget)), budget);
 		const zeroBudget = { hard: 0, block: "*" as const };
-		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget)), zeroBudget);
+		assert.throws(() => decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget)), /PI_SUBAGENT_TOOL_BUDGET\.hard must be an integer >= 1/);
+		assert.deepEqual(decodeToolBudgetEnv(encodeToolBudgetEnv(zeroBudget), { allowZero: true }), zeroBudget);
 	});
 
 	it("tracks state and block decisions", () => {

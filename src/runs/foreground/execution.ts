@@ -246,6 +246,7 @@ async function runSingleAttempt(
 		parentSessionId: options.parentSessionId,
 		structuredOutput: options.structuredOutput,
 		toolBudget: options.toolBudget,
+		allowZeroToolBudget: options.allowZeroToolBudget,
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
 	});

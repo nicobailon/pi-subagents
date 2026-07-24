@@ -232,6 +232,7 @@ interface ExecutionContextData {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	allowZeroToolBudget?: boolean;
 	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
 	modelScope?: ModelScopeConfig;
@@ -3131,6 +3132,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
 				toolBudget: effectiveToolBudget.toolBudget,
+				allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 			});
 		}
 	}
@@ -3219,6 +3221,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		deadlineAt,
 		turnBudget: data.turnBudget,
 		toolBudget: effectiveToolBudget.toolBudget,
+		allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 	});
 	if (foregroundControl) finishForegroundChild(foregroundControl, 0);
 	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
@@ -3927,6 +3930,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			timeoutMs: foregroundTimeout.timeoutMs,
 			turnBudget: turnBudget.turnBudget,
 			toolBudget: runToolBudget.toolBudget,
+			allowZeroToolBudget,
 			configToolBudget: configToolBudget.toolBudget,
 			contextPolicy,
 			modelScope,

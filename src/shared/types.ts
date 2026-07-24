@@ -1205,6 +1205,7 @@ export interface RunSyncOptions {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	allowZeroToolBudget?: boolean;
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
