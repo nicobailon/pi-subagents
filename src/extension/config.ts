@@ -19,6 +19,9 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
+	if (config.resultIntercom !== undefined && typeof config.resultIntercom !== "boolean") {
+		throw new Error("config.resultIntercom must be a boolean");
+	}
 	return parsed as ExtensionConfig;
 }
 

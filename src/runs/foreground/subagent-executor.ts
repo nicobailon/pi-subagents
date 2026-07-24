@@ -1437,12 +1437,14 @@ async function emitForegroundResultIntercom(input: {
 
 async function maybeBuildForegroundIntercomReceipt(input: {
 	pi: ExtensionAPI;
+	resultIntercom: boolean;
 	intercomBridge: IntercomBridgeState;
 	runId: string;
 	mode: SubagentRunMode;
 	details: Details;
 	nestedChildren?: NestedRunSummary[];
 }): Promise<{ text: string; details: Details } | null> {
+	if (!input.resultIntercom) return null;
 	const payload = await emitForegroundResultIntercom({
 		pi: input.pi,
 		intercomBridge: input.intercomBridge,
@@ -2324,6 +2326,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	const intercomReceipt = chainDetails && !chainDetails.results.some((result) => result.interrupted || result.detached)
 		? await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
+			resultIntercom: deps.config.resultIntercom !== false,
 			intercomBridge: data.intercomBridge,
 			runId,
 			mode: "chain",
@@ -2946,6 +2949,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
+			resultIntercom: deps.config.resultIntercom !== false,
 			intercomBridge: data.intercomBridge,
 			runId,
 			mode: "parallel",
@@ -3254,6 +3258,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
+			resultIntercom: deps.config.resultIntercom !== false,
 			intercomBridge: data.intercomBridge,
 			runId,
 			mode: "single",

@@ -1452,6 +1452,14 @@ Bridge activation requires a targetable current parent session id, which `pi-sub
 
 The default injected guidance tells children to use `contact_supervisor` with `reason: "need_decision"` when blocked or needing a decision, `reason: "progress_update"` only for meaningful blocked/progress updates, generic `intercom` as fallback plumbing, and avoid routine completion handoffs.
 
+### `resultIntercom`
+
+```json
+{ "resultIntercom": false }
+```
+
+Controls whether full foreground and async results are offered to an external intercom adapter. It defaults to `true` for compatibility. Set it to `false` when no trusted adapter is installed; native `contact_supervisor` / `subagent_supervisor` coordination remains enabled and normal tool results stay unchanged.
+
 ### `worktreeBaseDir`
 
 ```json

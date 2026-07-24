@@ -152,7 +152,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
-	function makeExecutor(options: { bridgeMode?: "always" | "off"; agents?: ReturnType<typeof makeAgent>[]; acknowledgeResults?: boolean; kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {}) {
+	function makeExecutor(options: { bridgeMode?: "always" | "off"; resultIntercom?: boolean; agents?: ReturnType<typeof makeAgent>[]; acknowledgeResults?: boolean; kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean } = {}) {
 		const events = createRecordingEventBus({ acknowledgeResults: options.acknowledgeResults ?? true });
 		const state = {
 			baseCwd: tempDir,
@@ -181,6 +181,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			state,
 			config: {
 				intercomBridge: { mode: options.bridgeMode ?? "always" },
+				...(options.resultIntercom !== undefined ? { resultIntercom: options.resultIntercom } : {}),
 			},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -233,6 +234,22 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
 		assert.match(result.content[0]?.text ?? "", /Legacy foreground output/);
+	});
+
+	it("keeps native supervisor communication without relaying foreground results when disabled", async () => {
+		mockPi.onCall({ output: "Result relay disabled" });
+		const { executor, events } = makeExecutor({ resultIntercom: false });
+
+		const result = await executor.execute(
+			"single-result-intercom-disabled",
+			{ agent: "worker", task: "Summarize feature" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
+		assert.match(result.content[0]?.text ?? "", /Result relay disabled/);
 	});
 
 	it("falls back to legacy foreground output when grouped delivery is not acknowledged", async () => {

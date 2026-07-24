@@ -953,6 +953,42 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("completes async results without relaying them when result intercom is disabled", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
+		try {
+			const emitted: string[] = [];
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const watcher = createResultWatcher({ events: {
+				on: () => () => {},
+				emit(event) { emitted.push(event); },
+			} }, state, resultsDir, 60_000, { resultIntercom: false });
+			try {
+				const resultPath = path.join(resultsDir, "async-no-result-intercom.json");
+				fs.writeFileSync(resultPath, JSON.stringify({
+					id: "async-no-result-intercom",
+					agent: "worker",
+					success: true,
+					state: "complete",
+					summary: "Worker summary",
+					sessionId: "session-1",
+					intercomTarget: "orchestrator",
+				}), "utf-8");
+				watcher.primeExistingResults();
+				const deadline = Date.now() + 1000;
+				while (!emitted.includes("subagent:async-complete") && Date.now() <= deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 25));
+				}
+				assert.equal(emitted.includes("subagent:async-complete"), true);
+				assert.equal(emitted.includes("subagent:result-intercom"), false);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("delivers a result when a previous duplicate key has expired", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-expired-"));
 		try {

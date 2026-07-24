@@ -37,6 +37,7 @@ type ResultWatcherDeps = {
 	fs?: ResultWatcherFs;
 	timers?: ResultWatcherTimers;
 	notifier?: Pick<CompletionNotifier, "deliver">;
+	resultIntercom?: boolean;
 };
 
 type ResultFileChild = {
@@ -199,7 +200,7 @@ export function createResultWatcher(
 			}), nestedChildren);
 
 			const intercomTarget = data.intercomTarget?.trim();
-			if (intercomTarget && triggerTurn) {
+			if (deps.resultIntercom !== false && intercomTarget && triggerTurn) {
 				const mode = data.mode === "single" || data.mode === "parallel" || data.mode === "chain"
 					? data.mode
 					: resultChildren.length > 1 ? "chain" : "single";

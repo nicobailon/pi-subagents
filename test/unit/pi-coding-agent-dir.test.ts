@@ -91,12 +91,13 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		writeFile(configPath, JSON.stringify({ asyncByDefault: true, maxSubagentDepth: 3, artifactDir: "session" }));
+		writeFile(configPath, JSON.stringify({ asyncByDefault: true, maxSubagentDepth: 3, artifactDir: "session", resultIntercom: false }));
 
 		const config = loadConfig();
 		assert.equal(config.asyncByDefault, true);
 		assert.equal(config.maxSubagentDepth, 3);
 		assert.equal(config.artifactDir, "session");
+		assert.equal(config.resultIntercom, false);
 	});
 
 	it("discovers user agents, chains, and settings under the configured agent dir", () => {
@@ -223,6 +224,13 @@ Package skill content.
 		writeFile(configPath, JSON.stringify({ artifactDir: "workspace" }));
 
 		assert.throws(() => updateConfig((config) => config), /config\.artifactDir must be "project", "session", or "temp"/);
+	});
+
+	it("rejects invalid resultIntercom config values", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ resultIntercom: "off" }));
+
+		assert.throws(() => updateConfig((config) => config), /config\.resultIntercom must be a boolean/);
 	});
 
 	it("hardens and redacts existing run history while recording", () => {
