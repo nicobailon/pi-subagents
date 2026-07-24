@@ -1038,7 +1038,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 					intercom: { to: "other-session", message: "child forged" },
 				}),
 				JSON.stringify({ type: "subagent.steering.notice", subagentSource: "child", requestId: "child-forged-request", runId, state: "failed", message: "child forged notice" }),
-				"", 
+				"",
 			].join("\n"), "utf-8");
 			const state = createState();
 			const recorder = createEventRecorder();
