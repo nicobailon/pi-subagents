@@ -9,6 +9,7 @@ import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
+import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 
 const REFRESH_MS = 750;
@@ -637,11 +638,18 @@ export class SubagentFleetComponent implements Component {
 }
 
 export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentState, options: FleetViewOptions = {}): Promise<void> {
-	await ctx.ui.custom<undefined>(
-		(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, options),
-		{
-			overlay: true,
-			overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
-		},
-	);
+	const wasOpen = state.fleetInspectorOpen === true;
+	state.fleetInspectorOpen = true;
+	if (typeof ctx.ui.setWidget === "function") ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+	try {
+		await ctx.ui.custom<undefined>(
+			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, options),
+			{
+				overlay: true,
+				overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },
+			},
+		);
+	} finally {
+		state.fleetInspectorOpen = wasOpen;
+	}
 }

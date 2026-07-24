@@ -1130,6 +1130,8 @@ export interface SubagentState {
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
+	/** Suppress dynamic status widgets while the fleet overlay owns the viewport. */
+	fleetInspectorOpen?: boolean;
 	foregroundRuns?: Map<string, ForegroundResumeRun>;
 	foregroundControls: Map<string, ForegroundRunControl>;
 	lastForegroundControlId: string | null;

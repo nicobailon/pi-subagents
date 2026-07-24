@@ -4,7 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
-import { collectFleetSnapshot, SubagentFleetComponent } from "../../src/tui/fleet.ts";
+import { collectFleetSnapshot, openSubagentFleet, SubagentFleetComponent } from "../../src/tui/fleet.ts";
+import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
 import { getArtifactPaths, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -389,6 +390,31 @@ describe("native subagent fleet", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("suppresses the status widget for the full inspector lifecycle", async () => {
+		const state = stateForTest();
+		let hidden = 0;
+		let observedOpen = false;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(key: string, content: unknown) {
+					assert.equal(key, FLEET_STATUS_WIDGET_KEY);
+					assert.equal(content, undefined);
+					hidden++;
+				},
+				async custom() {
+					observedOpen = state.fleetInspectorOpen === true;
+					throw new Error("overlay closed");
+				},
+			},
+		};
+
+		await assert.rejects(openSubagentFleet(ctx as never, state), /overlay closed/);
+		assert.equal(hidden, 1);
+		assert.equal(observedOpen, true);
+		assert.equal(state.fleetInspectorOpen, false);
 	});
 
 	it("opens the inspector with the FleetView-selected child focused", () => {

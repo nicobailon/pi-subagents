@@ -3,6 +3,7 @@ import { Editor, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } 
 import type { AsyncJobStep, SubagentState } from "../shared/types.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
+
 const MAX_AGENT_ROWS = 5;
 const REFRESH_MS = 500;
 
@@ -167,6 +168,15 @@ export class SubagentFleetStatus {
 		if (!ctx?.hasUI) return;
 		this.entries = collectFleetStatusEntries(this.state);
 		this.clampSelection();
+		if (this.inspectorOpen || this.state.fleetInspectorOpen) {
+			this.lastRenderKey = "";
+			if (this.widgetRegistered) {
+				ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+				this.widgetRegistered = false;
+				this.tui = undefined;
+			}
+			return;
+		}
 		if (this.entries.length === 0) {
 			this.active = false;
 			this.selectedKey = "main";
