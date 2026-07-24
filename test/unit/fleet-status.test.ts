@@ -132,6 +132,42 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("removes the dynamic widget while the fleet inspector owns the viewport", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		const registrations: string[] = [];
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					registrations.push(content ? "shown" : "hidden");
+				},
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			state.fleetInspectorOpen = true;
+			fleet.refresh();
+			state.fleetInspectorOpen = false;
+			fleet.refresh();
+			assert.deepEqual(registrations, ["shown", "hidden", "shown"]);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
 	it("shows only the current sequential chain step while retaining active parallel siblings", () => {
 		const state = stateForTest();
 		state.asyncJobs.set("sequential", {
@@ -305,6 +341,7 @@ describe("below-editor subagent FleetView", () => {
 			await Promise.resolve();
 			assert.deepEqual(opened, ["foreground-active:run-worker:0"]);
 			await new Promise<void>((resolve) => setImmediate(resolve));
+			widgetFactory!(tui, theme);
 			assert.deepEqual(inputHandler!("\x1b"), { consume: true });
 			assert.ok(component.render(100).some((line) => line.includes("⏺ main")));
 		} finally {
