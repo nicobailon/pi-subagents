@@ -447,6 +447,43 @@ function requestMatchesContext(request: SupervisorRequest, state: Pick<SubagentS
 	return Boolean(currentSessionId && request.orchestratorSessionId === currentSessionId);
 }
 
+function rememberedForegroundChild(request: SupervisorRequest, state: SubagentState) {
+	const run = state.foregroundRuns?.get(request.runId);
+	const child = run?.children.find((candidate) => candidate.index === request.childIndex && candidate.agent === request.agent)
+		?? run?.children[request.childIndex];
+	return run && child ? { run, child } : undefined;
+}
+
+function markForegroundSupervisorAttention(request: SupervisorRequest, state: SubagentState): void {
+	const remembered = rememberedForegroundChild(request, state);
+	if (!remembered || remembered.child.status !== "detached") return;
+	const updatedAt = Date.now();
+	remembered.run.updatedAt = updatedAt;
+	remembered.child.activityState = "needs_attention";
+	remembered.child.lastActivityAt = request.createdAt;
+	remembered.child.currentTool = "contact_supervisor";
+	remembered.child.currentToolStartedAt = request.createdAt;
+	remembered.child.updatedAt = updatedAt;
+}
+
+function clearForegroundSupervisorAttention(request: SupervisorRequest, pending: Map<string, PendingSupervisorRequest>, state: SubagentState): void {
+	if ([...pending.values()].some((candidate) =>
+		candidate.expectsReply
+		&& candidate.runId === request.runId
+		&& candidate.agent === request.agent
+		&& candidate.childIndex === request.childIndex
+	)) return;
+	const remembered = rememberedForegroundChild(request, state);
+	if (!remembered || remembered.child.status !== "detached" || remembered.child.currentTool !== "contact_supervisor") return;
+	const updatedAt = Date.now();
+	remembered.run.updatedAt = updatedAt;
+	remembered.child.activityState = undefined;
+	remembered.child.lastActivityAt = updatedAt;
+	remembered.child.currentTool = undefined;
+	remembered.child.currentToolStartedAt = undefined;
+	remembered.child.updatedAt = updatedAt;
+}
+
 function removeRequestFile(file: string): void {
 	try {
 		fs.rmSync(file, { force: true });
@@ -465,10 +502,8 @@ function requestExpiresAt(request: SupervisorRequest, now: number): number {
 
 function requestRunInactive(request: SupervisorRequest, state: SubagentState): boolean {
 	if (state.foregroundControls.has(request.runId)) return false;
-	const foregroundRun = state.foregroundRuns?.get(request.runId);
-	const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent)
-		?? foregroundRun?.children[request.childIndex];
-	if (foregroundChild) return foregroundChild.status !== "detached";
+	const foreground = rememberedForegroundChild(request, state);
+	if (foreground) return foreground.child.status !== "detached";
 
 	const asyncJob = state.asyncJobs.get(request.runId);
 	if (!asyncJob) return false;
@@ -580,6 +615,7 @@ function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>,
 				const request = resolvePendingRequest(pending, input);
 				writeReply(request, input.message ?? "");
 				pending.delete(request.id);
+				clearForegroundSupervisorAttention(request, pending, state);
 				return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
 			}
 			if (input.action === "send" || input.action === "ask") {
@@ -629,7 +665,10 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				continue;
 			}
 			seenFiles.add(file);
-			if (request.expectsReply) pending.set(request.id, request);
+			if (request.expectsReply) {
+				pending.set(request.id, request);
+				markForegroundSupervisorAttention(request, state);
+			}
 			else {
 				removeRequestFile(request.requestFile);
 			}
