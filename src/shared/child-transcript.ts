@@ -1,5 +1,5 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
+import { appendJsonl, ensureArtifactsDir, writeArtifact } from "./artifacts.ts";
 import type { Message } from "@earendil-works/pi-ai";
 import { extractTextFromContent, extractToolArgsPreview } from "./utils.ts";
 
@@ -130,7 +130,7 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 		const markerBytes = Buffer.byteLength(marker, "utf-8");
 		if (bytesWritten + markerBytes > maxBytes) return false;
 		try {
-			fs.appendFileSync(input.transcriptPath, marker, "utf-8");
+			appendJsonl(input.transcriptPath, marker.trimEnd());
 			bytesWritten += markerBytes;
 			return true;
 		} catch (error) {
@@ -157,7 +157,7 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 			return;
 		}
 		try {
-			fs.appendFileSync(input.transcriptPath, line, "utf-8");
+			appendJsonl(input.transcriptPath, line.trimEnd());
 			bytesWritten += bytes;
 		} catch (error) {
 			writeError = `Failed to write child transcript '${input.transcriptPath}': ${errorMessage(error)}`;
@@ -165,8 +165,8 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 	};
 
 	try {
-		fs.mkdirSync(path.dirname(input.transcriptPath), { recursive: true });
-		fs.writeFileSync(input.transcriptPath, "", "utf-8");
+		ensureArtifactsDir(path.dirname(input.transcriptPath));
+		writeArtifact(input.transcriptPath, "");
 	} catch (error) {
 		writeError = `Failed to initialize child transcript '${input.transcriptPath}': ${errorMessage(error)}`;
 	}

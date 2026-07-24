@@ -28,6 +28,10 @@ describe("createChildTranscriptWriter", () => {
 		writer.writeInitialUserMessage("do the thing");
 
 		assert.equal(writer.getError(), undefined);
+		if (process.platform !== "win32") {
+			assert.equal(fs.statSync(path.dirname(transcriptPath)).mode & 0o777, 0o700);
+			assert.equal(fs.statSync(transcriptPath).mode & 0o777, 0o600);
+		}
 		const records = readRecords(transcriptPath);
 		assert.equal(records.length, 1);
 		const record = records[0]!;

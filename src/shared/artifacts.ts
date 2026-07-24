@@ -1,8 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
+import { writePrivateAtomicJson } from "./atomic-json.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
 
 export function getProjectSubagentsDir(cwd: string): string {
@@ -57,11 +60,26 @@ export function getArtifactPaths(artifactsDir: string, runId: string, agent: str
 }
 
 export function ensureArtifactsDir(dir: string): void {
-	fs.mkdirSync(dir, { recursive: true });
+	fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
+	const stat = fs.lstatSync(dir);
+	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Artifact path must be a real directory: ${dir}`);
+	if (process.platform !== "win32") fs.chmodSync(dir, PRIVATE_DIR_MODE);
+}
+
+function writePrivateFile(filePath: string, content: string, append: boolean): void {
+	const noFollow = process.platform === "win32" ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
+	const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | (append ? fs.constants.O_APPEND : fs.constants.O_TRUNC) | noFollow;
+	const fd = fs.openSync(filePath, flags, PRIVATE_FILE_MODE);
+	try {
+		if (process.platform !== "win32") fs.fchmodSync(fd, PRIVATE_FILE_MODE);
+		fs.writeFileSync(fd, append ? `${content}\n` : content, "utf-8");
+	} finally {
+		fs.closeSync(fd);
+	}
 }
 
 export function writeArtifact(filePath: string, content: string): void {
-	fs.writeFileSync(filePath, content, "utf-8");
+	writePrivateFile(filePath, content, false);
 }
 
 export function formatOutputArtifactContent(input: {
@@ -78,11 +96,11 @@ export function formatOutputArtifactContent(input: {
 }
 
 export function writeMetadata(filePath: string, metadata: object): void {
-	fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
+	writePrivateAtomicJson(filePath, metadata);
 }
 
 export function appendJsonl(filePath: string, line: string): void {
-	fs.appendFileSync(filePath, `${line}\n`);
+	writePrivateFile(filePath, line, true);
 }
 
 export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
@@ -113,7 +131,7 @@ export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
 		}
 	}
 
-	fs.writeFileSync(markerPath, String(now));
+	writePrivateFile(markerPath, String(now), false);
 }
 
 export function cleanupAllArtifactDirs(maxAgeDays: number): void {

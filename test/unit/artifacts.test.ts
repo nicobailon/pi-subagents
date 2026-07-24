@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+	appendJsonl,
+	ensureArtifactsDir,
 	getArtifactsDir,
 	getProjectArtifactsDir,
 	getProjectChainRunsDir,
 	getProjectSubagentsDir,
+	writeArtifact,
+	writeMetadata,
 } from "../../src/shared/artifacts.ts";
 
 describe("project-local artifact paths", () => {
@@ -20,5 +26,56 @@ describe("project-local artifact paths", () => {
 	it("keeps the session artifact fallback when no project cwd is available", () => {
 		const sessionFile = path.join("tmp", "sessions", "parent.jsonl");
 		assert.equal(getArtifactsDir(sessionFile), path.join("tmp", "sessions", "subagent-artifacts"));
+	});
+
+	it("writes private artifacts atomically where required", { skip: process.platform === "win32" }, () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-"));
+		const dir = path.join(root, "artifacts");
+		try {
+			ensureArtifactsDir(dir);
+			const outputPath = path.join(dir, "output.md");
+			const metadataPath = path.join(dir, "metadata.json");
+			const jsonlPath = path.join(dir, "events.jsonl");
+			writeArtifact(outputPath, "output");
+			writeMetadata(metadataPath, { complete: true });
+			appendJsonl(jsonlPath, JSON.stringify({ event: 1 }));
+
+			assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+			for (const file of [outputPath, metadataPath, jsonlPath]) {
+				assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+			}
+			assert.deepEqual(JSON.parse(fs.readFileSync(metadataPath, "utf-8")), { complete: true });
+			assert.equal(fs.readFileSync(jsonlPath, "utf-8"), '{"event":1}\n');
+			assert.deepEqual(fs.readdirSync(dir).sort(), ["events.jsonl", "metadata.json", "output.md"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a symlink as the artifact directory", { skip: process.platform === "win32" }, () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-"));
+		try {
+			const target = path.join(root, "target");
+			const link = path.join(root, "artifacts");
+			fs.mkdirSync(target);
+			fs.symlinkSync(target, link);
+			assert.throws(() => ensureArtifactsDir(link), /must be a real directory/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses to follow a symlink artifact file", { skip: process.platform === "win32" }, () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-"));
+		try {
+			const target = path.join(root, "target.txt");
+			const link = path.join(root, "output.md");
+			fs.writeFileSync(target, "keep");
+			fs.symlinkSync(target, link);
+			assert.throws(() => writeArtifact(link, "replace"), (error: unknown) => (error as NodeJS.ErrnoException).code === "ELOOP");
+			assert.equal(fs.readFileSync(target, "utf-8"), "keep");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
