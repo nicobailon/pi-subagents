@@ -41,8 +41,33 @@ export function hasMutationToolCapability(tools: string[] | undefined, mcpDirect
 	return !tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool));
 }
 
+function hasCheckpointMutationEvidence(message: Message): boolean {
+	const record = message as unknown as {
+		role?: string;
+		type?: string;
+		customType?: unknown;
+		data?: unknown;
+		details?: unknown;
+	};
+	if ((record.role !== "custom" && record.type !== "custom") || record.customType !== "pi-checkpoint") return false;
+	const details = typeof record.details === "object" && record.details !== null && !Array.isArray(record.details)
+		? record.details as Record<string, unknown>
+		: undefined;
+	const data = typeof record.data === "object" && record.data !== null && !Array.isArray(record.data)
+		? record.data as Record<string, unknown>
+		: typeof details?.beforeCommit === "string" || typeof details?.afterCommit === "string"
+			? details
+			: details?.data && typeof details.data === "object" && !Array.isArray(details.data)
+				? details.data as Record<string, unknown>
+				: undefined;
+	return typeof data?.beforeCommit === "string"
+		&& typeof data.afterCommit === "string"
+		&& data.beforeCommit !== data.afterCommit;
+}
+
 export function hasMutationToolCall(messages: Message[]): boolean {
 	for (const message of messages) {
+		if (hasCheckpointMutationEvidence(message)) return true;
 		if (message.role !== "assistant") continue;
 		for (const part of message.content) {
 			if (part.type === "thinking" && CURSOR_FILE_MUTATION_THINKING.test(part.thinking)) return true;

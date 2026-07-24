@@ -244,6 +244,68 @@ test("claimed changedFiles without mutation evidence does not bypass the guard",
 	assert.equal(hasMutationToolCall([report]), false);
 });
 
+function checkpointDataEntry(beforeCommit: string, afterCommit: string): Message {
+	return {
+		type: "custom",
+		customType: "pi-checkpoint",
+		data: { beforeCommit, afterCommit },
+	} as unknown as Message;
+}
+
+function checkpointDetailsMessage(beforeCommit: string, afterCommit: string): Message {
+	return {
+		role: "custom",
+		customType: "pi-checkpoint",
+		content: [],
+		details: { beforeCommit, afterCommit },
+	} as unknown as Message;
+}
+
+function checkpointNestedDetailsMessage(beforeCommit: string, afterCommit: string): Message {
+	return {
+		role: "custom",
+		customType: "pi-checkpoint",
+		content: [],
+		details: { data: { beforeCommit, afterCommit } },
+	} as unknown as Message;
+}
+
+test("provider checkpoint with a changed commit counts as mutation evidence", () => {
+	for (const message of [
+		checkpointDataEntry("before", "after"),
+		checkpointDetailsMessage("before", "after"),
+		checkpointNestedDetailsMessage("before", "after"),
+	]) {
+		assert.equal(hasMutationToolCall([message]), true);
+		assert.equal(
+			evaluateCompletionMutationGuard({
+				agent: "worker",
+				task: "Edit the target source file",
+				messages: [message],
+			}).triggered,
+			false,
+		);
+	}
+});
+
+test("unchanged provider checkpoint does not bypass the completion guard", () => {
+	for (const message of [
+		checkpointDataEntry("same", "same"),
+		checkpointDetailsMessage("same", "same"),
+		checkpointNestedDetailsMessage("same", "same"),
+	]) {
+		assert.equal(hasMutationToolCall([message]), false);
+		assert.equal(
+			evaluateCompletionMutationGuard({
+				agent: "worker",
+				task: "Edit the target source file",
+				messages: [message],
+			}).triggered,
+			true,
+		);
+	}
+});
+
 test("implementation task with Cursor edit thinking does not trigger", () => {
 	const result = evaluateCompletionMutationGuard({
 		agent: "worker",
