@@ -235,7 +235,7 @@ const SubagentParamsSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
-		description: "Management/control action only. Must be omitted for execution mode (single, parallel, or chain)."
+		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
 		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', or action='append-step'."

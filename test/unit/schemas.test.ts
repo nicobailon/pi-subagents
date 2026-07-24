@@ -180,9 +180,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(actionSchema.type, "string");
 		assert.equal(actionSchema.enum, undefined);
 		const description = String(actionSchema.description ?? "");
-		assert.match(description, /Management\/control action only/);
-		assert.match(description, /Must be omitted for execution mode/);
-		assert.match(description, /single, parallel, or chain/);
+		assert.match(description, /Optional management\/control action/);
+		assert.match(description, /Omit this field entirely for execution\/delegation/);
+		assert.match(description, /\{agent, task\}, \{tasks\}, or \{chain\}/);
+		assert.match(description, /use it only for management\/control actions/);
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 

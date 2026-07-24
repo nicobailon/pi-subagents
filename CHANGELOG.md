@@ -16,6 +16,7 @@
 ### Fixed
 - Kept completed Fleet inspector durations stable when legacy terminal status lacks an explicit end timestamp, preventing time-sensitive redraws from changing rendered snapshots.
 - Deferred strict child tool availability diagnostics until after child extension startup hooks, so tools registered asynchronously by child-only extensions no longer falsely fail as unavailable. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #567.
+- Made parent-facing subagent tool descriptions lead with delegation and clarified that `action` is omitted for execution. Thanks to @donwellsav for #600.
 - Required `@earendil-works/pi-ai` 0.80.0 or newer because watchdog reviews import its `./compat` entrypoint, preventing background runs from loading on older hosts. Thanks to @donwellsav for #599.
 - Removed evicted nested async status event files after the bounded cursor is written so old records are not rediscovered and replayed after the retention cap. Thanks to @mhbzhy-lost for #579.
 - Counted provider-native `pi-checkpoint` commit changes as mutation evidence so CompletionGuard does not falsely fail Cursor SDK writer runs that already edited files. Thanks to Matias Gigena (@MatiasGigena) for #615.
