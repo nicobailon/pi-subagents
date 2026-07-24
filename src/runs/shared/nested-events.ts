@@ -612,7 +612,9 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 		} catch {
 			continue;
 		}
-		for (const event of parseNestedEventRecords(content, route)) {
+		const records = parseNestedEventRecords(content, route);
+		if (records.length === 0) continue;
+		for (const event of records) {
 			registry = applyNestedEvent(registry, event);
 			changed = true;
 		}
@@ -620,11 +622,34 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
 		changed = true;
 	}
 	if (changed) {
-		registry = { ...registry, processedEvents: [...seen].slice(-1000) };
+		const processedEvents = [...seen];
+		const retainedEvents = processedEvents.slice(-1000);
+		const evictedEvents = processedEvents.slice(0, -1000);
+		registry = { ...registry, processedEvents: retainedEvents };
 		// Parent projection is the only writer to this sidecar registry. Child and
 		// runner processes only create immutable event files, so parent status.json
 		// remains owned by the existing runner writer and is never rewritten here.
 		writeAtomicJson(registryPath(route), registry);
+
+		// The registry retains only a bounded filename cursor. Remove the old
+		// immutable status records after the cursor is durable; otherwise an evicted
+		// filename is rediscovered on the next projection and replayed forever.
+		for (const entry of evictedEvents) {
+			const eventPath = path.join(route.eventSink, entry);
+			if (!containedPath(route.eventSink, eventPath)) continue;
+			try {
+				const stat = fs.statSync(eventPath);
+				if (!stat.isFile() || stat.size > MAX_EVENT_BYTES) continue;
+				const content = fs.readFileSync(eventPath, "utf-8");
+				const hasStatusRecord = parseNestedEventRecords(content, route).length > 0;
+				const hasControlResult = content
+					.split("\n")
+					.some((line) => line.trim() && parseControlResult(line.trim(), route));
+				if (hasStatusRecord && !hasControlResult) fs.unlinkSync(eventPath);
+			} catch {
+				// A cleanup failure must not make a successfully projected status fail.
+			}
+		}
 	}
 	return registry;
 }

@@ -326,4 +326,34 @@ describe("nested event parsing and projection", () => {
 		assert.equal(records.length, 1);
 		assert.equal(records[0]?.child.id, "jsonl-good");
 	});
+
+	it("removes evicted status files without replaying completed children", () => {
+		const route = trackRoute();
+		for (let index = 0; index < 1000; index++) {
+			writeNestedEvent(route, {
+				type: "subagent.nested.updated",
+				ts: index + 1,
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				child: child("nested-retained", "running", index + 1),
+			});
+		}
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: 1001,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: child("nested-retained", "complete", 1001),
+		});
+
+		assert.equal(fs.readdirSync(route.eventSink).length, 1001);
+		const firstProjection = projectNestedEvents(route);
+		assert.equal(firstProjection.processedEvents.length, 1000);
+		assert.equal(fs.readdirSync(route.eventSink).length, 1000);
+		assert.equal(firstProjection.children[0]?.state, "complete");
+
+		const secondProjection = projectNestedEvents(route);
+		assert.deepEqual(secondProjection, firstProjection);
+		assert.equal(secondProjection.children[0]?.state, "complete");
+	});
 });
