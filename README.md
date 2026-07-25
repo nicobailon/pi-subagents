@@ -1002,6 +1002,33 @@ If you are writing an agent that orchestrates subagents, the bundled skill helps
 Pi extensions can request configured foreground agents through the public event
 contract exported by `pi-subagents/delegation`.
 
+### Launch contract preflight
+
+Use `pi-subagents/preflight` when an extension needs to inspect the resolved child launch contract before deciding whether to run anything:
+
+```ts
+import { resolveSubagentLaunchContract } from "pi-subagents/preflight";
+
+const result = await resolveSubagentLaunchContract({
+  agent: "reviewer",
+  task: "Review the current diff.",
+  context: "fresh",
+  cwd: ctx.cwd,
+  sessionRoot: "/tmp/my-extension-preflight-session-root",
+  availableModels: ctx.modelRegistry.getAvailable(),
+});
+
+if (!result.ok) {
+  // missing_agent, ambiguous_agent, missing_skill, denied_required_tool,
+  // invalid_artifact_dir, invalid_cwd, or unsupported_mode
+  throw new Error(result.message);
+}
+
+console.log(result.contract.digest, result.contract.tools.effectiveAllowlist);
+```
+
+Preflight covers ordinary single-agent launch resolution: selected agent identity and shadowed candidates, fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions, artifact and session paths, package/lifecycle versions, capability-ceiling audit data, and a stable digest. It is side-effect-free for launch state: it does not create child sessions, temp prompt files, structured-output runtimes, tool-diagnostic files, or run artifacts. Some host-owned facts, such as exact fork snapshots and live model registries, can only be proven by the Pi host; those appear as `host_required` diagnostics instead of silently pretending to be exact.
+
 ### Delegation v1
 
 The compatibility v1 contract runs one configured foreground agent per request:

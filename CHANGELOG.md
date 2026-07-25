@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added a public `pi-subagents/preflight` API that resolves an ordinary single-agent launch contract without creating child sessions, temp prompt files, structured-output runtimes, or run artifacts. Thanks to @shaggitza for #634.
 - Added an out-of-band, session-scoped capability-ceiling API for monotonic child tool and extension restrictions, with inherited async/nested propagation and bounded audit metadata. Thanks to aoguai for #585.
 - Added durable v3 process-terminal proof for detached async runners, with exact close observation, conservative unknown states after observer loss, and status/RPC projections. Thanks to shaggitza for #626.
 - Added `subagents.defaultThinking` for project- or user-scoped default thinking levels on agents without explicit thinking settings. Thanks to corrius for #612.
