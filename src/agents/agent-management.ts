@@ -203,7 +203,12 @@ function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPa
 
 export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const base = agent.override?.base;
-	if (!base) return { ...agent };
+	if (!base) {
+		return {
+			...agent,
+			extensions: agent.extensionsFromDefault ? undefined : agent.extensions ? [...agent.extensions] : undefined,
+		};
+	}
 
 	return {
 		...agent,
@@ -221,6 +226,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		skillPath: base.skillPath ? [...base.skillPath] : undefined,
 		tools: base.tools ? [...base.tools] : undefined,
 		mcpDirectTools: base.mcpDirectTools ? [...base.mcpDirectTools] : undefined,
+		extensions: base.extensions ? [...base.extensions] : undefined,
 		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
 		completionGuard: base.completionGuard,
 		override: undefined,

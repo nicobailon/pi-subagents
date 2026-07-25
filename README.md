@@ -6,7 +6,7 @@
 
 `pi-subagents` lets Pi delegate work to focused child agents. Use it for code review, scouting, implementation, parallel audits, saved workflows, background jobs, and anything else that benefits from a second or third set of model eyes.
 
-https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1
+<https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1>
 
 ## Installation
 
@@ -171,6 +171,23 @@ Set `subagents.defaultThinking` to give builtin, package, user, and project agen
 ```
 
 If your provider rejects model IDs with thinking suffixes, set `subagents.disableThinking: true` in user or project settings. That clears bundled builtin thinking defaults in one place; an explicit higher-precedence `agentOverrides.<name>.thinking` value can opt a role back in. Existing custom-agent frontmatter remains authoritative.
+
+Set `subagents.defaultExtensions` to give builtin, package, user, and project agents without an `extensions` field a shared extension allowlist. Absent preserves Pi's normal ambient extension discovery. Present as an empty array, the default sets `extensions: []` for agents that do not explicitly define it, disabling ambient extension loading. Present as a non-empty array, the default supplies that allowlist to agents that do not explicitly define one. Project settings win over user settings. Use `agentOverrides.<name>.extensions` for per-agent settings; explicit custom-agent frontmatter remains authoritative.
+
+```json
+{
+  "subagents": {
+    "defaultExtensions": [],
+    "agentOverrides": {
+      "researcher": {
+        "extensions": ["./tools/research.ts"]
+      }
+    }
+  }
+}
+```
+
+A non-array value, an array containing a non-string entry, or an empty/whitespace-only string raises a settings error naming `defaultExtensions` and the offending settings file, matching the validation pattern used by `defaultModel` and `defaultThinking`.
 
 To inspect what `pi-subagents` has actually loaded right now, use:
 
@@ -829,6 +846,8 @@ When `extensions` is present, normal discovered extensions are disabled; the lis
 
 Use `subagentOnlyExtensions` when a custom extension tool should exist only inside child sessions. It is scoped by agent config: every run of that agent receives those extension paths, while other agents do not unless they declare the same field. The current model does not have a separate named-subagent audience inside one agent definition.
 
+To apply the same `extensions` allowlist to every agent that does not declare its own, set `subagents.defaultExtensions` in user or project settings. Omit it to preserve ambient extension discovery or set it to `[]` to disable ambient extensions by default; project settings win over user settings. Agents that explicitly define `extensions` keep their own value, including an empty `extensions:` field.
+
 Before the first model turn, the child runtime compares every explicit tool name with Pi's final filtered registry. A missing provider now fails the run with the unavailable names and concrete `subagentOnlyExtensions`/`extensions` guidance instead of letting a direct or chained child silently continue without its requested tools.
 
 ## Chain files
@@ -988,6 +1007,7 @@ Missing skills do not fail execution. The result summary shows a warning.
 The package bundles a `pi-subagents` skill that is automatically available to the parent agent when the extension is installed. It is for the orchestrating parent only: child subagents never receive it, and their context is explicitly filtered to strip parent-only orchestration instructions.
 
 What the bundled skill covers:
+
 - **Delegation patterns**: when to launch which agent, whether to use single, parallel, chain, or async mode, and whether to use fresh or forked context
 - **Prompt workflow recipes**: how to apply the packaged techniques directly with `subagent(...)` when the user describes the workflow in natural language instead of invoking a slash command. This includes parallel review, review-loop, parallel research, parallel context-build, parallel handoff-plan, gather-context-and-clarify, and parallel cleanup
 - **Role-agent prompting guidance**: compact contract prompts instead of long scripts, what to include in role-specific meta prompts, and retrieval budgets for researchers
