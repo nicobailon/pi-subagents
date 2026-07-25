@@ -9,6 +9,7 @@ import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./s
 import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
+import { TEAM_DIR_ENV } from "./team-board.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CHILD_TOOLS_ENV } from "./tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV, encodeChildWatchdogConfig, type ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
@@ -81,6 +82,8 @@ export interface BuildPiArgsInput {
 		outputPath: string;
 	};
 	toolBudget?: ResolvedToolBudget;
+	/** Team scratch dir; gates and locates `team_note` in the child. */
+	teamDir?: string;
 	allowZeroToolBudget?: boolean;
 	childWatchdog?: ChildWatchdogConfig;
 	waitToolEnabled?: boolean;
@@ -367,6 +370,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 	if (input.steerCapabilityPath) env[SUBAGENT_STEER_CAPABILITY_ENV] = input.steerCapabilityPath;
 	if (input.steerAckDir) env[SUBAGENT_STEER_ACK_DIR_ENV] = input.steerAckDir;
+	if (input.teamDir) env[TEAM_DIR_ENV] = input.teamDir;
 	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
 	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 	env[TOOL_BUDGET_ZERO_AUTH_ENV] = input.allowZeroToolBudget ? "1" : undefined;

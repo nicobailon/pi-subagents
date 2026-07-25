@@ -13,6 +13,7 @@ import {
 	type ChildToolDiagnostic,
 } from "./tool-availability.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
+import { TEAM_DIR_ENV, claimPaths, isTeamDir, postNote, readBoard, type BoardEntry } from "./team-board.ts";
 import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
@@ -234,6 +235,99 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	});
 }
 
+/**
+ * Register `team_note` for a team member: post/read the shared board and claim
+ * paths.
+ *
+ * The team directory arrives as a tool argument rather than through the child
+ * environment. Threading a new per-task value into the child env would mean
+ * touching every launch path in subagent-runner.ts; instead the parent tells the
+ * member its team dir in the task text, and `team-board`'s `.team-root` marker is
+ * what makes accepting a path safe — a child can only reach a directory the
+ * parent actually provisioned as a team dir.
+ *
+ * Registered unconditionally: a non-team child simply never has a team dir to
+ * name, and every call it could make is rejected by the marker check. Tool
+ * visibility is still governed by the agent's `tools` allowlist.
+ */
+function registerTeamNoteTool(pi: ExtensionAPI): void {
+	if (typeof pi.registerTool !== "function") return;
+	// Only a child that belongs to a team run gets this tool. Registering it
+	// unconditionally would add an unusable tool to every child's surface.
+	const teamDirFromEnv = process.env[TEAM_DIR_ENV]?.trim();
+	if (!teamDirFromEnv || !isTeamDir(teamDirFromEnv)) return;
+	const registerTool = pi.registerTool as unknown as (tool: {
+		name: string;
+		label: string;
+		description: string;
+		parameters: unknown;
+		execute: (
+			_id: string,
+			params: { dir?: string; action?: string; text?: string; paths?: string[]; since?: number },
+		) => Promise<unknown>;
+	}) => void;
+
+	const text = (value: string) => ({ content: [{ type: "text", text: value }] });
+
+	registerTool({
+		name: "team_note",
+		label: "Team Note",
+		description: [
+			"Coordinate with your team through its shared board. `dir` is the team scratch directory given in your task.",
+			"post: append an attributed finding. read: catch up on the board (pass `since` for only newer entries).",
+			"claim: record the paths you intend to edit before editing them; it fails if another member already claimed an overlapping path.",
+			"Claims are advisory bookkeeping to catch collisions early, not a lock — they do not grant exclusive access.",
+		].join(" "),
+		parameters: {
+			type: "object",
+			additionalProperties: false,
+			required: ["action"],
+			properties: {
+				dir: { type: "string", description: "Optional. Team scratch directory; defaults to your own team dir." },
+				action: { type: "string", enum: ["post", "read", "claim"] },
+				text: { type: "string", description: "post: the finding to append." },
+				paths: { type: "array", items: { type: "string" }, description: "claim: paths or globs you will edit." },
+				since: { type: "integer", minimum: 0, description: "read: return only entries after this sequence number." },
+			},
+		} as never,
+		async execute(_id, params) {
+			// Default to this child's own team dir; an explicit dir must still pass
+			// the marker check, so a child cannot redirect writes elsewhere.
+			const dir = typeof params.dir === "string" && params.dir.trim() !== "" ? params.dir : teamDirFromEnv;
+			if (!dir || !isTeamDir(dir)) {
+				throw new Error(
+					`team_note: '${dir}' is not a team directory. Use the team scratch dir given in your task; team_note is only available inside a team run.`,
+				);
+			}
+			// Attribute to the agent name the launcher assigned, which is the member's
+			// role for a team-expanded task.
+			const author = process.env[SUBAGENT_CHILD_AGENT_ENV]?.trim() || "member";
+
+			if (params.action === "post") {
+				const result = postNote(dir, author, params.text ?? "");
+				if (!result.ok) throw new Error(`team_note: ${result.error}`);
+				return text(`Posted to the team board as entry ${result.seq}.`);
+			}
+			if (params.action === "read") {
+				const { entries, total } = readBoard(dir, { since: params.since });
+				if (entries.length === 0) return text(total === 0 ? "The team board is empty." : "No new team board entries.");
+				const body = entries.map((entry: BoardEntry) => `[${entry.seq}] ${entry.author} (${entry.at})\n${entry.text}`).join("\n\n");
+				return text(`${entries.length} of ${total} team board entries:\n\n${body}`);
+			}
+			if (params.action === "claim") {
+				const result = claimPaths(dir, author, params.paths ?? []);
+				if (!result.ok) {
+					throw new Error(
+						`team_note: claim rejected — ${result.error}. Coordinate on the board instead of editing a path another member owns.`,
+					);
+				}
+				return text(`Claimed for ${author}: ${result.claimed.join(", ")}`);
+			}
+			throw new Error(`team_note: unknown action '${String(params.action)}'; use post, read, or claim.`);
+		},
+	});
+}
+
 export function registerSteeringInbox(
 	pi: ExtensionAPI,
 	deps: { watch?: typeof fs.watch; nativeRealpath?: (filePath: string) => string } = {},
@@ -424,6 +518,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 			},
 		});
 	}
+
+	registerTeamNoteTool(pi);
 
 	onRuntimeEvent("context", (event: { messages: unknown[] }) => {
 		const messages = stripParentOnlySubagentMessages(event.messages);

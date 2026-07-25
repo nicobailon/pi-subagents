@@ -842,6 +842,8 @@ export interface Details {
 	stopped?: boolean;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	/** Team scratch dir, forwarded to the child to gate/locate `team_note`. */
+	teamDir?: string;
 	progress?: AgentProgress[];
 	progressSummary?: ProgressSummary;
 	artifacts?: {
@@ -1368,6 +1370,8 @@ export interface RunSyncOptions {
 	/** Enforce maxTurns + graceTurns as a hard model-turn boundary. */
 	enforceHardTurnLimit?: boolean;
 	toolBudget?: ResolvedToolBudget;
+	/** Team scratch dir, forwarded to the child to gate/locate `team_note`. */
+	teamDir?: string;
 	allowZeroToolBudget?: boolean;
 	allowIntercomDetach?: boolean;
 	intercomEvents?: IntercomEventBus;

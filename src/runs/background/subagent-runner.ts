@@ -149,6 +149,7 @@ interface SubagentRunConfig {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	teamDir?: string;
 	revivalLease?: SessionLeaseRequest;
 	revivalLeaseToken?: string;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
@@ -1200,6 +1201,7 @@ async function runSingleStep(
 			steerAckDir: ctx.steerAckDir,
 			structuredOutput: effectiveStructuredOutput,
 			toolBudget: step.toolBudget,
+			teamDir: step.teamDir,
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
 		});
@@ -3125,6 +3127,7 @@ async function runSubagent(
 					turnBudgetExceeded: pr.turnBudgetExceeded,
 					wrapUpRequested: pr.wrapUpRequested,
 					toolBudget: pr.toolBudget,
+					teamDir: pr.teamDir,
 					toolBudgetBlocked: pr.toolBudgetBlocked,
 					sessionFile: pr.sessionFile,
 					intercomTarget: pr.intercomTarget,
@@ -3501,6 +3504,7 @@ async function runSubagent(
 						turnBudgetExceeded: pr.turnBudgetExceeded,
 						wrapUpRequested: pr.wrapUpRequested,
 						toolBudget: pr.toolBudget,
+					teamDir: pr.teamDir,
 						toolBudgetBlocked: pr.toolBudgetBlocked,
 						sessionFile: pr.sessionFile,
 						intercomTarget: pr.intercomTarget,
@@ -3695,6 +3699,7 @@ async function runSubagent(
 				turnBudgetExceeded: singleResult.turnBudgetExceeded,
 				wrapUpRequested: singleResult.wrapUpRequested,
 				toolBudget: singleResult.toolBudget,
+				teamDir: singleResult.teamDir,
 				toolBudgetBlocked: singleResult.toolBudgetBlocked,
 			});
 			if (seqStep.outputName) {
@@ -3983,6 +3988,7 @@ async function runSubagent(
 				turnBudgetExceeded: r.turnBudgetExceeded || undefined,
 				wrapUpRequested: r.wrapUpRequested || undefined,
 				toolBudget: r.toolBudget,
+				teamDir: r.teamDir,
 				toolBudgetBlocked: r.toolBudgetBlocked || undefined,
 				sessionFile: r.sessionFile,
 				intercomTarget: r.intercomTarget,

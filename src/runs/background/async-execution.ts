@@ -934,6 +934,7 @@ export function executeAsyncChain(
 		worktreeBaseDir,
 		asyncDir,
 		toolBudget: params.toolBudget,
+				teamDir: params.teamDir,
 		configToolBudget: params.configToolBudget,
 		capabilityCeiling,
 	});
@@ -989,6 +990,7 @@ export function executeAsyncChain(
 				controlConfig,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
+				teamDir: params.teamDir,
 				controlIntercomTarget,
 				childIntercomTargets,
 				resultMode,
@@ -1366,6 +1368,7 @@ export function executeAsyncSingle(
 				deadlineAt,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
+				teamDir: params.teamDir,
 				controlIntercomTarget,
 				childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
 				resultMode: "single",

@@ -13,6 +13,7 @@ import {
 	type TeamConfig,
 	type TeamMember,
 } from "../../src/agents/teams.ts";
+import { isTeamDir } from "../../src/runs/shared/team-board.ts";
 
 function teamFile(frontmatter: string, body = ""): string {
 	return `---\n${frontmatter}\n---\n${body}`;
@@ -284,6 +285,35 @@ describe("resolveTeamRequest", () => {
 		const fromCaller: Record<string, unknown> = { team: "build", task: "go", concurrency: 1 };
 		resolveTeamRequest(fromCaller, cwd);
 		assert.equal(fromCaller.concurrency, 1);
+	});
+
+	it("provisions a shared team dir and puts it on every task", () => {
+		const args: Record<string, unknown> = { team: "build", task: "go" };
+		resolveTeamRequest(args, cwd);
+		const tasks = args.tasks as { teamDir?: string; task: string }[];
+		const dir = tasks[0].teamDir;
+		assert.ok(dir, "teamDir must be attached for env forwarding");
+		assert.equal(isTeamDir(dir), true, "the dir must be a real provisioned team dir");
+		// Every member shares the one directory, and is told where it is.
+		for (const task of tasks) {
+			assert.equal(task.teamDir, dir);
+			assert.match(task.task, /Team scratch dir/);
+		}
+		assert.equal(fs.existsSync(path.join(dir, "board.md")), true);
+	});
+
+	it("skips provisioning when the team opts out of shared state", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "teams-nodir-"));
+		fs.mkdirSync(path.join(dir, ".pi", "teams"), { recursive: true });
+		fs.writeFileSync(
+			path.join(dir, ".pi", "teams", "solo.md"),
+			"---\ndescription: no shared state\nsharedDir: false\nmembers:\n  - agent: scout\n---\n",
+		);
+		const args: Record<string, unknown> = { team: "solo", task: "go" };
+		resolveTeamRequest(args, dir);
+		const tasks = args.tasks as { teamDir?: string; task: string }[];
+		assert.equal(tasks[0].teamDir, undefined);
+		assert.doesNotMatch(tasks[0].task, /Team scratch dir/);
 	});
 
 	it("is a no-op when no team is requested", () => {

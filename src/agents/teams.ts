@@ -15,12 +15,14 @@
  * See docs/proposals/agent-teams.md for the design rationale.
  */
 
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
+import { TEAM_DIRS_ROOT, provisionTeamDir } from "../runs/shared/team-board.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import type { ResolvedToolBudget } from "../shared/types.ts";
@@ -307,7 +309,24 @@ export function resolveTeamRequest(args: Record<string, unknown>, cwd: string): 
 		);
 	}
 
-	args.tasks = expandTeamToTasks(team, task);
+	// Provision the shared board/claims dir now, in the parent, and hand every
+	// member the same path. A generated id is used rather than the run id because
+	// this runs in prepareArguments, before a run id exists.
+	let teamDir: string | undefined;
+	if (team.sharedDir) {
+		try {
+			teamDir = provisionTeamDir(TEAM_DIRS_ROOT, team.name, randomUUID());
+		} catch {
+			// A team without shared state is still a usable team; degrade rather than
+			// refusing to launch.
+			teamDir = undefined;
+		}
+	}
+
+	const expanded = expandTeamToTasks(team, task, teamDir);
+	// teamDir rides on each task so pi-args can put it in the child env, which is
+	// what gates and locates `team_note`.
+	args.tasks = teamDir ? expanded.map((entry) => ({ ...entry, teamDir })) : expanded;
 	delete args.team;
 	// The caller's explicit concurrency wins; otherwise use the team's.
 	if (args.concurrency === undefined && team.concurrency !== undefined) args.concurrency = team.concurrency;
