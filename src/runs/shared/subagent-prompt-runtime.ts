@@ -7,6 +7,7 @@ import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHI
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
+	MCP_DIRECT_CHILD_TOOLS_ENV,
 	REQUIRED_CHILD_TOOLS_ENV,
 	writeChildToolDiagnostic,
 	type ChildToolDiagnostic,
@@ -78,12 +79,24 @@ function readRequiredChildTools(): string[] | undefined {
 	return required;
 }
 
+function readMcpDirectChildTools(): string[] | undefined {
+	const encoded = process.env[MCP_DIRECT_CHILD_TOOLS_ENV]?.trim();
+	if (!encoded) return undefined;
+	try {
+		const tools = JSON.parse(encoded) as unknown;
+		if (!Array.isArray(tools) || tools.some((name) => typeof name !== "string" || !name)) return undefined;
+		return tools;
+	} catch {
+		return undefined;
+	}
+}
+
 function refreshChildToolDiagnostic(pi: ExtensionAPI): ChildToolDiagnostic | undefined {
 	const filePath = process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV]?.trim();
 	const required = readRequiredChildTools();
 	if (!filePath || !required) return undefined;
 	const available = pi.getAllTools().map((tool) => tool.name);
-	return writeChildToolDiagnostic(filePath, required, available, process.env[SUBAGENT_CHILD_AGENT_ENV]?.trim());
+	return writeChildToolDiagnostic(filePath, required, available, process.env[SUBAGENT_CHILD_AGENT_ENV]?.trim(), readMcpDirectChildTools());
 }
 
 function findSectionEnd(prompt: string, startIndex: number, nextHeaders: string[]): number {

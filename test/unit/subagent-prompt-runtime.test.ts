@@ -18,7 +18,7 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
-import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
+import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 import registerSubagentPromptRuntime, {
@@ -45,6 +45,7 @@ const envSnapshot = {
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
 	PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
 	PI_SUBAGENT_REQUIRED_TOOLS: process.env.PI_SUBAGENT_REQUIRED_TOOLS,
+	PI_SUBAGENT_MCP_DIRECT_TOOLS: process.env.PI_SUBAGENT_MCP_DIRECT_TOOLS,
 	PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH: process.env.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH,
 	PI_SUBAGENT_ORCHESTRATOR_TARGET: process.env.PI_SUBAGENT_ORCHESTRATOR_TARGET,
 	PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: process.env.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
@@ -97,6 +98,8 @@ afterEach(() => {
 	else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
 	if (envSnapshot.PI_SUBAGENT_REQUIRED_TOOLS === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 	else process.env[REQUIRED_CHILD_TOOLS_ENV] = envSnapshot.PI_SUBAGENT_REQUIRED_TOOLS;
+	if (envSnapshot.PI_SUBAGENT_MCP_DIRECT_TOOLS === undefined) delete process.env[MCP_DIRECT_CHILD_TOOLS_ENV];
+	else process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = envSnapshot.PI_SUBAGENT_MCP_DIRECT_TOOLS;
 	if (envSnapshot.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH === undefined) delete process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV];
 	else process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = envSnapshot.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH;
 	if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_TARGET === undefined) delete process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV];
@@ -702,6 +705,71 @@ describe("subagent prompt runtime", () => {
 			available.push("fixture_search");
 			handlers.get("agent_start")?.({});
 			assert.equal(fs.existsSync(diagnosticPath), false);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores malformed inherited MCP metadata before strict availability diagnostics", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-stale-mcp-tool-diagnostic-"));
+		try {
+			const diagnosticPath = path.join(dir, "tools.json");
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "fixture_search"]);
+			process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = "not-json";
+			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				getAllTools: () => [{ name: "read" }],
+				registerTool() {},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(): void });
+
+			assert.doesNotThrow(() => handlers.get("agent_start")?.({}));
+			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
+				agent: "worker",
+				required: ["read", "fixture_search"],
+				available: ["read"],
+				missing: ["fixture_search"],
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("classifies missing resolved MCP direct tools without softening strict diagnostics", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-mcp-tool-diagnostic-"));
+		try {
+			const diagnosticPath = path.join(dir, "tools.json");
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			process.env[REQUIRED_CHILD_TOOLS_ENV] = JSON.stringify(["read", "rust_symbols_workspace_symbols", "fixture_search"]);
+			process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = JSON.stringify(["rust_symbols_workspace_symbols"]);
+			process.env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV] = diagnosticPath;
+			process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				getAllTools: () => [{ name: "read" }],
+				registerTool() {},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(): void });
+
+			handlers.get("agent_start")?.({});
+			const diagnostic = readChildToolDiagnostic(diagnosticPath);
+			assert.deepEqual(diagnostic, {
+				agent: "worker",
+				required: ["read", "rust_symbols_workspace_symbols", "fixture_search"],
+				available: ["read"],
+				missing: ["rust_symbols_workspace_symbols", "fixture_search"],
+				missingMcpDirectTools: ["rust_symbols_workspace_symbols"],
+			});
+			assert.match(formatChildToolDiagnostic(diagnostic!), /host\/pi-mcp-adapter registration problem/);
+			assert.match(formatChildToolDiagnostic(diagnostic!), /fixture_search/);
+			assert.equal(fs.existsSync(diagnosticPath), true);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

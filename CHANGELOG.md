@@ -20,6 +20,7 @@
 
 ### Fixed
 - Kept explicit empty and MCP-only child tool allowlists from falling back to Pi's default builtin tools. Thanks to @jstokke for #628.
+- Classified missing resolved MCP direct tools as a host/pi-mcp-adapter child-registration problem while preserving strict fail-closed diagnostics. Thanks to peedrr for #638.
 - Kept completed Fleet inspector durations stable when legacy terminal status lacks an explicit end timestamp, preventing time-sensitive redraws from changing rendered snapshots.
 - Deferred strict child tool availability diagnostics until after child extension startup hooks, so tools registered asynchronously by child-only extensions no longer falsely fail as unavailable. Thanks to ConjugativeIndicator (@CovetingEpiphany2152) for #567.
 - Made parent-facing subagent tool descriptions lead with delegation and clarified that `action` is omitted for execution. Thanks to @donwellsav for #600.

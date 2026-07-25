@@ -7,7 +7,7 @@ import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allo
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
-import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
+import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
@@ -42,6 +42,7 @@ const originalEnv = {
 	PI_SUBAGENT_PARENT_CAPABILITY_TOKEN: process.env.PI_SUBAGENT_PARENT_CAPABILITY_TOKEN,
 	PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
 	PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
+	[MCP_DIRECT_CHILD_TOOLS_ENV]: process.env[MCP_DIRECT_CHILD_TOOLS_ENV],
 	[TOOL_BUDGET_ZERO_AUTH_ENV]: process.env[TOOL_BUDGET_ZERO_AUTH_ENV],
 	[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV],
 };
@@ -457,6 +458,22 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(owned.env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
 	});
 
+	it("clears inherited MCP direct-tool metadata for non-MCP launches", () => {
+		for (const staleValue of [JSON.stringify(["fixture_search"]), "not-json"]) {
+			process.env[MCP_DIRECT_CHILD_TOOLS_ENV] = staleValue;
+			const { env } = buildPiArgs({
+				baseArgs: ["-p"],
+				task: "hello",
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritSkills: false,
+				tools: ["read", "fixture_search"],
+			});
+
+			assert.equal(env[MCP_DIRECT_CHILD_TOOLS_ENV], undefined);
+		}
+	});
+
 	it("passes child intercom and orchestrator metadata through env", () => {
 		const { env } = buildPiArgs({
 			baseArgs: ["-p"],
@@ -591,6 +608,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,bash,chrome_devtools_take_screenshot,chrome_devtools_click");
 		assert.equal(env.MCP_DIRECT_TOOLS, "chrome-devtools");
+		assert.equal(env[REQUIRED_CHILD_TOOLS_ENV], JSON.stringify(["read", "bash", "chrome_devtools_take_screenshot", "chrome_devtools_click"]));
+		assert.equal(env[MCP_DIRECT_CHILD_TOOLS_ENV], JSON.stringify(["chrome_devtools_take_screenshot", "chrome_devtools_click"]));
 	});
 
 	it("emits --no-tools for explicit empty tool allowlists", () => {
