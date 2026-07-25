@@ -11,6 +11,8 @@ import {
 	ASYNC_DIR,
 	RESULTS_DIR,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_PROCESS_TERMINAL_EVENT,
+	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
@@ -181,12 +183,14 @@ function pingData(ctx: ExtensionContext | null) {
 			nonRecoveringSteer: true,
 			interrupt: true,
 			stop: true,
+			processTerminalProof: { version: 1, lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION },
 		},
 		events: {
 			ready: SUBAGENT_RPC_READY_EVENT,
 			request: SUBAGENT_RPC_REQUEST_EVENT,
 			replyPrefix: SUBAGENT_RPC_REPLY_EVENT_PREFIX,
 			asyncComplete: SUBAGENT_ASYNC_COMPLETE_EVENT,
+			processTerminal: SUBAGENT_PROCESS_TERMINAL_EVENT,
 		},
 		session: sessionData(ctx),
 	};

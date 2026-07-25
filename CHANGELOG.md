@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added durable v3 process-terminal proof for detached async runners, with exact close observation, conservative unknown states after observer loss, and status/RPC projections. Thanks to shaggitza for #626.
 - Added `subagents.defaultThinking` for project- or user-scoped default thinking levels on agents without explicit thinking settings. Thanks to corrius for #612.
 - Documented that builtin worker and delegate agents use strict tool allowlists and do not inherit ambient parent extension tools; custom agents must explicitly name extension tools and load their providers. Thanks to buihongduc132 for #586.
 - Added versioned aggregate handoff manifests for worktree-isolated parallel runs, including per-child status and output references, durable patch metadata, explicit cleanup outcomes, async status/result projection, and completion-delivery paths.

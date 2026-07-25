@@ -317,8 +317,48 @@ export interface EffectsProjection {
 	fileMutation?: FileMutationEffect;
 }
 
-export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 2;
+export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
+
+export type ProcessTerminalState = "pending" | "observed" | "unknown" | "not-started";
+export type ProcessTerminalReason =
+	| "observer-unavailable"
+	| "runner-candidate-missing"
+	| "runner-instance-mismatch"
+	| "writer-close-unverified"
+	| "canonical-session-unavailable"
+	| "canonical-session-lease-active"
+	| "proof-write-failed"
+	| "stale-repair";
+
+export interface ProcessInstanceExitV1 {
+	processInstanceId: string;
+	kind: "runner" | "pi-writer";
+	attempt?: number;
+	closeObservedAt: number;
+	exitCode: number | null;
+	signal: string | null;
+}
+
+export interface CanonicalSessionTerminalV1 {
+	canonicalSessionId: string;
+	leaseDisposition: "released" | "not-held";
+	freeAtObservation: true;
+	canonicalSessionLeaseReleased?: true;
+}
+
+export interface ProcessTerminalV1 {
+	version: 1;
+	state: ProcessTerminalState;
+	runId: string;
+	childIndex?: number;
+	runnerProcessInstanceId: string;
+	observedAt?: number;
+	instances?: ProcessInstanceExitV1[];
+	canonicalSession?: CanonicalSessionTerminalV1;
+	resumeDisposition?: "resumable" | "non-resumable" | "unavailable";
+	reason?: ProcessTerminalReason;
+}
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
 export type SteeringTargetState = "scheduled" | "routed" | "delivered" | "late" | "failed" | "recovered";
@@ -800,6 +840,9 @@ export interface Details {
 	totalCost?: CostSummary;
 	spawnBudget?: SpawnBudgetSnapshot;
 	parallelHandoff?: ParallelHandoffReference;
+	lifecycleStatus?: {
+		processTerminal?: ProcessTerminalV1;
+	};
 }
 
 // ============================================================================
@@ -873,6 +916,7 @@ export interface NestedStepSummary {
 	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
+	processTerminal?: ProcessTerminalV1;
 	children?: NestedRunSummary[];
 }
 
@@ -888,6 +932,7 @@ export interface NestedRunSummary extends NestedRunAddress {
 	controlInbox?: string;
 	capabilityToken?: string;
 	mode?: SubagentRunMode;
+	processTerminal?: ProcessTerminalV1;
 	state: NestedRunState;
 	agent?: string;
 	agents?: string[];
@@ -987,6 +1032,7 @@ export interface AsyncStatus {
 	pendingAppends?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	processTerminal?: ProcessTerminalV1;
 	steps?: Array<{
 		agent: string;
 		/** Resolved launch context for this child step. */
@@ -1039,6 +1085,7 @@ export interface AsyncStatus {
 		review?: ReviewProjection;
 		effects?: EffectsProjection;
 		watchdog?: ChildWatchdogProgress;
+		processTerminal?: ProcessTerminalV1;
 	}>;
 	sessionDir?: string;
 	outputFile?: string;
@@ -1252,6 +1299,7 @@ export const INTERCOM_DETACH_REQUEST_EVENT = "pi-intercom:detach-request";
 export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
 export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";

@@ -175,6 +175,9 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 	return {
 		...status,
 		state: repair.state,
+		...(status.lifecycleArtifactVersion === 3 && !status.processTerminal ? {
+			processTerminal: { version: 1 as const, state: "unknown" as const, runId: status.runId, runnerProcessInstanceId: "observer-unavailable", reason: "observer-unavailable" as const },
+		} : {}),
 		...(repair.state === "stopped" ? { stopped: true } : {}),
 		activityState: undefined,
 		lastUpdate: now,
@@ -231,6 +234,9 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	const repairedStatus: AsyncStatus = {
 		...status,
 		state: "failed",
+		...(status.lifecycleArtifactVersion === 3 && !status.processTerminal ? {
+			processTerminal: { version: 1 as const, state: "unknown" as const, runId, runnerProcessInstanceId: "observer-unavailable", reason: "stale-repair" as const },
+		} : {}),
 		activityState: undefined,
 		lastUpdate: now,
 		endedAt: now,

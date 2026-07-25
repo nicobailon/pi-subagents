@@ -9,6 +9,7 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { contextModeLabel, summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { readProcessTerminal } from "./process-terminal.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -50,6 +51,7 @@ interface AsyncRunStepSummary {
 	execution?: AsyncJobStep["execution"];
 	review?: AsyncJobStep["review"];
 	effects?: AsyncJobStep["effects"];
+	processTerminal?: AsyncJobStep["processTerminal"];
 	children?: NestedRunSummary[];
 }
 
@@ -92,6 +94,7 @@ export interface AsyncRunSummary {
 	sessionFile?: string;
 	nestedChildren?: NestedRunSummary[];
 	nestedWarnings?: string[];
+	processTerminal?: AsyncStatus["processTerminal"];
 }
 
 interface AsyncRunListOptions {
@@ -194,6 +197,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': sessionId must be a string.`);
 	}
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
+	const processTerminal = status.processTerminal ?? readProcessTerminal(asyncDir);
 	const steps = status.steps ?? [];
 	const chainStepCount = status.chainStepCount ?? steps.length;
 	const parallelGroups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
@@ -250,6 +254,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.execution ? { execution: step.execution } : {}),
 			...(step.review ? { review: step.review } : {}),
 			...(step.effects ? { effects: step.effects } : {}),
+			...(step.processTerminal ? { processTerminal: step.processTerminal } : {}),
 			...(step.children?.length ? { children: step.children } : {}),
 		};
 	});
@@ -288,6 +293,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		steps: summarizedSteps,
 		...(nestedChildren.length ? { nestedChildren } : {}),
 		...(nestedWarnings.length ? { nestedWarnings } : {}),
+		...(processTerminal ? { processTerminal } : {}),
 		...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
 		...(status.outputFile ? { outputFile: status.outputFile } : {}),
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),

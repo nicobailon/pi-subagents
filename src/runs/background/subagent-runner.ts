@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -146,8 +147,10 @@ interface SubagentRunConfig {
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	revivalLease?: SessionLeaseRequest;
+	revivalLeaseToken?: string;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
+	runnerProcessInstanceId?: string;
 }
 
 interface StepResult {
@@ -186,6 +189,7 @@ interface StepResult {
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
+	writerProcesses?: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }>;
 }
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -396,6 +400,9 @@ interface RunPiStreamingResult {
 	toolBudgetBlocked?: boolean;
 	observedMutationAttempt?: boolean;
 	watchdog?: ChildWatchdogStateSnapshot;
+	processInstanceId: string;
+	processCloseObservedAt?: number;
+	processSignal?: string | null;
 }
 
 function runPiStreaming(
@@ -418,6 +425,7 @@ function runPiStreaming(
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
+		const processInstanceId = randomUUID();
 		onWriterProcess?.({ state: "spawning" });
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
@@ -755,6 +763,7 @@ function runPiStreaming(
 		});
 		child.on("close", (exitCode, signal) => {
 			settled = true;
+			const processCloseObservedAt = Date.now();
 			try {
 				onWriterProcess?.({ state: "none" });
 			} catch {
@@ -790,6 +799,9 @@ function runPiStreaming(
 				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined,
 				observedMutationAttempt,
 				watchdog: childWatchdogState,
+				processInstanceId,
+				processCloseObservedAt,
+				processSignal: signal,
 			});
 		});
 
@@ -812,7 +824,7 @@ function runPiStreaming(
 			const stderr = stderrTail.text();
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState });
+			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId });
 		});
 	});
 }
@@ -1108,6 +1120,7 @@ async function runSingleStep(
 			: [undefined];
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
+	const writerProcesses: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }> = [];
 	const attemptNotes: string[] = [];
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
 	let finalResult: RunPiStreamingResult | undefined;
@@ -1193,6 +1206,16 @@ async function runSingleStep(
 			ctx.registerTurnBudgetAbort,
 			ctx.onWriterProcess,
 		);
+		if (run.processCloseObservedAt !== undefined) {
+			writerProcesses.push({
+				processInstanceId: run.processInstanceId,
+				kind: "pi-writer",
+				attempt: index,
+				closeObservedAt: run.processCloseObservedAt,
+				exitCode: run.exitCode,
+				signal: run.processSignal ?? null,
+			});
+		}
 		if (run.turnBudget) turnBudget = run.turnBudget;
 		else if (ctx.turnBudget) {
 			const assistantMessages = run.messages.filter((message) => message.role === "assistant");
@@ -1437,6 +1460,7 @@ async function runSingleStep(
 		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
 		watchdog: finalResult?.watchdog,
+		writerProcesses,
 	};
 	return isAgentContractV1(step.agentContract) ? attachContractProjections(result as unknown as import("../../shared/types.ts").SingleResult) as unknown as typeof result : result;
 }
@@ -1711,6 +1735,11 @@ async function runSubagent(
 	const sessionEnabled = Boolean(config.sessionDir)
 		|| shareEnabled
 		|| flatSteps.some((step) => Boolean(step.sessionFile));
+	if (config.runnerProcessInstanceId) {
+		for (const step of initialStatusSteps) {
+			step.processTerminal = { version: 1, state: "pending", runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId };
+		}
+	}
 	const statusPayload: RunnerStatusPayload = {
 		lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 		runId: id,
@@ -1732,6 +1761,7 @@ async function runSubagent(
 		chainStepCount: steps.length,
 		parallelGroups,
 		workflowGraph: config.workflowGraph,
+		...(config.runnerProcessInstanceId ? { processTerminal: { version: 1 as const, state: "pending" as const, runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId } } : {}),
 		steps: initialStatusSteps,
 		artifactsDir,
 		sessionDir: config.sessionDir,
@@ -3897,6 +3927,25 @@ async function runSubagent(
 	} catch (err) {
 		console.error(`Failed to write result file ${resultPath}:`, err);
 	}
+	if (config.runnerProcessInstanceId) {
+		const writers: Record<string, Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }>> = {};
+		for (const [index, result] of results.entries()) {
+			if (result.writerProcesses?.length) writers[String(index)] = result.writerProcesses;
+		}
+		const candidate: ProcessTerminalCandidate = {
+			version: 1,
+			runId: id,
+			runnerProcessInstanceId: config.runnerProcessInstanceId,
+			writers,
+			...(config.revivalLease?.sessionFile ? { sessionFile: config.revivalLease.sessionFile } : {}),
+			...(config.revivalLeaseToken ? { revivalLeaseToken: config.revivalLeaseToken } : {}),
+		};
+		try {
+			writeProcessTerminalCandidate(asyncDir, candidate);
+		} catch (error) {
+			console.error(`Failed to write process-terminal candidate for '${id}':`, error);
+		}
+	}
 }
 
 async function waitForStartupControl(
@@ -3940,6 +3989,7 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 	try {
 		if (config.revivalLease) {
 			lease = acquireSessionLease(config.revivalLease);
+			config.revivalLeaseToken = lease.owner.token;
 			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
 			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
 			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });

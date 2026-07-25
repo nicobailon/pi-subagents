@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -54,6 +55,8 @@ import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
+import { finalizeProcessTerminal } from "./process-terminal.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -397,7 +400,7 @@ function terminateRunnerBeforeProceed(pid: number): void {
 	}
 }
 
-function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; error?: string } {
+function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal?: (proof: unknown) => void): { pid?: number; error?: string } {
 	if (!jitiCliPath) {
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
@@ -413,12 +416,14 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 
 	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
 	const cfgPath = getAsyncConfigPath(suffix);
-	fs.writeFileSync(cfgPath, JSON.stringify(cfg));
+	const runnerProcessInstanceId = randomUUID();
+	const launchConfig = { ...cfg, runnerProcessInstanceId };
+	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
-	const startupPath = typeof (cfg as { revivalLease?: unknown; asyncDir?: unknown }).revivalLease === "object"
-		&& typeof (cfg as { asyncDir?: unknown }).asyncDir === "string"
-		? path.join((cfg as { asyncDir: string }).asyncDir, "runner-startup.json")
+	const startupPath = typeof (launchConfig as { revivalLease?: unknown; asyncDir?: unknown }).revivalLease === "object"
+		&& typeof (launchConfig as { asyncDir?: unknown }).asyncDir === "string"
+		? path.join((launchConfig as { asyncDir: string }).asyncDir, "runner-startup.json")
 		: undefined;
 	const startupAckPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-ack.json") : undefined;
 	const startupProceedPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-proceed.json") : undefined;
@@ -426,7 +431,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 	if (startupAckPath) fs.rmSync(startupAckPath, { force: true });
 	if (startupProceedPath) fs.rmSync(startupProceedPath, { force: true });
 
-	const logPaths = resolveAsyncRunnerLogPaths(cfg);
+	const logPaths = resolveAsyncRunnerLogPaths(launchConfig);
 	let stdoutFd: number | undefined;
 	let stderrFd: number | undefined;
 	try {
@@ -449,6 +454,18 @@ function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; 
 		closeFd(stderrFd);
 		proc.on("error", (error) => {
 			console.error(`[pi-subagents] async spawn failed: ${error.message}`);
+		});
+		proc.once("close", (exitCode, signal) => {
+			const asyncDir = (launchConfig as { asyncDir?: unknown }).asyncDir;
+			const runId = (launchConfig as { id?: unknown }).id;
+			if (typeof asyncDir !== "string" || typeof runId !== "string") return;
+			const proof = finalizeProcessTerminal(asyncDir, runId, {
+				processInstanceId: runnerProcessInstanceId,
+				closeObservedAt: Date.now(),
+				exitCode,
+				signal,
+			});
+			onProcessTerminal?.(proof);
 		});
 		if (typeof proc.pid !== "number") {
 			return { error: `async runner did not produce a pid for cwd: ${cwd}` };
@@ -943,6 +960,7 @@ export function executeAsyncChain(
 			},
 			id,
 			runnerCwd,
+			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1274,6 +1292,7 @@ export function executeAsyncSingle(
 			},
 			id,
 			runnerCwd,
+			(proof) => ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof),
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

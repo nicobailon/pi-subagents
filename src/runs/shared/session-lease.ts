@@ -40,6 +40,11 @@ export interface SessionLeaseHandle {
 	release(): void;
 }
 
+export type SessionLeaseState =
+	| { state: "free"; canonicalSessionFile: string; canonicalSessionId: string }
+	| { state: "owned"; canonicalSessionFile: string; canonicalSessionId: string; owner: SessionLeaseOwner }
+	| { state: "unreadable"; canonicalSessionFile: string; canonicalSessionId: string };
+
 interface SessionLeaseOptions {
 	rootDir?: string;
 	now?: () => number;
@@ -98,11 +103,25 @@ export function canonicalSessionFilePath(sessionFile: string): string {
 	return fs.realpathSync.native(path.resolve(sessionFile));
 }
 
-export function sessionLeaseDir(sessionFile: string, rootDir = SESSION_LEASES_DIR): string {
+export function canonicalSessionId(sessionFile: string): string {
 	const canonical = canonicalSessionFilePath(sessionFile);
 	const key = process.platform === "win32" ? canonical.toLowerCase() : canonical;
-	const digest = createHash("sha256").update(key).digest("hex");
-	return path.join(rootDir, digest);
+	return createHash("sha256").update(key).digest("hex");
+}
+
+export function sessionLeaseDir(sessionFile: string, rootDir = SESSION_LEASES_DIR): string {
+	return path.join(rootDir, canonicalSessionId(sessionFile));
+}
+
+export function inspectSessionLease(sessionFile: string, rootDir = SESSION_LEASES_DIR): SessionLeaseState {
+	const canonicalSessionFile = canonicalSessionFilePath(sessionFile);
+	const canonicalSessionIdValue = canonicalSessionId(canonicalSessionFile);
+	const leaseDir = path.join(rootDir, canonicalSessionIdValue);
+	if (!fs.existsSync(leaseDir)) return { state: "free", canonicalSessionFile, canonicalSessionId: canonicalSessionIdValue };
+	const owner = readLeaseOwner(leaseDir);
+	return owner
+		? { state: "owned", canonicalSessionFile, canonicalSessionId: canonicalSessionIdValue, owner }
+		: { state: "unreadable", canonicalSessionFile, canonicalSessionId: canonicalSessionIdValue };
 }
 
 function parseOwner(value: unknown): SessionLeaseOwner | undefined {
