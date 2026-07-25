@@ -7,6 +7,7 @@ import {
 	finalizeProcessTerminal,
 	processTerminalPath,
 	readProcessTerminal,
+	sanitizeProcessTerminal,
 	writeProcessTerminalCandidate,
 } from "../../src/runs/background/process-terminal.ts";
 
@@ -134,6 +135,51 @@ test("process-terminal preserves stopped non-resumability and requires lease rel
 	} finally {
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 	}
+});
+
+
+test("process-terminal rejects cross-run observed sidecars and inconsistent expected writer maps", () => {
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-process-terminal-"));
+	try {
+		fs.writeFileSync(processTerminalPath(asyncDir), JSON.stringify({
+			version: 1,
+			state: "observed",
+			runId: "wrong-run",
+			runnerProcessInstanceId: "runner-1",
+			observedAt: 10,
+			instances: [{ processInstanceId: "runner-1", kind: "runner", closeObservedAt: 10, exitCode: 0, signal: null }],
+		}));
+		const crossRun = finalizeProcessTerminal(asyncDir, "actual-run", { processInstanceId: "runner-1", closeObservedAt: 20, exitCode: 0, signal: null });
+		assert.equal(crossRun.state, "unknown");
+		assert.equal(crossRun.reason, "proof-write-failed");
+		assert.match(crossRun.diagnostic ?? "", /wrong-run|expected/);
+
+		fs.rmSync(processTerminalPath(asyncDir), { force: true });
+		writeProcessTerminalCandidate(asyncDir, {
+			version: 1,
+			runId: "actual-run",
+			runnerProcessInstanceId: "runner-1",
+			expectedWriters: { "0": 0 },
+			writers: {
+				"0": [{ processInstanceId: "unexpected-writer", kind: "pi-writer", attempt: 0, closeObservedAt: 10, exitCode: 0, signal: null }],
+			},
+		});
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "actual-run", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "complete" }] }));
+		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
+		const inconsistent = finalizeProcessTerminal(asyncDir, "actual-run", { processInstanceId: "runner-1", closeObservedAt: 30, exitCode: 0, signal: null });
+		assert.equal(inconsistent.state, "unknown");
+		assert.equal(inconsistent.reason, "writer-close-unverified");
+	} finally {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+	}
+});
+
+test("process-terminal sanitizes malformed status fallback proofs", () => {
+	const malformed = readProcessTerminal("/no/such/dir", { runId: "run-fallback", runnerProcessInstanceId: "runner-fallback" });
+	assert.equal(malformed, undefined);
+	const sanitized = sanitizeProcessTerminal({ version: 1, state: "bogus", runId: "run-fallback", runnerProcessInstanceId: "runner-fallback" }, { runId: "run-fallback", runnerProcessInstanceId: "runner-fallback" }, "status.json");
+	assert.equal(sanitized?.state, "unknown");
+	assert.equal(sanitized?.reason, "proof-write-failed");
 });
 
 test("process-terminal reports unknown when the runner candidate is unavailable", () => {

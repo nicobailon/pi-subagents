@@ -470,7 +470,20 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 			if (!persisted) return;
 			if (launch.nestedRoute && launch.nestedSelf) {
 				try {
-					const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as import("../../shared/types.ts").AsyncStatus;
+					let status: import("../../shared/types.ts").AsyncStatus;
+					try {
+						status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as import("../../shared/types.ts").AsyncStatus;
+						status.processTerminal = persisted;
+					} catch {
+						status = {
+							runId,
+							mode: "single",
+							state: persisted.state === "observed" ? "complete" : "failed",
+							startedAt: persisted.observedAt ?? Date.now(),
+							lastUpdate: Date.now(),
+							processTerminal: persisted,
+						};
+					}
 					writeNestedEvent(launch.nestedRoute, {
 						type: "subagent.nested.completed",
 						ts: Date.now(),
