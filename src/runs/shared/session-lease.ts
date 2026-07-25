@@ -37,7 +37,7 @@ export interface SessionLeaseHandle {
 	leaseDir: string;
 	owner: SessionLeaseOwner;
 	updateWriter(writer: { state: "none" | "spawning" } | { state: "running"; pid: number }): void;
-	release(): void;
+	release(): boolean;
 }
 
 export type SessionLeaseState =
@@ -270,8 +270,9 @@ export function acquireSessionLease(request: SessionLeaseRequest, options: Sessi
 				},
 				release() {
 					const currentOwner = readLeaseOwner(leaseDir);
-					if (!currentOwner || currentOwner.token !== owner.token) return;
+					if (!currentOwner || currentOwner.token !== owner.token) return false;
 					fs.rmSync(leaseDir, { recursive: true, force: true });
+					return !fs.existsSync(leaseDir);
 				},
 			};
 		}

@@ -6,6 +6,7 @@ import test from "node:test";
 import {
 	finalizeProcessTerminal,
 	processTerminalPath,
+	readProcessTerminal,
 	writeProcessTerminalCandidate,
 } from "../../src/runs/background/process-terminal.ts";
 
@@ -16,6 +17,7 @@ test("process-terminal proof requires the matching runner instance and writer cl
 			version: 1,
 			runId: "run-1",
 			runnerProcessInstanceId: "runner-1",
+			expectedWriters: { "0": 1 },
 			writers: {
 				"0": [{
 					processInstanceId: "writer-1",
@@ -49,6 +51,86 @@ test("process-terminal proof requires the matching runner instance and writer cl
 		assert.equal(observed.state, "observed");
 		assert.equal(observed.instances?.length, 2);
 		assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")).processTerminal.state, "observed");
+	} finally {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+	}
+});
+
+test("process-terminal rejects missing writer close evidence", () => {
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-process-terminal-"));
+	try {
+		writeProcessTerminalCandidate(asyncDir, {
+			version: 1,
+			runId: "run-missing-writer",
+			runnerProcessInstanceId: "runner-missing-writer",
+			expectedWriters: { "0": 1 },
+			writers: { "0": [] },
+		});
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "run-missing-writer", state: "complete", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "complete" }] }));
+		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
+		const proof = finalizeProcessTerminal(asyncDir, "run-missing-writer", {
+			processInstanceId: "runner-missing-writer",
+			closeObservedAt: 40,
+			exitCode: 1,
+			signal: null,
+		});
+		assert.equal(proof.state, "unknown");
+		assert.equal(proof.reason, "writer-close-unverified");
+	} finally {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+	}
+});
+
+test("malformed process-terminal sidecars project unknown instead of throwing", () => {
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-process-terminal-"));
+	try {
+		fs.writeFileSync(processTerminalPath(asyncDir), JSON.stringify({ version: 1, state: "bogus" }));
+		const proof = readProcessTerminal(asyncDir, { runId: "malformed-run", runnerProcessInstanceId: "malformed-runner" });
+		assert.equal(proof?.state, "unknown");
+		assert.equal(proof?.reason, "proof-write-failed");
+		assert.match(proof?.diagnostic ?? "", /Invalid process-terminal proof/);
+		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
+		const finalized = finalizeProcessTerminal(asyncDir, "malformed-run", {
+			processInstanceId: "malformed-runner",
+			closeObservedAt: 10,
+			exitCode: 1,
+			signal: null,
+		});
+		assert.equal(finalized.state, "unknown");
+	} finally {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+	}
+});
+
+test("process-terminal preserves stopped non-resumability and requires lease release acknowledgement", () => {
+	const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-process-terminal-"));
+	try {
+		writeProcessTerminalCandidate(asyncDir, {
+			version: 1,
+			runId: "stopped-run",
+			runnerProcessInstanceId: "stopped-runner",
+			expectedWriters: { "0": 1 },
+			writers: {
+				"0": [{ processInstanceId: "stopped-writer", kind: "pi-writer", attempt: 0, closeObservedAt: 10, exitCode: 0, signal: null }],
+			},
+			revivalLeaseToken: "lease-token",
+			revivalLeaseReleaseAcknowledged: false,
+		});
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: "stopped-run", state: "stopped", lifecycleArtifactVersion: 3, steps: [{ agent: "worker", status: "stopped" }] }));
+		fs.writeFileSync(path.join(asyncDir, "events.jsonl"), "");
+		const unverified = finalizeProcessTerminal(asyncDir, "stopped-run", { processInstanceId: "stopped-runner", closeObservedAt: 20, exitCode: 0, signal: null });
+		assert.equal(unverified.state, "unknown");
+		assert.equal(unverified.reason, "canonical-session-release-unverified");
+
+		fs.rmSync(processTerminalPath(asyncDir), { force: true });
+		const candidatePath = path.join(asyncDir, "process-terminal-candidate.json");
+		const candidate = JSON.parse(fs.readFileSync(candidatePath, "utf8"));
+		candidate.revivalLeaseReleaseAcknowledged = true;
+		delete candidate.revivalLeaseToken;
+		fs.writeFileSync(candidatePath, JSON.stringify(candidate));
+		const observed = finalizeProcessTerminal(asyncDir, "stopped-run", { processInstanceId: "stopped-runner", closeObservedAt: 30, exitCode: 0, signal: null });
+		assert.equal(observed.state, "observed");
+		assert.equal(observed.resumeDisposition, "non-resumable");
 	} finally {
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 	}

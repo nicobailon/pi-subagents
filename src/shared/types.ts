@@ -328,6 +328,7 @@ export type ProcessTerminalReason =
 	| "writer-close-unverified"
 	| "canonical-session-unavailable"
 	| "canonical-session-lease-active"
+	| "canonical-session-release-unverified"
 	| "proof-write-failed"
 	| "stale-repair";
 
@@ -358,6 +359,7 @@ export interface ProcessTerminalV1 {
 	canonicalSession?: CanonicalSessionTerminalV1;
 	resumeDisposition?: "resumable" | "non-resumable" | "unavailable";
 	reason?: ProcessTerminalReason;
+	diagnostic?: string;
 }
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";

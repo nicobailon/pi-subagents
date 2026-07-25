@@ -105,9 +105,9 @@ describe("session revival leases", () => {
 					&& error.owner?.runId === "revive-a"
 					&& /already owned by run 'revive-a'/.test(error.message),
 			);
-			first.release();
+			assert.equal(first.release(), true);
 			const second = acquireSessionLease(request(sessionFile, "revive-b"), { rootDir: leases, token: () => "token-b" });
-			second.release();
+			assert.equal(second.release(), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

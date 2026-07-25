@@ -50,12 +50,12 @@ import {
 	getAsyncConfigPath,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
-import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
+import { nestedResultsPath, nestedSummaryFromAsyncStatus, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
 import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
-import { finalizeProcessTerminal } from "./process-terminal.ts";
+import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 
 const require = createRequire(import.meta.url);
@@ -456,16 +456,41 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 			console.error(`[pi-subagents] async spawn failed: ${error.message}`);
 		});
 		proc.once("close", (exitCode, signal) => {
-			const asyncDir = (launchConfig as { asyncDir?: unknown }).asyncDir;
-			const runId = (launchConfig as { id?: unknown }).id;
+			const launch = launchConfig as { asyncDir?: unknown; id?: unknown; nestedRoute?: NestedRouteInfo; nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> } };
+			const asyncDir = launch.asyncDir;
+			const runId = launch.id;
 			if (typeof asyncDir !== "string" || typeof runId !== "string") return;
-			const proof = finalizeProcessTerminal(asyncDir, runId, {
+			finalizeProcessTerminal(asyncDir, runId, {
 				processInstanceId: runnerProcessInstanceId,
 				closeObservedAt: Date.now(),
 				exitCode,
 				signal,
 			});
-			onProcessTerminal?.(proof);
+			const persisted = readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId });
+			if (!persisted) return;
+			if (launch.nestedRoute && launch.nestedSelf) {
+				try {
+					const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as import("../../shared/types.ts").AsyncStatus;
+					writeNestedEvent(launch.nestedRoute, {
+						type: "subagent.nested.completed",
+						ts: Date.now(),
+						parentRunId: launch.nestedSelf.parentRunId,
+						parentStepIndex: launch.nestedSelf.parentStepIndex,
+						child: nestedSummaryFromAsyncStatus(status, asyncDir, {
+							id: runId,
+							parentRunId: launch.nestedSelf.parentRunId,
+							parentStepIndex: launch.nestedSelf.parentStepIndex,
+							depth: launch.nestedSelf.depth,
+							path: launch.nestedSelf.path,
+							mode: status.mode,
+							ts: Date.now(),
+						}),
+					});
+				} catch (error) {
+					console.error("Failed to emit final nested process-terminal status:", error);
+				}
+			}
+			onProcessTerminal?.(persisted);
 		});
 		if (typeof proc.pid !== "number") {
 			return { error: `async runner did not produce a pid for cwd: ${cwd}` };

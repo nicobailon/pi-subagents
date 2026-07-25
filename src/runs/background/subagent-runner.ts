@@ -65,6 +65,7 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
+import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, readStatus } from "../../shared/utils.ts";
@@ -190,6 +191,7 @@ interface StepResult {
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 	writerProcesses?: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }>;
+	writerAttemptCount?: number;
 }
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -1008,6 +1010,7 @@ async function runSingleStep(
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	writerAttemptCount?: number;
 }> {
 	if (step.importAsyncRoot) {
 		let importTimedOut = false;
@@ -1121,6 +1124,7 @@ async function runSingleStep(
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
 	const writerProcesses: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }> = [];
+	let writerAttemptCount = 0;
 	const attemptNotes: string[] = [];
 	const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
 	let finalResult: RunPiStreamingResult | undefined;
@@ -1187,6 +1191,7 @@ async function runSingleStep(
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
 		});
+		writerAttemptCount += 1;
 		const run = await runPiStreaming(
 			args,
 			step.cwd ?? ctx.cwd,
@@ -1461,6 +1466,7 @@ async function runSingleStep(
 		acceptance: effectiveAcceptance,
 		watchdog: finalResult?.watchdog,
 		writerProcesses,
+		writerAttemptCount,
 	};
 	return isAgentContractV1(step.agentContract) ? attachContractProjections(result as unknown as import("../../shared/types.ts").SingleResult) as unknown as typeof result : result;
 }
@@ -3929,14 +3935,17 @@ async function runSubagent(
 	}
 	if (config.runnerProcessInstanceId) {
 		const writers: Record<string, Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }>> = {};
+		const expectedWriters: Record<string, number> = {};
 		for (const [index, result] of results.entries()) {
-			if (result.writerProcesses?.length) writers[String(index)] = result.writerProcesses;
+			writers[String(index)] = result.writerProcesses ?? [];
+			expectedWriters[String(index)] = result.writerAttemptCount ?? 0;
 		}
 		const candidate: ProcessTerminalCandidate = {
 			version: 1,
 			runId: id,
 			runnerProcessInstanceId: config.runnerProcessInstanceId,
 			writers,
+			expectedWriters,
 			...(config.revivalLease?.sessionFile ? { sessionFile: config.revivalLease.sessionFile } : {}),
 			...(config.revivalLeaseToken ? { revivalLeaseToken: config.revivalLeaseToken } : {}),
 		};
@@ -4016,10 +4025,16 @@ async function runConfiguredSubagent(config: SubagentRunConfig): Promise<void> {
 	} finally {
 		process.off("exit", releaseOnExit);
 		if (lease) {
+			let acknowledged = false;
 			try {
-				lease.release();
+				acknowledged = lease.release();
 			} catch (error) {
 				console.error("Failed to release session revival lease:", error);
+			}
+			try {
+				markProcessTerminalCandidateLeaseRelease(config.asyncDir, lease.owner.token, acknowledged);
+			} catch (error) {
+				console.error("Failed to record session revival lease release:", error);
 			}
 		}
 	}

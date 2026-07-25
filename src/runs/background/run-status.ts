@@ -352,7 +352,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
 			const statusActivityText = status.state === "running" ? formatActivityLabel(status.lastActivityAt, status.activityState) : undefined;
 			const steeringText = formatSteeringSummary(status);
-			const processTerminal = status.processTerminal ?? readProcessTerminal(asyncDir);
+			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }) ?? status.processTerminal;
 
 			const lines = [
 				`Run: ${status.runId}`,

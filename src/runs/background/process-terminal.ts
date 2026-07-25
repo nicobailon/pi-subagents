@@ -16,8 +16,10 @@ export interface ProcessTerminalCandidate {
 	runId: string;
 	runnerProcessInstanceId: string;
 	writers: Record<string, ProcessInstanceExitV1[]>;
+	expectedWriters?: Record<string, number>;
 	sessionFile?: string;
 	revivalLeaseToken?: string;
+	revivalLeaseReleaseAcknowledged?: boolean;
 }
 
 export interface RunnerCloseObservation {
@@ -50,6 +52,10 @@ export function processTerminalPath(asyncDir: string): string {
 	return path.join(asyncDir, "process-terminal.json");
 }
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export function readProcessTerminalCandidate(asyncDir: string): ProcessTerminalCandidate | undefined {
 	try {
 		const raw = JSON.parse(fs.readFileSync(processTerminalCandidatePath(asyncDir), "utf-8")) as unknown;
@@ -61,15 +67,27 @@ export function readProcessTerminalCandidate(asyncDir: string): ProcessTerminalC
 			if (!Array.isArray(entries) || !entries.every(validInstance)) throw new Error(`Invalid writer process records for child '${index}'.`);
 			writers[index] = entries;
 		}
+		let expectedWriters: Record<string, number> | undefined;
+		if (raw.expectedWriters !== undefined) {
+			if (!isRecord(raw.expectedWriters)) throw new Error("Invalid expected writer process records.");
+			expectedWriters = {};
+			for (const [index, count] of Object.entries(raw.expectedWriters)) {
+				if (typeof count !== "number" || !Number.isInteger(count) || count < 0) throw new Error(`Invalid expected writer count for child '${index}'.`);
+				expectedWriters[index] = count;
+			}
+		}
 		if (raw.sessionFile !== undefined && typeof raw.sessionFile !== "string") throw new Error("Invalid process-terminal candidate sessionFile.");
 		if (raw.revivalLeaseToken !== undefined && typeof raw.revivalLeaseToken !== "string") throw new Error("Invalid process-terminal candidate lease token.");
+		if (raw.revivalLeaseReleaseAcknowledged !== undefined && typeof raw.revivalLeaseReleaseAcknowledged !== "boolean") throw new Error("Invalid process-terminal lease release acknowledgement.");
 		return {
 			version: 1,
 			runId: raw.runId,
 			runnerProcessInstanceId: raw.runnerProcessInstanceId,
 			writers,
+			...(expectedWriters ? { expectedWriters } : {}),
 			...(raw.sessionFile ? { sessionFile: raw.sessionFile } : {}),
 			...(raw.revivalLeaseToken ? { revivalLeaseToken: raw.revivalLeaseToken } : {}),
+			...(raw.revivalLeaseReleaseAcknowledged !== undefined ? { revivalLeaseReleaseAcknowledged: raw.revivalLeaseReleaseAcknowledged } : {}),
 		};
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -81,14 +99,25 @@ export function writeProcessTerminalCandidate(asyncDir: string, candidate: Proce
 	writePrivateAtomicJson(processTerminalCandidatePath(asyncDir), candidate);
 }
 
-function unknownProof(runId: string, runnerProcessInstanceId: string, reason: ProcessTerminalReason): ProcessTerminalV1 {
-	return { version: 1, state: "unknown", runId, runnerProcessInstanceId, reason };
+export function markProcessTerminalCandidateLeaseRelease(asyncDir: string, token: string, acknowledged: boolean): void {
+	const candidate = readProcessTerminalCandidate(asyncDir);
+	if (!candidate || candidate.revivalLeaseToken !== token) return;
+	writeProcessTerminalCandidate(asyncDir, { ...candidate, revivalLeaseReleaseAcknowledged: acknowledged });
 }
 
-function sessionProjection(candidate: ProcessTerminalCandidate): CanonicalSessionTerminalV1 | undefined {
-	if (!candidate.sessionFile) return undefined;
-	const lease = inspectSessionLease(candidate.sessionFile);
-	if (lease.state !== "free") return undefined;
+function unknownProof(runId: string, runnerProcessInstanceId: string, reason: ProcessTerminalReason, diagnostic?: string): ProcessTerminalV1 {
+	return { version: 1, state: "unknown", runId, runnerProcessInstanceId, reason, ...(diagnostic ? { diagnostic } : {}) };
+}
+
+function resumeDisposition(state: string | undefined, sessionFile: string | undefined): "resumable" | "non-resumable" | "unavailable" {
+	if (state === "stopped") return "non-resumable";
+	if (state !== "complete" && state !== "completed" && state !== "failed" && state !== "paused") return "unavailable";
+	return sessionFile && fs.existsSync(sessionFile) ? "resumable" : "unavailable";
+}
+
+function sessionProjection(candidate: ProcessTerminalCandidate, lease: ReturnType<typeof inspectSessionLease>): CanonicalSessionTerminalV1 | undefined {
+	if (!candidate.sessionFile || lease.state !== "free") return undefined;
+	if (candidate.revivalLeaseToken && candidate.revivalLeaseReleaseAcknowledged !== true) return undefined;
 	return {
 		canonicalSessionId: canonicalSessionId(candidate.sessionFile),
 		leaseDisposition: candidate.revivalLeaseToken ? "released" : "not-held",
@@ -97,14 +126,25 @@ function sessionProjection(candidate: ProcessTerminalCandidate): CanonicalSessio
 	};
 }
 
-export function readProcessTerminal(asyncDir: string): ProcessTerminalV1 | undefined {
+function validateProof(raw: unknown, asyncDir: string): raw is ProcessTerminalV1 {
+	if (!isRecord(raw) || raw.version !== 1 || !["pending", "observed", "unknown", "not-started"].includes(String(raw.state)) || typeof raw.runId !== "string" || typeof raw.runnerProcessInstanceId !== "string") {
+		throw new Error(`Invalid process-terminal proof in '${asyncDir}'.`);
+	}
+	if (raw.instances !== undefined && (!Array.isArray(raw.instances) || !raw.instances.every((entry) => isRecord(entry) && (entry.kind === "runner" || validInstance(entry))))) {
+		throw new Error(`Invalid process-terminal instances in '${asyncDir}'.`);
+	}
+	if (raw.resumeDisposition !== undefined && !["resumable", "non-resumable", "unavailable"].includes(String(raw.resumeDisposition))) throw new Error(`Invalid process-terminal resume disposition in '${asyncDir}'.`);
+	return true;
+}
+
+export function readProcessTerminal(asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): ProcessTerminalV1 | undefined {
 	try {
 		const raw = JSON.parse(fs.readFileSync(processTerminalPath(asyncDir), "utf-8")) as unknown;
-		if (!isRecord(raw) || raw.version !== 1 || typeof raw.state !== "string" || typeof raw.runId !== "string" || typeof raw.runnerProcessInstanceId !== "string") throw new Error(`Invalid process-terminal proof in '${asyncDir}'.`);
-		return raw as unknown as ProcessTerminalV1;
+		validateProof(raw, asyncDir);
+		return raw;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw error;
+		return unknownProof(fallback?.runId ?? path.basename(asyncDir), fallback?.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));
 	}
 }
 
@@ -116,14 +156,20 @@ function overlayStatus(asyncDir: string, proof: ProcessTerminalV1, candidate?: P
 		if (status.steps) {
 			for (const [index, step] of status.steps.entries()) {
 				const records = candidate?.writers[String(index)] ?? [];
-				step.processTerminal = records.length > 0
-					? { ...proof, childIndex: index, instances: records }
-					: { version: 1, state: "not-started", runId: proof.runId, childIndex: index, runnerProcessInstanceId: proof.runnerProcessInstanceId };
+				const expected = candidate?.expectedWriters?.[String(index)] ?? (records.length > 0 ? records.length : 0);
+				const stepState = expected === 0 ? "not-started" : proof.state === "observed" && records.length === expected ? "observed" : proof.state === "pending" ? "pending" : "unknown";
+				step.processTerminal = {
+					...proof,
+					state: stepState,
+					childIndex: index,
+					...(records.length ? { instances: records } : {}),
+					resumeDisposition: resumeDisposition(step.status, step.sessionFile ?? candidate?.sessionFile),
+				};
 			}
 		}
 		writeAtomicJson(statusPath, status);
 	} catch {
-		// A proof sidecar remains authoritative when terminal status is unavailable.
+		// The proof sidecar remains authoritative when terminal status is unavailable.
 	}
 }
 
@@ -132,7 +178,8 @@ export function finalizeProcessTerminal(
 	runId: string,
 	runnerClose: RunnerCloseObservation,
 ): ProcessTerminalV1 {
-	const existing = readProcessTerminal(asyncDir);
+	const existing = readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: runnerClose.processInstanceId });
+	if (existing?.reason === "proof-write-failed" && fs.existsSync(processTerminalPath(asyncDir))) return existing;
 	if (existing?.state === "observed" && existing.runnerProcessInstanceId === runnerClose.processInstanceId) return existing;
 	let proof: ProcessTerminalV1;
 	let candidateForOverlay: ProcessTerminalCandidate | undefined;
@@ -143,13 +190,21 @@ export function finalizeProcessTerminal(
 		else if (candidate.runId !== runId || candidate.runnerProcessInstanceId !== runnerClose.processInstanceId) proof = unknownProof(runId, runnerClose.processInstanceId, "runner-instance-mismatch");
 		else {
 			const allWriters = Object.values(candidate.writers).flat();
+			const status = (() => {
+				try { return JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatus; } catch { return undefined; }
+			})();
 			const session = candidate.sessionFile ? inspectSessionLease(candidate.sessionFile) : undefined;
+			const expectedEntries = Object.entries(candidate.expectedWriters ?? {});
+			const missingWriters = expectedEntries.some(([index, expected]) => (candidate.writers[index]?.length ?? 0) !== expected && expected > 0);
 			if (session && session.state !== "free") {
 				proof = unknownProof(runId, runnerClose.processInstanceId, session.state === "owned" ? "canonical-session-lease-active" : "canonical-session-unavailable");
-			} else if (allWriters.some((entry) => !validInstance(entry))) {
+			} else if (candidate.revivalLeaseToken && candidate.revivalLeaseReleaseAcknowledged !== true) {
+				proof = unknownProof(runId, runnerClose.processInstanceId, "canonical-session-release-unverified");
+			} else if (missingWriters || (allWriters.length === 0 && expectedEntries.length === 0)) {
 				proof = unknownProof(runId, runnerClose.processInstanceId, "writer-close-unverified");
 			} else {
 				const runner: ProcessInstanceExitV1 = { kind: "runner", ...runnerClose };
+				const canonicalSession = session && sessionProjection(candidate, session);
 				proof = {
 					version: 1,
 					state: "observed",
@@ -157,19 +212,22 @@ export function finalizeProcessTerminal(
 					runnerProcessInstanceId: runnerClose.processInstanceId,
 					observedAt: runnerClose.closeObservedAt,
 					instances: [runner, ...allWriters],
-					...(sessionProjection(candidate) ? { canonicalSession: sessionProjection(candidate) } : {}),
+					resumeDisposition: resumeDisposition(status?.state, candidate.sessionFile ?? status?.sessionFile),
+					...(canonicalSession ? { canonicalSession } : {}),
 				};
 			}
 		}
-	} catch {
-		proof = unknownProof(runId, runnerClose.processInstanceId, "proof-write-failed");
+	} catch (error) {
+		proof = unknownProof(runId, runnerClose.processInstanceId, "proof-write-failed", errorMessage(error));
 	}
+	let durable = false;
 	try {
-		writePrivateAtomicJson(processTerminalPath(asyncDir), proof);
+		writeAtomicJson(processTerminalPath(asyncDir), proof);
+		durable = true;
 		overlayStatus(asyncDir, proof, candidateForOverlay);
 		fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: "subagent.run.process_terminal", lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, ts: Date.now(), runId, processTerminal: proof })}\n`, "utf-8");
 	} catch {
-		// The caller still receives the proof; status/event persistence is best effort.
+		// Do not emit a process-terminal event when the proof sidecar was not durable.
 	}
-	return proof;
+	return durable ? proof : unknownProof(runId, runnerClose.processInstanceId, "proof-write-failed", "Failed to persist process-terminal proof.");
 }
