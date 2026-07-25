@@ -261,14 +261,16 @@ Direct settings example:
 
 Useful override fields: `model`, `fallbackModels`, `thinking`,
 `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`,
-`acceptanceRole`, `disabled`, `skills`, `tools`, and `systemPrompt`. Use
-`acceptanceRole: false` to clear an override. Create a user or project
+`acceptanceRole`, `disabled`, `skills`, `tools`, `extensions`, and `systemPrompt`.
+Use `acceptanceRole: false` to clear an override. Create a user or project
 agent with the same name only when you want a substantially different agent.
 
 If a provider rejects model IDs with thinking suffixes, use
 `subagents.disableThinking: true` in user or project settings to clear bundled
 builtin thinking defaults globally. A higher-precedence per-agent `thinking`
 override can opt one builtin back in. Existing custom-agent frontmatter remains authoritative.
+
+Set `subagents.defaultExtensions` to give agents without an `extensions` field a shared child extension allowlist. Omit it to preserve ambient extension discovery, set it to `[]` to disable ambient extensions by default, or use `agentOverrides.<name>.extensions` for one agent. Explicit custom-agent frontmatter still wins.
 
 Tool description modes live in `~/.pi/agent/extensions/subagent/config.json`, not `subagents` settings. Set `toolDescriptionMode` to `compact` to reduce tool-description prompt cost while keeping the execution, async/`subagent_wait`, child-safety, one-writer, management/action, and artifact/status guardrails. Set it to `custom` to read `subagent-tool-description.md` from the project config dir or agent dir; invalid custom files fall back to full mode and the safety guidance is still appended.
 
