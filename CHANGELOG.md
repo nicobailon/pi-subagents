@@ -12,6 +12,7 @@
 - Documented that builtin worker and delegate agents use strict tool allowlists and do not inherit ambient parent extension tools; custom agents must explicitly name extension tools and load their providers. Thanks to buihongduc132 for #586.
 
 ### Fixed
+- Preferred direct empty terminal-response evidence over stale tool errors so fallback models can retry abandoned child turns, and stopped treating successful tool output as a hidden failure. Thanks to Dmitry S. (@nuzayets) for #645.
 - Separated evidence acceptance from independent review: evidence levels now end at `verified`, risky runs carry an orthogonal review requirement, `review-required` reports pending review while preserving `evidenceStatus`, and `reviewed` is reserved for achieved independent review. Explicit `reviewed` remains schema-recognized solely for actionable preflight recovery. Thanks to Theodor Hillmann (@t0dorakis) for #440.
 - Bound public preflight launch digests to resolved skill injection metadata, matching execution when skill descriptions change.
 - Classified missing resolved MCP direct tools as a host/pi-mcp-adapter child-registration problem while preserving strict fail-closed diagnostics. Thanks to peedrr for #638.

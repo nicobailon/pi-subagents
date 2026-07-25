@@ -412,6 +412,14 @@ export function compactForegroundDetails(details: Details): Details {
 	};
 }
 
+export function hasEmptyTerminalAssistantResponse(messages: Message[]): boolean {
+	const lastAssistant = messages.findLast((message) => message.role === "assistant");
+	return lastAssistant?.role === "assistant"
+		&& Array.isArray(lastAssistant.content)
+		&& lastAssistant.content.length === 0
+		&& lastAssistant.usage.output === 0;
+}
+
 /**
  * Detect errors in subagent execution from messages (only errors with no subsequent success)
  */
@@ -438,50 +446,17 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 		const toolName = "toolName" in msg && typeof msg.toolName === "string" ? msg.toolName : undefined;
 		const isError = "isError" in msg && msg.isError === true;
 
-		if (isError) {
-			const text = msg.content.find((c) => c.type === "text");
-			const details = text && "text" in text ? text.text : undefined;
-			const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-			return {
-				hasError: true,
-				exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
-				errorType: toolName || "tool",
-				details: details?.slice(0, 200),
-			};
-		}
-
-		if (toolName !== "bash") continue;
+		if (!isError) continue;
 
 		const text = msg.content.find((c) => c.type === "text");
-		if (!text || !("text" in text)) continue;
-		const output = text.text;
-
-		const exitMatch = output.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-		if (exitMatch) {
-			const code = parseInt(exitMatch[1], 10);
-			if (code !== 0) {
-				return { hasError: true, exitCode: code, errorType: "bash", details: output.slice(0, 200) };
-			}
-		}
-
-		// NOTE: These patterns can match legitimate output (grep results, logs,
-		// testing). With the assistant-message check above, most false positives
-		// are mitigated since the agent will have responded after routine errors.
-		const fatalPatterns = [
-			/command not found/i,
-			/permission denied/i,
-			/no such file or directory/i,
-			/segmentation fault/i,
-			/killed|terminated/i,
-			/out of memory/i,
-			/connection refused/i,
-			/timeout/i,
-		];
-		for (const pattern of fatalPatterns) {
-			if (pattern.test(output)) {
-				return { hasError: true, exitCode: 1, errorType: "bash", details: output.slice(0, 200) };
-			}
-		}
+		const details = text && "text" in text ? text.text : undefined;
+		const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+		return {
+			hasError: true,
+			exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
+			errorType: toolName || "tool",
+			details: details?.slice(0, 200),
+		};
 	}
 
 	return { hasError: false };

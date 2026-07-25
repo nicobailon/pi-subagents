@@ -49,13 +49,13 @@ describe("detectSubagentError", { skip: !detectSubagentError ? "utils not import
 		assert.equal(result.hasError, false);
 	});
 
-	it("detects fatal bash error in last tool result", () => {
+	it("detects bash error in last tool result", () => {
 		const messages = [
 			{ role: "assistant", content: [{ type: "text", text: "Running..." }] },
 			{
 				role: "toolResult",
 				toolName: "bash",
-				isError: false,
+				isError: true,
 				content: [{ type: "text", text: "command not found" }],
 			},
 		];
@@ -64,13 +64,13 @@ describe("detectSubagentError", { skip: !detectSubagentError ? "utils not import
 		assert.equal(result.errorType, "bash");
 	});
 
-	it("detects non-zero exit code in bash output", () => {
+	it("extracts a non-zero exit code from bash error output", () => {
 		const messages = [
 			{ role: "assistant", content: [{ type: "text", text: "Running..." }] },
 			{
 				role: "toolResult",
 				toolName: "bash",
-				isError: false,
+				isError: true,
 				content: [{ type: "text", text: "Error: process exited with code 127" }],
 			},
 		];
@@ -146,9 +146,10 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 	it("detectSubagentError overrides exit 0 on hidden failure", async () => {
 		mockPi.onCall({
 			jsonl: [
+				events.assistantMessage("Starting deployment"),
 				events.toolStart("bash", { command: "deploy" }),
 				events.toolEnd("bash"),
-				events.toolResult("bash", "connection refused"),
+				events.toolResult("bash", "connection refused", true),
 			],
 		});
 		const agents = makeAgentConfigs(["deployer"]);

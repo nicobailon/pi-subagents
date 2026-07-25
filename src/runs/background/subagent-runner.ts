@@ -68,7 +68,7 @@ import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model
 import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
-import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, readStatus } from "../../shared/utils.ts";
+import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import {
 	createMutatingFailureState,
@@ -1293,7 +1293,12 @@ async function runSingleStep(
 		const missingStructuredOutput = effectiveStructuredOutput
 			? !fs.existsSync(effectiveStructuredOutput.outputPath)
 			: false;
-		const emptyOutputError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !run.finalOutput.trim() && (!effectiveStructuredOutput || missingStructuredOutput)
+		const emptyOutputError = run.exitCode === 0
+			&& !run.error
+			&& !toolAvailabilityError
+			&& !run.finalOutput.trim()
+			&& (!effectiveStructuredOutput || missingStructuredOutput)
+			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;
 		let structuredOutput: unknown;
@@ -1329,23 +1334,22 @@ async function runSingleStep(
 		const completionGuardError = completionGuardTriggered && !isAgentContractV1(step.agentContract)
 			? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
 			: undefined;
-		const effectiveExitCode = toolAvailabilityError || (completionGuardTriggered && !isAgentContractV1(step.agentContract)) || structuredError
+		const effectiveExitCode = toolAvailabilityError || (completionGuardTriggered && !isAgentContractV1(step.agentContract)) || structuredError || emptyOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
-				: emptyOutputError
+				: run.error && run.exitCode === 0
 					? 1
-					: run.error && run.exitCode === 0
-						? 1
-						: run.exitCode;
+					: run.exitCode;
 		const error = toolAvailabilityError
 			?? completionGuardError
 			?? structuredError
+			?? emptyOutputError
 			?? (hiddenError?.hasError
 				? hiddenError.details
 					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
 					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-				: emptyOutputError ?? (run.error || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined)));
+				: run.error || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
 		const attempt: ModelAttempt = {
 			model: candidate ?? run.model ?? step.model ?? "default",
 			success: effectiveExitCode === 0 && !error,

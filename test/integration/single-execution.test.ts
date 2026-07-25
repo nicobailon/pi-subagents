@@ -1629,6 +1629,40 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("prefers empty-output fallback over an earlier tool error", async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.toolResult("read", "ENOENT: no such file or directory", true),
+				events.toolResult("read", "recovered file contents"),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [],
+						model: "openai/gpt-5-mini",
+						stopReason: "stop",
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "fallback-empty-output-after-tool-error",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-sonnet-4");
+		assert.match(result.modelAttempts?.[0]?.error ?? "", /no output/i);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("fails zero-exit provider errors when no fallback succeeds", async () => {
 		mockPi.onCall({
 			jsonl: [{
@@ -1801,7 +1835,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("does not retry on ordinary task/tool failures", async () => {
 		mockPi.onCall({
-			jsonl: [events.toolResult("bash", "process exited with code 127")],
+			jsonl: [events.toolResult("bash", "process exited with code 127", true)],
 			exitCode: 0,
 		});
 		const agents = [makeAgent("echo", {

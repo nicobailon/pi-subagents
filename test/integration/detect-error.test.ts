@@ -69,6 +69,13 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 		assert.equal(detectSubagentError(messages).hasError, false);
 	});
 
+	it("does not infer failure from successful bash output", () => {
+		const messages = [
+			toolResult("bash", "diff --git a/src/queue.ts b/src/queue.ts\n+ await new Promise((resolve) => setTimeout(resolve, 0))"),
+		];
+		assert.equal(detectSubagentError(messages).hasError, false);
+	});
+
 	it("detects isError tool result as failure (no assistant response)", () => {
 		const messages = [
 			toolResult("read", "file contents"),
@@ -80,18 +87,18 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 		assert.match(result.details!, /EISDIR/);
 	});
 
-	it("detects bash fatal pattern (permission denied, no assistant response)", () => {
+	it("detects bash error (permission denied, no assistant response)", () => {
 		const messages = [
-			toolResult("bash", "ls: permission denied: /root/secret"),
+			toolResult("bash", "ls: permission denied: /root/secret", true),
 		];
 		const result = detectSubagentError(messages);
 		assert.equal(result.hasError, true);
 		assert.equal(result.errorType, "bash");
 	});
 
-	it("detects bash exit code in output", () => {
+	it("extracts a bash exit code from error output", () => {
 		const messages = [
-			toolResult("bash", "error: process exited with code 127"),
+			toolResult("bash", "error: process exited with code 127", true),
 		];
 		const result = detectSubagentError(messages);
 		assert.equal(result.hasError, true);
@@ -129,9 +136,9 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 			"agent produced substantive output after error — not a failure");
 	});
 
-	it("ignores bash fatal pattern when agent responded after", () => {
+	it("ignores bash error when agent responded after", () => {
 		const messages = [
-			toolResult("bash", "ls: permission denied: /root/secret"),
+			toolResult("bash", "ls: permission denied: /root/secret", true),
 			assistantMsg("I couldn't access /root/secret, but I found the data elsewhere."),
 		];
 		const result = detectSubagentError(messages);
@@ -145,7 +152,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 		const messages = [
 			assistantMsg("Here is my analysis..."),
 			toolResult("bash", "rm -rf /important", false),
-			toolResult("bash", "error: process exited with code 1", false),
+			toolResult("bash", "error: process exited with code 1", true),
 		];
 		const result = detectSubagentError(messages);
 		assert.equal(result.hasError, true);
@@ -168,7 +175,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 	it("flags error when no assistant messages at all", () => {
 		const messages = [
 			toolResult("read", "ok"),
-			toolResult("bash", "segmentation fault"),
+			toolResult("bash", "segmentation fault", true),
 		];
 		const result = detectSubagentError(messages);
 		assert.equal(result.hasError, true,
@@ -181,7 +188,7 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 		// assistant message doesn't count as recovery. The final tool result is
 		// successful to ensure this test actually distinguishes correct behavior.
 		const messages = [
-			toolResult("bash", "permission denied: /etc/shadow"),
+			toolResult("bash", "permission denied: /etc/shadow", true),
 			assistantToolCall("bash"),
 			toolResult("bash", "command succeeded"),
 		];

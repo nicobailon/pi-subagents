@@ -42,6 +42,7 @@ import {
 	getFinalOutput,
 	findLatestSessionFile,
 	detectSubagentError,
+	hasEmptyTerminalAssistantResponse,
 	extractToolArgsPreview,
 	extractTextFromContent,
 } from "../../shared/utils.ts";
@@ -1079,22 +1080,21 @@ async function runSingleAttempt(
 		result.exitCode = 1;
 	}
 	if (result.exitCode === 0 && !result.error) {
-		const errInfo = detectSubagentError(result.messages ?? []);
-		if (errInfo.hasError) {
+		const messages = result.messages ?? [];
+		const finalText = getFinalOutput(messages);
+		const missingStructuredOutput = options.structuredOutput
+			? !existsSync(options.structuredOutput.outputPath)
+			: false;
+		const errInfo = detectSubagentError(messages);
+		const missingOutput = !finalText?.trim() && (!options.structuredOutput || missingStructuredOutput);
+		if (missingOutput && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
+			result.exitCode = 1;
+			result.error = "Subagent produced no output (possible model cold-start or empty response).";
+		} else if (errInfo.hasError) {
 			result.exitCode = errInfo.exitCode ?? 1;
 			result.error = errInfo.details
 				? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
 				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
-		}
-	}
-	if (result.exitCode === 0 && !result.error) {
-		const finalText = getFinalOutput(result.messages ?? []);
-		const missingStructuredOutput = options.structuredOutput
-			? !existsSync(options.structuredOutput.outputPath)
-			: false;
-		if (!finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
-			result.exitCode = 1;
-			result.error = "Subagent produced no output (possible model cold-start or empty response).";
 		}
 	}
 	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
