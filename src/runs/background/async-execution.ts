@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
-import { applyThinkingSuffix } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
@@ -51,13 +51,14 @@ import {
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
 import { nestedResultsPath, nestedSummaryFromAsyncStatus, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent } from "../shared/nested-events.ts";
-import { initialTurnBudgetState } from "../shared/turn-budget.ts";
+import { appendTurnBudgetSystemPrompt, initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ImportedAsyncRoot } from "./chain-root-attachment.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
-import { resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { decodeSubagentCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -1216,6 +1217,39 @@ export function executeAsyncSingle(
 	const structuredOutput = params.structuredOutputSchema
 		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"))
 		: undefined;
+	const modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
+		applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined),
+	);
+	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(systemPrompt, params.turnBudget);
+	const toolPlan = resolvePiLaunchToolPlan({
+		tools: agentConfig.tools,
+		extensions: agentConfig.extensions,
+		subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
+		mcpDirectTools: agentConfig.mcpDirectTools,
+		cwd: runnerCwd,
+		requireReadTool: Boolean(resolvedSkills.length),
+		structuredOutput: Boolean(params.structuredOutputSchema),
+		capabilityCeiling,
+		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
+	});
+	const launchContractDigest = launchBindingDigest({
+		definitionDigest: agentDefinitionDigest(agentConfig),
+		task,
+		...(model ? { model } : {}),
+		modelCandidates,
+		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
+		systemPrompt: effectiveSystemPrompt,
+		systemPromptMode: agentConfig.systemPromptMode,
+		inheritProjectContext: agentConfig.inheritProjectContext,
+		inheritSkills: agentConfig.inheritSkills,
+		skills: resolvedSkills.map((skill) => skill.name),
+		tools: toolPlan.effectiveToolAllowlist,
+		extensions: toolPlan.extensionArgs,
+		mcpDirectTools: toolPlan.effectiveMcpTools,
+		...(outputPath ? { outputPath } : {}),
+		outputMode,
+		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
+	});
 	const resolvedAcceptance = resolveEffectiveAcceptance({
 		explicit: params.acceptance,
 		agentName: agent,
@@ -1227,6 +1261,7 @@ export function executeAsyncSingle(
 	});
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
+		launchContractDigest,
 		sourceRunId: id,
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
@@ -1284,9 +1319,7 @@ export function executeAsyncSingle(
 						cwd: runnerCwd,
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
-						modelCandidates: buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
-							applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined),
-						),
+						modelCandidates,
 						tools: agentConfig.tools,
 						extensions: agentConfig.extensions,
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
@@ -1303,6 +1336,9 @@ export function executeAsyncSingle(
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						waitToolEnabled: params.waitToolEnabled,
 						...(params.agentContract ? { agentContract: params.agentContract } : {}),
+						definitionDigest: agentDefinitionDigest(agentConfig),
+						launchBindingTask: task,
+						launchContractDigest,
 						effectiveAcceptance: resolvedAcceptance,
 						...(structuredOutput ? { structuredOutput } : {}),
 						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
@@ -1333,6 +1369,7 @@ export function executeAsyncSingle(
 				controlIntercomTarget,
 				childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
 				resultMode: "single",
+				launchContractDigest,
 				...(params.revivalLease ? { revivalLease: params.revivalLease } : {}),
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
@@ -1403,6 +1440,7 @@ export function executeAsyncSingle(
 			goal: (params.goal ?? task).slice(0, 120),
 			cwd: runnerCwd,
 			asyncDir,
+			launchContractDigest,
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -1412,6 +1450,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
 	};
 }

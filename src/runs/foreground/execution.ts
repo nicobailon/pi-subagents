@@ -51,8 +51,8 @@ import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
-import { resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { decodeSubagentCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
@@ -78,6 +78,7 @@ import { attachContractProjections, isAgentContractV1 } from "../shared/agent-co
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
 	acceptChildWatchdogEvent,
@@ -195,6 +196,7 @@ async function runSingleAttempt(
 		sessionEnabled: boolean;
 		systemPrompt: string;
 		resolvedSkillNames?: string[];
+		modelCandidates?: string[];
 		skillsWarning?: string;
 		jsonlPath?: string;
 		artifactPaths?: ArtifactPaths;
@@ -253,10 +255,41 @@ async function runSingleAttempt(
 		capabilityCeiling: options.capabilityCeiling,
 	});
 
+	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget);
+	const toolPlan = resolvePiLaunchToolPlan({
+		tools: agent.tools,
+		extensions: agent.extensions,
+		subagentOnlyExtensions: agent.subagentOnlyExtensions,
+		mcpDirectTools: agent.mcpDirectTools,
+		cwd: options.cwd ?? runtimeCwd,
+		requireReadTool: Boolean(shared.resolvedSkillNames?.length),
+		structuredOutput: Boolean(options.structuredOutput),
+		capabilityCeiling: options.capabilityCeiling,
+		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
+	});
+	const launchContractDigest = launchBindingDigest({
+		definitionDigest: agentDefinitionDigest(agent),
+		task: shared.originalTask ?? task,
+		...(modelArg ? { model: modelArg } : {}),
+		modelCandidates: shared.modelCandidates,
+		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
+		systemPrompt: effectiveSystemPrompt,
+		systemPromptMode: agent.systemPromptMode,
+		inheritProjectContext: agent.inheritProjectContext,
+		inheritSkills: agent.inheritSkills,
+		skills: shared.resolvedSkillNames ?? [],
+		tools: toolPlan.effectiveToolAllowlist,
+		extensions: toolPlan.extensionArgs,
+		mcpDirectTools: toolPlan.effectiveMcpTools,
+		...(options.outputPath ? { outputPath: options.outputPath } : {}),
+		outputMode: options.outputMode ?? "inline",
+		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
+	});
 	const result: SingleResult = withRunContext({
 		agent: agent.name,
 		task: shared.originalTask ?? task,
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
+		launchContractDigest,
 		exitCode: 0,
 		messages: [],
 		usage: emptyUsage(),
@@ -1325,6 +1358,7 @@ export async function runSync(
 			toolCount: target.progressSummary?.toolCount,
 			error: target.error,
 			agentContract: target.agentContract,
+			launchContractDigest: target.launchContractDigest,
 			execution: target.execution,
 			acceptance: target.acceptance,
 			capabilityCeiling: target.capabilityCeiling,
@@ -1393,6 +1427,7 @@ export async function runSync(
 			artifactPaths: artifactPathsResult,
 			transcriptWriter,
 			attemptNotes,
+			modelCandidates: candidates.map((candidate) => applyThinkingSuffix(candidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined)),
 			outputSnapshot,
 			originalTask: task,
 		});

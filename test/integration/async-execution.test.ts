@@ -22,11 +22,14 @@ import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts"
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
 
 interface AsyncExecutionResult {
 	content: Array<{ text?: string }>;
 	isError?: boolean;
-	details: { asyncId?: string; asyncDir?: string };
+	details: { asyncId?: string; asyncDir?: string; launchContractDigest?: string };
 }
 
 interface AsyncResultPayload {
@@ -36,6 +39,7 @@ interface AsyncResultPayload {
 	exitCode?: number;
 	sessionId?: string;
 	mode?: string;
+	launchContractDigest?: string;
 	summary?: string;
 	error?: string;
 	timeoutMs?: number;
@@ -47,7 +51,7 @@ interface AsyncResultPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{ agent?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
+	results: Array<{ agent?: string; launchContractDigest?: string; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
@@ -63,6 +67,7 @@ interface AsyncStatusPayload {
 	currentTool?: string;
 	currentPath?: string;
 	state?: string;
+	launchContractDigest?: string;
 	error?: string;
 	timeoutMs?: number;
 	deadlineAt?: number;
@@ -94,6 +99,7 @@ interface AsyncStatusPayload {
 		tokens?: { total: number };
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 		agentContract?: { version: 1 };
+		launchContractDigest?: string;
 		execution?: { status?: string; success?: boolean; exitCode?: number };
 		effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } };
 		acceptance?: { status?: string };
@@ -429,6 +435,66 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
 	});
 
+	it("matches preflight launch digest in equivalent foreground and async execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const agentName = `contract-worker-${Date.now().toString(36)}`;
+		const task = "Compare the resolved launch inputs.";
+		const turnBudget = { maxTurns: 2, graceTurns: 1 } as const;
+		const agentPath = path.join(tempDir, ".pi", "agents", `${agentName}.md`);
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(agentPath, `---\nname: ${agentName}\ndescription: Contract comparison worker\n---\n`, "utf-8");
+		const discovered = discoverAgents(tempDir).agents.find((agent) => agent.name === agentName);
+		assert.ok(discovered, "expected temporary agent definition to be discovered");
+		const preflight = await resolveSubagentLaunchContract({ agent: agentName, cwd: tempDir, task, turnBudget, runId: "contract-preflight" });
+		assert.equal(preflight.ok, true);
+
+		mockPi.onCall({ output: "foreground contract comparison" });
+		const foreground = await runSync(tempDir, [discovered], agentName, task, { runId: "contract-foreground", acceptance: false, turnBudget });
+		assert.equal(foreground.exitCode, 0);
+		assert.equal(foreground.launchContractDigest, preflight.contract.launchContractDigest);
+
+		mockPi.onCall({ output: "async contract comparison" });
+		const asyncId = `async-contract-equivalence-${Date.now().toString(36)}`;
+		const launch = executeAsyncSingle(asyncId, {
+			agent: agentName,
+			task,
+			agentConfig: discovered,
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+			turnBudget,
+		});
+		const payload = await readAsyncPayload(asyncId);
+		assert.equal(launch.details.launchContractDigest, preflight.contract.launchContractDigest);
+		assert.equal(payload.launchContractDigest, preflight.contract.launchContractDigest);
+		assert.equal(payload.results[0]?.launchContractDigest, preflight.contract.launchContractDigest);
+	});
+
+	it("persists the actual launch digest in async status and result metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "digest-bound async done" });
+		const id = `async-launch-digest-${Date.now().toString(36)}`;
+		const launch = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Exercise launch digest reporting",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		assert.match(launch.details.launchContractDigest ?? "", /^[a-f0-9]{64}$/);
+		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.launchContractDigest, launch.details.launchContractDigest);
+		assert.equal(payload.results[0]?.launchContractDigest, launch.details.launchContractDigest);
+		assert.equal(status.launchContractDigest, launch.details.launchContractDigest);
+		assert.equal(status.steps?.[0]?.launchContractDigest, launch.details.launchContractDigest);
+	});
+
 	it("background fails with protocol_output_limit for an oversized stdout line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) });
 		const id = `async-protocol-limit-${Date.now().toString(36)}`;
@@ -502,7 +568,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.ok(events.some((event) => event.type === "subagent.capability-ceiling.applied" && event.stepIndex === 0 && event.capabilityAudit?.removedTools?.includes("write")));
 			const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
 			assert.ok(metadataPath);
-			const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { capabilityCeiling?: unknown; capabilityAudit?: { removedTools?: string[] } };
+			const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { launchContractDigest?: string; capabilityCeiling?: unknown; capabilityAudit?: { removedTools?: string[] } };
+			assert.equal(metadata.launchContractDigest, payload.results[0]?.launchContractDigest);
 			assert.deepEqual(metadata.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(metadata.capabilityAudit?.removedTools, ["write", "intercom", "contact_supervisor"]);
 		} finally {

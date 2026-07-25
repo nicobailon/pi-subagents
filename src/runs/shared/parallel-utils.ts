@@ -43,6 +43,9 @@ export interface RunnerSubagentStep {
 	};
 	structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
 	agentContract?: import("../../shared/types.ts").AgentContract;
+	definitionDigest?: string;
+	launchBindingTask?: string;
+	launchContractDigest?: string;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;

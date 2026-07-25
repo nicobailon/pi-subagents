@@ -112,6 +112,9 @@ Project prompt.
 			assert.equal(result.ok, true);
 			assert.equal(result.contract.version, SUBAGENT_LAUNCH_CONTRACT_VERSION);
 			assert.equal(result.contract.agent.source, "project");
+			assert.equal(result.contract.agent.definitionProjectionVersion, 1);
+			assert.match(result.contract.agent.definitionDigest, /^[a-f0-9]{64}$/);
+			assert.match(result.contract.launchContractDigest, /^[a-f0-9]{64}$/);
 			assert.ok(result.contract.agent.shadowedCandidates.some((candidate) => candidate.name === "worker" && candidate.source === "builtin"));
 			assert.equal(result.contract.model, "test/primary:high");
 			assert.deepEqual(result.contract.modelCandidates, ["test/primary:high", "test/fallback:high"]);
@@ -124,6 +127,10 @@ Project prompt.
 			assert.equal(result.contract.tools.disableAmbientExtensions, true);
 			assert.equal(result.contract.roots.sessionFile, path.join(sessionRoot, "run-123", "run-0", "session.jsonl"));
 			assert.equal(result.contract.roots.outputPath, path.join(cwd, ".pi-subagents", "artifacts", "outputs", "run-123", "report.md"));
+			assert.equal(result.contract.roots.lifecycle?.statusPath.endsWith(path.join("run-123", "status.json")), true);
+			assert.equal(result.contract.roots.lifecycle?.eventsPath.endsWith(path.join("run-123", "events.jsonl")), true);
+			assert.equal(result.contract.roots.lifecycle?.processTerminalPath.endsWith(path.join("run-123", "process-terminal.json")), true);
+			assert.notEqual(result.contract.roots.lifecycle?.asyncDir, result.contract.roots.artifactsDir);
 			assert.match(result.contract.digest, /^[a-f0-9]{64}$/);
 			const repeated = await resolveSubagentLaunchContract({
 				agent: "worker",
@@ -144,6 +151,35 @@ Project prompt.
 		} finally {
 			handle.dispose();
 		}
+	});
+
+	it("changes definition and launch digests when selected agent content changes", async () => {
+		const cwd = path.join(tempDir, "repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		const agentPath = path.join(cwd, ".pi", "agents", "worker.md");
+		writeAgent(agentPath, `---
+name: digest-worker
+description: Digest worker
+tools:
+  - read
+---
+First prompt.
+`);
+		const before = await resolveSubagentLaunchContract({ agent: "digest-worker", cwd, runId: "digest-test" });
+		assert.equal(before.ok, true);
+		writeAgent(agentPath, `---
+name: digest-worker
+description: Digest worker
+tools:
+  - read
+---
+Changed prompt.
+`);
+		const after = await resolveSubagentLaunchContract({ agent: "digest-worker", cwd, runId: "digest-test" });
+		assert.equal(after.ok, true);
+		assert.notEqual(after.contract.agent.definitionDigest, before.contract.agent.definitionDigest);
+		assert.notEqual(after.contract.launchContractDigest, before.contract.launchContractDigest);
+		assert.notEqual(after.contract.digest, before.contract.digest);
 	});
 
 	it("returns closed failures for missing agents and missing skills", async () => {

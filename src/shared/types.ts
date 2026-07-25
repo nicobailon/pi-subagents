@@ -427,6 +427,7 @@ export interface SteeringNotice {
 
 export interface SteeringRecoveryDescriptor {
 	version: 1;
+	launchContractDigest?: string;
 	sourceRunId: string;
 	agentContract?: AgentContract;
 	agent: string;
@@ -777,6 +778,7 @@ export interface SingleResult {
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
 	agentContract?: AgentContract;
+	launchContractDigest?: string;
 	execution?: ExecutionProjection;
 	review?: ReviewProjection;
 	effects?: EffectsProjection;
@@ -851,6 +853,7 @@ export interface Details {
 	lifecycleStatus?: {
 		processTerminal?: ProcessTerminalV1;
 	};
+	launchContractDigest?: string;
 }
 
 // ============================================================================
@@ -1003,6 +1006,7 @@ export interface AsyncStartedEvent {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	launchContractDigest?: string;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
@@ -1046,6 +1050,7 @@ export interface AsyncStatus {
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
 	processTerminal?: ProcessTerminalV1;
+	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	steps?: Array<{
@@ -1096,6 +1101,7 @@ export interface AsyncStatus {
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
 		agentContract?: AgentContract;
+		launchContractDigest?: string;
 		execution?: ExecutionProjection;
 		review?: ReviewProjection;
 		effects?: EffectsProjection;

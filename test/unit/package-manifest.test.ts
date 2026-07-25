@@ -71,7 +71,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(delegation.SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION, 2);
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
 	const preflight = await import("pi-subagents/preflight");
-	assert.equal(preflight.SUBAGENT_LAUNCH_CONTRACT_VERSION, 1);
+	assert.equal(preflight.SUBAGENT_LAUNCH_CONTRACT_VERSION, 2);
 	assert.equal(typeof preflight.resolveSubagentLaunchContract, "function");
 });
 

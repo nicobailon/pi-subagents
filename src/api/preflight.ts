@@ -4,18 +4,25 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
-import { normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
+import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
+import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, type AvailableModelInfo, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { applyThinkingSuffix, resolvePiLaunchToolPlan, type PiLaunchToolPlan } from "../runs/shared/pi-args.ts";
-import { normalizeSingleOutputOverride, resolveSingleOutputPath } from "../runs/shared/single-output.ts";
+import { injectOutputPathSystemPrompt, normalizeSingleOutputOverride, resolveSingleOutputPath } from "../runs/shared/single-output.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
+import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
+import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
+import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindingDigest } from "../shared/launch-contract.ts";
+import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR } from "../shared/types.ts";
+import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
+import { nestedResultsPath } from "../runs/shared/nested-events.ts";
 
-export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 1 as const;
+export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
 export type SubagentLaunchContractReasonCode =
 	| "missing_agent"
@@ -47,12 +54,15 @@ export interface SubagentLaunchContractInput {
 	output?: string | boolean;
 	outputMode?: OutputMode;
 	outputSchema?: JsonSchemaObject;
+	turnBudget?: ResolvedTurnBudget;
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
 	parentSessionFile?: string | null;
 	sessionRoot?: string;
 	sessionDir?: string;
 	runId?: string;
+	/** Root run id supplied by a host when projecting nested async lifecycle paths. */
+	nestedRootRunId?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
@@ -73,6 +83,8 @@ export interface SubagentLaunchContractAgent {
 	packageName?: string;
 	source: AgentSource;
 	filePath: string;
+	definitionProjectionVersion: typeof AGENT_DEFINITION_PROJECTION_VERSION;
+	definitionDigest: string;
 	shadowedCandidates: SubagentLaunchContractAgentCandidate[];
 }
 
@@ -109,6 +121,14 @@ export interface SubagentLaunchContractRoots {
 	artifactsDir?: string;
 	artifactPaths?: ArtifactPaths;
 	outputPath?: string;
+	lifecycle?: {
+		asyncDir: string;
+		resultPath: string;
+		statusPath: string;
+		eventsPath: string;
+		processTerminalPath: string;
+		processTerminalCandidatePath: string;
+	};
 }
 
 export interface SubagentLaunchContract {
@@ -130,6 +150,8 @@ export interface SubagentLaunchContract {
 		packageVersion: string;
 	};
 	diagnostics: SubagentLaunchContractDiagnostic[];
+	/** Digest of the resolved child inputs, recomputed by execution paths. */
+	launchContractDigest: string;
 	digest: string;
 }
 
@@ -261,6 +283,12 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const outputPath = resolveSingleOutputPath(behavior.output, effectiveCwd, effectiveCwd, artifactsDir ? path.join(artifactsDir, "outputs", runId) : undefined);
 	const sessionRoot = input.sessionDir ? path.resolve(input.sessionDir) : input.sessionRoot ? path.join(path.resolve(input.sessionRoot), runId) : undefined;
 	const sessionDir = sessionRoot ? path.join(sessionRoot, "run-0") : undefined;
+	const lifecycleAsyncDir = input.nestedRootRunId
+		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", input.nestedRootRunId, runId)
+		: path.join(ASYNC_DIR, runId);
+	const lifecycleResultPath = input.nestedRootRunId
+		? nestedResultsPath(input.nestedRootRunId, runId)
+		: path.join(RESULTS_DIR, `${runId}.json`);
 	if (!sessionDir) diagnostics.push({ code: "host_required", severity: "host-required", message: "No sessionRoot/sessionDir was supplied; exact child session paths require the Pi host session-root policy." });
 	if (input.availableModels === undefined && (input.model || agent.model || input.parentModel)) {
 		diagnostics.push({ code: "host_required", severity: "host-required", message: "No availableModels snapshot was supplied; model resolution may differ from the active Pi host registry." });
@@ -268,8 +296,19 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (resolvedSkills.missing.length > 0) {
 		return { ok: false, code: "missing_skill", message: `Missing skills: ${resolvedSkills.missing.join(", ")}`, diagnostics };
 	}
+	let effectiveSystemPrompt = agent.systemPrompt?.trim() ?? "";
+	if (resolvedSkills.length > 0) {
+		const skillInjection = buildSkillInjection(resolvedSkills);
+		effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${skillInjection}` : skillInjection;
+	}
+	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);
+	if (memoryInjection) effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${memoryInjection}` : memoryInjection;
+	effectiveSystemPrompt = injectOutputPathSystemPrompt(effectiveSystemPrompt, outputPath, agent);
+	const turnBudget = input.turnBudget ?? agent.defaultTurnBudget;
+	effectiveSystemPrompt = appendTurnBudgetSystemPrompt(effectiveSystemPrompt, turnBudget);
 	const candidates = candidateList(input.agent, agent, effectiveCwd);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);
+	const definitionDigest = agentDefinitionDigest(agent);
 	const contractBase: Omit<SubagentLaunchContract, "digest"> = {
 		version: SUBAGENT_LAUNCH_CONTRACT_VERSION,
 		runId,
@@ -279,6 +318,8 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			...(agent.packageName ? { packageName: agent.packageName } : {}),
 			source: agent.source,
 			filePath: agent.filePath,
+			definitionProjectionVersion: AGENT_DEFINITION_PROJECTION_VERSION,
+			definitionDigest,
 			shadowedCandidates,
 		},
 		context: input.context ?? agent.defaultContext ?? "fresh",
@@ -318,12 +359,38 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			...(artifactsDir ? { artifactsDir } : {}),
 			...(artifactPaths ? { artifactPaths } : {}),
 			...(outputPath ? { outputPath } : {}),
+			lifecycle: {
+				asyncDir: lifecycleAsyncDir,
+				resultPath: lifecycleResultPath,
+				statusPath: path.join(lifecycleAsyncDir, "status.json"),
+				eventsPath: path.join(lifecycleAsyncDir, "events.jsonl"),
+				processTerminalPath: processTerminalPath(lifecycleAsyncDir),
+				processTerminalCandidatePath: processTerminalCandidatePath(lifecycleAsyncDir),
+			},
 		},
 		protocol: {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 			packageVersion: packageVersion(),
 		},
 		diagnostics,
+		launchContractDigest: launchBindingDigest({
+			task: input.task ?? "",
+			definitionDigest,
+			...(model ? { model } : {}),
+			modelCandidates,
+			...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
+			systemPrompt: effectiveSystemPrompt,
+			systemPromptMode: agent.systemPromptMode,
+			inheritProjectContext: agent.inheritProjectContext,
+			inheritSkills: agent.inheritSkills,
+			skills: requestedSkills,
+			tools: toolPlan.effectiveToolAllowlist,
+			extensions: toolPlan.extensionArgs,
+			mcpDirectTools: toolPlan.effectiveMcpTools,
+			...(outputPath ? { outputPath } : {}),
+			outputMode: input.outputMode ?? "inline",
+			...(input.outputSchema ? { structuredOutputSchema: input.outputSchema } : {}),
+		}),
 	};
 	return { ok: true, contract: { ...contractBase, digest: digestContract(contractBase) } };
 }

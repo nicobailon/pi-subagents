@@ -58,7 +58,7 @@ import {
 	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
@@ -93,6 +93,7 @@ import {
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
@@ -105,7 +106,7 @@ import { formatParallelHandoffError, formatParallelHandoffReference, parallelHan
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
-import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
 	acceptChildWatchdogEvent,
@@ -153,6 +154,7 @@ interface SubagentRunConfig {
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	launchContractDigest?: string;
 	runnerProcessInstanceId?: string;
 }
 
@@ -186,6 +188,7 @@ interface StepResult {
 	transcriptPath?: string;
 	transcriptError?: string;
 	agentContract?: import("../../shared/types.ts").AgentContract;
+	launchContractDigest?: string;
 	execution?: import("../../shared/types.ts").ExecutionProjection;
 	review?: import("../../shared/types.ts").ReviewProjection;
 	effects?: import("../../shared/types.ts").EffectsProjection;
@@ -988,6 +991,7 @@ async function runSingleStep(
 	agent: string;
 	context?: "fresh" | "fork";
 	agentContract?: import("../../shared/types.ts").AgentContract;
+	launchContractDigest?: string;
 	output: string;
 	exitCode: number | null;
 	error?: string;
@@ -1139,6 +1143,7 @@ async function runSingleStep(
 	let turnBudget = ctx.turnBudget ? initialTurnBudgetState(ctx.turnBudget) : undefined;
 	let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
 	let toolBudgetBlocked = false;
+	let actualLaunchContractDigest = step.launchContractDigest;
 
 	for (let index = 0; index < candidates.length; index++) {
 		if (ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
@@ -1198,6 +1203,37 @@ async function runSingleStep(
 			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
 		});
+		if (step.definitionDigest) {
+			const toolPlan = resolvePiLaunchToolPlan({
+				tools: step.tools,
+				extensions: step.extensions,
+				subagentOnlyExtensions: step.subagentOnlyExtensions,
+				mcpDirectTools: step.mcpDirectTools,
+				cwd: step.cwd ?? ctx.cwd,
+				requireReadTool: Boolean(step.skills?.length),
+				structuredOutput: Boolean(effectiveStructuredOutput),
+				capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
+				inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
+			});
+			actualLaunchContractDigest = launchBindingDigest({
+				definitionDigest: step.definitionDigest,
+				task: step.launchBindingTask ?? task,
+				...(candidate ? { model: candidate } : {}),
+				modelCandidates: candidates,
+				...(resolveEffectiveThinking(candidate, step.thinking) ? { thinking: resolveEffectiveThinking(candidate, step.thinking) } : {}),
+				systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
+				systemPromptMode: step.systemPromptMode,
+				inheritProjectContext: step.inheritProjectContext,
+				inheritSkills: step.inheritSkills,
+				skills: step.skills,
+				tools: toolPlan.effectiveToolAllowlist,
+				extensions: toolPlan.extensionArgs,
+				mcpDirectTools: toolPlan.effectiveMcpTools,
+				...(step.outputPath ? { outputPath: step.outputPath } : {}),
+				...(step.outputMode ? { outputMode: step.outputMode } : {}),
+				...(step.structuredOutputSchema ? { structuredOutputSchema: step.structuredOutputSchema } : {}),
+			});
+		}
 		capabilityAudit = attemptCapabilityAudit;
 		writerAttemptCount += 1;
 		const run = await runPiStreaming(
@@ -1432,6 +1468,7 @@ async function runSingleStep(
 					error: effectiveFinalError,
 					acceptance: effectiveAcceptance,
 					...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
+					launchContractDigest: actualLaunchContractDigest,
 					...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
 					transcriptError: transcriptWriter?.getError(),
 					skills: step.skills,
@@ -1446,6 +1483,7 @@ async function runSingleStep(
 		agent: step.agent,
 		context: step.context,
 		...(step.agentContract ? { agentContract: step.agentContract } : {}),
+		launchContractDigest: actualLaunchContractDigest,
 		output: outputForSummary,
 		exitCode: effectiveFinalExitCode,
 		error: effectiveFinalError,
@@ -1707,6 +1745,7 @@ async function runSubagent(
 					outputName: task.outputName,
 					structured: task.structured,
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
+					...(task.launchContractDigest ? { launchContractDigest: task.launchContractDigest } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
 					status: "pending",
 					...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
@@ -1749,6 +1788,7 @@ async function runSubagent(
 				outputName: step.outputName,
 				structured: step.structured,
 				...(step.agentContract ? { agentContract: step.agentContract } : {}),
+				...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
 				status: "pending",
 				...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
@@ -1793,6 +1833,7 @@ async function runSubagent(
 		chainStepCount: steps.length,
 		parallelGroups,
 		workflowGraph: config.workflowGraph,
+		...(config.launchContractDigest ? { launchContractDigest: config.launchContractDigest } : {}),
 		...(config.capabilityCeiling ? { capabilityCeiling: config.capabilityCeiling } : {}),
 		...(config.runnerProcessInstanceId ? { processTerminal: { version: 1 as const, state: "pending" as const, runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId } } : {}),
 		steps: initialStatusSteps,
@@ -3039,6 +3080,7 @@ async function runSubagent(
 				statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
 				statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
 				statusPayload.steps[fi].agentContract = singleResult.agentContract;
+				statusPayload.steps[fi].launchContractDigest = singleResult.launchContractDigest;
 				statusPayload.steps[fi].effects = singleResult.effects;
 				statusPayload.steps[fi].execution = singleResult.execution;
 				statusPayload.steps[fi].review = singleResult.review;
@@ -3069,6 +3111,7 @@ async function runSubagent(
 					agent: pr.agent,
 					context: pr.context,
 					agentContract: pr.agentContract,
+					launchContractDigest: pr.launchContractDigest,
 					output: pr.output,
 					error: pr.error,
 					protocolError: pr.protocolError,
@@ -3444,6 +3487,7 @@ async function runSubagent(
 						agent: pr.agent,
 						context: pr.context,
 						agentContract: pr.agentContract,
+						launchContractDigest: pr.launchContractDigest,
 						output: pr.output,
 						error: pr.error,
 						protocolError: pr.protocolError,
@@ -3619,6 +3663,7 @@ async function runSubagent(
 				agent: singleResult.agent,
 				context: singleResult.context,
 				agentContract: singleResult.agentContract,
+				launchContractDigest: singleResult.launchContractDigest,
 				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
 				protocolError: singleResult.protocolError,
@@ -3950,6 +3995,7 @@ async function runSubagent(
 				transcriptPath: r.transcriptPath,
 				transcriptError: r.transcriptError,
 				agentContract: r.agentContract,
+				launchContractDigest: r.launchContractDigest,
 				execution: r.execution,
 				review: r.review,
 				effects: r.effects,
@@ -3975,6 +4021,7 @@ async function runSubagent(
 			artifactsDir,
 			cwd,
 			asyncDir,
+			launchContractDigest: config.launchContractDigest,
 			sessionId: config.sessionId,
 			sessionFile: effectiveSessionFile,
 			intercomTarget: config.controlIntercomTarget,
