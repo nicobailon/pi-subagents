@@ -51,6 +51,7 @@ import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capabili
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
+import { resolveTeamRequest } from "../agents/teams.ts";
 import {
 	type Details,
 	type SubagentState,
@@ -402,6 +403,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			// Run friendly chain validation before pi-ai's raw TypeBox schema check
 			// so the model sees which property is disallowed, what is allowed, and a
 			// valid example instead of `chain.N: must not have additional properties`.
+			// Expand `team:` into the equivalent `tasks:` parallel group before any
+			// validation runs, so nothing downstream needs to know teams exist.
+			resolveTeamRequest(args as unknown as Record<string, unknown>, process.cwd());
 			validateChainInput(args);
 			return args as never;
 		},

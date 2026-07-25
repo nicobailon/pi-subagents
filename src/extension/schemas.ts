@@ -273,6 +273,9 @@ const SubagentParamsSchema = Type.Object({
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
 	})),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
+	team: Type.Optional(Type.String({
+		description: "TEAM mode: name of a configured team (see /subagents-teams). Expands its roster into a parallel group with a shared board, one fleet identity, and the team's goal and per-member roles injected. Mutually exclusive with tasks/chain.",
+	})),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for parallel tasks; requires clean git state."
