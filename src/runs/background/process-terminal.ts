@@ -35,13 +35,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer"): value is ProcessInstanceExitV1 {
 	if (!isRecord(value)) return false;
-	return typeof value.processInstanceId === "string"
-		&& value.processInstanceId.length > 0
-		&& (kind ? value.kind === kind : (value.kind === "runner" || value.kind === "pi-writer"))
-		&& typeof value.closeObservedAt === "number"
-		&& Number.isFinite(value.closeObservedAt)
-		&& (typeof value.exitCode === "number" || value.exitCode === null)
-		&& (typeof value.signal === "string" || value.signal === null);
+	if (typeof value.processInstanceId !== "string" || value.processInstanceId.length === 0) return false;
+	if (kind ? value.kind !== kind : (value.kind !== "runner" && value.kind !== "pi-writer")) return false;
+	if (typeof value.closeObservedAt !== "number" || !Number.isFinite(value.closeObservedAt)) return false;
+	if (typeof value.exitCode !== "number" && value.exitCode !== null) return false;
+	if (typeof value.signal !== "string" && value.signal !== null) return false;
+	return value.kind === "runner"
+		? value.attempt === undefined
+		: typeof value.attempt === "number" && Number.isInteger(value.attempt) && value.attempt >= 0;
 }
 
 function validInstance(value: unknown): value is ProcessInstanceExitV1 {
@@ -170,6 +171,29 @@ export function readProcessTerminal(asyncDir: string, fallback?: { runId?: strin
 	}
 }
 
+function stepProcessTerminalProof(
+	proof: ProcessTerminalV1,
+	childIndex: number,
+	state: ProcessTerminalV1["state"],
+	records: ProcessInstanceExitV1[],
+	resumeDispositionValue: ProcessTerminalV1["resumeDisposition"],
+): ProcessTerminalV1 {
+	const base = {
+		version: 1 as const,
+		runId: proof.runId,
+		childIndex,
+		runnerProcessInstanceId: proof.runnerProcessInstanceId,
+		...(resumeDispositionValue ? { resumeDisposition: resumeDispositionValue } : {}),
+	};
+	if (state === "observed") {
+		return { ...base, state, observedAt: proof.state === "observed" ? proof.observedAt : Date.now(), instances: records };
+	}
+	if (state === "unknown") {
+		return { ...base, state, reason: proof.state === "unknown" ? proof.reason : "writer-close-unverified" };
+	}
+	return { ...base, state };
+}
+
 function overlayStatus(asyncDir: string, proof: ProcessTerminalV1, candidate?: ProcessTerminalCandidate): void {
 	const statusPath = path.join(asyncDir, "status.json");
 	try {
@@ -180,13 +204,7 @@ function overlayStatus(asyncDir: string, proof: ProcessTerminalV1, candidate?: P
 				const records = candidate?.writers[String(index)] ?? [];
 				const expected = candidate?.expectedWriters?.[String(index)] ?? (records.length > 0 ? records.length : 0);
 				const stepState = expected === 0 ? "not-started" : proof.state === "observed" && records.length === expected ? "observed" : proof.state === "pending" ? "pending" : "unknown";
-				step.processTerminal = {
-					...proof,
-					state: stepState,
-					childIndex: index,
-					...(records.length ? { instances: records } : {}),
-					resumeDisposition: resumeDisposition(step.status, step.sessionFile ?? candidate?.sessionFile),
-				};
+				step.processTerminal = stepProcessTerminalProof(proof, index, stepState, records, resumeDisposition(step.status, step.sessionFile ?? candidate?.sessionFile));
 			}
 		}
 		writeAtomicJson(statusPath, status);

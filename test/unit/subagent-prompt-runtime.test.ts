@@ -652,24 +652,31 @@ describe("subagent prompt runtime", () => {
 
 	it("registers native supervisor tools at runtime when pi-intercom is absent", async () => {
 		setSupervisorEnv();
+		const previousRequiredTools = process.env[REQUIRED_CHILD_TOOLS_ENV];
+		delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 		const handlers = new Map<string, (payload?: unknown) => unknown>();
 		const registered: string[] = [];
 
-		registerSubagentPromptRuntime({
-			on(event: string, handler: (payload?: unknown) => unknown) {
-				handlers.set(event, handler);
-			},
-			getAllTools: () => registered.map((name) => ({ name })),
-			registerTool(tool: { name: string }) {
-				registered.push(tool.name);
-			},
-		} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
+		try {
+			registerSubagentPromptRuntime({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				getAllTools: () => registered.map((name) => ({ name })),
+				registerTool(tool: { name: string }) {
+					registered.push(tool.name);
+				},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
-		handlers.get("session_start")?.({});
-		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
+			handlers.get("session_start")?.({});
+			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 
-		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor", "intercom"]);
+			await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
+			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor", "intercom"]);
+		} finally {
+			if (previousRequiredTools === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
+			else process.env[REQUIRED_CHILD_TOOLS_ENV] = previousRequiredTools;
+		}
 	});
 
 	it("records requested tools missing from the child registry after startup hooks settle", async () => {

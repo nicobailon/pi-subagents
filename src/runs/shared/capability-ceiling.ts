@@ -4,10 +4,9 @@ export const SUBAGENT_CAPABILITY_CEILING_VERSION = 1 as const;
 export const SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY = "pi-subagents.capability-ceiling.v1";
 export const SUBAGENT_CAPABILITY_CEILING_ENV = "PI_SUBAGENT_CAPABILITY_CEILING_V1";
 
-export interface SubagentCapabilityCeiling {
-	allowedTools?: readonly string[];
-	denyExtensions?: boolean;
-}
+export type SubagentCapabilityCeiling =
+	| { allowedTools: readonly string[]; denyExtensions?: boolean }
+	| { allowedTools?: readonly string[]; denyExtensions: boolean };
 
 export interface ResolvedSubagentCapabilityCeiling {
 	version: typeof SUBAGENT_CAPABILITY_CEILING_VERSION;

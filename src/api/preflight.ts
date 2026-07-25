@@ -162,7 +162,10 @@ export type SubagentLaunchContractResult =
 function packageVersion(): string {
 	const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
 	const parsed = JSON.parse(fs.readFileSync(packagePath, "utf-8")) as { version?: unknown };
-	return typeof parsed.version === "string" ? parsed.version : "0.0.0";
+	if (typeof parsed.version !== "string" || !parsed.version.trim()) {
+		throw new Error(`Invalid package version in '${packagePath}'.`);
+	}
+	return parsed.version;
 }
 
 function stableJson(value: unknown): string {
@@ -297,8 +300,8 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "missing_skill", message: `Missing skills: ${resolvedSkills.missing.join(", ")}`, diagnostics };
 	}
 	let effectiveSystemPrompt = agent.systemPrompt?.trim() ?? "";
-	if (resolvedSkills.length > 0) {
-		const skillInjection = buildSkillInjection(resolvedSkills);
+	if (resolvedSkills.resolved.length > 0) {
+		const skillInjection = buildSkillInjection(resolvedSkills.resolved);
 		effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${skillInjection}` : skillInjection;
 	}
 	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);

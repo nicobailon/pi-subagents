@@ -182,6 +182,32 @@ Changed prompt.
 		assert.notEqual(after.contract.digest, before.contract.digest);
 	});
 
+	it("binds resolved skill content into the launch digest", async () => {
+		const cwd = path.join(tempDir, "repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeSkill(cwd, "digest-skill");
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+tools:
+  - read
+skills:
+  - digest-skill
+---
+Project prompt.
+`);
+		const before = await resolveSubagentLaunchContract({ agent: "worker", cwd, runId: "skill-digest-test" });
+		assert.equal(before.ok, true);
+		fs.writeFileSync(path.join(cwd, ".pi", "skills", "digest-skill", "SKILL.md"), "---\ndescription: updated digest-skill\n---\n\nUse digest-skill.\n", "utf-8");
+		clearSkillCache();
+
+		const after = await resolveSubagentLaunchContract({ agent: "worker", cwd, runId: "skill-digest-test" });
+		assert.equal(after.ok, true);
+		assert.equal(after.contract.agent.definitionDigest, before.contract.agent.definitionDigest);
+		assert.notEqual(after.contract.launchContractDigest, before.contract.launchContractDigest);
+		assert.notEqual(after.contract.digest, before.contract.digest);
+	});
+
 	it("returns closed failures for missing agents and missing skills", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });

@@ -333,14 +333,24 @@ export type ProcessTerminalReason =
 	| "proof-write-failed"
 	| "stale-repair";
 
-export interface ProcessInstanceExitV1 {
+export interface RunnerProcessInstanceExitV1 {
 	processInstanceId: string;
-	kind: "runner" | "pi-writer";
-	attempt?: number;
+	kind: "runner";
 	closeObservedAt: number;
 	exitCode: number | null;
 	signal: string | null;
 }
+
+export interface PiWriterProcessInstanceExitV1 {
+	processInstanceId: string;
+	kind: "pi-writer";
+	attempt: number;
+	closeObservedAt: number;
+	exitCode: number | null;
+	signal: string | null;
+}
+
+export type ProcessInstanceExitV1 = RunnerProcessInstanceExitV1 | PiWriterProcessInstanceExitV1;
 
 export interface CanonicalSessionTerminalV1 {
 	canonicalSessionId: string;
@@ -349,19 +359,27 @@ export interface CanonicalSessionTerminalV1 {
 	canonicalSessionLeaseReleased?: true;
 }
 
-export interface ProcessTerminalV1 {
+interface ProcessTerminalBaseV1 {
 	version: 1;
-	state: ProcessTerminalState;
 	runId: string;
 	childIndex?: number;
 	runnerProcessInstanceId: string;
-	observedAt?: number;
-	instances?: ProcessInstanceExitV1[];
-	canonicalSession?: CanonicalSessionTerminalV1;
 	resumeDisposition?: "resumable" | "non-resumable" | "unavailable";
-	reason?: ProcessTerminalReason;
-	diagnostic?: string;
 }
+
+export type ProcessTerminalV1 =
+	| (ProcessTerminalBaseV1 & { state: "pending" | "not-started" })
+	| (ProcessTerminalBaseV1 & {
+		state: "observed";
+		observedAt: number;
+		instances: ProcessInstanceExitV1[];
+		canonicalSession?: CanonicalSessionTerminalV1;
+	})
+	| (ProcessTerminalBaseV1 & {
+		state: "unknown";
+		reason: ProcessTerminalReason;
+		diagnostic?: string;
+	});
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
 export type SteeringTargetState = "scheduled" | "routed" | "delivered" | "late" | "failed" | "recovered";
