@@ -127,6 +127,7 @@ function resolveAttemptTimeout(options: RunSyncOptions): { timeoutMs: number; re
 function buildPendingAcceptanceLedger(acceptance: ResolvedAcceptanceConfig): AcceptanceLedger {
 	return {
 		status: "pending",
+		evidenceStatus: "pending",
 		explicit: acceptance.explicit,
 		effectiveAcceptance: acceptance,
 		inferredReason: acceptance.inferredReason,

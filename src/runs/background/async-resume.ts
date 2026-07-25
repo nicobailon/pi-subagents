@@ -265,10 +265,6 @@ function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): Ac
 	if (value && typeof value === "object" && !Array.isArray(value) && ("explicit" in value || "inferredReason" in value)) {
 		const { explicit, inferredReason: _inferredReason, ...publicAcceptance } = value as Record<string, unknown>;
 		if (explicit === false) return undefined;
-		if (publicAcceptance.level === "reviewed") {
-			publicAcceptance.level = "verified";
-			delete publicAcceptance.review;
-		}
 		value = publicAcceptance;
 	}
 	const errors = validateAcceptanceInput(value, "recoveryDescriptor.acceptance");

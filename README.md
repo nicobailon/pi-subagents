@@ -597,7 +597,7 @@ Append `[key=value,...]` to an agent name to override defaults. `/chain` applies
 | `cwd` | `cwd=packages/api` | Run the step in a subdirectory. |
 | `count` | `count=3` | Fan a group task into N copies (only inside a `( ... )` group). |
 | `outputSchema` | `outputSchema=schema.json` | Validate structured output against a JSON Schema file (path resolved against the session cwd, not an inline step `cwd`). |
-| `acceptance` | `acceptance=checked` | Inline acceptance level: `auto`, `attested`, or `checked`. Use the tool API or saved `.chain.json` for object contracts such as `none` or `verified`; `reviewed` is inferred-only. |
+| `acceptance` | `acceptance=checked` | Inline evidence level: `auto`, `attested`, or `checked`. Use the tool API or saved `.chain.json` for object contracts such as `none`, `verified`, or an orthogonal review requirement. `reviewed` is an achieved status, not an input level. |
 
 Set `output=false`, `reads=false`, or `skills=false` to disable that behavior explicitly. Do not use `output=false` for file-only returns; use `outputMode=file-only` with an `output` path.
 
@@ -1391,7 +1391,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Override inferred gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. `reviewed` is inferred-only; explicit requests fail preflight. `false` disables gates. With `agentContract: { version: 1 }`, omitted, `"auto"`, and `false` mean no acceptance request for that run; explicit acceptance is reported separately from execution. |
+| `acceptance` | string/object/false | inferred | Configure evidence gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. Independent review is orthogonal: use `review: { required: true, agent?: "reviewer", focus?: "..." }`. `review-required` means evidence passed but review is pending; `reviewed` is achieved only after a real independent result. Explicit `"reviewed"` remains schema-recognized solely for actionable preflight recovery. For reviewer/read-only calls, omit acceptance. `false` disables gates. With `agentContract: { version: 1 }`, omitted, `"auto"`, and `false` mean no acceptance request for that run; explicit acceptance is reported separately from execution. |
 
 `agentContract: { version: 1 }` keeps existing fields and artifacts but adds derived `execution`, `acceptance`, `review`, and `effects` projections. In v1, acceptance failures do not rewrite execution success, and an explicit completion guard reports `effects.fileMutation` instead of failing the run by itself. Chain steps default to advancing on execution under v1; set `gateOn: "acceptance"` on a v1 step or parallel task when rejected acceptance should stop the chain.
 
@@ -1726,15 +1726,18 @@ Every run resolves an effective acceptance policy. Callers may omit `acceptance`
 }
 ```
 
-Acceptance policies use the levels `auto`, `none`, `attested`, `checked`, `verified`, and `reviewed`. `acceptance: "auto"` is the default. Callers may explicitly request levels through `verified`; `reviewed` is reserved for inferred policy because the current execution path cannot supply an independent reviewer result. Explicit `reviewed` fails preflight instead of spawning a child that is guaranteed to be rejected. Read-only tasks infer lightweight attestation, normal writer tasks infer checked evidence, and async/risky/dynamic writer contexts infer a reviewed gate. Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks; explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access. The bare string `"none"` is rejected; use `{ level: "none", reason: "..." }` instead. `acceptance: false` is accepted only as a deprecated shorthand for disabling gates.
+Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verified`. `acceptance: "auto"` is the default. Review is a separate gate configured with `acceptance.review`; async, risky, and dynamic writer contexts infer checked evidence plus `review: { agent: "reviewer", required: true }`. Read-only tasks infer lightweight attestation, while normal writer tasks infer checked evidence without review. Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks; explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access. The bare string `"none"` is rejected; use `{ level: "none", reason: "..." }` instead. `acceptance: false` is accepted only as a deprecated shorthand for disabling gates.
 
-Acceptance provenance is stored separately from child prose:
+For reviewer/read-only calls, omit `acceptance`. The explicit value `"reviewed"` is not a policy level: it remains schema-recognized only so semantic preflight can explain the mistake without spawning a child. To require review of a writer result, use `acceptance: { level: "checked", review: { required: true, agent: "reviewer" } }` and orchestrate the reviewer separately.
+
+Acceptance provenance is stored separately from child prose. `evidenceStatus` preserves evidence progress when the overall status is waiting on or has completed review:
 
 - `claimed`: child finished but did not provide structured evidence.
 - `attested`: child returned a structured acceptance report.
 - `checked`: runtime structural checks passed, such as required evidence and no staged files.
 - `verified`: configured runtime verification commands passed. Child-reported command success does not count.
-- `reviewed`: an independent reviewer result is present.
+- `review-required`: required evidence passed, but no independent reviewer result has been supplied.
+- `reviewed`: an independent reviewer result is present and has no blockers.
 - `rejected`: attestation, structural checks, verification, or review failed.
 
 For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block. The parser canonicalizes known enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous keys and enum values fail with field-level diagnostics. Explicit empty `changedFiles` and `testsAddedOrUpdated` arrays are recorded as not applicable; missing fields and empty required command or validation evidence still fail.

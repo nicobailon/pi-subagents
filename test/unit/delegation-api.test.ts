@@ -538,7 +538,7 @@ describe("public subagent delegation contract", () => {
 							progressSummary: { toolCount: 4, tokens: 5, durationMs: 6 },
 							agentContract: { version: 1 },
 							execution: { status: "completed", success: true, exitCode: 0 },
-							acceptance: { status: "checked", explicit: true },
+							acceptance: { status: "checked", evidenceStatus: "checked", explicit: true },
 							review: { status: "not-requested" },
 							effects: { fileMutation: { status: "missing", expected: true, attempted: false } },
 							skillsWarning: "Skills not found: review",
@@ -600,7 +600,7 @@ describe("public subagent delegation contract", () => {
 		assert.equal(response.turns, 2);
 		assert.equal(response.toolCount, 4);
 		assert.equal(response.tokens, 5);
-		assert.deepEqual(response.acceptance, { status: "checked", explicit: true });
+		assert.deepEqual(response.acceptance, { status: "checked", evidenceStatus: "checked", explicit: true });
 		assert.deepEqual(response.warnings, ["Skills not found: review"]);
 		bridge.dispose();
 	});

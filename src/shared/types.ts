@@ -303,7 +303,7 @@ export interface ExecutionProjection {
 }
 
 export interface ReviewProjection {
-	status: "not-requested" | "no-blockers" | "blockers" | "needs-parent-decision";
+	status: "not-requested" | "review-required" | "reviewed" | "blockers";
 	findings?: AcceptanceReviewResult["findings"];
 }
 
@@ -595,7 +595,7 @@ export interface ModelAttempt {
 	usage?: Usage;
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
+export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified";
 
 export type AcceptanceEvidenceKind =
 	| "changed-files"
@@ -704,7 +704,7 @@ export interface AcceptanceVerifyResult {
 }
 
 export interface AcceptanceReviewResult {
-	status: "no-blockers" | "blockers" | "needs-parent-decision";
+	status: "review-required" | "reviewed" | "blockers";
 	findings: Array<{
 		severity: "blocker" | "non-blocking";
 		file?: string;
@@ -713,19 +713,24 @@ export interface AcceptanceReviewResult {
 	}>;
 }
 
-export type AcceptanceLedgerStatus =
+export type AcceptanceEvidenceStatus =
 	| "pending"
 	| "not-required"
 	| "claimed"
 	| "attested"
 	| "checked"
 	| "verified"
-	| "reviewed"
-	| "accepted"
 	| "rejected";
+
+export type AcceptanceLedgerStatus =
+	| AcceptanceEvidenceStatus
+	| "review-required"
+	| "reviewed"
+	| "accepted";
 
 export interface AcceptanceLedger {
 	status: AcceptanceLedgerStatus;
+	evidenceStatus: AcceptanceEvidenceStatus;
 	explicit: boolean;
 	effectiveAcceptance: ResolvedAcceptanceConfig;
 	inferredReason: string[];

@@ -2257,7 +2257,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			);
 
 			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /cannot be requested explicitly.*independent reviewer result/i);
+			assert.match(result.content[0]?.text ?? "", /achieved status.*omit acceptance.*acceptance\.review\.required/i);
 		}
 		assert.equal(mockPi.callCount(), 0);
 	});
@@ -2277,7 +2277,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Cannot append step:.*cannot be requested explicitly.*independent reviewer result/i);
+		assert.match(result.content[0]?.text ?? "", /Cannot append step:.*achieved status.*acceptance\.review\.required/i);
 		assert.equal(mockPi.callCount(), 0);
 	});
 

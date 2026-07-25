@@ -423,8 +423,14 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(acceptanceSchema.type, undefined);
 		assert.equal(hasAnyOfType(acceptanceSchema, "string"), true);
 		assert.equal(hasAnyOfType(acceptanceSchema, "boolean"), true);
-		const acceptanceStringBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "string");
-		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "attested", "checked", "verified", "reviewed"], "bare \"none\" requires the object form with a reason");
+		const acceptanceStringBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "string");
+		const acceptanceLevelBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("auto"));
+		assert.deepEqual(acceptanceLevelBranch?.enum, ["auto", "attested", "checked", "verified"], "evidence levels end at verified");
+		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
+		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
+		assert.equal(reviewedRecoveryBranch?.deprecated, true);
+		assert.match(String(acceptanceSchema.description ?? ""), /reviewer\/read-only calls, omit acceptance/i);
+		assert.match(String(acceptanceSchema.description ?? ""), /acceptance\.review\.required/);
 		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
 		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
 		assert.equal(acceptanceObjectBranch.additionalProperties, true);

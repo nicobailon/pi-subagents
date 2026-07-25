@@ -44,6 +44,9 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /timeoutMs/i);
 		assert.match(description, /maxRuntimeMs/i);
 		assert.match(description, /foreground and async\/background runs/i);
+		assert.match(description, /omit acceptance for reviewer\/read-only calls/i);
+		assert.match(description, /acceptance\.review\.required/i);
+		assert.match(description, /reviewed is achieved only after an independent reviewer result/i);
 		assert.doesNotMatch(description, /only for foreground runs/i);
 		assert.doesNotMatch(description, /omit for async\/background runs/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
@@ -101,6 +104,9 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Do not sleep or poll/i);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /one writer/i);
+		assert.match(description, /omit acceptance for reviewer\/read-only calls/i);
+		assert.match(description, /acceptance\.review\.required/i);
+		assert.match(description, /reviewed is an achieved status/i);
 		assert.match(description, /view:"fleet"/);
 		assert.match(description, /view:"transcript"/);
 		assert.match(description, /steer/);

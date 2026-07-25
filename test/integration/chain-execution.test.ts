@@ -677,7 +677,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.itemKey), ["src/a.ts", "src/b.ts"]);
 	});
 
-	it("persists checked acceptance status for dynamic fanout materialized children and aggregate group", async () => {
+	it("persists checked child evidence and pending aggregate review for dynamic fanout", async () => {
 		mockPi.onCall({
 			output: "targets",
 			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
@@ -704,8 +704,9 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "checked");
+		assert.equal(dynamicNode?.acceptanceStatus, "review-required");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["checked", "checked"]);
+		assert.deepEqual(result.details.results.filter((child) => child.agent === "reviewer").map((child) => child.acceptance?.evidenceStatus), ["checked", "checked"]);
 	});
 
 	it("applies read-only acceptance roles to dynamic children and their aggregate group", async () => {
@@ -773,7 +774,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const explorerResults = result.details.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["reviewed", "reviewed"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["checked", "checked"]);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.acceptanceStatus, "rejected");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["rejected", "rejected"]);

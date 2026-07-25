@@ -67,11 +67,17 @@ const JsonSchemaObject = Type.Unsafe({
 
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
-		{ type: "string", enum: ["auto", "attested", "checked", "verified", "reviewed"] },
+		{ type: "string", enum: ["auto", "attested", "checked", "verified"] },
+		{
+			type: "string",
+			enum: ["reviewed"],
+			deprecated: true,
+			description: "Invalid as an explicit policy. Recognized only so preflight can explain that reviewed is an achieved status.",
+		},
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: "Optional acceptance policy. In the current/default contract, omitted means auto-inferred; verified requires configured runtime commands. With agentContract.version=1, omitted means not requested and acceptance failures are reported separately from execution.",
+	description: "Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Evidence levels end at verified; require independent review with acceptance.review.required. The value reviewed is an achieved status and is accepted by the schema only for actionable preflight recovery. In the current/default contract, omitted means auto-inferred. With agentContract.version=1, omitted means not requested and acceptance failures are reported separately from execution.",
 });
 
 const AgentContractOverride = Type.Object({

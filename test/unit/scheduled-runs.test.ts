@@ -253,7 +253,7 @@ describe("ScheduledRunManager create/list/status/cancel", () => {
 				...params,
 			}, harness.ctx);
 			assert.equal(isError(result), true);
-			assert.match(result.content[0]!.text, /cannot be requested explicitly.*independent reviewer result/i);
+			assert.match(result.content[0]!.text, /achieved status.*omit acceptance.*acceptance\.review\.required/i);
 		}
 		assert.equal(harness.timers.pendingCount(), 0);
 	});

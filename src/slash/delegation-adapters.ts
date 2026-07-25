@@ -491,7 +491,7 @@ export function toSubagentDelegationResponse(
 		...(child?.finalOutput ? { output: child.finalOutput } : {}),
 		...(child?.savedOutputPath ? { outputPath: child.savedOutputPath } : {}),
 		...(child?.sessionFile ? { sessionFile: child.sessionFile } : {}),
-		...(child?.acceptance ? { acceptance: { status: child.acceptance.status, explicit: child.acceptance.explicit } } : {}),
+		...(child?.acceptance ? { acceptance: { status: child.acceptance.status, evidenceStatus: child.acceptance.evidenceStatus, explicit: child.acceptance.explicit } } : {}),
 		...(child?.review ? { review: child.review as SubagentDelegationReviewResult } : {}),
 		...(child?.effects ? { effects: child.effects as SubagentDelegationEffectsResult } : {}),
 		...(typeof child?.usage?.turns === "number" ? { turns: child.usage.turns } : {}),

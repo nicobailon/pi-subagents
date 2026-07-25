@@ -47,11 +47,16 @@ function tempRepo(): string {
 }
 
 describe("acceptance gates", () => {
-	it("infers different policies for reviewer, writer, async writer, and dynamic contexts", () => {
+	it("infers evidence levels and review requirements independently", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "reviewer", task: "Review-only. Do not edit.", mode: "single" }).level, "attested");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single" }).level, "checked");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single", async: true }).level, "reviewed");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }).level, "reviewed");
+		for (const resolved of [
+			resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", mode: "single", async: true }),
+			resolveEffectiveAcceptance({ agentName: "worker", task: "Fix each item", mode: "chain", dynamic: true }),
+		]) {
+			assert.equal(resolved.level, "checked");
+			assert.equal(resolved.review && resolved.review !== false ? resolved.review.required : undefined, true);
+		}
 	});
 
 	it("keeps async oracle review tasks on read-only acceptance despite implementation vocabulary", () => {
@@ -94,7 +99,7 @@ describe("acceptance gates", () => {
 			task: "Patch src/auth.ts",
 			mode: "single",
 			async: true,
-		}).level, "reviewed");
+		}).level, "checked");
 		assert.equal(resolveEffectiveAcceptance({
 			agentName: "worker",
 			acceptanceRole: "read-only",
@@ -113,7 +118,7 @@ describe("acceptance gates", () => {
 			task: "Handle the authentication flow",
 			mode: "single",
 			async: true,
-		}).level, "reviewed");
+		}).level, "checked");
 		assert.equal(resolveEffectiveAcceptance({
 			agentName: "worker",
 			acceptanceRole: "read-only",
@@ -140,17 +145,21 @@ describe("acceptance gates", () => {
 			mode: "chain",
 			dynamicGroup: true,
 		}).level, "attested");
-		assert.equal(resolveEffectiveAcceptance({
+		const dynamicReviewer = resolveEffectiveAcceptance({
 			agentName: "reviewer",
 			task: "Review each target",
 			mode: "chain",
 			dynamic: true,
-		}).level, "reviewed");
+		});
+		assert.equal(dynamicReviewer.level, "checked");
+		assert.equal(dynamicReviewer.review && dynamicReviewer.review !== false ? dynamicReviewer.review.required : undefined, true);
 	});
 
-	it("preserves risky keyword inference when acceptance role metadata is omitted", () => {
+	it("preserves risky keyword review inference when acceptance role metadata is omitted", () => {
 		for (const task of ["Inspect the security posture", "Read-only security audit"]) {
-			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task }).level, "reviewed", task);
+			const resolved = resolveEffectiveAcceptance({ agentName: "worker", task });
+			assert.equal(resolved.level, "checked", task);
+			assert.equal(resolved.review && resolved.review !== false ? resolved.review.required : undefined, true, task);
 		}
 	});
 
@@ -167,7 +176,8 @@ describe("acceptance gates", () => {
 
 	it("agent contract v1 disables inferred acceptance without changing current defaults", () => {
 		const current = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true });
-		assert.equal(current.level, "reviewed");
+		assert.equal(current.level, "checked");
+		assert.equal(current.review && current.review !== false ? current.review.required : undefined, true);
 		assert.deepEqual(current.inferredReason, ["async write-capable or risky run"]);
 
 		for (const explicit of [undefined, "auto" as const, false] as const) {
@@ -669,22 +679,23 @@ describe("acceptance gates", () => {
 		}
 	});
 
-	it("reviewed mode records no-blocker and blocker reviewer outcomes", async () => {
+	it("records achieved, blocked, and pending independent review separately from evidence", async () => {
 		const cwd = tempRepo();
 		try {
 			const acceptance = resolveEffectiveAcceptance({
 				agentName: "worker",
 				task: "Implement a risky fix",
-				explicit: { level: "reviewed", review: { agent: "reviewer", required: true } },
+				explicit: { level: "checked", review: { agent: "reviewer", required: true } },
 			});
-			const noBlockers = await evaluateAcceptance({
+			const reviewed = await evaluateAcceptance({
 				acceptance,
 				output: report(),
 				cwd,
-				reviewResult: { status: "no-blockers", findings: [] },
+				reviewResult: { status: "reviewed", findings: [] },
 			});
-			assert.equal(noBlockers.status, "reviewed");
-			assert.equal(noBlockers.reviewResult?.status, "no-blockers");
+			assert.equal(reviewed.status, "reviewed");
+			assert.equal(reviewed.evidenceStatus, "checked");
+			assert.equal(reviewed.reviewResult?.status, "reviewed");
 
 			const blockers = await evaluateAcceptance({
 				acceptance,
@@ -696,81 +707,67 @@ describe("acceptance gates", () => {
 				},
 			});
 			assert.equal(blockers.status, "rejected");
+			assert.equal(blockers.evidenceStatus, "checked");
 			assert.equal(blockers.reviewResult?.status, "blockers");
 
-			const unavailable = await evaluateAcceptance({ acceptance, output: report(), cwd });
-			assert.equal(unavailable.status, "rejected");
-			assert.equal(unavailable.reviewResult?.status, "needs-parent-decision");
+			const pending = await evaluateAcceptance({ acceptance, output: report(), cwd });
+			assert.equal(pending.status, "review-required");
+			assert.equal(pending.evidenceStatus, "checked");
+			assert.equal(pending.reviewResult?.status, "review-required");
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
 	});
 
-	it("does not make explicit checked acceptance an explicit reviewed blocker when inference recommends review", async () => {
+	it("keeps inferred review required when callers explicitly select checked or auto evidence", async () => {
 		const cwd = tempRepo();
 		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement each dynamic item",
-				dynamic: true,
-				explicit: { level: "checked" },
-			});
-
-			assert.equal(acceptance.level, "reviewed");
-			assert.equal(acceptance.review && acceptance.review !== false ? acceptance.review.required : undefined, false);
-			const ledger = await evaluateAcceptance({ acceptance, output: report({ criteriaSatisfied: [
-				{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
-				{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
-			] }), cwd });
-			assert.equal(ledger.status, "checked");
-			assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
-
-	it("keeps inferred review non-blocking when explicit auto is supplied", async () => {
-		const cwd = tempRepo();
-		try {
-			for (const explicit of ["auto", { level: "auto" }] as const) {
+			for (const explicit of [{ level: "checked" }, "auto", { level: "auto" }] as const) {
 				const acceptance = resolveEffectiveAcceptance({
 					agentName: "worker",
-					task: "Implement the async fix",
-					async: true,
+					task: "Implement each dynamic item",
+					dynamic: true,
 					explicit,
 				});
 
-				assert.equal(acceptance.level, "reviewed");
-				assert.equal(acceptance.review && acceptance.review !== false ? acceptance.review.required : undefined, false);
+				assert.equal(acceptance.level, "checked");
+				assert.equal(acceptance.review && acceptance.review !== false ? acceptance.review.required : undefined, true);
 				const ledger = await evaluateAcceptance({ acceptance, output: report({ criteriaSatisfied: [
 					{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
 					{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
 				] }), cwd });
-				assert.equal(ledger.status, "checked");
-				assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
+				assert.equal(ledger.status, "review-required");
+				assert.equal(ledger.evidenceStatus, "checked");
+				assert.equal(ledger.reviewResult?.status, "review-required");
 			}
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
 	});
 
-	it("does not mark reviewed without an independent reviewer result", async () => {
+	it("allows an explicit review opt-out without claiming reviewed status", async () => {
 		const cwd = tempRepo();
 		try {
-			const acceptance = resolveEffectiveAcceptance({
-				agentName: "worker",
-				task: "Implement a fix",
-				explicit: {
-					level: "reviewed",
-					review: false,
-				},
-			});
-			assert.equal(acceptance.level, "reviewed");
-
-			const ledger = await evaluateAcceptance({ acceptance, output: report(), cwd });
-			assert.equal(ledger.status, "rejected");
-			assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
-			assert.match(acceptanceFailureMessage(ledger) ?? "", /review required/i);
+			for (const review of [false, { agent: "reviewer", required: false }] as const) {
+				const acceptance = resolveEffectiveAcceptance({
+					agentName: "worker",
+					task: "Implement an async fix",
+					async: true,
+					explicit: { level: "checked", review },
+				});
+				const ledger = await evaluateAcceptance({
+					acceptance,
+					output: report({ criteriaSatisfied: [
+						{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
+						{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
+					] }),
+					cwd,
+					reviewResult: { status: "review-required", findings: [] },
+				});
+				assert.equal(ledger.status, "checked");
+				assert.equal(ledger.evidenceStatus, "checked");
+				assert.equal(ledger.reviewResult, undefined);
+			}
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -969,12 +966,12 @@ describe("acceptance gates", () => {
 		});
 
 		assert.equal(errors.length, 5);
-		assert.match(errors[0] ?? "", /^acceptance cannot be requested explicitly/);
-		assert.match(errors[1] ?? "", /^tasks\[0\]\.acceptance\.level cannot be requested explicitly/);
-		assert.match(errors[2] ?? "", /^chain\[0\]\.acceptance cannot be requested explicitly/);
-		assert.match(errors[3] ?? "", /^chain\[1\]\.parallel\[0\]\.acceptance\.level cannot be requested explicitly/);
-		assert.match(errors[4] ?? "", /^chain\[2\]\.parallel\.acceptance cannot be requested explicitly/);
-		assert.match(errors.join("\n"), /independent reviewer result/);
+		assert.match(errors[0] ?? "", /^acceptance is an achieved status/);
+		assert.match(errors[1] ?? "", /^tasks\[0\]\.acceptance\.level is an achieved status/);
+		assert.match(errors[2] ?? "", /^chain\[0\]\.acceptance is an achieved status/);
+		assert.match(errors[3] ?? "", /^chain\[1\]\.parallel\[0\]\.acceptance\.level is an achieved status/);
+		assert.match(errors[4] ?? "", /^chain\[2\]\.parallel\.acceptance is an achieved status/);
+		assert.match(errors.join("\n"), /acceptance\.review\.required/);
 	});
 
 	it("blanket read-only wording is not inferred as a risky write task", () => {
@@ -994,21 +991,21 @@ describe("acceptance gates", () => {
 		}
 
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Inspect the failure and implement the fix" }).level, "checked");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Inspect the failure and implement the fix", async: true }).level, "reviewed");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests; implement the fix", async: true }).level, "reviewed");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests but implement the fix", async: true }).level, "reviewed");
-		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests and implement the fix", async: true }).level, "reviewed");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Inspect the failure and implement the fix", async: true }).level, "checked");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests; implement the fix", async: true }).level, "checked");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests but implement the fix", async: true }).level, "checked");
+		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task: "Do not modify tests and implement the fix", async: true }).level, "checked");
 		for (const task of [
 			"Do not modify tests - implement the fix",
 			"Do not modify tests – implement the fix",
 			"Do not modify tests — implement the fix",
 		]) {
 			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task }).level, "checked", task);
-			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task, async: true }).level, "reviewed", task);
+			assert.equal(resolveEffectiveAcceptance({ agentName: "worker", task, async: true }).level, "checked", task);
 		}
 	});
 
-	it("bare write verbs keep their reviewed gate for async tasks on any agent", () => {
+	it("bare write verbs keep their review requirement for async tasks on any agent", () => {
 		const tasks = [
 			"Write the code",
 			"Commit the changes",
@@ -1017,7 +1014,9 @@ describe("acceptance gates", () => {
 			"Update dependencies",
 		];
 		for (const task of tasks) {
-			assert.equal(resolveEffectiveAcceptance({ agentName: "delegate", task, async: true }).level, "reviewed", task);
+			const resolved = resolveEffectiveAcceptance({ agentName: "delegate", task, async: true });
+			assert.equal(resolved.level, "checked", task);
+			assert.equal(resolved.review && resolved.review !== false ? resolved.review.required : undefined, true, task);
 		}
 	});
 
@@ -1038,8 +1037,8 @@ describe("acceptance gates", () => {
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);
 		assert.deepEqual(validateAcceptanceInput(false), []);
 		assert.deepEqual(validateAcceptanceInput("checked"), []);
-		assert.match(validateAcceptanceInput("reviewed").join("\n"), /cannot be requested explicitly.*independent reviewer result/i);
-		assert.match(validateAcceptanceInput({ level: "reviewed" }).join("\n"), /cannot be requested explicitly.*independent reviewer result/i);
+		assert.match(validateAcceptanceInput("reviewed").join("\n"), /achieved status.*omit acceptance.*acceptance\.review\.required/i);
+		assert.match(validateAcceptanceInput({ level: "reviewed" }).join("\n"), /achieved status.*omit acceptance.*acceptance\.review\.required/i);
 		assert.deepEqual(validateAcceptanceInput({ criteria: ["ship the fix"], review: false, stopRules: ["stay scoped"] }), []);
 		assert.match(validateAcceptanceInput({ criteria: [{ id: "missing-must" }] }).join("\n"), /acceptance\.criteria\[0\]\.must is required/);
 		assert.match(validateAcceptanceInput({ criteria: [

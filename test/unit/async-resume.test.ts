@@ -168,7 +168,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("downgrades explicit legacy reviewed acceptance metadata in recovery descriptors", () => {
+	it("rejects stale explicit reviewed acceptance metadata in recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-reviewed-acceptance-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -203,16 +203,10 @@ describe("async resume lookup", () => {
 				},
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-reviewed-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
-
-			assert.equal(target.kind, "revive");
-			assert.deepEqual(target.recoveryDescriptor?.acceptance, {
-				level: "verified",
-				criteria: ["Return evidence"],
-				evidence: ["validation-output"],
-				verify: [],
-				stopRules: [],
-			});
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-reviewed-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/achieved status.*acceptance\.review\.required/i,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

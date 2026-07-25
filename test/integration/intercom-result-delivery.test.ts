@@ -434,7 +434,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			);
 
 			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /Cannot resume:.*cannot be requested explicitly.*independent reviewer result/i);
+			assert.match(result.content[0]?.text ?? "", /Cannot resume:.*achieved status.*acceptance\.review\.required/i);
 			assert.equal(events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT), false);
 		}
 	});

@@ -1323,7 +1323,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 		const patchPayload = await readAsyncPayload(patchId);
-		assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "reviewed");
+		assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
 
 		const reviewId = `async-role-task-template-review-${Date.now().toString(36)}`;
 		executeAsyncChain(reviewId, {
@@ -1376,11 +1376,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-			assert.equal(payload.mode, "parallel");
-			assert.equal(payload.sessionId, "session-123");
-			assert.equal(payload.results[0]?.acceptance?.status, "checked");
-			assert.equal(status.sessionId, "session-123");
-			assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
+		assert.equal(payload.mode, "parallel");
+		assert.equal(payload.sessionId, "session-123");
+		assert.equal(payload.results[0]?.acceptance?.status, "review-required");
+		assert.equal(payload.results[0]?.acceptance?.evidenceStatus, "checked");
+		assert.equal(status.sessionId, "session-123");
+		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
+		assert.equal(status.steps?.[0]?.acceptance?.evidenceStatus, "checked");
 		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", asyncId, "async-top-output.md");
 		const outputDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(outputPath)) {
@@ -1536,7 +1538,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(taskArgs.find((task) => task.includes("Write second"))?.includes(path.join("parallel-0", "1-worker", "context.md")));
 	});
 
-	it("async single rejects explicit reviewed acceptance without a reviewer result", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("async single preserves checked evidence while independent review is pending", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			output: [
 				"implemented",
@@ -1571,17 +1573,18 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			artifactConfig,
 			shareEnabled: false,
 			maxSubagentDepth: 2,
-			acceptance: { level: "reviewed", criteria: ["Patch bug"], review: false },
+			acceptance: { level: "checked", criteria: ["Patch bug"], review: { agent: "reviewer", required: true } },
 		});
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 
-		assert.equal(result.success, false);
-		assert.equal(result.results[0]?.acceptance?.status, "rejected");
+		assert.equal(result.success, true);
+		assert.equal(result.results[0]?.acceptance?.status, "review-required");
+		assert.equal(result.results[0]?.acceptance?.evidenceStatus, "checked");
 		assert.ok(result.results[0]?.acceptance?.childReport);
-		assert.equal(result.results[0]?.acceptance?.reviewResult?.status, "needs-parent-decision");
-		assert.equal(status.steps?.[0]?.acceptance?.status, "rejected");
+		assert.equal(result.results[0]?.acceptance?.reviewResult?.status, "review-required");
+		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
 	});
 
 	it("top-level async chain suppresses progress for {task} review-only tasks", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
@@ -2018,7 +2021,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = await readAsyncPayload(id);
 		const explorerResults = payload.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["reviewed", "reviewed"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["checked", "checked"]);
 		const dynamicNode = payload.workflowGraph?.nodes?.[1];
 		assert.equal(payload.success, true);
 		assert.equal(dynamicNode?.acceptanceStatus, "rejected");

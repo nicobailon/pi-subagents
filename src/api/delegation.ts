@@ -38,7 +38,7 @@ export interface SubagentDelegationExecutionResult {
 }
 
 export interface SubagentDelegationReviewResult {
-	status: "not-requested" | "no-blockers" | "blockers" | "needs-parent-decision";
+	status: "not-requested" | "review-required" | "reviewed" | "blockers";
 	findings?: Array<{ severity: "blocker" | "non-blocking"; file?: string; issue: string; rationale: string }>;
 }
 
@@ -162,12 +162,14 @@ export type SubagentDelegationAcceptanceStatus =
 	| "attested"
 	| "checked"
 	| "verified"
+	| "review-required"
 	| "reviewed"
 	| "accepted"
 	| "rejected";
 
 export interface SubagentDelegationAcceptanceResult {
 	status: SubagentDelegationAcceptanceStatus;
+	evidenceStatus: Exclude<SubagentDelegationAcceptanceStatus, "review-required" | "reviewed" | "accepted">;
 	explicit: boolean;
 }
 
