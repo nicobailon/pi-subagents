@@ -9,6 +9,7 @@ import type { AgentConfig } from "../agents/agents.ts";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
+import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 
 // ============================================================================
 // Basic Types
@@ -457,6 +458,7 @@ export interface SteeringRecoveryDescriptor {
 	initialToolBudget?: ResolvedToolBudget;
 	maxSubagentDepth: number;
 	maxOutput?: MaxOutputConfig;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	share: boolean;
 	sessionDir?: string;
 	artifactsDir?: string;
@@ -782,6 +784,8 @@ export interface SingleResult {
 	transcriptError?: string;
 	children?: NestedRunSummary[];
 	watchdog?: ChildWatchdogProgress;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: SubagentCapabilityAudit;
 }
 
 export interface SpawnBudgetGrant {
@@ -841,6 +845,8 @@ export interface Details {
 	// Aggregated cost across all agents in the run
 	totalCost?: CostSummary;
 	spawnBudget?: SpawnBudgetSnapshot;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: SubagentCapabilityAudit;
 	parallelHandoff?: ParallelHandoffReference;
 	lifecycleStatus?: {
 		processTerminal?: ProcessTerminalV1;
@@ -919,6 +925,8 @@ export interface NestedStepSummary {
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	processTerminal?: ProcessTerminalV1;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: SubagentCapabilityAudit;
 	children?: NestedRunSummary[];
 }
 
@@ -935,6 +943,8 @@ export interface NestedRunSummary extends NestedRunAddress {
 	capabilityToken?: string;
 	mode?: SubagentRunMode;
 	processTerminal?: ProcessTerminalV1;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: SubagentCapabilityAudit;
 	state: NestedRunState;
 	agent?: string;
 	agents?: string[];
@@ -997,6 +1007,7 @@ export interface AsyncStartedEvent {
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
 	nestedRoute?: NestedRouteInfo;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
 
 export interface AsyncStatus {
@@ -1035,6 +1046,8 @@ export interface AsyncStatus {
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
 	processTerminal?: ProcessTerminalV1;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: SubagentCapabilityAudit;
 	steps?: Array<{
 		agent: string;
 		/** Resolved launch context for this child step. */
@@ -1088,6 +1101,8 @@ export interface AsyncStatus {
 		effects?: EffectsProjection;
 		watchdog?: ChildWatchdogProgress;
 		processTerminal?: ProcessTerminalV1;
+		capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+		capabilityAudit?: SubagentCapabilityAudit;
 	}>;
 	sessionDir?: string;
 	outputFile?: string;
@@ -1182,6 +1197,8 @@ export interface ForegroundResumeChild {
 	execution?: ExecutionProjection;
 	review?: ReviewProjection;
 	effects?: EffectsProjection;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: SubagentCapabilityAudit;
 	updatedAt?: number;
 }
 
@@ -1349,6 +1366,7 @@ export interface RunSyncOptions {
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */
 	waitToolEnabled?: boolean;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;

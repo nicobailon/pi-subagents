@@ -52,6 +52,7 @@ import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
+import { resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
@@ -215,7 +216,7 @@ async function runSingleAttempt(
 			childIndex: options.index ?? 0,
 		})
 		: undefined;
-	const { args, env: sharedEnv, tempDir, toolDiagnosticPath } = buildPiArgs({
+	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, capabilityAudit } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
 		sessionEnabled: shared.sessionEnabled,
@@ -249,6 +250,7 @@ async function runSingleAttempt(
 		allowZeroToolBudget: options.allowZeroToolBudget,
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
+		capabilityCeiling: options.capabilityCeiling,
 	});
 
 	const result: SingleResult = withRunContext({
@@ -266,6 +268,8 @@ async function runSingleAttempt(
 		skillsWarning: shared.skillsWarning,
 		...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
+		...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
+		...(capabilityAudit ? { capabilityAudit } : {}),
 	}, options.context);
 	const startTime = Date.now();
 	if (options.structuredOutput) {
@@ -1194,6 +1198,10 @@ export async function runSync(
 	task: string,
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
+	options = {
+		...options,
+		capabilityCeiling: options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId),
+	};
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
 		return withRunContext({
@@ -1319,6 +1327,8 @@ export async function runSync(
 			agentContract: target.agentContract,
 			execution: target.execution,
 			acceptance: target.acceptance,
+			capabilityCeiling: target.capabilityCeiling,
+			capabilityAudit: target.capabilityAudit,
 			review: target.review,
 			effects: target.effects,
 			...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),

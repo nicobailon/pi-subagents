@@ -1,0 +1,17 @@
+export {
+	SUBAGENT_CAPABILITY_CEILING_ENV,
+	SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY,
+	SUBAGENT_CAPABILITY_CEILING_VERSION,
+	decodeSubagentCapabilityCeiling,
+	encodeSubagentCapabilityCeiling,
+	intersectSubagentCapabilityCeilings,
+	parseSubagentCapabilityCeiling,
+	registerSubagentCapabilityCeiling,
+	resolveCurrentSubagentCapabilityCeiling,
+	resolveSubagentCapabilityCeiling,
+	type RegisterSubagentCapabilityCeilingOptions,
+	type ResolvedSubagentCapabilityCeiling,
+	type SubagentCapabilityCeiling,
+	type SubagentCapabilityCeilingHandle,
+	type SubagentCapabilityAudit,
+} from "../runs/shared/capability-ceiling.ts";

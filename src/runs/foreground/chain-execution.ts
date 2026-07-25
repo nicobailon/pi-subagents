@@ -79,6 +79,7 @@ import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
+import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 
 interface ChainExecutionDetailsInput {
 	results: SingleResult[];
@@ -148,6 +149,7 @@ interface ParallelChainRunInput {
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	dynamic?: boolean;
 }
 
@@ -342,6 +344,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const agentContract = task.agentContract ?? input.step.agentContract ?? input.agentContract;
 			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				capabilityCeiling: input.capabilityCeiling,
 				context: input.contextForAgent?.(task.agent),
 				cwd: taskCwd,
 				signal: input.signal,
@@ -471,6 +474,7 @@ interface ChainExecutionParams {
 	configToolBudget?: ToolBudgetConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
 
 interface ChainExecutionResult {
@@ -1248,6 +1252,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			});
 			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+				capabilityCeiling: params.capabilityCeiling,
 				context: params.contextForAgent?.(seqStep.agent),
 				cwd: resolveChildCwd(cwd ?? ctx.cwd, seqStep.cwd),
 				signal,

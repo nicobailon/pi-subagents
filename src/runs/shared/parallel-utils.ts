@@ -48,6 +48,8 @@ export interface RunnerSubagentStep {
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
 	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 	toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
+	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 }
 
 export interface ParallelStepGroup {

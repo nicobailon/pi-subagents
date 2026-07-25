@@ -69,14 +69,16 @@ interface MetadataCache {
 	servers: Record<string, ServerCacheEntry>;
 }
 
-export function resolveMcpDirectToolNames(mcpDirectTools: string[] | undefined, cwd = process.cwd()): string[] {
+export interface ResolvedMcpDirectToolSelection { name: string; selector: string }
+
+export function resolveMcpDirectToolSelections(mcpDirectTools: string[] | undefined, cwd = process.cwd()): ResolvedMcpDirectToolSelection[] {
 	if (!mcpDirectTools?.length) return [];
 
 	try {
 		const config = loadMcpConfig(cwd);
 		const cache = loadMetadataCache();
 		if (!cache) return [];
-		return resolveDirectToolNames(config, cache, getToolPrefix(config.settings?.toolPrefix), mcpDirectTools);
+		return resolveDirectToolSelections(config, cache, getToolPrefix(config.settings?.toolPrefix), mcpDirectTools);
 	} catch {
 		return [];
 	}
@@ -195,8 +197,8 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
 	return servers && typeof servers === "object" && !Array.isArray(servers) ? servers as Record<string, ServerEntry> : {};
 }
 
-function resolveDirectToolNames(config: McpConfig, cache: MetadataCache, prefix: ToolPrefix, envOverride: string[]): string[] {
-	const names: string[] = [];
+function resolveDirectToolSelections(config: McpConfig, cache: MetadataCache, prefix: ToolPrefix, envOverride: string[]): ResolvedMcpDirectToolSelection[] {
+	const names: ResolvedMcpDirectToolSelection[] = [];
 	const seenNames = new Set<string>();
 	const { servers: selectedServers, tools: selectedTools } = parseSelections(envOverride);
 
@@ -216,7 +218,7 @@ function resolveDirectToolNames(config: McpConfig, cache: MetadataCache, prefix:
 			const prefixedName = formatToolName(tool.name, serverName, prefix);
 			if (BUILTIN_TOOL_NAMES.has(prefixedName) || seenNames.has(prefixedName)) continue;
 			seenNames.add(prefixedName);
-			names.push(prefixedName);
+			names.push({ name: prefixedName, selector: `${serverName}/${tool.name}` });
 		}
 
 		if (definition.exposeResources === false) continue;
@@ -228,11 +230,15 @@ function resolveDirectToolNames(config: McpConfig, cache: MetadataCache, prefix:
 			const prefixedName = formatToolName(baseName, serverName, prefix);
 			if (BUILTIN_TOOL_NAMES.has(prefixedName) || seenNames.has(prefixedName)) continue;
 			seenNames.add(prefixedName);
-			names.push(prefixedName);
+			names.push({ name: prefixedName, selector: `${serverName}/${baseName}` });
 		}
 	}
 
 	return names;
+}
+
+export function resolveMcpDirectToolNames(mcpDirectTools: string[] | undefined, cwd = process.cwd()): string[] {
+	return resolveMcpDirectToolSelections(mcpDirectTools, cwd).map((selection) => selection.name);
 }
 
 function parseSelections(selections: string[]): { servers: Set<string>; tools: Map<string, Set<string>> } {

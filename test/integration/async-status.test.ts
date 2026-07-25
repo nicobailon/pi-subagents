@@ -85,6 +85,32 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("preserves capability ceiling and audit projections on summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-capability-"));
+		try {
+			const ceiling = { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["plan"] };
+			const audit = { ceiling, requestedTools: ["read", "write"], effectiveTools: ["read"], removedTools: ["write"], internalTools: [], extensionsDenied: true, removedExtensionCount: 1, requestedMcpToolCount: 0, effectiveMcpTools: [] };
+			createAsyncDir(root, "run-capability", {
+				runId: "run-capability",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				capabilityCeiling: ceiling,
+				capabilityAudit: audit,
+				steps: [{ agent: "worker", status: "complete", capabilityCeiling: ceiling, capabilityAudit: audit }],
+			});
+
+			const runs = listAsyncRuns(root, { states: ["complete"] });
+			assert.deepEqual(runs[0]?.capabilityCeiling, ceiling);
+			assert.deepEqual(runs[0]?.capabilityAudit, audit);
+			assert.deepEqual(runs[0]?.steps[0]?.capabilityCeiling, ceiling);
+			assert.deepEqual(runs[0]?.steps[0]?.capabilityAudit, audit);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("formats async run and step context labels", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-context-"));
 		try {

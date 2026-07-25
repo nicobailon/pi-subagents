@@ -41,6 +41,49 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("preserves and validates persisted capability ceilings for resume", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ceiling-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-ceiling");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				capabilityCeiling: { version: 1, allowedTools: ["read", "write"], denyExtensions: true, sources: ["run"] },
+				steps: [{ agent: "worker", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: ["step"] } }],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(target.capabilityCeiling, { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["run", "step"] });
+
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				capabilityCeiling: { version: 2, allowedTools: ["read"], denyExtensions: true, sources: ["run"] },
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			});
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling version/);
+
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			writeJson(path.join(resultsDir, "run-ceiling.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", success: true, cwd: root,
+				capabilityCeiling: { version: 1, allowedTools: ["read", "grep"], denyExtensions: false, sources: ["result"] },
+				results: [{ agent: "worker", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result-step"] } }],
+			});
+			const resultOnly = resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(resultOnly.capabilityCeiling, { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["result", "result-step"] });
+
+			writeJson(path.join(resultsDir, "run-ceiling.json"), {
+				runId: "run-ceiling", mode: "single", state: "complete", success: true, cwd: root,
+				results: [{ agent: "worker", success: true, sessionFile, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true } }],
+			});
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-ceiling" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects unknown, cross-run, and wrong-agent recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-descriptor-"));
 		try {
@@ -59,6 +102,12 @@ describe("async resume lookup", () => {
 			};
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true },
+			});
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);

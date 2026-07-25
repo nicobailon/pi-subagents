@@ -1119,6 +1119,26 @@ tools, skills, context, model policy, and workspace authority; it is not a
 sandbox or a durable task broker. `pi-subagents/delegation` is the canonical
 contract for extension integrations.
 
+## Capability ceilings
+
+Parent extensions can enforce an out-of-band, session-scoped capability ceiling without adding a model-visible field to `subagent`:
+
+```ts
+import { registerSubagentCapabilityCeiling } from "pi-subagents/capability-ceiling";
+
+const restriction = registerSubagentCapabilityCeiling({
+  sessionId: ctx.sessionManager.getSessionId(),
+  source: "plan-mode",
+  ceiling: { allowedTools: ["read", "grep", "find", "ls"], denyExtensions: true },
+});
+// restriction.update(...) replaces this provider's policy atomically.
+// restriction.dispose() removes only this provider's registration.
+```
+
+Active registrations intersect their `allowedTools` sets and OR `denyExtensions`; an explicit empty list means no caller-facing tools, while an omitted list does not restrict names. The resolved snapshot is propagated monotonically to nested and async children and is retained for recovery. `structured_output` may remain as a package-owned internal protocol tool when an output schema requires it; it is not a caller capability. A denied lazy-skill `read` requirement fails before spawn rather than widening the ceiling.
+
+`denyExtensions` suppresses ambient, configured, and MCP provider extensions while retaining the package runtime needed for child protocol enforcement. This is a same-process policy boundary, not a sandbox against malicious code already running in the parent process. Schedules created while a ceiling is active are rejected until durable schedule persistence is available; unrestricted schedules remain subject to any policy active when they fire. Public status exposes bounded audit counts and sources, never full extension paths.
+
 ## Background-work provider API
 
 Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the versioned process-local provider contract:
