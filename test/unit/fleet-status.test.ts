@@ -94,6 +94,112 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("stops refreshing when the captured extension context becomes stale", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		let stale = false;
+		let contextReads = 0;
+		let inputUnsubscribes = 0;
+		let widgetRemovals = 0;
+		const ctx = {
+			get hasUI() {
+				contextReads++;
+				if (stale) {
+					throw new Error("This extension ctx is stale after session replacement or reload.");
+				}
+				return true;
+			},
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					if (content === undefined) widgetRemovals++;
+				},
+				onTerminalInput() { return () => { inputUnsubscribes++; }; },
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			stale = true;
+			assert.doesNotThrow(() => fleet.refresh());
+			assert.equal(inputUnsubscribes, 1);
+			assert.equal(widgetRemovals, 1);
+			assert.equal((fleet as unknown as { timer?: unknown }).timer, undefined);
+			const readsAfterStaleRefresh = contextReads;
+			fleet.refresh();
+			assert.equal(contextReads, readsAfterStaleRefresh, "later refreshes must not reuse the stale context");
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("does not swallow unrelated widget cleanup errors", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					if (content === undefined) throw new Error("widget cleanup failed");
+				},
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		fleet.setContext(ctx);
+		assert.throws(() => fleet.dispose(), /widget cleanup failed/);
+	});
+
+	it("preserves multiple unrelated UI cleanup errors", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			currentAgent: "worker",
+		});
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: unknown) {
+					if (content === undefined) throw new Error("widget cleanup failed");
+				},
+				onTerminalInput() {
+					return () => { throw new Error("input cleanup failed"); };
+				},
+				getEditorText() { return ""; },
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		fleet.setContext(ctx);
+		assert.throws(
+			() => fleet.dispose(),
+			(error: unknown) => error instanceof AggregateError
+				&& error.errors.map(String).join("\n").includes("input cleanup failed")
+				&& error.errors.map(String).join("\n").includes("widget cleanup failed"),
+		);
+	});
+
 	it("keeps widget ownership through invalidation so an empty refresh removes it", () => {
 		const state = stateForTest();
 		state.foregroundControls.set("run-worker", {

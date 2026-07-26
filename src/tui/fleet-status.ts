@@ -48,6 +48,13 @@ function isActiveState(value: string): boolean {
 	return value === "running" || value === "queued" || value === "pending";
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	// Pi currently exposes stale contexts as plain Errors without a stable code or subtype.
+	return error instanceof Error
+		&& (error.message.includes("This extension ctx is stale")
+			|| error.message.includes("Extension context no longer active"));
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	for (const control of state.foregroundControls.values()) {
@@ -111,6 +118,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 
 export class SubagentFleetStatus {
 	private ctx: ExtensionContext | undefined;
+	private ui: ExtensionContext["ui"] | undefined;
 	private tui: FleetStatusTui | undefined;
 	private inputUnsubscribe: (() => void) | undefined;
 	private timer: ReturnType<typeof setInterval> | undefined;
@@ -138,15 +146,17 @@ export class SubagentFleetStatus {
 
 	setContext(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
-		if (this.ctx?.ui === ctx.ui) {
+		const ui = ctx.ui;
+		if (this.ui === ui) {
 			this.ctx = ctx;
 			this.refresh();
 			return;
 		}
 		this.clearUiRegistration();
 		this.ctx = ctx;
-		if (typeof ctx.ui.onTerminalInput === "function") {
-			this.inputUnsubscribe = ctx.ui.onTerminalInput((data) => this.handleKey(data));
+		this.ui = ui;
+		if (typeof ui.onTerminalInput === "function") {
+			this.inputUnsubscribe = ui.onTerminalInput((data) => this.handleKey(data));
 		}
 		this.timer = setInterval(() => this.refresh(), this.refreshMs);
 		this.timer.unref?.();
@@ -156,6 +166,7 @@ export class SubagentFleetStatus {
 	dispose(): void {
 		this.clearUiRegistration();
 		this.ctx = undefined;
+		this.ui = undefined;
 		this.entries = [];
 		this.active = false;
 		this.selectedKey = "main";
@@ -164,8 +175,8 @@ export class SubagentFleetStatus {
 	}
 
 	refresh(): void {
-		const ctx = this.ctx;
-		if (!ctx?.hasUI) return;
+		const ctx = this.getActiveUiContext();
+		if (!ctx) return;
 		this.entries = collectFleetStatusEntries(this.state);
 		this.clampSelection();
 		if (this.inspectorOpen || this.state.fleetInspectorOpen) {
@@ -215,8 +226,8 @@ export class SubagentFleetStatus {
 	}
 
 	handleKey(data: string): { consume?: boolean; data?: string } | undefined {
-		const ctx = this.ctx;
-		if (!ctx?.hasUI || this.entries.length === 0 || isKeyRelease(data)) return undefined;
+		const ctx = this.getActiveUiContext();
+		if (!ctx || this.entries.length === 0 || isKeyRelease(data)) return undefined;
 		if (this.inspectorOpen) return undefined;
 		if (!this.editorHasFocus()) {
 			if (this.active) this.deactivate();
@@ -344,19 +355,47 @@ export class SubagentFleetStatus {
 		});
 	}
 
+	private getActiveUiContext(): ExtensionContext | undefined {
+		const ctx = this.ctx;
+		if (!ctx) return undefined;
+		try {
+			return ctx.hasUI ? ctx : undefined;
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) throw error;
+			this.clearUiRegistration();
+			return undefined;
+		}
+	}
+
 	private clearUiRegistration(): void {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
-		this.inputUnsubscribe?.();
+
+		const inputUnsubscribe = this.inputUnsubscribe;
+		const ui = this.ui;
+		const widgetRegistered = this.widgetRegistered;
 		this.inputUnsubscribe = undefined;
-		if (this.ctx?.hasUI && this.widgetRegistered) {
-			try {
-				this.ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
-			} catch {
-				// The previous extension context may already be stale during reload/session replacement.
-			}
-		}
+		this.ctx = undefined;
+		this.ui = undefined;
 		this.widgetRegistered = false;
 		this.tui = undefined;
+
+		const cleanupErrors: unknown[] = [];
+		try {
+			inputUnsubscribe?.();
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) cleanupErrors.push(error);
+		}
+		if (ui && widgetRegistered) {
+			try {
+				ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+			} catch (error) {
+				if (!isStaleExtensionContextError(error)) cleanupErrors.push(error);
+			}
+		}
+		if (cleanupErrors.length === 1) throw cleanupErrors[0];
+		if (cleanupErrors.length > 1) {
+			throw new AggregateError(cleanupErrors, "Failed to clean up FleetView UI registration");
+		}
 	}
 }
