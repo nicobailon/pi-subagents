@@ -27,6 +27,7 @@ type ImportKind = keyof typeof IMPORT_PATHS;
 interface ServerEntry {
 	command?: string;
 	args?: string[];
+	socket?: string;
 	env?: Record<string, string>;
 	cwd?: string;
 	url?: string;
@@ -35,6 +36,7 @@ interface ServerEntry {
 	bearerToken?: string;
 	bearerTokenEnv?: string;
 	exposeResources?: boolean;
+	includeTools?: string[];
 	excludeTools?: string[];
 	directTools?: boolean | string[];
 }
@@ -271,14 +273,16 @@ export function computeMcpServerHash(definition: ServerEntry): string {
 	const identity: Record<string, unknown> = {
 		command: definition.command,
 		args: definition.args,
+		socket: resolveConfigPath(definition.socket),
 		env: interpolateEnvRecord(definition.env),
 		cwd: resolveConfigPath(definition.cwd),
-		url: definition.url,
+		url: resolveServerUrl(definition),
 		headers: interpolateEnvRecord(definition.headers),
 		auth: definition.auth,
 		bearerToken: resolveBearerToken(definition),
 		bearerTokenEnv: definition.bearerTokenEnv,
 		exposeResources: definition.exposeResources,
+		includeTools: definition.includeTools,
 		excludeTools: definition.excludeTools,
 	};
 	return createHash("sha256").update(stableStringify(identity)).digest("hex");
@@ -333,22 +337,51 @@ function resourceNameToToolName(name: string): string {
 }
 
 function interpolateEnvRecord(values: Record<string, string> | undefined): Record<string, string> | undefined {
-	if (!values || typeof values !== "object" || Array.isArray(values)) return undefined;
-	const resolved: Record<string, string> = {};
-	for (const [key, value] of Object.entries(values)) {
-		if (typeof value === "string") resolved[key] = interpolateEnvVars(value);
-	}
-	return resolved;
+	if (!values) return undefined;
+	return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, interpolateSecretExpression(value)]));
 }
 
 function interpolateEnvVars(value: string): string {
 	return value
 		.replace(/\$\{(\w+)\}/g, (_, name: string) => process.env[name] ?? "")
-		.replace(/\$env:(\w+)/g, (_, name: string) => process.env[name] ?? "");
+		.replace(/\$env:(\w+)/g, (_, name: string) => process.env[name] ?? "")
+		.replace(/\{env:(\w+)\}/g, (_, name: string) => process.env[name] ?? "");
+}
+
+function interpolateSecretExpression(value: string): string {
+	if (value.startsWith("!!")) return interpolateEnvVars(value.slice(1));
+	return value.startsWith("!") ? value : interpolateEnvVars(value);
+}
+
+function getMissingEnvVars(value: string): string[] {
+	const missing = new Set<string>();
+	for (const match of value.matchAll(/\$\{(\w+)\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
+		const name = match[1] ?? match[2] ?? match[3];
+		if (name && process.env[name] === undefined) missing.add(name);
+	}
+	return [...missing];
+}
+
+function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
+	if (definition.url == null) return undefined;
+	if (typeof definition.url !== "string") throw new Error("MCP server URL must be a string");
+
+	const missing = getMissingEnvVars(definition.url);
+	if (missing.length > 0) {
+		throw new Error(`Missing environment variable${missing.length === 1 ? "" : "s"} in MCP server URL: ${missing.join(", ")}`);
+	}
+
+	const resolved = interpolateEnvVars(definition.url);
+	try {
+		new URL(resolved);
+	} catch (error) {
+		throw new Error(`Invalid MCP server URL after environment interpolation: ${resolved}`, { cause: error });
+	}
+	return resolved;
 }
 
 function resolveConfigPath(value: string | undefined): string | undefined {
-	if (typeof value !== "string") return undefined;
+	if (value === undefined) return undefined;
 	const resolved = interpolateEnvVars(value);
 	if (resolved === "~") return os.homedir();
 	if (resolved.startsWith("~/") || resolved.startsWith("~\\")) return path.join(os.homedir(), resolved.slice(2));
@@ -356,8 +389,8 @@ function resolveConfigPath(value: string | undefined): string | undefined {
 }
 
 function resolveBearerToken(definition: Pick<ServerEntry, "bearerToken" | "bearerTokenEnv">): string | undefined {
-	if (typeof definition.bearerToken === "string") return interpolateEnvVars(definition.bearerToken);
-	return typeof definition.bearerTokenEnv === "string" ? process.env[definition.bearerTokenEnv] : undefined;
+	if (definition.bearerToken !== undefined) return interpolateSecretExpression(definition.bearerToken);
+	return definition.bearerTokenEnv ? process.env[definition.bearerTokenEnv] : undefined;
 }
 
 function stableStringify(value: unknown): string {

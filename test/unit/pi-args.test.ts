@@ -45,6 +45,8 @@ const originalEnv = {
 	[MCP_DIRECT_CHILD_TOOLS_ENV]: process.env[MCP_DIRECT_CHILD_TOOLS_ENV],
 	[TOOL_BUDGET_ZERO_AUTH_ENV]: process.env[TOOL_BUDGET_ZERO_AUTH_ENV],
 	[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV],
+	MCP_HASH_ROOT: process.env.MCP_HASH_ROOT,
+	MCP_HASH_TOKEN: process.env.MCP_HASH_TOKEN,
 };
 const originalCwd = process.cwd();
 const tempRoots: string[] = [];
@@ -590,6 +592,46 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		});
 
 		assert.equal(args[args.indexOf("--tools") + 1], "read,bash");
+	});
+
+	it("includes adapter tool filters in MCP cache identity", () => {
+		const base = { command: "npx", args: ["browser-mcp"] };
+
+		assert.notEqual(
+			computeMcpServerHash(base),
+			computeMcpServerHash({ ...base, includeTools: ["browser_navigate"] }),
+		);
+	});
+
+	it("matches pi-mcp-adapter 2.15.0 metadata cache hashes", () => {
+		process.env.MCP_HASH_ROOT = "/tmp/mcp-root";
+		process.env.MCP_HASH_TOKEN = "token-value";
+
+		assert.deepEqual(
+			[
+				computeMcpServerHash({
+					command: "npx",
+					args: ["-y", "browser-mcp"],
+					env: { ROOT: "{env:MCP_HASH_ROOT}", SECRET_COMMAND: "!op read test" },
+					cwd: "${MCP_HASH_ROOT}/server",
+					exposeResources: false,
+					includeTools: ["browser_navigate"],
+					excludeTools: ["browser_close"],
+				}),
+				computeMcpServerHash({
+					url: "https://example.test/$env:MCP_HASH_TOKEN",
+					headers: { Authorization: "Bearer ${MCP_HASH_TOKEN}", Secret: "!op read test" },
+					auth: "bearer",
+					bearerTokenEnv: "MCP_HASH_TOKEN",
+				}),
+				computeMcpServerHash({ socket: "{env:MCP_HASH_ROOT}/rmcp.sock" }),
+			],
+			[
+				"8af47bd5a801f42bd252789826df883c6f4db6f1d425b82f8561d75063fbe3a8",
+				"77db141e556d24c3740a4b4f0cd50d8c23309a28062282cc1ca724207359ef5a",
+				"77f7f77a3e8df990d8c78e99ca81508fd8d1f954e814ee7cbfa46719f71eb46b",
+			],
+		);
 	});
 
 	it("augments explicit builtin allowlists with selected direct MCP tool names", () => {
