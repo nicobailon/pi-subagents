@@ -39,8 +39,11 @@ Humans often use the slash-command layer instead:
 - `/chain` — launch a chain of steps
 - `/parallel` — launch top-level parallel tasks
 - `/run-chain` — launch a saved `.chain.md` or `.chain.json` workflow
+- `/subagents` — interactive admin for inspecting agents and editing model, thinking, or system prompt
+- `/subagents-stop [run-id]` — stop a current-session top-level async run; opens a selector when no id is given
 - `/subagent-cost` — show parent plus child token usage and cost for the session
 - `/subagents-fleet` — open the live, inspection-only foreground/async fleet; `Ctrl+Alt+F` opens it during an active foreground turn, `↑↓`/`jk` selects children, and `PgUp`/`PgDn` scrolls transcript detail
+- `/subagents-watchdog` — inspect or configure the opt-in adversarial change watchdog (model, on/off, recommend-model, check)
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
 - `/subagents-models [agent]` — show the live runtime-loaded builtin model mapping
 - `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile` — manage model profiles and provider catalogs
@@ -190,12 +193,14 @@ and user/project agents override builtins with the same name.
 | `scout` | Fast codebase recon | inherits default | Writes `context.md` handoff material |
 | `planner` | Creates implementation plans | inherits default | Writes `plan.md` |
 | `worker` | Implementation and approved oracle handoffs | inherits default | Single-writer implementation with decision escalation |
-| `reviewer` | Review-and-fix specialist | inherits default | Can edit/fix reviewed code |
+| `reviewer` | Review specialist | inherits default | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
 | `context-builder` | Requirements/codebase handoff builder | inherits default | Writes structured context files |
 | `researcher` | Web research brief generator | inherits default | Writes `research.md` |
 | `delegate` | Lightweight generic delegate | inherits default | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
 | `advisor` | Claude Code-compatible alias for `oracle` | inherits default | Same advisory role as `oracle` |
+
+Builtin `worker` and `delegate` use strict tool allowlists and do not inherit ambient parent extension tools. To give a child an extension tool, name it in `tools` and load its provider via `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. Custom agents without an `extensions` field follow `subagents.defaultExtensions` when set.
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. Set `subagents.defaultModel` when subagents should use a different default model than the parent session. Override builtin defaults before copying full agent files when a small tweak is enough.
 
@@ -318,6 +323,10 @@ parent session. It does **not** create a fresh minimal review context or filter
 history down to only the relevant parts. Use it when you want a separate review
 or execution thread that can still reference the parent session history.
 
+Foreground results, async status, fleet, and widget surfaces label each child with
+its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
+`[mixed]` when a run uses both modes.
+
 ### Parallel execution
 
 ```typescript
@@ -339,6 +348,18 @@ subagent({
     { agent: "reviewer", task: "Review auth tests", model: "anthropic/claude-sonnet-4" }
   ],
   concurrency: 3
+})
+```
+
+Repeat one parallel task N times with the same settings via `count` (useful for identical scouts or review angles without hand-duplicating entries):
+
+```typescript
+subagent({
+  tasks: [
+    { agent: "scout", task: "Map a distinct slice of the auth surface and return compressed context.", count: 3 }
+  ],
+  concurrency: 3,
+  context: "fresh"
 })
 ```
 
@@ -407,6 +428,17 @@ const run = subagent({
 
 Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
+Stop a current-session top-level async run with `stop` (or `/subagents-stop`). Stopped runs finish as `stopped`/cancelled and are not resumable. Append one more step to the tail of a still-running async chain with `append-step` (`chain` must contain exactly one step):
+
+```typescript
+subagent({ action: "stop", id: "run-id" })
+subagent({
+  action: "append-step",
+  id: "run-id",
+  chain: [{ agent: "reviewer", task: "Re-check the worker diff after the fix pass. Do not modify files." }]
+})
+```
+
 Use `steer` for top-level live async guidance and `resume` after a delegated run pauses or finishes. Routed nested runs retain their existing non-destructive live follow-up path:
 
 ```typescript
@@ -451,7 +483,7 @@ subagent({ action: "schedule-status", id: "ab12" })
 subagent({ action: "schedule-cancel", id: "ab12" })
 ```
 
-`schedule` accepts the same execution fields as a normal async run (`agent`/`tasks`/`chain`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `subagent_wait()`, and delivers the normal completion notification.
+`schedule` accepts the same execution fields as a normal async run (`agent`/`tasks`/`chain`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs` / `maxRuntimeMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `subagent_wait()`, and delivers the normal completion notification.
 
 Schedules are persisted per session and restored after a Pi restart. A job whose scheduled time passed by more than `scheduledRuns.maxLatenessMs` (default 5 minutes) while Pi was unavailable is marked `missed` instead of firing late. `scheduledRuns.maxPending` (default 20) caps pending or running scheduled jobs per session.
 
@@ -459,7 +491,7 @@ Humans can use `/subagents-doctor` for the same read-only report. It checks runt
 
 ### Subagent control
 
-Subagent control is the runtime visibility and intervention layer for delegated runs. It is separate from lifecycle status. Lifecycle status says whether a child is `queued`, `running`, `paused`, `complete`, or `failed`. Activity reporting is factual: it tracks the last observed activity time and the current tool when known. It does not pretend to know that a child is truly stuck.
+Subagent control is the runtime visibility and intervention layer for delegated runs. It is separate from lifecycle status. Lifecycle status says whether a child is `queued`, `running`, `paused`, `complete`, `stopped`, or `failed`. Activity reporting is factual: it tracks the last observed activity time and the current tool when known. It does not pretend to know that a child is truly stuck. Manual top-level async cancellation uses `stop` / `/subagents-stop`; a live async chain can gain one more tail step via `append-step`.
 
 Default behavior is intentionally conservative. When no activity has been observed past the configured threshold, the run emits a `needs_attention` control event. Foreground runs can push this as a `subagent:control-event` event, and async runs persist it to `events.jsonl` so the parent tracker can surface it without constant manual polling. Notification-worthy control events are also inserted into the visible transcript so both the user and the parent agent can see them, with a proactive hint plus concrete `nudge`, `status`, and `interrupt` options. Visible notifications fire once per child run and attention state.
 
@@ -501,6 +533,41 @@ subagent({ action: "steer", id: "abc123", message: "Focus on the failing test." 
 
 The action waits up to three seconds for the child Pi session to accept the correlated user input and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Indexed pending children return `scheduled` immediately. Only a top-level single-child run may automatically interrupt after a missed acknowledgment and recover after confirmed pause within a further 15 seconds. Recovery preserves the original child contract and only its remaining deadline, turn, and tool budgets. If the session is missing, a budget is exhausted, the pause cannot be confirmed, or replacement launch fails, the source remains paused when pausing succeeded and the action returns the exact failure. Chain, parallel, and nested runs never auto-interrupt; inspect their per-child outcomes and handle failures explicitly. A late acknowledgment is recorded and cannot cancel committed recovery.
 
+## Watchdog
+
+The subagent watchdog is an **opt-in** adversarial change reviewer. It is not the
+`reviewer` subagent and is not configured by `subagents.defaultModel` or
+`agentOverrides.reviewer`.
+
+When enabled, it reviews actual repo edits at safe `agent_end` boundaries only if
+the final worktree state changed during that turn. Unchanged or reverted diffs and
+generated `.pi-subagents/` / temp artifacts do not trigger review. Writing children
+can review their own worktree; the parent can still review the aggregate diff after
+child changes land. Enabled watchdogs also run changed-file TypeScript/JavaScript
+LSP diagnostics before the model pass when `typescript-language-server` is available.
+
+Prefer a strong complementary model (for example Opus 4.8 high paired against a
+GPT 5.5 main session, or the reverse). Recommendation and configuration:
+
+```text
+/subagents-watchdog recommend-model
+/subagents-watchdog session model recommended
+/subagents-watchdog on
+/subagents-watchdog status
+/subagents-watchdog check
+```
+
+```typescript
+subagent({ action: "watchdog.status" })
+subagent({ action: "watchdog.recommend-model" })
+subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
+subagent({ action: "watchdog.check" })
+```
+
+`session` scope is temporary. Persistent `user`/`project` scopes write settings only
+when the user asked. Use ordinary fresh-context `reviewer` fanout for planned review
+waves; enable the watchdog when you want an automatic second pass on real edits.
+
 ## Clarify TUI
 
 Single and parallel runs support a clarification TUI when you want to preview or
@@ -535,8 +602,8 @@ subagent({
 
 `worktree: true` gives each parallel task its own git worktree branched from
 HEAD. This requires a clean git state and is mainly for intentionally parallel
-write workflows. On completion, use the `parallelHandoff.path` returned in
-foreground details or async status/results instead of scraping the combined
+write workflows. On completion, use the versioned aggregate handoff at
+`parallelHandoff.path` from foreground details or async status/results instead of scraping the combined
 text. Its versioned manifest records child status and output references, full
 patch paths and stats, and whether each temporary worktree and branch was
 removed. If you want one writer thread and several advisory agents, prefer a
@@ -722,6 +789,9 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 - `maxSubagentDepth`
 - `acceptance`
 - `acceptanceRole`
+- `async` — single-agent default for background launch (`true`/`false`); explicit tool-call `async` wins
+- `timeoutMs` — single-agent default run-level max runtime in ms (tool alias `maxRuntimeMs` also accepted on calls)
+- `turnBudget` — single-agent default `{ maxTurns, graceTurns? }` JSON object
 
 `acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; chain and parallel acceptance remains configured on the task or step. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
 
@@ -771,7 +841,7 @@ Methods: `ping`, `status`, `spawn`, `steer`, `interrupt`, and `stop`. `spawn` is
 - **Keep conversational authority clear.** Advisory subagents should not silently
   become second decision-makers.
 
-Runtime config can change orchestration behavior. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make direct `subagent_wait()` calls return immediately while headless auto-drain remains active, and its effective value is propagated to child runtimes; `globalConcurrencyLimit` bounds concurrent fanout, while a positive `maxSubagentSpawnsPerSession` optionally caps cumulative launches (`0` or unset is unlimited). Status and doctor report the budget; static work preflights declared capacity; only the settled root interactive parent can use `grant-spawn-budget` after native confirmation, with total grants bounded by the original cap. Compaction does not reset usage or grants; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. Per-run `artifacts: false` disables artifact capture for that launch. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Child protocol failures expose a structured `protocolError`; `protocol_output_limit` means a child emitted a JSONL line above the 4 MiB live-parser cap. Prefer these artifacts and `status` views over scraping terminal output.
+Runtime config can change orchestration behavior. `asyncByDefault` and `forceTopLevelAsync` affect whether launches detach; `waitTool` can make direct `subagent_wait()` calls return immediately while headless auto-drain remains active, and its effective value is propagated to child runtimes; `globalConcurrencyLimit` bounds concurrent fanout, while a positive `maxSubagentSpawnsPerSession` optionally caps cumulative launches (`0` or unset is unlimited). Status and doctor report the budget; static work preflights declared capacity; only the settled root interactive parent can use `grant-spawn-budget` after native confirmation, with total grants bounded by the original cap. Compaction does not reset usage or grants; `singleRunOutputBaseDir` and `worktreeBaseDir` route outputs and worktrees; `completionBatch` groups async notifications. `artifactDir` is `project` (default), `session`, or `temp` and chooses where subagent artifacts are stored. Set `asyncWidget: false` to hide the above-editor background-run widget when a companion footer or dashboard owns that space (fleet inspector remains available). Per-run `artifacts: false` disables artifact capture for that launch. Async status and result artifacts are versioned with fields such as `lifecycleArtifactVersion`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `turnCount`, `toolCount`, and nested `children`. Child protocol failures expose a structured `protocolError`; `protocol_output_limit` means a child emitted a JSONL line above the 4 MiB live-parser cap. Prefer these artifacts and `status` views over scraping terminal output.
 
 ## Best Practices
 
