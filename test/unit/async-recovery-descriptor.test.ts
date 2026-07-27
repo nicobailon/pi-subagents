@@ -31,4 +31,30 @@ describe("async recovery descriptor", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("rejects malformed launchContractDigest values", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-digest-"));
+		try {
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+				version: 1,
+				launchContractDigest: {},
+				sourceRunId: "run-digest",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			}), "utf-8");
+
+			assert.throws(
+				() => readAsyncRecoveryDescriptor(root),
+				/launchContractDigest must be a non-empty string/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

@@ -6,6 +6,7 @@
 - Refreshed the bundled `pi-subagents` skill for 0.35–0.37 control and config surface: `/subagents`, `/subagents-stop`, `/subagents-watchdog`, `stop`/`append-step`, parallel `count`, watchdog overview, frontmatter `async`/`timeoutMs`/`turnBudget` defaults, `artifactDir`/`asyncWidget`, fresh/fork badges, and builtin worker/delegate ambient-tool boundaries.
 
 ### Fixed
+- Accepted persisted async recovery descriptors that include the launch contract digest written by async execution. Thanks to @boadij for #654 and #652.
 - Classified verification-only tasks that prohibit product/source/config files as read-only. Thanks to @git-geeky for #648.
 - Matched pi-mcp-adapter metadata cache identity so valid direct MCP tools are not rejected as stale when tool filters, socket transport, URL interpolation, or command-backed secrets are configured. Thanks to @mattrobenolt for #649.
 

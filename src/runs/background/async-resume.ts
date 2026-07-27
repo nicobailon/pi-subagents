@@ -315,7 +315,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (item !== undefined && (!Array.isArray(item) || item.some((entry) => typeof entry !== "string" || !entry.trim()))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must contain non-empty strings.`);
 	}
 	if (parsed.systemPrompt !== undefined && typeof parsed.systemPrompt !== "string") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPrompt must be a string.`);
-	for (const field of ["sessionFile", "model", "thinking", "agentFilePath", "outputPath", "sessionDir", "artifactsDir"] as const) {
+	for (const field of ["launchContractDigest", "sessionFile", "model", "thinking", "agentFilePath", "outputPath", "sessionDir", "artifactsDir"] as const) {
 		if (parsed[field] !== undefined && (typeof parsed[field] !== "string" || !(parsed[field] as string).trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.completionGuard !== undefined && typeof parsed.completionGuard !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': completionGuard must be a boolean.`);
