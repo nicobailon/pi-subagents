@@ -565,7 +565,7 @@ interface ChainRenderResultEntry {
 	kind: "result";
 	resultIndex: number;
 	rowNumber: number;
-	rowLabel: string;
+	rowLabel?: string;
 	agentName: string;
 }
 
@@ -1399,7 +1399,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const r = d.results[i];
 		const fallbackLabel = itemTitle.toLowerCase();
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, rowLabel: resultRowLabel(multiLabel, i, rowNumber), agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
 	});
 	for (const entry of renderEntries) {
 		if (entry.kind === "placeholder") {
@@ -1694,7 +1694,7 @@ export function renderSubagentResult(
 		const i = displayStart + offset;
 		const r = d.results[i];
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, rowLabel: resultRowLabel(multiLabel, i, rowNumber), agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
 	});
 
 	c.addChild(new Spacer(1));
