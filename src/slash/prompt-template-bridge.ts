@@ -6,6 +6,8 @@ import {
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
 	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
+	DEFAULT_SUBAGENT_DELEGATION_PROVIDER,
+	registerSubagentDelegationProvider,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
 	type SubagentDelegationV2InvalidResponse,
@@ -79,6 +81,7 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 	const activeV2Nodes = new Map<string, { attemptKey: string; controller: AbortController }>();
 	const settledV2Attempts = new Map<string, true>();
 	const subscriptions: Array<() => void> = [];
+	const providerRegistration = registerSubagentDelegationProvider(options.events, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
 	let disposed = false;
 	let v2IdentitySaturated = false;
 
@@ -412,6 +415,7 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 			v2IdentitySaturated = false;
 		},
 		dispose: () => {
+			providerRegistration.dispose();
 			disposed = true;
 			for (const controller of controllers.values()) controller.abort();
 			for (const controller of v2Controllers.values()) controller.abort();

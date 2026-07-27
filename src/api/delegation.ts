@@ -1,3 +1,5 @@
+import { PACKAGE_METADATA } from "../shared/package-metadata.ts";
+
 export const SUBAGENT_DELEGATION_PROTOCOL_VERSION = 1 as const;
 export const SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION = 2 as const;
 
@@ -8,6 +10,141 @@ export const SUBAGENT_DELEGATION_STARTED_EVENT = "prompt-template:subagent:start
 export const SUBAGENT_DELEGATION_UPDATE_EVENT = "prompt-template:subagent:update";
 export const SUBAGENT_DELEGATION_RESPONSE_EVENT = "prompt-template:subagent:response";
 export const SUBAGENT_DELEGATION_CANCEL_EVENT = "prompt-template:subagent:cancel";
+
+export const SUBAGENT_DELEGATION_PROVIDER_ID = "pi-subagents/prompt-template-bridge" as const;
+export const SUBAGENT_DELEGATION_PROVIDER_PACKAGE = PACKAGE_METADATA.name;
+export const SUBAGENT_DELEGATION_PROVIDER_PACKAGE_VERSION = PACKAGE_METADATA.version;
+
+export interface SubagentDelegationRequestFieldCapabilities {
+	readonly model: boolean;
+	readonly thinking: boolean;
+	readonly timeout: boolean;
+	readonly turnBudget: boolean;
+	readonly toolBudget: boolean;
+	readonly skills: boolean;
+	readonly artifacts: boolean;
+	readonly textResult: boolean;
+	readonly structuredResult: boolean;
+	readonly ownershipIdentity: boolean;
+}
+
+export interface SubagentDelegationProtocolCapability {
+	readonly version: 1 | 2;
+	readonly terminalStatuses: readonly string[];
+	readonly requestFields: SubagentDelegationRequestFieldCapabilities;
+}
+
+export interface SubagentDelegationProviderDescriptor {
+	readonly providerId: string;
+	readonly packageName: string;
+	readonly packageVersion: string;
+	/** Monotonically unique within this process-global provider registry. */
+	readonly generation: number;
+	readonly protocols: readonly SubagentDelegationProtocolCapability[];
+	readonly cancellation: Readonly<{
+		supported: boolean;
+		preCancellation: boolean;
+		identity: "requestId" | "requestId+ownerRunId+nodeId" | "protocol-specific";
+	}>;
+	readonly concurrency: Readonly<{
+		semantics: "v1-request-id-v2-owner-node";
+		maximumConcurrentRequests: number | null;
+		v2IdentityHistoryLimit: number;
+		v1DuplicateIdentity: "ignored";
+		v2DuplicateIdentity: "ignored";
+		v2ConcurrentLogicalNode: "duplicate_node";
+	}>;
+}
+
+export type SubagentDelegationProviderRegistration = Omit<SubagentDelegationProviderDescriptor, "generation">;
+
+interface SubagentDelegationProviderRegistry {
+	readonly providers: WeakMap<object, SubagentDelegationProviderDescriptor>;
+	nextGeneration: number;
+}
+
+// Symbol.for intentionally lets duplicate installed copies observe and replace the
+// provider owning the same concrete EventBus instead of maintaining split registries.
+const DELEGATION_PROVIDER_REGISTRY = Symbol.for("pi-subagents.delegation-provider-registry.v1");
+const globalRegistry = globalThis as typeof globalThis & {
+	[DELEGATION_PROVIDER_REGISTRY]?: SubagentDelegationProviderRegistry;
+};
+const delegationProviderRegistry = globalRegistry[DELEGATION_PROVIDER_REGISTRY] ??= {
+	providers: new WeakMap<object, SubagentDelegationProviderDescriptor>(),
+	nextGeneration: 0,
+};
+
+function freezeDelegationProviderDescriptor(
+	descriptor: SubagentDelegationProviderRegistration,
+	generation: number,
+): SubagentDelegationProviderDescriptor {
+	const protocols = descriptor.protocols.map((protocol) => Object.freeze({
+		...protocol,
+		terminalStatuses: Object.freeze([...protocol.terminalStatuses]),
+		requestFields: Object.freeze({ ...protocol.requestFields }),
+	}));
+	return Object.freeze({
+		...descriptor,
+		generation,
+		protocols: Object.freeze(protocols),
+		cancellation: Object.freeze({ ...descriptor.cancellation }),
+		concurrency: Object.freeze({ ...descriptor.concurrency }),
+	});
+}
+
+/**
+ * Registers the provider currently owning a concrete Pi EventBus/extension context.
+ * Registration is synchronous and does not dispatch or reserve delegation work.
+ * Disposing an older generation never invalidates a newer replacement.
+ */
+export function registerSubagentDelegationProvider(
+	context: object,
+	descriptor: SubagentDelegationProviderRegistration,
+): { readonly descriptor: SubagentDelegationProviderDescriptor; dispose(): void } {
+	const generation = ++delegationProviderRegistry.nextGeneration;
+	const immutableDescriptor = freezeDelegationProviderDescriptor(descriptor, generation);
+	delegationProviderRegistry.providers.set(context, immutableDescriptor);
+	return Object.freeze({
+		descriptor: immutableDescriptor,
+		dispose: () => {
+			if (delegationProviderRegistry.providers.get(context)?.generation === generation) delegationProviderRegistry.providers.delete(context);
+		},
+	});
+}
+
+/** Returns the current provider generation for this exact context without emitting events. */
+export function getSubagentDelegationProvider(
+	context: object,
+): SubagentDelegationProviderDescriptor | undefined {
+	return delegationProviderRegistry.providers.get(context);
+}
+
+export const DEFAULT_SUBAGENT_DELEGATION_PROVIDER: SubagentDelegationProviderRegistration = Object.freeze({
+	providerId: SUBAGENT_DELEGATION_PROVIDER_ID,
+	packageName: SUBAGENT_DELEGATION_PROVIDER_PACKAGE,
+	packageVersion: SUBAGENT_DELEGATION_PROVIDER_PACKAGE_VERSION,
+	protocols: Object.freeze([
+		Object.freeze({
+			version: 1 as const,
+			terminalStatuses: Object.freeze(["completed", "failed", "timed_out", "cancelled", "interrupted", "turn_budget_exhausted", "tool_budget_exhausted", "structured_output_failed", "acceptance_failed", "invalid_request", "unavailable_context"]),
+			requestFields: Object.freeze({ model: true, thinking: false, timeout: true, turnBudget: true, toolBudget: true, skills: true, artifacts: true, textResult: true, structuredResult: true, ownershipIdentity: false }),
+		}),
+		Object.freeze({
+			version: 2 as const,
+			terminalStatuses: Object.freeze(["completed", "failed", "timed_out", "cancelled", "interrupted", "turn_budget_exhausted", "tool_budget_exhausted", "structured_output_failed", "acceptance_failed", "invalid_request", "unavailable_context", "duplicate_node"]),
+			requestFields: Object.freeze({ model: true, thinking: true, timeout: true, turnBudget: true, toolBudget: true, skills: true, artifacts: true, textResult: true, structuredResult: true, ownershipIdentity: true }),
+		}),
+	]),
+	cancellation: Object.freeze({ supported: true, preCancellation: true, identity: "protocol-specific" as const }),
+	concurrency: Object.freeze({
+		semantics: "v1-request-id-v2-owner-node" as const,
+		maximumConcurrentRequests: null,
+		v2IdentityHistoryLimit: 8_192,
+		v1DuplicateIdentity: "ignored" as const,
+		v2DuplicateIdentity: "ignored" as const,
+		v2ConcurrentLogicalNode: "duplicate_node" as const,
+	}),
+});
 
 export interface SubagentDelegationTurnBudget {
 	maxTurns: number;

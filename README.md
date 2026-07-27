@@ -1022,6 +1022,30 @@ If you are writing an agent that orchestrates subagents, the bundled skill helps
 Pi extensions can request configured foreground agents through the public event
 contract exported by `pi-subagents/delegation`.
 
+### Provider capability discovery
+
+Consumers can synchronously inspect the provider currently registered for their
+exact Pi EventBus without emitting an event or reserving work:
+
+```ts
+import { getSubagentDelegationProvider } from "pi-subagents/delegation";
+
+const provider = getSubagentDelegationProvider(pi.events);
+if (!provider?.protocols.some(({ version }) => version === 2)) {
+  throw new Error("This pi-subagents generation does not support delegation v2");
+}
+```
+
+The immutable descriptor reports provider and package identity, package version,
+a monotonically unique bridge generation, exact terminal statuses, cancellation
+and concurrency behavior, and request-field support for every advertised protocol.
+It is registered and removed with the prompt-template delegation bridge. Reloading
+the bridge replaces the descriptor, and disposal of an older bridge cannot erase a
+newer generation. This process-local discovery seam is keyed by object identity;
+passing a different EventBus object returns `undefined`. Package/version and
+capability drift are therefore visible before a consumer chooses a protocol. It is
+not an acknowledgement that a request started and does not add a discovery event.
+
 ### Launch contract preflight
 
 Use `pi-subagents/preflight` when an extension needs to inspect the resolved child launch contract before deciding whether to run anything:

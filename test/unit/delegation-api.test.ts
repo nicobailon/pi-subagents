@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import { describe, it } from "node:test";
 
 import {
+	DEFAULT_SUBAGENT_DELEGATION_PROVIDER,
+	getSubagentDelegationProvider,
+	registerSubagentDelegationProvider,
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_PROVIDER_PACKAGE_VERSION,
 	SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 	SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -100,6 +105,72 @@ const request: SubagentDelegationRequest = {
 };
 
 describe("public subagent delegation contract", () => {
+	it("discovers the exact immutable v1/v2 provider descriptor registered for one context", () => {
+		const context = {};
+		assert.equal(getSubagentDelegationProvider(context), undefined);
+		const registration = registerSubagentDelegationProvider(context, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+		assert.equal(getSubagentDelegationProvider(context), registration.descriptor);
+		assert.notEqual(getSubagentDelegationProvider({}), registration.descriptor);
+		assert.deepEqual(registration.descriptor.protocols, [
+			{
+				version: 1,
+				terminalStatuses: ["completed", "failed", "timed_out", "cancelled", "interrupted", "turn_budget_exhausted", "tool_budget_exhausted", "structured_output_failed", "acceptance_failed", "invalid_request", "unavailable_context"],
+				requestFields: { model: true, thinking: false, timeout: true, turnBudget: true, toolBudget: true, skills: true, artifacts: true, textResult: true, structuredResult: true, ownershipIdentity: false },
+			},
+			{
+				version: 2,
+				terminalStatuses: ["completed", "failed", "timed_out", "cancelled", "interrupted", "turn_budget_exhausted", "tool_budget_exhausted", "structured_output_failed", "acceptance_failed", "invalid_request", "unavailable_context", "duplicate_node"],
+				requestFields: { model: true, thinking: true, timeout: true, turnBudget: true, toolBudget: true, skills: true, artifacts: true, textResult: true, structuredResult: true, ownershipIdentity: true },
+			},
+		]);
+		assert.ok(Object.isFrozen(registration));
+		assert.ok(Object.isFrozen(registration.descriptor));
+		assert.ok(Object.isFrozen(registration.descriptor.protocols));
+		assert.ok(registration.descriptor.protocols.every((protocol) => Object.isFrozen(protocol) && Object.isFrozen(protocol.terminalStatuses) && Object.isFrozen(protocol.requestFields)));
+		assert.ok(Object.isFrozen(registration.descriptor.cancellation));
+		assert.ok(Object.isFrozen(registration.descriptor.concurrency));
+		assert.throws(() => { (registration.descriptor.protocols[0].requestFields as { thinking: boolean }).thinking = true; }, TypeError);
+		registration.dispose();
+		assert.equal(getSubagentDelegationProvider(context), undefined);
+	});
+
+	it("keeps newer bridge generations registered when an older generation disposes", () => {
+		const events = new FakeEvents();
+		const options = {
+			events,
+			getContext: () => ({ cwd: "/repo" }),
+			execute: async () => ({ details: { mode: "single" as const, results: [] } }),
+		};
+		const older = registerPromptTemplateDelegationBridge(options);
+		const olderDescriptor = getSubagentDelegationProvider(events);
+		const newer = registerPromptTemplateDelegationBridge(options);
+		const newerDescriptor = getSubagentDelegationProvider(events);
+		assert.ok(olderDescriptor);
+		assert.ok(newerDescriptor);
+		assert.ok(newerDescriptor.generation > olderDescriptor.generation);
+		older.dispose();
+		assert.equal(getSubagentDelegationProvider(events), newerDescriptor);
+		newer.dispose();
+		assert.equal(getSubagentDelegationProvider(events), undefined);
+	});
+
+	it("shares registration across duplicate module instances through the process-global Symbol registry", async () => {
+		const duplicate = await import(`../../src/api/delegation.ts?duplicate=${Date.now()}`);
+		const context = {};
+		const registration = duplicate.registerSubagentDelegationProvider(context, duplicate.DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+		assert.equal(getSubagentDelegationProvider(context), registration.descriptor);
+		const replacement = registerSubagentDelegationProvider(context, DEFAULT_SUBAGENT_DELEGATION_PROVIDER);
+		registration.dispose();
+		assert.equal(duplicate.getSubagentDelegationProvider(context), replacement.descriptor);
+		replacement.dispose();
+	});
+
+	it("derives the advertised package version from the canonical package manifest", () => {
+		const manifest = JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf-8")) as { version: string };
+		assert.equal(SUBAGENT_DELEGATION_PROVIDER_PACKAGE_VERSION, manifest.version);
+		assert.equal(DEFAULT_SUBAGENT_DELEGATION_PROVIDER.packageVersion, manifest.version);
+	});
+
 	it("uses the existing prompt-template event family as the only transport", () => {
 		assert.equal(SUBAGENT_DELEGATION_PROTOCOL_VERSION, 1);
 		assert.equal(SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");

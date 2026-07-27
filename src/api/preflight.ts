@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
@@ -21,6 +20,7 @@ import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindi
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
+import { PACKAGE_METADATA } from "../shared/package-metadata.ts";
 
 export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
@@ -158,15 +158,6 @@ export interface SubagentLaunchContract {
 export type SubagentLaunchContractResult =
 	| { ok: true; contract: SubagentLaunchContract }
 	| { ok: false; code: SubagentLaunchContractReasonCode; message: string; diagnostics: SubagentLaunchContractDiagnostic[] };
-
-function packageVersion(): string {
-	const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
-	const parsed = JSON.parse(fs.readFileSync(packagePath, "utf-8")) as { version?: unknown };
-	if (typeof parsed.version !== "string" || !parsed.version.trim()) {
-		throw new Error(`Invalid package version in '${packagePath}'.`);
-	}
-	return parsed.version;
-}
 
 function stableJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -373,7 +364,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		},
 		protocol: {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-			packageVersion: packageVersion(),
+			packageVersion: PACKAGE_METADATA.version,
 		},
 		diagnostics,
 		launchContractDigest: launchBindingDigest({
