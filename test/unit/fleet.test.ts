@@ -552,6 +552,12 @@ describe("native subagent fleet", () => {
 				() => {},
 				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 10 },
 			);
+			let invalidations = 0;
+			const originalInvalidate = component.invalidate.bind(component);
+			component.invalidate = () => {
+				invalidations++;
+				originalInvalidate();
+			};
 			try {
 				assert.ok(component.render(90).some((line) => line.includes("No tracked children")));
 				const initialOutput = Array.from({ length: 40 }, (_, index) => `output line ${index}`).join("\n");
@@ -565,6 +571,7 @@ describe("native subagent fleet", () => {
 				lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("LATEST LIVE OUTPUT")), "live transcript should keep following new output");
 				assert.ok(renderRequests > 0);
+				assert.ok(invalidations > 0, "live refresh must invalidate cached TUI frames before rendering");
 			} finally {
 				component.dispose();
 			}

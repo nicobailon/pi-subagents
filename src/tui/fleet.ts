@@ -463,7 +463,7 @@ export class SubagentFleetComponent implements Component {
 		this.refresh();
 		this.timer = setInterval(() => {
 			if (this.disposed) return;
-			this.refresh();
+			this.invalidate();
 			this.tui.requestRender();
 		}, options.refreshMs ?? REFRESH_MS);
 		this.timer.unref?.();
