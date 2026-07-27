@@ -1414,7 +1414,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const rowNumber = entry.rowNumber;
 		const agentName = entry.agentName;
 		if (!r) {
-			const pendingLabel = chainEntries ? entry.rowLabel : `${itemTitle} ${rowNumber}`;
+			const pendingLabel = entry.rowLabel ?? `${itemTitle} ${rowNumber}`;
 			c.addChild(new Text(truncLine(theme.fg("dim", `  ◦ ${pendingLabel}: ${agentName} · pending`), width), 0, 0));
 			continue;
 		}
@@ -1427,7 +1427,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const stepStats = formatProgressStats(theme, rProg);
 		const glyph = rPending ? theme.fg("dim", "◦") : resultGlyph(r, output, theme, rRunning, progressRunningSeed(rProg), frame);
 		const pendingLabel = rPending ? ` ${theme.fg("dim", "· pending")}` : "";
-		const stepLabel = chainEntries ? entry.rowLabel : resultRowLabel(multiLabel, i, stepNumber);
+		const stepLabel = entry.rowLabel ?? resultRowLabel(multiLabel, i, stepNumber);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${contextModeBadge(theme, r.context)}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`  ${line}`, width), 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
@@ -1714,7 +1714,7 @@ export function renderSubagentResult(
 		const agentName = entry.agentName;
 
 		if (!r) {
-			const pendingLabel = chainEntries ? entry.rowLabel : `${itemTitle} ${rowNumber}`;
+			const pendingLabel = entry.rowLabel ?? `${itemTitle} ${rowNumber}`;
 			c.addChild(new Text(fit(theme.fg("dim", `  ${pendingLabel}: ${agentName}`)), 0, 0));
 			c.addChild(new Text(theme.fg("dim", `    status: pending`), 0, 0));
 			c.addChild(new Spacer(1));
@@ -1737,7 +1737,7 @@ export function renderSubagentResult(
 					: theme.fg("success", "done");
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, r.model);
-		const stepLabel = chainEntries ? entry.rowLabel : resultRowLabel(multiLabel, i, stepNumber);
+		const stepLabel = entry.rowLabel ?? resultRowLabel(multiLabel, i, stepNumber);
 		const contextBadge = contextModeBadge(theme, r.context);
 		const stepHeader = rRunning
 			? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${contextBadge}${modelDisplay}${stats}`
