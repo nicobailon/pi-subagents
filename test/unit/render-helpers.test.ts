@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { row } from "../../src/tui/render-helpers.ts";
-import { renderSubagentResult } from "../../src/tui/render.ts";
+import { renderSubagentResult, truncLine } from "../../src/tui/render.ts";
 
 const theme = {
 	fg(_name: string, text: string): string {
@@ -47,6 +47,18 @@ test("row keeps styled multiline content within the available width", () => {
 	const rendered = row("\u001b[31merror line 1\nline 2\tvalue\u001b[39m", 18, theme as any);
 	assert.equal(visibleWidth(rendered), 18);
 	assert.doesNotMatch(rendered, /[\r\n\t]/);
+});
+
+test("truncLine preserves ANSI styles and resets through the ellipsis", () => {
+	assert.equal(truncLine("\u001b[31mabcdef\u001b[0m", 4), "\u001b[31mabc\u001b[31m…");
+	assert.equal(truncLine("\u001b[31mab\u001b[0mcdef", 4), "\u001b[31mab\u001b[0mc…");
+	assert.equal(truncLine("ab\u001b[xcd", 4), "ab\u001b[…");
+});
+
+test("truncLine respects grapheme display width", () => {
+	const rendered = truncLine("🙂🙂🙂", 5);
+	assert.equal(rendered, "🙂🙂…");
+	assert.equal(visibleWidth(rendered), 5);
 });
 
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {

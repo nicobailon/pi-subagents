@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Reduced repeated scanning and file reads in live TUI rendering and skill loading.
+
 ## [0.37.1] - 2026-07-27
 
 ### Added

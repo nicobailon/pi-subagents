@@ -40,6 +40,7 @@ function getTermWidth(): number {
 }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const ansiStylePattern = /\x1b\[[0-9;]*m/y;
 
 /**
  * Truncate a line to maxWidth, preserving ANSI styling through the ellipsis.
@@ -50,7 +51,7 @@ const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
  * 
  * Uses Intl.Segmenter for proper Unicode/emoji handling (not char-by-char).
  */
-function truncLine(text: string, maxWidth: number): string {
+export function truncLine(text: string, maxWidth: number): string {
 	if (visibleWidth(text) <= maxWidth) return text;
 
 	const targetWidth = maxWidth - 1;
@@ -60,7 +61,8 @@ function truncLine(text: string, maxWidth: number): string {
 	let i = 0;
 
 	while (i < text.length) {
-		const ansiMatch = text.slice(i).match(/^\x1b\[[0-9;]*m/);
+		ansiStylePattern.lastIndex = i;
+		const ansiMatch = ansiStylePattern.exec(text);
 		if (ansiMatch) {
 			const code = ansiMatch[0];
 			result += code;
@@ -74,11 +76,9 @@ function truncLine(text: string, maxWidth: number): string {
 			continue;
 		}
 
-		let end = i;
-		while (end < text.length && !text.slice(end).match(/^\x1b\[[0-9;]*m/)) {
-			end++;
-		}
-
+		let end = text.indexOf("\x1b[", i);
+		if (end === i) end = text.indexOf("\x1b[", i + 2);
+		if (end === -1) end = text.length;
 		const textPortion = text.slice(i, end);
 		for (const seg of segmenter.segment(textPortion)) {
 			const grapheme = seg.segment;
@@ -529,17 +529,15 @@ function buildChainStepSpans(details: Pick<Details, "chainAgents" | "workflowGra
 	return spans;
 }
 
-function isChainParallelGroupActive(details: Pick<Details, "mode" | "chainAgents" | "currentStepIndex" | "workflowGraph">): boolean {
-	if (details.mode !== "chain") return false;
-	if (details.currentStepIndex === undefined) return false;
-	return buildChainStepSpans(details).some((span) => span.stepIndex === details.currentStepIndex && span.isParallel);
-}
-
 function buildAsyncChainStepSpans(total: number, stepCount: number, parallelGroups: AsyncParallelGroupStatus[] = []): ChainStepSpan[] {
+	const groupsByStep = new Map<number, AsyncParallelGroupStatus>();
+	for (const group of parallelGroups) {
+		if (!groupsByStep.has(group.stepIndex)) groupsByStep.set(group.stepIndex, group);
+	}
 	const spans: ChainStepSpan[] = [];
 	let flatIndex = 0;
 	for (let stepIndex = 0; stepIndex < total; stepIndex++) {
-		const group = parallelGroups.find((candidate) => candidate.stepIndex === stepIndex);
+		const group = groupsByStep.get(stepIndex);
 		if (group) {
 			spans.push({ stepIndex, start: group.start, count: group.count, isParallel: true });
 			flatIndex = Math.max(flatIndex, group.start + group.count);
@@ -567,6 +565,7 @@ interface ChainRenderResultEntry {
 	kind: "result";
 	resultIndex: number;
 	rowNumber: number;
+	rowLabel: string;
 	agentName: string;
 }
 
@@ -601,6 +600,7 @@ function buildChainRenderEntries(details: Details, label: MultiProgressLabel): C
 				kind: "result",
 				resultIndex: index,
 				rowNumber: index + 1,
+				rowLabel: span.isParallel ? `Agent ${index - span.start + 1}/${span.count}` : `Step ${span.stepIndex + 1}`,
 				agentName: details.results[index]?.agent ?? details.chainAgents?.[span.stepIndex] ?? `step-${span.stepIndex + 1}`,
 			});
 		}
@@ -622,7 +622,9 @@ interface MultiProgressLabel {
 function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "progress" | "totalSteps" | "currentStepIndex" | "chainAgents" | "workflowGraph">, hasRunning: boolean): MultiProgressLabel {
 	const stepSpans = buildChainStepSpans(details);
 	const hasParallelInChain = details.mode === "chain" && stepSpans.some((span) => span.isParallel);
-	const activeParallelGroup = isChainParallelGroupActive(details);
+	const activeParallelGroup = details.mode === "chain"
+		&& details.currentStepIndex !== undefined
+		&& stepSpans.some((span) => span.stepIndex === details.currentStepIndex && span.isParallel);
 	const itemTitle: "Step" | "Agent" = details.mode === "parallel" || activeParallelGroup ? "Agent" : "Step";
 
 	if (details.mode === "parallel") {
@@ -708,15 +710,10 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 	return { headerLabel, itemTitle, totalCount, hasParallelInChain, activeParallelGroup, groupStartIndex: 0, groupEndIndex: details.results.length, showActiveGroupOnly: false };
 }
 
-function resultRowLabel(details: Pick<Details, "mode" | "chainAgents" | "workflowGraph">, label: MultiProgressLabel, resultIndex: number, stepNumber: number): string {
-	if (details.mode === "chain" && label.hasParallelInChain) {
-		const span = buildChainStepSpans(details).find((candidate) => resultIndex >= candidate.start && resultIndex < candidate.start + candidate.count);
-		if (span?.isParallel) return `Agent ${resultIndex - span.start + 1}/${span.count}`;
-		if (span) return `Step ${span.stepIndex + 1}`;
-	}
+function resultRowLabel(label: MultiProgressLabel, resultIndex: number, stepNumber: number): string {
 	if (label.itemTitle === "Agent") {
 		const localStepNumber = label.activeParallelGroup
-			? Math.max(1, stepNumber - label.groupStartIndex)
+			? resultIndex - label.groupStartIndex + 1
 			: stepNumber;
 		return `Agent ${localStepNumber}/${label.totalCount}`;
 	}
@@ -1402,7 +1399,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const r = d.results[i];
 		const fallbackLabel = itemTitle.toLowerCase();
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, rowLabel: resultRowLabel(multiLabel, i, rowNumber), agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
 	});
 	for (const entry of renderEntries) {
 		if (entry.kind === "placeholder") {
@@ -1417,7 +1414,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const rowNumber = entry.rowNumber;
 		const agentName = entry.agentName;
 		if (!r) {
-			const pendingLabel = chainEntries ? resultRowLabel(d, multiLabel, i, rowNumber) : `${itemTitle} ${rowNumber}`;
+			const pendingLabel = chainEntries ? entry.rowLabel : `${itemTitle} ${rowNumber}`;
 			c.addChild(new Text(truncLine(theme.fg("dim", `  ◦ ${pendingLabel}: ${agentName} · pending`), width), 0, 0));
 			continue;
 		}
@@ -1430,7 +1427,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const stepStats = formatProgressStats(theme, rProg);
 		const glyph = rPending ? theme.fg("dim", "◦") : resultGlyph(r, output, theme, rRunning, progressRunningSeed(rProg), frame);
 		const pendingLabel = rPending ? ` ${theme.fg("dim", "· pending")}` : "";
-		const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
+		const stepLabel = chainEntries ? entry.rowLabel : resultRowLabel(multiLabel, i, stepNumber);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${contextModeBadge(theme, r.context)}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`  ${line}`, width), 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
@@ -1697,7 +1694,7 @@ export function renderSubagentResult(
 		const i = displayStart + offset;
 		const r = d.results[i];
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, rowLabel: resultRowLabel(multiLabel, i, rowNumber), agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
 	});
 
 	c.addChild(new Spacer(1));
@@ -1717,7 +1714,7 @@ export function renderSubagentResult(
 		const agentName = entry.agentName;
 
 		if (!r) {
-			const pendingLabel = chainEntries ? resultRowLabel(d, multiLabel, i, rowNumber) : `${itemTitle} ${rowNumber}`;
+			const pendingLabel = chainEntries ? entry.rowLabel : `${itemTitle} ${rowNumber}`;
 			c.addChild(new Text(fit(theme.fg("dim", `  ${pendingLabel}: ${agentName}`)), 0, 0));
 			c.addChild(new Text(theme.fg("dim", `    status: pending`), 0, 0));
 			c.addChild(new Spacer(1));
@@ -1740,7 +1737,7 @@ export function renderSubagentResult(
 					: theme.fg("success", "done");
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, r.model);
-		const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
+		const stepLabel = chainEntries ? entry.rowLabel : resultRowLabel(multiLabel, i, stepNumber);
 		const contextBadge = contextModeBadge(theme, r.context);
 		const stepHeader = rRunning
 			? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${contextBadge}${modelDisplay}${stats}`

@@ -379,19 +379,21 @@ function chooseHigherPrioritySkill(existing: CachedSkillEntry | undefined, candi
 	return candidate.order < existing.order ? candidate : existing;
 }
 
+function parseSkillDescription(content: string): string | undefined {
+	const normalized = content.replace(/\r\n/g, "\n");
+	if (!normalized.startsWith("---")) return undefined;
+
+	const endIndex = normalized.indexOf("\n---", 3);
+	if (endIndex === -1) return undefined;
+
+	const frontmatter = normalized.slice(3, endIndex).trim();
+	const match = frontmatter.match(/^description:\s*(.+)$/m);
+	return match?.[1]?.trim().replace(/^['\"]|['\"]$/g, "");
+}
+
 function maybeReadSkillDescription(filePath: string): string | undefined {
 	try {
-		const content = fs.readFileSync(filePath, "utf-8");
-		const normalized = content.replace(/\r\n/g, "\n");
-		if (!normalized.startsWith("---")) return undefined;
-
-		const endIndex = normalized.indexOf("\n---", 3);
-		if (endIndex === -1) return undefined;
-
-		const frontmatter = normalized.slice(3, endIndex).trim();
-		const match = frontmatter.match(/^description:\s*(.+)$/m);
-		if (!match) return undefined;
-		return match[1]?.trim().replace(/^['\"]|['\"]$/g, "");
+		return parseSkillDescription(fs.readFileSync(filePath, "utf-8"));
 	} catch {
 		// Description parsing is best-effort metadata extraction.
 		return undefined;
@@ -585,7 +587,7 @@ function readSkill(
 
 		const raw = fs.readFileSync(skillPath, "utf-8");
 		const content = stripSkillFrontmatter(raw);
-		const description = maybeReadSkillDescription(skillPath);
+		const description = parseSkillDescription(raw);
 		const skill: ResolvedSkill = {
 			name: skillName,
 			path: skillPath,
