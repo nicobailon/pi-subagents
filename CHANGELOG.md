@@ -5,6 +5,9 @@
 ### Changed
 - Reduced repeated scanning and file reads in live TUI rendering and skill loading.
 
+### Fixed
+- Passed `--no-context-files` to child Pi runs when an agent disables inherited project context, avoiding stale prompt-header parsing as Pi's context block format changes. Thanks to @KorenKrita for #667.
+
 ## [0.37.1] - 2026-07-27
 
 ### Added

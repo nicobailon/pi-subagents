@@ -253,6 +253,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 	for (const extPath of toolPlan.extensionArgs) args.push("--extension", extPath);
 
+	if (!input.inheritProjectContext) {
+		args.push("--no-context-files");
+	}
 	if (!input.inheritSkills) {
 		args.push("--no-skills");
 	}
