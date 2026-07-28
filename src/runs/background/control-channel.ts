@@ -380,8 +380,15 @@ function parseSteerRequest(raw: unknown): SteerRequest | undefined {
 
 export function consumeSteerRequestsFromDir(dir: string, fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs): SteerRequest[] {
 	if (!fsImpl.existsSync(dir)) return [];
+	let entries: string[];
+	try {
+		entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
+	} catch {
+		// Leave requests in place so the periodic poll can retry the scan.
+		return [];
+	}
 	const requests: SteerRequest[] = [];
-	for (const entry of fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort()) {
+	for (const entry of entries) {
 		const requestPath = path.join(dir, entry);
 		let parsed: SteerRequest | undefined;
 		try {
