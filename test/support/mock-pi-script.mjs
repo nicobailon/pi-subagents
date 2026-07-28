@@ -383,6 +383,10 @@ async function main() {
 		await new Promise((resolve) => setTimeout(resolve, response.keepAliveAfterFinalMessageMs));
 	}
 
+	if (typeof response.signal === "string") {
+		process.kill(process.pid, response.signal);
+		return;
+	}
 	exitAfterFlush(typeof response.exitCode === "number" ? response.exitCode : 0);
 }
 

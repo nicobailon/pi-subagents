@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Retried short, zero-activity child startup exits on the same model with bounded backoff, reducing concurrent subagent launch races without replaying model or tool work.
+
 ## [0.37.2] - 2026-07-28
 
 ### Changed
