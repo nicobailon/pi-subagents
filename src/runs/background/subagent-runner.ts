@@ -65,6 +65,13 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
+import {
+	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentStartupRetryExhaustedError,
+	formatSubagentStartupRetryNote,
+	isRetryableSubagentStartupFailure,
+	waitForSubagentStartupRetry,
+} from "../shared/subagent-startup-retry.ts";
 import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
@@ -395,6 +402,8 @@ interface RunPiStreamingResult {
 	exitCode: number | null;
 	messages: Message[];
 	usage: Usage;
+	toolCount: number;
+	durationMs: number;
 	model?: string;
 	error?: string;
 	protocolError?: ProtocolOutputLimit;
@@ -434,6 +443,7 @@ function runPiStreaming(
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
+		const startedAt = Date.now();
 		const processInstanceId = randomUUID();
 		onWriterProcess?.({ state: "spawning" });
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
@@ -471,6 +481,7 @@ function runPiStreaming(
 		let turnBudgetMessage: string | undefined;
 		let turnBudget: TurnBudgetState | undefined;
 		let observedMutationAttempt = false;
+		let toolCount = 0;
 		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
 		let applyChildLifecycle = (_action: ChildLifecycleAction): void => {};
@@ -557,6 +568,7 @@ function runPiStreaming(
 			onChildEvent?.(event);
 
 			if (event.type === "tool_execution_start" && event.toolName) {
+				toolCount += 1;
 				observedMutationAttempt = observedMutationAttempt || isMutatingTool(event.toolName, event.args);
 				const toolArgs = extractToolArgsPreview(event.args ?? {});
 				writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
@@ -796,6 +808,8 @@ function runPiStreaming(
 				exitCode: timedOut || stopped ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
+				toolCount,
+				durationMs: Date.now() - startedAt,
 				model,
 				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError,
 				protocolError,
@@ -833,7 +847,7 @@ function runPiStreaming(
 			const stderr = stderrTail.text();
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId });
+			resolve({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId });
 		});
 	});
 }
@@ -1145,9 +1159,11 @@ async function runSingleStep(
 	let toolBudgetBlocked = false;
 	let actualLaunchContractDigest = step.launchContractDigest;
 
-	for (let index = 0; index < candidates.length; index++) {
-		if (ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
-		const candidate = candidates[index];
+	let modelIndex = 0;
+	let startupAttemptIndex = 0;
+	modelAttemptsLoop: while (modelIndex < candidates.length) {
+		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
+		const candidate = candidates[modelIndex];
 		ctx.onAttemptStart?.({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) });
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		if (effectiveStructuredOutput) {
@@ -1259,7 +1275,7 @@ async function runSingleStep(
 			writerProcesses.push({
 				processInstanceId: run.processInstanceId,
 				kind: "pi-writer",
-				attempt: index,
+				attempt: writerAttemptCount - 1,
 				closeObservedAt: run.processCloseObservedAt,
 				exitCode: run.exitCode,
 				signal: run.processSignal ?? null,
@@ -1358,7 +1374,7 @@ async function runSingleStep(
 			usage: run.usage,
 		};
 		modelAttempts.push(attempt);
-		if (candidate) attemptedModels.push(candidate);
+		if (candidate && startupAttemptIndex === 0) attemptedModels.push(candidate);
 		completionGuardTriggeredFinal = completionGuardTriggered;
 		finalOutputSnapshot = outputSnapshot;
 		if (step.toolBudget) {
@@ -1368,11 +1384,55 @@ async function runSingleStep(
 			toolBudget = toolBudgetState(step.toolBudget, toolMessages.length, blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined);
 		}
 		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect ? { effects: { fileMutation: fileMutationEffect } } : {}) } as RunPiStreamingResult & { structuredOutput?: unknown; agentContract?: import("../../shared/types.ts").AgentContract; effects?: import("../../shared/types.ts").EffectsProjection };
-		if (run.turnBudgetExceeded) break;
-		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
-		if (attempt.success || completionGuardTriggered) break;
-		if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
-		attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
+		if (run.turnBudgetExceeded) break modelAttemptsLoop;
+		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
+		if (attempt.success || completionGuardTriggered) break modelAttemptsLoop;
+
+		const startupFailure = isRetryableSubagentStartupFailure({
+			exitCode: effectiveExitCode,
+			error,
+			finalOutput: run.finalOutput,
+			messageCount: run.messages.length,
+			toolCount: run.toolCount,
+			usage: run.usage,
+			durationMs: run.durationMs,
+			protocolError: run.protocolError,
+			processSignal: run.processSignal,
+			observedMutationAttempt: run.observedMutationAttempt,
+			interrupted: run.interrupted,
+			timedOut: run.timedOut,
+			stopped: run.stopped,
+			turnBudgetExceeded: run.turnBudgetExceeded,
+		});
+		const retryDelayMs = SUBAGENT_STARTUP_RETRY_DELAYS_MS[startupAttemptIndex];
+		if (startupFailure && retryDelayMs !== undefined) {
+			const retryNote = formatSubagentStartupRetryNote({
+				model: attempt.model,
+				attempt: startupAttemptIndex + 1,
+				maxAttempts: SUBAGENT_STARTUP_RETRY_DELAYS_MS.length + 1,
+				delayMs: retryDelayMs,
+			});
+			const shouldRetry = await waitForSubagentStartupRetry(retryDelayMs, [ctx.timeoutSignal, ctx.stopSignal]);
+			if (!shouldRetry || ctx.skipAcceptance?.()) break modelAttemptsLoop;
+			attempt.error = retryNote;
+			attemptNotes.push(retryNote);
+			startupAttemptIndex += 1;
+			continue;
+		}
+		if (startupFailure) {
+			const startupError = formatSubagentStartupRetryExhaustedError({
+				model: attempt.model,
+				attempts: startupAttemptIndex + 1,
+			});
+			attempt.error = startupError;
+			finalResult.error = startupError;
+			finalResult.finalOutput = startupError;
+			break modelAttemptsLoop;
+		}
+		if (!isRetryableModelFailure(error) || modelIndex === candidates.length - 1) break modelAttemptsLoop;
+		attemptNotes.push(formatModelAttemptNote(attempt, candidates[modelIndex + 1]));
+		modelIndex += 1;
+		startupAttemptIndex = 0;
 	}
 
 	const rawOutput = finalResult?.finalOutput ?? "";

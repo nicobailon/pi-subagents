@@ -64,6 +64,13 @@ import {
 	isRetryableModelFailure,
 } from "../shared/model-fallback.ts";
 import {
+	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentStartupRetryExhaustedError,
+	formatSubagentStartupRetryNote,
+	isRetryableSubagentStartupFailure,
+	waitForSubagentStartupRetry,
+} from "../shared/subagent-startup-retry.ts";
+import {
 	createMutatingFailureState,
 	didMutatingToolFail,
 	isMutatingTool,
@@ -703,6 +710,7 @@ async function runSingleAttempt(
 			emitUpdateSnapshot(output || "(running...)");
 		};
 
+		const rawStdoutTail = createBoundedByteTail();
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
 			jsonlWriter.writeLine(line);
@@ -710,6 +718,7 @@ async function runSingleAttempt(
 			try {
 				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
 			} catch {
+				rawStdoutTail.push(`${line}\n`);
 				shared.transcriptWriter?.writeStdoutLine(line);
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
@@ -938,12 +947,17 @@ async function runSingleAttempt(
 			stdoutReader.end();
 			stderrReader.end();
 			const stderr = stderrTail.text();
+			const rawStdout = rawStdoutTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			if (code !== 0 && rawStdout.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
+				closeError = rawStdout.trim();
+			}
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
 			}
 			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			if (signal) result.processSignal = signal;
 			if (detached) {
 				const recoveredProgress = snapshotProgress(progress);
 				const recoveredResult = snapshotResult(result, recoveredProgress);
@@ -1351,6 +1365,7 @@ export async function runSync(
 			agent: agentName,
 			task,
 			exitCode: target.exitCode,
+			processSignal: target.processSignal,
 			usage: target.usage,
 			model: target.model,
 			attemptedModels: target.attemptedModels,
@@ -1416,47 +1431,109 @@ export async function runSync(
 
 	let lastResult: SingleResult | undefined;
 	const modelsToTry = candidates.length > 0 ? candidates : [undefined];
-	for (let i = 0; i < modelsToTry.length; i++) {
-		const candidate = modelsToTry[i];
-		const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-		const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, detachedAwareOptions, {
-			sessionEnabled,
-			systemPrompt,
-			resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
-			skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
-			jsonlPath,
-			artifactPaths: artifactPathsResult,
-			transcriptWriter,
-			attemptNotes,
-			modelCandidates: candidates.map((candidate) => applyThinkingSuffix(candidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined)),
-			outputSnapshot,
-			originalTask: task,
-		});
-		lastResult = result;
-		if (result.model) attemptedModels.push(result.model);
-		else if (candidate) attemptedModels.push(candidate);
-		sumUsage(aggregateUsage, result.usage);
-		totalToolCount += result.progressSummary?.toolCount ?? 0;
-		totalDurationMs += result.progressSummary?.durationMs ?? 0;
-		const attemptSucceeded = result.exitCode === 0 && !result.error;
-		const attempt: ModelAttempt = {
-			model: result.model ?? candidate ?? agent.model ?? "default",
-			success: attemptSucceeded,
-			exitCode: result.exitCode,
-			error: result.error,
-			usage: { ...result.usage },
-		};
-		modelAttempts.push(attempt);
-		if (result.detached || result.timedOut || result.turnBudgetExceeded) {
+	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
+		const candidate = modelsToTry[modelIndex];
+		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
+			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, detachedAwareOptions, {
+				sessionEnabled,
+				systemPrompt,
+				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
+				skillsWarning: missingSkills.length > 0 ? `Skills not found: ${missingSkills.join(", ")}` : undefined,
+				jsonlPath,
+				artifactPaths: artifactPathsResult,
+				transcriptWriter,
+				attemptNotes,
+				modelCandidates: candidates.map((modelCandidate) => applyThinkingSuffix(modelCandidate, options.thinkingOverride ?? agent.thinking, options.thinkingOverride !== undefined)),
+				outputSnapshot,
+				originalTask: task,
+			});
+			lastResult = result;
+			if (startupAttemptIndex === 0) {
+				if (result.model) attemptedModels.push(result.model);
+				else if (candidate) attemptedModels.push(candidate);
+			}
+			sumUsage(aggregateUsage, result.usage);
+			totalToolCount += result.progressSummary?.toolCount ?? 0;
+			totalDurationMs += result.progressSummary?.durationMs ?? 0;
+			const attemptSucceeded = result.exitCode === 0 && !result.error;
+			const attempt: ModelAttempt = {
+				model: result.model ?? candidate ?? agent.model ?? "default",
+				success: attemptSucceeded,
+				exitCode: result.exitCode,
+				error: result.error,
+				usage: { ...result.usage },
+			};
+			modelAttempts.push(attempt);
+			if (result.detached || result.timedOut || result.turnBudgetExceeded) break modelAttemptsLoop;
+			if (attemptSucceeded) break modelAttemptsLoop;
+
+			const startupFailure = isRetryableSubagentStartupFailure({
+				exitCode: result.exitCode,
+				error: result.error,
+				finalOutput: result.finalOutput,
+				messageCount: result.messages?.length ?? 0,
+				toolCount: result.progressSummary?.toolCount ?? 0,
+				usage: result.usage,
+				durationMs: result.progressSummary?.durationMs ?? Number.POSITIVE_INFINITY,
+				protocolError: result.protocolError,
+				processSignal: result.processSignal,
+				detached: result.detached,
+				interrupted: result.interrupted,
+				timedOut: result.timedOut,
+				stopped: result.stopped,
+				turnBudgetExceeded: result.turnBudgetExceeded,
+			});
+			const retryDelayMs = SUBAGENT_STARTUP_RETRY_DELAYS_MS[startupAttemptIndex];
+			if (startupFailure && retryDelayMs !== undefined) {
+				const retryNote = formatSubagentStartupRetryNote({
+					model: attempt.model,
+					attempt: startupAttemptIndex + 1,
+					maxAttempts: SUBAGENT_STARTUP_RETRY_DELAYS_MS.length + 1,
+					delayMs: retryDelayMs,
+				});
+				const shouldRetry = await waitForSubagentStartupRetry(retryDelayMs, [options.signal, options.interruptSignal]);
+				if (!shouldRetry) {
+					if (options.interruptSignal?.aborted) {
+						result.exitCode = 0;
+						result.interrupted = true;
+						result.error = undefined;
+						result.finalOutput = "Interrupted. Waiting for explicit next action.";
+						if (result.progress) {
+							result.progress.status = "running";
+							result.progress.error = undefined;
+						}
+					} else {
+						const cancellationError = "Subagent startup retry cancelled before relaunch.";
+						result.error = cancellationError;
+						result.finalOutput = cancellationError;
+						attempt.error = cancellationError;
+						if (result.progress) result.progress.error = cancellationError;
+					}
+					break modelAttemptsLoop;
+				}
+				attempt.error = retryNote;
+				attemptNotes.push(retryNote);
+				continue;
+			}
+			if (startupFailure) {
+				const startupError = formatSubagentStartupRetryExhaustedError({
+					model: attempt.model,
+					attempts: startupAttemptIndex + 1,
+				});
+				result.error = startupError;
+				result.finalOutput = startupError;
+				if (result.progress) {
+					result.progress.error = startupError;
+					result.progress.status = "failed";
+				}
+				attempt.error = startupError;
+				break modelAttemptsLoop;
+			}
+			if (!isRetryableModelFailure(result.error) || modelIndex === modelsToTry.length - 1) break modelAttemptsLoop;
+			attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[modelIndex + 1]));
 			break;
 		}
-		if (attemptSucceeded) {
-			break;
-		}
-		if (!isRetryableModelFailure(result.error) || i === modelsToTry.length - 1) {
-			break;
-		}
-		attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[i + 1]));
 	}
 
 	const result = withRunContext(lastResult ?? {
@@ -1476,13 +1553,6 @@ export async function runSync(
 		tokens: aggregateUsage.input + aggregateUsage.output,
 		durationMs: totalDurationMs,
 	};
-	if (attemptNotes.length > 0 && result.progress) {
-		result.progress.recentOutput = [...attemptNotes, ...result.progress.recentOutput];
-		if (result.progress.recentOutput.length > 50) {
-			result.progress.recentOutput.splice(50);
-		}
-	}
-
 	if (transcriptWriter) result.transcriptPath = artifactPathsResult?.transcriptPath;
 	if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
 

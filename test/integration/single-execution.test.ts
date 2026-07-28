@@ -1418,6 +1418,98 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.error?.includes("Something went wrong"));
 	});
 
+	it("retries a zero-activity startup exit on the same model", async () => {
+		mockPi.onCall({ exitCode: 1 });
+		mockPi.onCall({ output: "Recovered after startup race" });
+		const agents = [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			runId: "startup-retry-sync",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "openai/gpt-5-mini");
+		assert.equal(result.finalOutput, "Recovered after startup race");
+		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini"]);
+		assert.deepEqual(result.modelAttempts?.map((attempt) => attempt.success), [false, true]);
+		assert.match(result.progress.recentOutput.join("\n"), /\[startup-retry\].*same model/i);
+		assert.equal(result.progress.recentOutput.filter((line) => line.startsWith("[startup-retry]")).length, 1);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("does not retry a non-zero exit after tool activity", async () => {
+		mockPi.onCall({ jsonl: [events.toolStart("read", { path: "package.json" })], exitCode: 1 });
+		mockPi.onCall({ output: "must not run" });
+		const agents = [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "worker", "Read a file", {
+			runId: "startup-no-retry-after-tool",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("does not retry a signaled child exit", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
+		mockPi.onCall({ signal: "SIGKILL" });
+		mockPi.onCall({ output: "must not run" });
+		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			runId: "startup-no-retry-after-signal",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.processSignal, "SIGKILL");
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("does not retry a child exit with raw stdout diagnostics", async () => {
+		mockPi.onCall({ stdoutRaw: "configuration failed before protocol startup\n", exitCode: 1 });
+		mockPi.onCall({ output: "must not run" });
+		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			runId: "startup-no-retry-after-stdout-diagnostic",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /configuration failed before protocol startup/);
+		assert.equal(result.modelAttempts?.length, 1);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("reports an actionable error after startup retries are exhausted", async () => {
+		mockPi.onCall({ exitCode: 1 });
+		const agents = [makeAgent("worker", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			runId: "startup-retry-exhausted-sync",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.modelAttempts?.length, 4);
+		assert.deepEqual(result.attemptedModels, ["openai/gpt-5-mini"]);
+		assert.match(result.error ?? "", /failed to start after 4 attempts.*concurrent Pi startup race/i);
+		assert.equal(mockPi.callCount(), 4);
+	});
+
 	it("handles long tasks via temp file (ENAMETOOLONG prevention)", async () => {
 		mockPi.onCall({ output: "Got it" });
 		const longTask = "Analyze ".repeat(2000); // ~16KB
@@ -1534,6 +1626,42 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.usage.turns, 1);
 		assert.equal(result.usage.input, 100); // from mock
 		assert.equal(result.usage.output, 50); // from mock
+	});
+
+	it("advances to a fallback model after a recovered startup race and provider failure", async () => {
+		mockPi.onCall({ exitCode: 1 });
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "temporary provider failure" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "rate limit exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const agents = [makeAgent("echo", {
+			model: "openai/gpt-5-mini",
+			fallbackModels: ["anthropic/claude-sonnet-4"],
+		})];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "startup-then-fallback-sync",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-sonnet-4");
+		assert.deepEqual(result.attemptedModels, [
+			"openai/gpt-5-mini",
+			"anthropic/claude-sonnet-4",
+		]);
+		assert.deepEqual(result.modelAttempts?.map((attempt) => attempt.success), [false, false, true]);
+		assert.equal(mockPi.callCount(), 3);
 	});
 
 	it("retries with fallback models on retryable provider failures", async () => {

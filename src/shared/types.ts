@@ -762,6 +762,7 @@ export interface SingleResult {
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	exitCode: number;
+	processSignal?: string | null;
 	detached?: boolean;
 	detachedReason?: string;
 	interrupted?: boolean;
