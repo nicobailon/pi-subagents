@@ -148,6 +148,33 @@ describe("control channel: request file", () => {
 		}
 	});
 
+	it("keeps steer requests for retry when the inbox cannot be scanned", () => {
+		const asyncDir = tmpAsyncDir("pi-control-steer-scan-retry-");
+		try {
+			requestAsyncSteer(asyncDir, { message: "retry me", id: "retry", ts: 1 });
+			let failScan = true;
+			const fsImpl = {
+				existsSync: fs.existsSync,
+				readdirSync: ((target: fs.PathLike) => {
+					if (failScan) {
+						failScan = false;
+						throw Object.assign(new Error("file table overflow"), { code: "ENFILE" });
+					}
+					return fs.readdirSync(target);
+				}) as typeof fs.readdirSync,
+				readFileSync: fs.readFileSync,
+				rmSync: fs.rmSync,
+			};
+
+			assert.deepEqual(consumeSteerRequests(asyncDir, fsImpl), []);
+			assert.deepEqual(consumeSteerRequests(asyncDir, fsImpl), [
+				{ type: "steer", id: "retry", ts: 1, message: "retry me" },
+			]);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
 	it("does not deliver a steer request if another consumer removed it first", () => {
 		const asyncDir = tmpAsyncDir("pi-control-steer-concurrent-");
 		try {

@@ -5,6 +5,7 @@
 ### Fixed
 - Kept pi-intercom stable IDs from leaking into child sessions and used the current intercom runtime ID for unnamed supervisor targets.
 - Improved acceptance policy validation errors and tool-schema guidance for invalid evidence kinds. Thanks to @atimofeev for #672.
+- Tolerated temporary steering inbox scan failures so pending steer requests can be retried on the next poll. Thanks to @hughcars for #670.
 
 ## [0.37.2] - 2026-07-28
 
