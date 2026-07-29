@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Editor, visibleWidth } from "@earendil-works/pi-tui";
+import { Editor, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { collectFleetSnapshot } from "../../src/tui/fleet.ts";
@@ -476,10 +476,25 @@ describe("below-editor subagent FleetView", () => {
 
 			assert.equal(inputHandler!("\x1b[B"), undefined, "non-empty editor should retain Down");
 			editorText = "";
-			tui.focusedComponent = {} as Editor;
+			tui.focusedComponent = {
+				render() { return []; },
+				invalidate() {},
+				handleInput() {},
+			} as unknown as Editor;
 			assert.equal(inputHandler!("\x1b[B"), undefined, "non-editor focus should retain Down");
+
+			const crossModuleCustomEditor = {
+				render() { return []; },
+				invalidate() {},
+				handleInput() {},
+				getText() { return ""; },
+				setText() {},
+			} satisfies EditorComponent;
+			assert.equal(crossModuleCustomEditor instanceof Editor, false, "regression setup must cross the instanceof boundary");
+			tui.focusedComponent = crossModuleCustomEditor as unknown as Editor;
+			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true }, "custom editors should activate FleetView across jiti boundaries");
+
 			tui.focusedComponent = Object.create(Editor.prototype) as Editor;
-			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
 			assert.ok(component.render(100).some((line) => line.includes("⏺ worker")));
 			assert.deepEqual(inputHandler!("\r"), { consume: true });

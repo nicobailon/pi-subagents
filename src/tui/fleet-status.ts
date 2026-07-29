@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Editor, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AsyncJobStep, FleetViewPlacement, SubagentState } from "../shared/types.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
@@ -341,9 +341,16 @@ export class SubagentFleetStatus {
 	}
 
 	private editorHasFocus(): boolean {
-		// pi-tui exposes focus mutation but no focus getter; fail closed if this compatibility seam disappears.
+		// pi-tui exposes focus mutation but no focus getter, so inspect the focused
+		// component structurally. instanceof is unreliable across jiti module boundaries.
 		const focused = (this.tui as unknown as { focusedComponent?: unknown } | undefined)?.focusedComponent;
-		return focused instanceof Editor;
+		if (!focused || typeof focused !== "object") return false;
+		const candidate = focused as Partial<EditorComponent>;
+		return typeof candidate.render === "function"
+			&& typeof candidate.invalidate === "function"
+			&& typeof candidate.handleInput === "function"
+			&& typeof candidate.getText === "function"
+			&& typeof candidate.setText === "function";
 	}
 
 	private getRenderKey(): string {
