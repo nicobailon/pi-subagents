@@ -1046,7 +1046,9 @@ describe("acceptance gates", () => {
 			{ id: "release check", must: "second" },
 		] }).join("\n"), /acceptance\.criteria\[1\]\.id duplicates normalized criterion id 'release-check'/);
 		assert.match(validateAcceptanceInput({ criteria: [123] }).join("\n"), /acceptance\.criteria\[0\] must be a string or an object/);
-		assert.match(validateAcceptanceInput({ evidence: ["bogus"] }).join("\n"), /acceptance\.evidence\[0\] is not a supported evidence kind/);
+		assert.match(validateAcceptanceInput({ evidence: "commands-run" }).join("\n"), /acceptance\.evidence must be an array.*Supported evidence kinds:.*commands-run.*changed-files/s);
+		assert.match(validateAcceptanceInput({ evidence: ["bogus"] }).join("\n"), /acceptance\.evidence\[0\] "bogus" is not a supported evidence kind.*Supported evidence kinds:.*manual-notes.*Example:/s);
+		assert.match(validateAcceptanceInput({ criteria: [{ id: "ship", must: "ship", evidence: ["commands_run"] }] }).join("\n"), /acceptance\.criteria\[0\]\.evidence\[0\] "commands_run" is not a supported evidence kind.*Supported evidence kinds:/s);
 		assert.match(validateAcceptanceInput({ review: true }).join("\n"), /acceptance\.review must be false or an object/);
 		assert.match(validateAcceptanceInput({ review: { required: "yes" } }).join("\n"), /acceptance\.review\.required must be a boolean/);
 		assert.match(validateAcceptanceInput({ stopRules: [123] }).join("\n"), /acceptance\.stopRules\[0\] must be a string/);

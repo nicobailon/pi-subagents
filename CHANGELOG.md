@@ -4,6 +4,7 @@
 
 ### Fixed
 - Kept pi-intercom stable IDs from leaking into child sessions and used the current intercom runtime ID for unnamed supervisor targets.
+- Improved acceptance policy validation errors and tool-schema guidance for invalid evidence kinds. Thanks to @atimofeev for #672.
 
 ## [0.37.2] - 2026-07-28
 

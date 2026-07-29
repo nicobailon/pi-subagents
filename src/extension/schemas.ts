@@ -65,6 +65,18 @@ const JsonSchemaObject = Type.Unsafe({
 	description: "JSON Schema object for strict structured output. Non-object roots are rejected.",
 });
 
+const AcceptanceEvidenceKinds = [
+	"changed-files",
+	"tests-added",
+	"commands-run",
+	"validation-output",
+	"residual-risks",
+	"no-staged-files",
+	"diff-summary",
+	"review-findings",
+	"manual-notes",
+];
+
 const AcceptanceOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "string", enum: ["auto", "attested", "checked", "verified"] },
@@ -77,7 +89,7 @@ const AcceptanceOverride = Type.Unsafe({
 		{ type: "boolean", enum: [false] },
 		{ type: "object", additionalProperties: true },
 	],
-	description: "Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Evidence levels end at verified; require independent review with acceptance.review.required. The value reviewed is an achieved status and is accepted by the schema only for actionable preflight recovery. In the current/default contract, omitted means auto-inferred. With agentContract.version=1, omitted means not requested and acceptance failures are reported separately from execution.",
+	description: `Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review. Omitted means auto-inferred unless agentContract.version=1.`,
 });
 
 const AgentContractOverride = Type.Object({

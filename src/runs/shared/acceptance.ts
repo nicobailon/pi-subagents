@@ -32,7 +32,7 @@ const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
 };
 
 const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified"]);
-const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>([
+const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 	"changed-files",
 	"tests-added",
 	"commands-run",
@@ -42,7 +42,10 @@ const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>([
 	"diff-summary",
 	"review-findings",
 	"manual-notes",
-]);
+];
+const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>(VALID_EVIDENCE_KINDS);
+const ACCEPTANCE_EVIDENCE_HELP = `Supported evidence kinds: ${VALID_EVIDENCE_KINDS.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`;
+const ACCEPTANCE_OBJECT_EXAMPLE = "Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.";
 const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
@@ -153,6 +156,11 @@ function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
 	return explicit.level === "none" && typeof explicit.reason === "string" && explicit.reason.trim().length > 0;
 }
 
+function unsupportedEvidenceKindMessage(pathLabel: string, item: unknown): string {
+	const value = typeof item === "string" ? ` "${item}"` : "";
+	return `${pathLabel}${value} is not a supported evidence kind. ${ACCEPTANCE_EVIDENCE_HELP}`;
+}
+
 export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"): string[] {
 	const errors: string[] = [];
 	if (input === undefined) return errors;
@@ -164,7 +172,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
-		errors.push(`${pathLabel} must be a string level, false, or an object.`);
+		errors.push(`${pathLabel} must be a string level, false, or an object. ${ACCEPTANCE_OBJECT_EXAMPLE}`);
 		return errors;
 	}
 	const value = input as Record<string, unknown>;
@@ -202,11 +210,11 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 				criterionIds.add(normalizedId);
 			}
 			if (typeof gate.must !== "string" || !gate.must.trim()) errors.push(`${criterionPath}.must is required.`);
-			if (gate.evidence !== undefined && !Array.isArray(gate.evidence)) errors.push(`${criterionPath}.evidence must be an array.`);
+			if (gate.evidence !== undefined && !Array.isArray(gate.evidence)) errors.push(`${criterionPath}.evidence must be an array. ${ACCEPTANCE_EVIDENCE_HELP}`);
 			if (Array.isArray(gate.evidence)) {
 				for (const [evidenceIndex, item] of gate.evidence.entries()) {
 					if (typeof item !== "string" || !VALID_EVIDENCE.has(item as AcceptanceEvidenceKind)) {
-						errors.push(`${criterionPath}.evidence[${evidenceIndex}] is not a supported evidence kind.`);
+						errors.push(unsupportedEvidenceKindMessage(`${criterionPath}.evidence[${evidenceIndex}]`, item));
 					}
 				}
 			}
@@ -218,11 +226,11 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (Array.isArray(value.evidence)) {
 		for (const [index, item] of value.evidence.entries()) {
 			if (typeof item !== "string" || !VALID_EVIDENCE.has(item as AcceptanceEvidenceKind)) {
-				errors.push(`${pathLabel}.evidence[${index}] is not a supported evidence kind.`);
+				errors.push(unsupportedEvidenceKindMessage(`${pathLabel}.evidence[${index}]`, item));
 			}
 		}
 	} else if (value.evidence !== undefined) {
-		errors.push(`${pathLabel}.evidence must be an array.`);
+		errors.push(`${pathLabel}.evidence must be an array. ${ACCEPTANCE_EVIDENCE_HELP}`);
 	}
 	if (value.verify !== undefined && !Array.isArray(value.verify)) errors.push(`${pathLabel}.verify must be an array.`);
 	if (Array.isArray(value.verify)) {
