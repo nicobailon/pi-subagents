@@ -38,6 +38,8 @@ export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 export const SUBAGENT_STEER_CAPABILITY_ENV = "PI_SUBAGENT_STEER_CAPABILITY";
 export const SUBAGENT_STEER_ACK_DIR_ENV = "PI_SUBAGENT_STEER_ACK_DIR";
+export const PI_INTERCOM_STABLE_ID_ENV = "PI_INTERCOM_STABLE_ID";
+export const PI_INTERCOM_SESSION_ID_ENV = "PI_INTERCOM_SESSION_ID";
 
 export interface BuildPiArgsInput {
 	parentSessionId?: string;
@@ -331,6 +333,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		: "";
 	env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
 	env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
+	env[PI_INTERCOM_STABLE_ID_ENV] = input.intercomSessionName || undefined;
+	env[PI_INTERCOM_SESSION_ID_ENV] = undefined;
 	if (input.intercomSessionName) {
 		env.PI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
 	}

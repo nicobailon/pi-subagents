@@ -44,11 +44,15 @@ describe("resolveIntercomBridgeMode", () => {
 
 describe("resolveIntercomSessionTarget", () => {
 	it("prefers an explicit session name", () => {
-		assert.equal(resolveIntercomSessionTarget("planner", "session-12345678"), "planner");
+		assert.equal(resolveIntercomSessionTarget("planner", "session-12345678", "session-stableabcdef"), "planner");
 	});
 
 	it("uses a runtime-only subagent chat alias when unnamed", () => {
-		assert.equal(resolveIntercomSessionTarget(undefined, "session-12345678"), "subagent-chat-12345678");
+		assert.equal(resolveIntercomSessionTarget(undefined, "session-12345678", ""), "subagent-chat-12345678");
+	});
+
+	it("uses the current pi-intercom runtime id for unnamed fallback when present", () => {
+		assert.equal(resolveIntercomSessionTarget(undefined, "session-12345678", "session-stableabcdef"), "subagent-chat-stableab");
 	});
 });
 

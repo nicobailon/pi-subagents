@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Kept pi-intercom stable IDs from leaking into child sessions and used the current intercom runtime ID for unnamed supervisor targets.
+
 ## [0.37.2] - 2026-07-28
 
 ### Changed
