@@ -45,6 +45,9 @@ import {
 	hasEmptyTerminalAssistantResponse,
 	extractToolArgsPreview,
 	extractTextFromContent,
+	boundStreamedRecentTools,
+	boundStreamedRecentOutput,
+	boundStreamedToolCalls,
 } from "../../shared/utils.ts";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
@@ -168,8 +171,8 @@ function snapshotProgress(progress: AgentProgress): AgentProgress {
 	return {
 		...progress,
 		skills: progress.skills ? [...progress.skills] : undefined,
-		recentTools: progress.recentTools.map((tool) => ({ ...tool })),
-		recentOutput: [...progress.recentOutput],
+		recentTools: boundStreamedRecentTools(progress.recentTools),
+		recentOutput: boundStreamedRecentOutput(progress.recentOutput),
 	};
 }
 
@@ -193,6 +196,20 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
 		truncation: result.truncation ? { ...result.truncation } : undefined,
 		outputReference: result.outputReference ? { ...result.outputReference } : undefined,
 	};
+}
+
+/**
+ * Streaming variant of snapshotResult for `onUpdate` progress events: it drops the
+ * unbounded `messages` transcript in favour of compact tool-call summaries so a
+ * single `tool_execution_update` line stays well under the child-stdout protocol
+ * cap (`MAX_CHILD_PENDING_LINE_BYTES`). Non-streaming consumers such as
+ * detached-exit recovery call snapshotResult directly and keep the full transcript.
+ */
+function snapshotStreamResult(result: SingleResult, progress: AgentProgress): SingleResult {
+	const snapshot = snapshotResult(result, progress);
+	snapshot.messages = undefined;
+	snapshot.toolCalls = boundStreamedToolCalls(result);
+	return snapshot;
 }
 
 async function runSingleAttempt(
@@ -694,7 +711,7 @@ async function runSingleAttempt(
 		const emitUpdateSnapshot = (text: string) => {
 			if (!options.onUpdate || processClosed) return;
 			const progressSnapshot = snapshotProgress(progress);
-			const resultSnapshot = snapshotResult(result, progressSnapshot);
+			const resultSnapshot = snapshotStreamResult(result, progressSnapshot);
 			const controlEvents = drainPendingControlEvents();
 			options.onUpdate({
 				content: [{ type: "text", text }],
@@ -1231,7 +1248,7 @@ async function runSingleAttempt(
 	if (options.onUpdate) {
 		const finalText = result.finalOutput || result.error || "(no output)";
 		const progressSnapshot = snapshotProgress(progress);
-		const resultSnapshot = snapshotResult(result, progressSnapshot);
+		const resultSnapshot = snapshotStreamResult(result, progressSnapshot);
 		options.onUpdate({
 			content: [{ type: "text", text: finalText }],
 			details: {
