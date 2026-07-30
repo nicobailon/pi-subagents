@@ -603,6 +603,72 @@ Review nested project work.
 		assert.equal(agent.filePath, path.join(packageRoot, "agents", "reviewer.md"));
 	}));
 
+	it("keeps nearest project root discovery by default when a nested .pi exists", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-nearest-root-default-"));
+		tempDirs.push(dir);
+		const nested = path.join(dir, "packages", "app", "src");
+		const nestedConfigDir = path.join(dir, "packages", "app", ".pi");
+		const packageRoot = path.join(dir, ".pi", "npm", "node_modules", "outer-workflow");
+		fs.mkdirSync(nested, { recursive: true });
+		fs.mkdirSync(nestedConfigDir, { recursive: true });
+		fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+		writeJson(path.join(packageRoot, "package.json"), {
+			name: "outer-workflow",
+			"pi-subagents": { agents: ["./agents"] },
+		});
+		writeAgent(path.join(packageRoot, "agents", "planner.md"), `---
+name: planner
+package: outer-workflow
+description: Plan from the outer project package.
+---
+
+Plan outer project work.
+`);
+
+		const agent = discoverAgents(nested, "both").agents.find((candidate) => candidate.name === "outer-workflow.planner");
+		assert.equal(agent, undefined);
+	}));
+
+	it("can resolve project packages and overrides from the git root", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-git-root-resolution-"));
+		tempDirs.push(dir);
+		const nested = path.join(dir, "packages", "app", "src");
+		const nestedConfigDir = path.join(dir, "packages", "app", ".pi");
+		const packageRoot = path.join(dir, ".pi", "npm", "node_modules", "outer-workflow");
+		fs.mkdirSync(nested, { recursive: true });
+		fs.mkdirSync(nestedConfigDir, { recursive: true });
+		fs.writeFileSync(path.join(dir, ".git"), "gitdir: ../.git/worktrees/app\n", "utf-8");
+		writeJson(path.join(dir, ".pi", "settings.json"), {
+			subagents: {
+				projectRootResolution: "git-root",
+				agentOverrides: {
+					reviewer: { model: "openai/gpt-5.4" },
+				},
+			},
+		});
+		writeJson(path.join(packageRoot, "package.json"), {
+			name: "outer-workflow",
+			"pi-subagents": { agents: ["./agents"] },
+		});
+		writeAgent(path.join(packageRoot, "agents", "planner.md"), `---
+name: planner
+package: outer-workflow
+description: Plan from the outer project package.
+---
+
+Plan outer project work.
+`);
+
+		const agents = discoverAgents(nested, "both").agents;
+		const packageAgent = agents.find((candidate) => candidate.name === "outer-workflow.planner");
+		assert.ok(packageAgent);
+		assert.equal(packageAgent.source, "package");
+		assert.equal(packageAgent.filePath, path.join(packageRoot, "agents", "planner.md"));
+		const reviewer = agents.find((candidate) => candidate.name === "reviewer");
+		assert.equal(reviewer?.model, "openai/gpt-5.4");
+		assert.equal(reviewer?.override?.path, path.join(dir, ".pi", "settings.json"));
+	}));
+
 	it("does not register legacy skill files from broad package agent roots", () => withTempHome(() => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-broad-package-skills-"));
 		tempDirs.push(dir);
