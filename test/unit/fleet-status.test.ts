@@ -492,7 +492,13 @@ describe("below-editor subagent FleetView", () => {
 			} satisfies EditorComponent;
 			assert.equal(crossModuleCustomEditor instanceof Editor, false, "regression setup must cross the instanceof boundary");
 			tui.focusedComponent = crossModuleCustomEditor as unknown as Editor;
+			assert.equal(inputHandler!("j"), undefined, "inactive FleetView should retain printable navigation keys");
+			assert.equal(inputHandler!("k"), undefined, "inactive FleetView should retain printable navigation keys");
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true }, "custom editors should activate FleetView across jiti boundaries");
+			assert.deepEqual(inputHandler!("j"), { consume: true }, "active FleetView should navigate down with j");
+			assert.ok(component.render(100).some((line) => line.includes("⏺ worker")));
+			assert.deepEqual(inputHandler!("k"), { consume: true }, "active FleetView should navigate up with k");
+			assert.ok(component.render(100).some((line) => line.includes("⏺ main")));
 
 			tui.focusedComponent = Object.create(Editor.prototype) as Editor;
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });

@@ -6,6 +6,7 @@
 - Added the optional versioned `fleetStatus` RPC capability with bounded, current-session child roles, goals, model/effort, split token usage, elapsed timestamps, stable opaque reconciliation keys, and explicit overflow counts. Thanks to @neumie for #682.
 
 ### Fixed
+- Enabled the advertised `j`/`k` navigation aliases after activating the persistent FleetView while leaving printable editor input untouched before activation.
 - Added opt-in `subagents.projectRootResolution: "git-root"` so monorepos and git worktrees can keep the default nearest-root behavior unless they choose to resolve project packages and `agentOverrides` from the git root. Thanks to @klajdo-f for #677.
 - Recognized structurally compatible custom editors in FleetView focus detection, restoring FleetView arrow-key activation and navigation when a custom editor has focus. Thanks to @magoz for #679.
 - Scoped foreground fleet records to their originating parent session and propagated resolved model, thinking effort, and split input/output usage through live foreground controls.

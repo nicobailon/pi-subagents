@@ -252,12 +252,12 @@ export class SubagentFleetStatus {
 
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
-		if (matchesKey(data, "down")) {
+		if (matchesKey(data, "down") || matchesKey(data, "j")) {
 			this.selectedKey = roster[Math.min(roster.length - 1, selectedIndex + 1)] ?? "main";
 			this.refresh();
 			return { consume: true };
 		}
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || matchesKey(data, "k")) {
 			if (selectedIndex === 0) {
 				this.deactivate();
 				return { consume: true };
@@ -297,7 +297,7 @@ export class SubagentFleetStatus {
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
 		const hint = this.active
-			? "↑↓ select · enter inspect · esc back"
+			? "↑↓/jk select · enter inspect · esc back"
 			: "esc to interrupt · ← for agents · ↓ to manage";
 		const lines = [truncateToWidth(`  ${theme.fg("dim", hint)}`, width), ""];
 		lines.push(truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width));
