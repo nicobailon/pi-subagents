@@ -2162,6 +2162,17 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 					cwd: root,
 					sessionId: "session-test",
 					jobs: [{
+						id: "job-1",
+						name: "early scout",
+						schedule: "+5m",
+						runAt: Date.now() + 300_000,
+						state: "scheduled",
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+						cwd: root,
+						sessionId: "session-test",
+						params: { agent: "scout", task: "soon", async: true },
+					}, {
 						id: "job-2",
 						name: "delayed worker",
 						schedule: "+10m",
@@ -2200,9 +2211,27 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 				await commands.get("subagents-stop")!.handler("", createCommandContext({
 					cwd: root,
 					hasUI: true,
-					custom: async () => ({
-						confirmed: true,
-						target: { kind: "scheduled", id: "job-2", label: "job-2", detail: "scheduled", actionLabel: "cancel scheduled run" },
+					custom: async (...args: unknown[]) => new Promise((resolve) => {
+						const factory = args[0] as (
+							tui: { requestRender(): void },
+							theme: { fg(key: string, text: string): string; bold(text: string): string },
+							keybindings: unknown,
+							done: (result: unknown) => void,
+						) => { handleInput(data: string): void; render(width: number): string[] };
+						const component = factory(
+							{ requestRender() {} },
+							{ fg(_key, text) { return text; }, bold(text) { return text; } },
+							{},
+							resolve,
+						);
+						assert.match(component.render(84).join("\n"), /↑↓\/jk select/);
+						component.handleInput("j");
+						assert.ok(component.render(84).some((line) => line.startsWith("›") && line.includes("job-2")));
+						component.handleInput("k");
+						assert.ok(component.render(84).some((line) => line.startsWith("›") && line.includes("job-1")));
+						component.handleInput("j");
+						component.handleInput("\r");
+						component.handleInput("y");
 					}),
 				}));
 

@@ -451,13 +451,13 @@ export class ChainClarifyComponent implements Component {
 			return;
 		}
 
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || matchesKey(data, "k")) {
 			this.selectedStep = Math.max(0, this.selectedStep - 1);
 			this.tui.requestRender();
 			return;
 		}
 
-		if (matchesKey(data, "down")) {
+		if (matchesKey(data, "down") || matchesKey(data, "j")) {
 			const maxStep = Math.max(0, this.agentConfigs.length - 1);
 			this.selectedStep = Math.min(maxStep, this.selectedStep + 1);
 			this.tui.requestRender();
@@ -1123,7 +1123,7 @@ export class ChainClarifyComponent implements Component {
 	private getFooterText(): string {
 		return this.mode === 'single'
 			? " [Enter] Run • [Esc] Cancel "
-			: " [Enter] Run • [Esc] Cancel • [↑↓] Navigate ";
+			: " [Enter] Run • [Esc] Cancel • [↑↓/jk] Navigate ";
 	}
 
 	private appendNotice(lines: string[]): void {

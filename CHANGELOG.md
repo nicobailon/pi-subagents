@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added `j`/`k` navigation aliases to the non-filterable `/subagents-stop` selector and clarify step list while preserving text input in editor and search modes.
 - Added the optional versioned `fleetStatus` RPC capability with bounded, current-session child roles, goals, model/effort, split token usage, elapsed timestamps, stable opaque reconciliation keys, and explicit overflow counts. Thanks to @neumie for #682.
 
 ### Fixed

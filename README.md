@@ -656,7 +656,7 @@ Common clarify keys:
 
 - `Enter` runs in the foreground, or in the background if background is toggled on
 - `Esc` cancels or backs out
-- `↑↓` moves between steps or tasks
+- `↑↓` or `j`/`k` moves between steps or tasks
 - `e` edits the task/template
 - `m` selects a model
 - `t` selects thinking level
@@ -1441,7 +1441,7 @@ subagent({ action: "doctor" })
 
 `resume` revives a paused, completed, or failed async/foreground child by starting a new child from its stored session file; stopped runs remain non-resumable, and it does not interrupt a live top-level async child. Use `steer` for acknowledged live async guidance. Multi-child async runs and remembered foreground single, parallel, or chain runs can be revived by passing `index` to choose the child. Nested runs can be resumed by nested id when their live route or persisted nested session metadata is available. Revive starts a new child process from the old session context; it does not restart the same OS process, and it requires the chosen child to have a persisted `.jsonl` session file. Direct revival takes an exclusive cross-process lease on the canonical session file until the new child finishes. A concurrent attempt fails before Pi is spawned and identifies the owning revived run; dead-owner leases are reclaimed only when staleness can be proved.
 
-`stop` ends a current-session top-level async run. It is deliberately stronger than `interrupt`: it is not a resumable pause, stopped runs should be restarted as new runs, foreground and nested targets are rejected, direct id calls execute immediately, and `/subagents-stop` without an id opens a selector with confirmation when a TUI is available. In non-TUI contexts the slash command prints exact `subagent({ action: "stop", id })` and `/subagents-stop <id>` commands. Scheduled jobs can appear in the selector, but they are labeled as scheduled cancellations and route through `schedule-cancel`, not `stop`.
+`stop` ends a current-session top-level async run. It is deliberately stronger than `interrupt`: it is not a resumable pause, stopped runs should be restarted as new runs, foreground and nested targets are rejected, direct id calls execute immediately, and `/subagents-stop` without an id opens a selector with confirmation when a TUI is available. Use `↑`/`↓` or `j`/`k` to move through that selector. In non-TUI contexts the slash command prints exact `subagent({ action: "stop", id })` and `/subagents-stop <id>` commands. Scheduled jobs can appear in the selector, but they are labeled as scheduled cancellations and route through `schedule-cancel`, not `stop`.
 
 `steer` waits up to three seconds for a correlated child-Pi input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Delivery means Pi accepted the user message, not model compliance. A pending indexed child returns `scheduled`. Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; chain, parallel, and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery. The persisted `steering` ledger retains 20 requests and replaces the old `steerCount`/`lastSteerAt` fields.
 

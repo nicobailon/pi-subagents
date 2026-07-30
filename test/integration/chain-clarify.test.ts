@@ -349,9 +349,9 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			assert.match(initial, /\[Enter\] Run • \[Esc\] Cancel/);
 			if (mode === "single") {
 				assert.match(initial, /\[w\]Output/);
-				assert.doesNotMatch(initial, /\[↑↓\] Navigate/);
+				assert.doesNotMatch(initial, /\[↑↓\/jk\] Navigate/);
 			} else {
-				assert.match(initial, /\[↑↓\] Navigate/);
+				assert.match(initial, /\[↑↓\/jk\] Navigate/);
 			}
 			if (mode === "chain") {
 				assert.match(initial, /\[w\]Output/);
@@ -367,5 +367,54 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			component.handleInput("b");
 			assert.match(component.render(84).map(stripAnsi).join("\n"), /\[b\]Background:ON/);
 		}
+	});
+
+	it("navigates non-editing chain steps with j and k", () => {
+		const agents = ["scout", "worker"].map((name) => ({
+			name,
+			description: "",
+			systemPrompt: "",
+			systemPromptMode: "replace",
+			inheritProjectContext: false,
+			inheritSkills: false,
+			source: "user",
+			filePath: `${name}.md`,
+		}));
+		const component = new ChainClarifyComponent(
+			{ requestRender() {} },
+			{ fg(_key: string, text: string) { return text; } },
+			agents,
+			["Scout", "Implement"],
+			"Task",
+			undefined,
+			agents.map(() => ({ output: false, outputMode: "inline", reads: false, progress: false, skills: [], model: undefined })),
+			[],
+			undefined,
+			[{ name: "jk-skill", source: "user" }],
+			() => {},
+			"chain",
+		);
+
+		component.handleInput("j");
+		assert.equal(component.selectedStep, 1);
+		component.handleInput("k");
+		assert.equal(component.selectedStep, 0);
+
+		component.handleInput("e");
+		component.handleInput("j");
+		component.handleInput("k");
+		assert.match(component.render(84).map(stripAnsi).join("\n"), /jkScout/);
+		component.handleInput("\x1b");
+
+		component.handleInput("m");
+		component.handleInput("j");
+		component.handleInput("k");
+		assert.match(component.render(84).map(stripAnsi).join("\n"), /Search: jk/);
+		component.handleInput("\x1b");
+
+		component.handleInput("s");
+		component.handleInput("j");
+		component.handleInput("k");
+		assert.match(component.render(84).map(stripAnsi).join("\n"), /Search: jk/);
 	});
 });

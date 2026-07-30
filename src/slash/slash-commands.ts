@@ -336,12 +336,12 @@ class SubagentsStopSelector implements Component {
 			}
 			return;
 		}
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || matchesKey(data, "k")) {
 			this.selected = Math.max(0, this.selected - 1);
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, "down")) {
+		if (matchesKey(data, "down") || matchesKey(data, "j")) {
 			this.selected = Math.min(this.targets.length - 1, this.selected + 1);
 			this.tui.requestRender();
 			return;
@@ -375,7 +375,7 @@ class SubagentsStopSelector implements Component {
 			if (target.kind === "async") lines.push(this.theme.fg("dim", "Stop ends this run; use interrupt for a resumable pause."));
 			lines.push(this.theme.fg("dim", "Enter/Y confirms · N returns · Esc cancels"));
 		} else {
-			lines.push(this.theme.fg("dim", "↑/↓ select · Enter confirm · Esc cancel"));
+			lines.push(this.theme.fg("dim", "↑↓/jk select · Enter confirm · Esc cancel"));
 		}
 		return lines;
 	}
