@@ -4,7 +4,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
-import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
+import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { RESULTS_DIR, type AsyncJobState, type Details, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
@@ -223,12 +223,14 @@ function statusGlyph(item: FleetItem, theme: Theme): string {
 function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-active" }>): string[] {
 	const { control } = item;
 	const live = item.activeChild ?? control;
+	const modelThinking = formatModelThinking(live.model, live.thinking);
 	const lines = [
 		`Run: ${item.runId}`,
 		"Source: foreground",
 		`State: running`,
 		`Mode: ${control.mode}`,
 		item.index !== undefined ? `Child: ${item.index} (${item.agent})` : `Agent: ${item.agent}`,
+		modelThinking ? `Model: ${modelThinking}` : undefined,
 		`Started: ${new Date(live.startedAt).toISOString()}`,
 		live.currentTool ? `Current tool: ${live.currentTool}${live.currentPath ? ` · ${shortenPath(live.currentPath)}` : ""}` : undefined,
 		live.turnCount !== undefined ? `Turns: ${live.turnCount}` : undefined,
@@ -244,12 +246,14 @@ function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-act
 function foregroundRecentDetail(item: Extract<FleetItem, { kind: "foreground-recent" }>): string[] {
 	const { child, run } = item;
 	const outputPath = child.artifactPaths?.outputPath ?? child.savedOutputPath;
+	const modelThinking = formatModelThinking(child.model, child.thinking);
 	const lines = [
 		`Run: ${item.runId}`,
 		"Source: foreground",
 		`State: ${child.status}`,
 		`Mode: ${run.mode}`,
 		`Child: ${child.index} (${child.agent})${contextModeLabel(child.context) ? ` ${contextModeLabel(child.context)}` : ""}`,
+		modelThinking ? `Model: ${modelThinking}` : undefined,
 		`Updated: ${new Date(child.updatedAt ?? run.updatedAt).toISOString()}`,
 		outputPath ? `Output: ${outputPath}` : undefined,
 		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
@@ -377,10 +381,12 @@ function itemStats(item: FleetItem): string[] {
 	let durationMs: number | undefined;
 	if (item.kind === "foreground-active") {
 		const live = item.activeChild ?? item.control;
+		model = formatModelThinking(live.model, live.thinking) || undefined;
 		tokens = live.tokens;
 		tools = live.toolCount;
 		durationMs = Math.max(0, Date.now() - live.startedAt);
 	} else if (item.kind === "foreground-recent") {
+		model = formatModelThinking(item.child.model, item.child.thinking) || undefined;
 		tokens = item.child.tokens;
 		tools = item.child.toolCount;
 	} else {
@@ -733,7 +739,7 @@ export class SubagentFleetComponent implements Component {
 		if (transcriptWarning) raw.unshift(`Transcript preview warning: ${transcriptWarning}`, "");
 		const lines: string[] = [];
 		for (const line of raw) {
-			const styled = /^(Run|State|Mode|Source|Child|Agent):/.test(line)
+			const styled = /^(Run|State|Mode|Source|Child|Agent|Model):/.test(line)
 				? this.theme.bold(line)
 				: /^(Transcript|Result transcript tail)/.test(line)
 					? this.theme.fg("accent", line)
