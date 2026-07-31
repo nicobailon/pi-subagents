@@ -7,6 +7,7 @@ import {
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
+	type LaunchResolvedChildExtensionsV1,
 	type NestedRouteInfo,
 	type TurnBudgetState,
 	type NestedRunSummary,
@@ -197,6 +198,30 @@ function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined
 		: undefined;
 }
 
+function sanitizeLaunchResolvedExtensions(value: unknown): LaunchResolvedChildExtensionsV1 | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Record<string, unknown>;
+	if (raw.version !== 1 || raw.source !== "launch-resolved" || typeof raw.disableAmbientExtensions !== "boolean") return undefined;
+	const stringList = (input: unknown): string[] => Array.isArray(input)
+		? input.filter((item): item is string => typeof item === "string" && /^sha256:[a-f0-9]{16}$/.test(item)).slice(0, 32)
+		: [];
+	const omitted = raw.omitted && typeof raw.omitted === "object" ? raw.omitted as Record<string, unknown> : {};
+	const omittedCount = (key: string): number => Math.max(0, Math.floor(clampNumber(omitted[key]) ?? 0));
+	return {
+		version: 1,
+		source: "launch-resolved",
+		disableAmbientExtensions: raw.disableAmbientExtensions,
+		runtime: stringList(raw.runtime),
+		configured: stringList(raw.configured),
+		effective: stringList(raw.effective),
+		omitted: {
+			runtime: omittedCount("runtime"),
+			configured: omittedCount("configured"),
+			effective: omittedCount("effective"),
+		},
+	};
+}
+
 function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const raw = value as Record<string, unknown>;
@@ -249,6 +274,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
+		...(sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) ? { launchResolvedExtensions: sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
 	};
 }
@@ -306,6 +332,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
 		...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
+		...(sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) ? { launchResolvedExtensions: sanitizeLaunchResolvedExtensions(raw.launchResolvedExtensions) } : {}),
 		...(steps && steps.length > 0 ? { steps } : {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children) ? { children: raw.children.map((child) => sanitizeSummary(child, depth + 1)).filter((child): child is NestedRunSummary => Boolean(child)).slice(0, MAX_CHILDREN) } : {}),
 	};
@@ -893,6 +920,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		mode: status.mode ?? fallback.mode,
 		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
+		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
 		...(status.capabilityCeiling ? { capabilityCeiling: status.capabilityCeiling } : {}),
 		...(status.capabilityAudit ? { capabilityAudit: status.capabilityAudit } : {}),
 		state: status.state,
@@ -932,6 +960,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
 			...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 			...(step.error ? { error: step.error } : {}),
+			...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 			...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
 			...(step.stopped !== undefined ? { stopped: step.stopped } : {}),
 			...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),

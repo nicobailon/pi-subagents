@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -6,7 +7,7 @@ import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from ".
 import { resolveMcpDirectToolSelections, type ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-allowlist.ts";
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
-import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
+import { TEMP_ROOT_DIR, type JsonSchemaObject, type LaunchResolvedChildExtensionsV1, type ResolvedToolBudget } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CHILD_TOOLS_ENV } from "./tool-availability.ts";
@@ -16,6 +17,7 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import { SUBAGENT_CAPABILITY_CEILING_ENV, decodeSubagentCapabilityCeiling, encodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "./capability-ceiling.ts";
 
 const TASK_ARG_LIMIT = 8000;
+const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-prompt-runtime.ts");
 const FANOUT_CHILD_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extension", "fanout-child.ts");
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
@@ -144,6 +146,37 @@ export interface PiLaunchToolPlan {
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
+}
+
+function extensionIdentifier(value: string): string {
+	return `sha256:${createHash("sha256").update(path.normalize(value.trim())).digest("hex").slice(0, 16)}`;
+}
+
+function boundedExtensionIdentifiers(values: string[]): { ids: string[]; omitted: number } {
+	const ids = [...new Set(values.map(extensionIdentifier))];
+	return {
+		ids: ids.slice(0, MAX_LAUNCH_RESOLVED_EXTENSION_IDS),
+		omitted: Math.max(0, ids.length - MAX_LAUNCH_RESOLVED_EXTENSION_IDS),
+	};
+}
+
+export function projectLaunchResolvedChildExtensions(toolPlan: Pick<PiLaunchToolPlan, "runtimeExtensions" | "configuredExtensions" | "extensionArgs" | "disableAmbientExtensions">): LaunchResolvedChildExtensionsV1 {
+	const runtime = boundedExtensionIdentifiers(toolPlan.runtimeExtensions);
+	const configured = boundedExtensionIdentifiers(toolPlan.configuredExtensions);
+	const effective = boundedExtensionIdentifiers(toolPlan.extensionArgs);
+	return {
+		version: 1,
+		source: "launch-resolved",
+		disableAmbientExtensions: toolPlan.disableAmbientExtensions,
+		runtime: runtime.ids,
+		configured: configured.ids,
+		effective: effective.ids,
+		omitted: {
+			runtime: runtime.omitted,
+			configured: configured.omitted,
+			effective: effective.omitted,
+		},
+	};
 }
 
 export function resolvePiLaunchToolPlan(input: ResolvePiLaunchToolPlanInput): PiLaunchToolPlan {

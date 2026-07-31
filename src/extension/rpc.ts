@@ -386,6 +386,7 @@ function pingData(ctx: ExtensionContext | null) {
 			interrupt: true,
 			stop: true,
 			resume: true,
+			launchResolvedExtensions: { version: 1, source: "launch-resolved" },
 			processTerminalProof: { version: 1, lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION },
 		},
 		events: {

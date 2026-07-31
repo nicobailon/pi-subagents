@@ -27,6 +27,8 @@ import {
 	PI_INTERCOM_SESSION_ID_ENV,
 	applyThinkingSuffix,
 	buildPiArgs,
+	projectLaunchResolvedChildExtensions,
+	resolvePiLaunchToolPlan,
 } from "../../src/runs/shared/pi-args.ts";
 
 const originalEnv = {
@@ -132,6 +134,29 @@ afterEach(() => {
 });
 
 describe("buildPiArgs session wiring", () => {
+	it("projects launch-resolved extension identifiers without raw paths", () => {
+		const privateExt = path.join(os.tmpdir(), "private-extension-root", "secret-extension.ts");
+		const toolExt = path.join(os.tmpdir(), "tool-extension-root", "tool-extension.ts");
+		const plan = resolvePiLaunchToolPlan({
+			tools: ["read", toolExt],
+			extensions: [privateExt],
+			subagentOnlyExtensions: ["package-extension"],
+		});
+
+		const projection = projectLaunchResolvedChildExtensions(plan);
+
+		assert.equal(projection.version, 1);
+		assert.equal(projection.source, "launch-resolved");
+		assert.equal(projection.disableAmbientExtensions, true);
+		assert.equal(projection.runtime.length, 1);
+		assert.equal(projection.configured.length, 3);
+		assert.equal(projection.effective.length, 4);
+		for (const id of [...projection.runtime, ...projection.configured, ...projection.effective]) {
+			assert.match(id, /^sha256:[a-f0-9]{16}$/);
+		}
+		assert.ok(!JSON.stringify(projection).includes(os.tmpdir()), "projection should not expose raw extension paths");
+	});
+
 	it("uses --session when sessionFile is provided", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-session-"));
 		try {

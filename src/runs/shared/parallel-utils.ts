@@ -46,6 +46,7 @@ export interface RunnerSubagentStep {
 	definitionDigest?: string;
 	launchBindingTask?: string;
 	launchContractDigest?: string;
+	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensionsV1;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;

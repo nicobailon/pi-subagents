@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
-import { applyThinkingSuffix, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
@@ -695,6 +695,18 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const effectiveThinking = thinkingOverride ?? a.thinking;
 		const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const agentContract = s.agentContract ?? params.agentContract;
+		const toolPlan = resolvePiLaunchToolPlan({
+			tools: a.tools,
+			extensions: a.extensions,
+			subagentOnlyExtensions: a.subagentOnlyExtensions,
+			mcpDirectTools: a.mcpDirectTools,
+			cwd: stepCwd,
+			requireReadTool: Boolean(resolvedSkills.length),
+			structuredOutput: Boolean(s.outputSchema),
+			capabilityCeiling: params.capabilityCeiling,
+			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
+		});
+		const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
@@ -709,6 +721,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			cwd: stepCwd,
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
+			launchResolvedExtensions,
 			modelCandidates: buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
 				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
 			),
@@ -1232,6 +1245,7 @@ export function executeAsyncSingle(
 		capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 	});
+	const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({
 		definitionDigest: agentDefinitionDigest(agentConfig),
 		task,
@@ -1265,6 +1279,7 @@ export function executeAsyncSingle(
 		sourceRunId: id,
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
+		launchResolvedExtensions,
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: runnerCwd,
 		...(model ? { model } : {}),
@@ -1339,6 +1354,7 @@ export function executeAsyncSingle(
 						definitionDigest: agentDefinitionDigest(agentConfig),
 						launchBindingTask: task,
 						launchContractDigest,
+						launchResolvedExtensions,
 						effectiveAcceptance: resolvedAcceptance,
 						...(structuredOutput ? { structuredOutput } : {}),
 						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
@@ -1370,6 +1386,7 @@ export function executeAsyncSingle(
 				childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
 				resultMode: "single",
 				launchContractDigest,
+				launchResolvedExtensions,
 				...(params.revivalLease ? { revivalLease: params.revivalLease } : {}),
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf: inheritedNestedRoute && nestedAddress ? {
@@ -1441,6 +1458,7 @@ export function executeAsyncSingle(
 			cwd: runnerCwd,
 			asyncDir,
 			launchContractDigest,
+			launchResolvedExtensions,
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -1450,6 +1468,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}) },
 	};
 }

@@ -81,6 +81,15 @@ interface ArtifactPaths {
 	metadataPath?: string;
 }
 
+interface LaunchResolvedExtensions {
+	version?: number;
+	source?: string;
+	disableAmbientExtensions?: boolean;
+	runtime?: string[];
+	configured?: string[];
+	effective?: string[];
+}
+
 interface RunSyncResult {
 	exitCode: number;
 	agent: string;
@@ -122,6 +131,7 @@ interface RunSyncResult {
 		verifyRuns?: Array<{ status?: string }>;
 		runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
 	};
+	launchResolvedExtensions?: LaunchResolvedExtensions;
 }
 
 interface MockPiCallRecord {
@@ -2168,7 +2178,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("writes artifacts when configured", async () => {
 		mockPi.onCall({ output: "Result text" });
-		const agents = makeAgentConfigs(["echo"]);
+		const privateExtension = path.join(tempDir, "extensions", "private-extension.ts");
+		const agents = [makeAgent("echo", { extensions: [privateExtension] })];
 		const artifactsDir = path.join(tempDir, "artifacts");
 
 		const result = await runSync(tempDir, agents, "echo", "Task", {
@@ -2188,8 +2199,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(transcript.at(-1)?.text ?? "", /^Result text/);
 		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
-		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { launchContractDigest?: string };
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions };
 		assert.equal(metadata.launchContractDigest, result.launchContractDigest);
+		assert.equal(result.launchResolvedExtensions?.source, "launch-resolved");
+		assert.equal(result.launchResolvedExtensions?.disableAmbientExtensions, true);
+		assert.deepEqual(metadata.launchResolvedExtensions, result.launchResolvedExtensions);
+		assert.ok(!JSON.stringify(result.launchResolvedExtensions).includes(tempDir), "projection should not expose raw extension paths");
 	});
 
 	it("routes foreground artifacts to the configured session directory", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

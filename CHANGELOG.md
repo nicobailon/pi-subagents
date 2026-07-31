@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added optional `launchResolvedExtensions` status/result/RPC metadata with opaque launch-resolved child extension identifiers and ambient-extension state. Thanks to @saleemlala for #691.
 - Added Fleet inspector controls to steer the selected live async child and stop its top-level async run with confirmation. Thanks to @saleemlala for #692.
 
 ### Changed

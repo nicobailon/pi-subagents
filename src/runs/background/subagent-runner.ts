@@ -18,6 +18,7 @@ import {
 	type AsyncStatus,
 	type ChainOutputMap,
 	type CostSummary,
+	type LaunchResolvedChildExtensionsV1,
 	type ModelAttempt,
 	type NestedRouteInfo,
 	type NestedRunSummary,
@@ -58,7 +59,7 @@ import {
 	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
@@ -163,6 +164,7 @@ interface SubagentRunConfig {
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	launchContractDigest?: string;
+	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runnerProcessInstanceId?: string;
 }
 
@@ -171,6 +173,7 @@ interface StepResult {
 	context?: "fresh" | "fork";
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: import("../shared/capability-ceiling.ts").SubagentCapabilityAudit;
+	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	output: string;
 	error?: string;
 	protocolError?: ProtocolOutputLimit;
@@ -1016,6 +1019,7 @@ async function runSingleStep(
 	context?: "fresh" | "fork";
 	agentContract?: import("../../shared/types.ts").AgentContract;
 	launchContractDigest?: string;
+	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	output: string;
 	exitCode: number | null;
 	error?: string;
@@ -1156,6 +1160,7 @@ async function runSingleStep(
 			: [undefined];
 	const attemptedModels: string[] = [];
 	let capabilityAudit: import("../shared/capability-ceiling.ts").SubagentCapabilityAudit | undefined;
+	let launchResolvedExtensions = step.launchResolvedExtensions;
 	const modelAttempts: ModelAttempt[] = [];
 	const writerProcesses: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }> = [];
 	let writerAttemptCount = 0;
@@ -1241,6 +1246,7 @@ async function runSingleStep(
 				capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 				inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			});
+			launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
 			actualLaunchContractDigest = launchBindingDigest({
 				definitionDigest: step.definitionDigest,
 				task: step.launchBindingTask ?? task,
@@ -1550,6 +1556,7 @@ async function runSingleStep(
 					acceptance: effectiveAcceptance,
 					...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
 					launchContractDigest: actualLaunchContractDigest,
+					launchResolvedExtensions,
 					...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
 					transcriptError: transcriptWriter?.getError(),
 					skills: step.skills,
@@ -1595,6 +1602,7 @@ async function runSingleStep(
 		acceptance: effectiveAcceptance,
 		watchdog: finalResult?.watchdog,
 		...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
+		launchResolvedExtensions,
 		writerProcesses,
 		writerAttemptCount,
 	};
@@ -1828,6 +1836,7 @@ async function runSubagent(
 					structured: task.structured,
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
 					...(task.launchContractDigest ? { launchContractDigest: task.launchContractDigest } : {}),
+					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
 					status: "pending",
 					...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
@@ -1871,6 +1880,7 @@ async function runSubagent(
 				structured: step.structured,
 				...(step.agentContract ? { agentContract: step.agentContract } : {}),
 				...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
+				...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
 				status: "pending",
 				...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
@@ -1916,6 +1926,7 @@ async function runSubagent(
 		parallelGroups,
 		workflowGraph: config.workflowGraph,
 		...(config.launchContractDigest ? { launchContractDigest: config.launchContractDigest } : {}),
+		...(config.launchResolvedExtensions ? { launchResolvedExtensions: config.launchResolvedExtensions } : {}),
 		...(config.capabilityCeiling ? { capabilityCeiling: config.capabilityCeiling } : {}),
 		...(config.runnerProcessInstanceId ? { processTerminal: { version: 1 as const, state: "pending" as const, runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId } } : {}),
 		steps: initialStatusSteps,
@@ -3015,6 +3026,7 @@ async function runSubagent(
 					outputName: undefined,
 					structured: Boolean(task.structuredOutputSchema),
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
+					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
 					status: "pending",
 					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
@@ -3163,6 +3175,7 @@ async function runSubagent(
 				statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
 				statusPayload.steps[fi].agentContract = singleResult.agentContract;
 				statusPayload.steps[fi].launchContractDigest = singleResult.launchContractDigest;
+				statusPayload.steps[fi].launchResolvedExtensions = singleResult.launchResolvedExtensions;
 				statusPayload.steps[fi].effects = singleResult.effects;
 				statusPayload.steps[fi].execution = singleResult.execution;
 				statusPayload.steps[fi].review = singleResult.review;
@@ -3194,6 +3207,7 @@ async function runSubagent(
 					context: pr.context,
 					agentContract: pr.agentContract,
 					launchContractDigest: pr.launchContractDigest,
+					launchResolvedExtensions: pr.launchResolvedExtensions,
 					output: pr.output,
 					error: pr.error,
 					protocolError: pr.protocolError,
@@ -3503,6 +3517,7 @@ async function runSubagent(
 						statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
 						statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
 						statusPayload.steps[fi].agentContract = singleResult.agentContract;
+						statusPayload.steps[fi].launchResolvedExtensions = singleResult.launchResolvedExtensions;
 						statusPayload.steps[fi].effects = singleResult.effects;
 						statusPayload.steps[fi].execution = singleResult.execution;
 						statusPayload.steps[fi].review = singleResult.review;
@@ -3570,6 +3585,7 @@ async function runSubagent(
 						context: pr.context,
 						agentContract: pr.agentContract,
 						launchContractDigest: pr.launchContractDigest,
+						launchResolvedExtensions: pr.launchResolvedExtensions,
 						output: pr.output,
 						error: pr.error,
 						protocolError: pr.protocolError,
@@ -3752,6 +3768,7 @@ async function runSubagent(
 				context: singleResult.context,
 				agentContract: singleResult.agentContract,
 				launchContractDigest: singleResult.launchContractDigest,
+				launchResolvedExtensions: singleResult.launchResolvedExtensions,
 				output: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
 				protocolError: singleResult.protocolError,
@@ -3842,6 +3859,7 @@ async function runSubagent(
 			statusPayload.steps[flatIndex].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
 			statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
 			statusPayload.steps[flatIndex].agentContract = singleResult.agentContract;
+			statusPayload.steps[flatIndex].launchResolvedExtensions = singleResult.launchResolvedExtensions;
 			statusPayload.steps[flatIndex].effects = singleResult.effects;
 			statusPayload.steps[flatIndex].execution = singleResult.execution;
 			statusPayload.steps[flatIndex].review = singleResult.review;
@@ -4094,6 +4112,7 @@ async function runSubagent(
 				transcriptError: r.transcriptError,
 				agentContract: r.agentContract,
 				launchContractDigest: r.launchContractDigest,
+				launchResolvedExtensions: r.launchResolvedExtensions,
 				execution: r.execution,
 				review: r.review,
 				effects: r.effects,
@@ -4120,6 +4139,7 @@ async function runSubagent(
 			cwd,
 			asyncDir,
 			launchContractDigest: config.launchContractDigest,
+			launchResolvedExtensions: config.launchResolvedExtensions,
 			sessionId: config.sessionId,
 			sessionFile: effectiveSessionFile,
 			intercomTarget: config.controlIntercomTarget,

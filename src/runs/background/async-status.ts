@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState } from "../../shared/types.ts";
+import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type LaunchResolvedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -53,6 +53,7 @@ interface AsyncRunStepSummary {
 	review?: AsyncJobStep["review"];
 	effects?: AsyncJobStep["effects"];
 	processTerminal?: AsyncJobStep["processTerminal"];
+	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 	children?: NestedRunSummary[];
@@ -98,6 +99,7 @@ export interface AsyncRunSummary {
 	nestedChildren?: NestedRunSummary[];
 	nestedWarnings?: string[];
 	processTerminal?: AsyncStatus["processTerminal"];
+	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
 }
@@ -258,6 +260,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.acceptance ? { acceptance: step.acceptance } : {}),
 			...(step.agentContract ? { agentContract: step.agentContract } : {}),
 			...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
+			...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 			...(step.execution ? { execution: step.execution } : {}),
 			...(step.review ? { review: step.review } : {}),
 			...(step.effects ? { effects: step.effects } : {}),
@@ -304,6 +307,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(nestedWarnings.length ? { nestedWarnings } : {}),
 		...(processTerminal ? { processTerminal } : {}),
 		...(status.launchContractDigest ? { launchContractDigest: status.launchContractDigest } : {}),
+		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
 		...(status.capabilityCeiling ? { capabilityCeiling: status.capabilityCeiling } : {}),
 		...(status.capabilityAudit ? { capabilityAudit: status.capabilityAudit } : {}),
 		...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
