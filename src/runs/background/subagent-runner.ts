@@ -26,6 +26,7 @@ import {
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type SubagentRunMode,
+	type UsageBudgetConfig,
 	type ToolBudgetState,
 	type TurnBudgetState,
 	type Usage,
@@ -111,6 +112,7 @@ import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests } from "./chain-append.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
@@ -158,6 +160,7 @@ interface SubagentRunConfig {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	usageBudget?: UsageBudgetConfig;
 	revivalLease?: SessionLeaseRequest;
 	revivalLeaseToken?: string;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
@@ -1808,6 +1811,7 @@ async function runSubagent(
 	let timedOut = false;
 	let stopped = false;
 	let turnBudgetExceeded = false;
+	let usageBudgetExceeded = false;
 	const timeoutMessage = config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
 	const stopMessage = "Subagent stopped by user.";
 	const timeoutAbortController = new AbortController();
@@ -1919,6 +1923,7 @@ async function runSubagent(
 		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 		...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
 		...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
+		...(config.usageBudget ? { usageBudget: usageBudgetState(config.usageBudget, undefined) } : {}),
 		pid: process.pid,
 		cwd,
 		currentStep: 0,
@@ -1937,6 +1942,23 @@ async function runSubagent(
 
 	fs.mkdirSync(asyncDir, { recursive: true });
 	writeAtomicJson(statusPath, statusPayload);
+	let pendingParallelUsageCost: CostSummary = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+	const currentUsageTotals = (): CostSummary => {
+		const cost = results.reduce<CostSummary>((sum, result) => ({
+			inputTokens: sum.inputTokens + (result.totalCost?.inputTokens ?? result.usage?.input ?? 0),
+			outputTokens: sum.outputTokens + (result.totalCost?.outputTokens ?? result.usage?.output ?? 0),
+			costUsd: sum.costUsd + (result.totalCost?.costUsd ?? result.usage?.cost ?? 0),
+		}), { inputTokens: pendingParallelUsageCost.inputTokens, outputTokens: pendingParallelUsageCost.outputTokens, costUsd: pendingParallelUsageCost.costUsd });
+		return {
+			inputTokens: Math.max(cost.inputTokens, statusPayload.totalTokens?.input ?? 0),
+			outputTokens: Math.max(cost.outputTokens, statusPayload.totalTokens?.output ?? 0),
+			costUsd: cost.costUsd,
+		};
+	};
+	const refreshUsageBudget = () => {
+		statusPayload.usageBudget = usageBudgetState(config.usageBudget, currentUsageTotals());
+		return statusPayload.usageBudget;
+	};
 	const emitNestedSelfEvent = (type: "subagent.nested.updated" | "subagent.nested.completed"): void => {
 		if (!config.nestedRoute || !config.nestedSelf) return;
 		try {
@@ -2633,6 +2655,7 @@ async function runSubagent(
 				const totalInput = statusPayload.totalTokens?.input ?? 0;
 				const totalOutput = statusPayload.totalTokens?.output ?? 0;
 				statusPayload.totalTokens = { input: totalInput + input, output: totalOutput + output, total: totalInput + totalOutput + input + output };
+				refreshUsageBudget();
 			}
 			statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
 			updateStepTurnBudget(
@@ -2873,6 +2896,16 @@ async function runSubagent(
 		if (interrupted || timedOut || stopped || turnBudgetExceeded) break;
 		consumePendingAppendRequests();
 		if (stepCursor >= steps.length) break;
+		refreshUsageBudget();
+		if (statusPayload.usageBudget?.exhausted) {
+			usageBudgetExceeded = true;
+			statusPayload.state = "failed";
+			statusPayload.error = usageBudgetExceededMessage(statusPayload.usageBudget);
+			statusPayload.currentStep = flatIndex;
+			statusPayload.lastUpdate = Date.now();
+			writeStatusPayload();
+			break;
+		}
 		const stepIndex = stepCursor++;
 		const step = steps[stepIndex]!;
 
@@ -3087,6 +3120,22 @@ async function runSubagent(
 			let aborted = false;
 			const parallelResults = await mapConcurrent(dynamicSteps, concurrency, async (task, taskIdx) => {
 				const fi = groupStartFlatIndex + taskIdx;
+				refreshUsageBudget();
+				if (statusPayload.usageBudget?.exhausted) {
+					const skippedAt = Date.now();
+					const message = usageBudgetExceededMessage(statusPayload.usageBudget);
+					statusPayload.steps[fi].status = "failed";
+					statusPayload.steps[fi].error = message;
+					statusPayload.steps[fi].startedAt = skippedAt;
+					statusPayload.steps[fi].endedAt = skippedAt;
+					statusPayload.steps[fi].durationMs = 0;
+					statusPayload.steps[fi].exitCode = 1;
+					statusPayload.lastUpdate = skippedAt;
+					usageBudgetExceeded = true;
+					writeStatusPayload();
+					appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0 }));
+					return { agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true };
+				}
 				if (timedOut) return timedOutStepResult(task.agent, task.context);
 				if (stopped) return stoppedStepResult(task.agent, task.context);
 				if (interrupted) return pausedStepResult(task.agent, task.context);
@@ -3170,6 +3219,14 @@ async function runSubagent(
 				statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 				statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 				statusPayload.steps[fi].totalCost = singleResult.totalCost;
+				if (singleResult.totalCost) {
+					pendingParallelUsageCost = {
+						inputTokens: pendingParallelUsageCost.inputTokens + singleResult.totalCost.inputTokens,
+						outputTokens: pendingParallelUsageCost.outputTokens + singleResult.totalCost.outputTokens,
+						costUsd: pendingParallelUsageCost.costUsd + singleResult.totalCost.costUsd,
+					};
+					refreshUsageBudget();
+				}
 				statusPayload.steps[fi].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 				statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
 				statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
@@ -3243,6 +3300,8 @@ async function runSubagent(
 					capabilityAudit: pr.capabilityAudit,
 				});
 			}
+			pendingParallelUsageCost = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+			refreshUsageBudget();
 			const collection = collectDynamicResults(step as Parameters<typeof collectDynamicResults>[0], materialized.items, parallelResults);
 			const failures = parallelResults.filter((result) => result.exitCode !== 0 && result.exitCode !== -1);
 			const acceptanceFailures = parallelResults
@@ -3408,6 +3467,25 @@ async function runSubagent(
 					concurrency,
 					async (task, taskIdx) => {
 						const fi = groupStartFlatIndex + taskIdx;
+						refreshUsageBudget();
+						if (statusPayload.usageBudget?.exhausted) {
+							const skippedAt = Date.now();
+							const message = usageBudgetExceededMessage(statusPayload.usageBudget);
+							statusPayload.steps[fi].status = "failed";
+							statusPayload.steps[fi].error = message;
+							statusPayload.steps[fi].startedAt = skippedAt;
+							statusPayload.steps[fi].endedAt = skippedAt;
+							statusPayload.steps[fi].durationMs = 0;
+							statusPayload.steps[fi].exitCode = 1;
+							statusPayload.steps[fi].activityState = undefined;
+							statusPayload.lastUpdate = skippedAt;
+							usageBudgetExceeded = true;
+							writeStatusPayload();
+							appendJsonl(eventsPath, JSON.stringify({
+								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0,
+							}));
+							return { agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true };
+						}
 						if (timedOut) return timedOutStepResult(task.agent, task.context);
 						if (stopped) return stoppedStepResult(task.agent, task.context);
 						if (interrupted) return pausedStepResult(task.agent, task.context);
@@ -3513,6 +3591,14 @@ async function runSubagent(
 						statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
 						statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
 						statusPayload.steps[fi].totalCost = singleResult.totalCost;
+						if (singleResult.totalCost) {
+							pendingParallelUsageCost = {
+								inputTokens: pendingParallelUsageCost.inputTokens + singleResult.totalCost.inputTokens,
+								outputTokens: pendingParallelUsageCost.outputTokens + singleResult.totalCost.outputTokens,
+								costUsd: pendingParallelUsageCost.costUsd + singleResult.totalCost.costUsd,
+							};
+							refreshUsageBudget();
+						}
 						statusPayload.steps[fi].error = stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
 						statusPayload.steps[fi].transcriptPath = singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
 						statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
@@ -3619,6 +3705,8 @@ async function runSubagent(
 						watchdog: pr.watchdog,
 					});
 				}
+				pendingParallelUsageCost = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+				refreshUsageBudget();
 				for (let t = 0; t < group.parallel.length; t++) {
 					const outputName = group.parallel[t]?.outputName;
 					if (outputName) outputs[outputName] = outputEntryFromAsyncResult({
@@ -3987,7 +4075,7 @@ async function runSubagent(
 		stopped: result.stopped,
 		turnBudgetExceeded: result.turnBudgetExceeded,
 	}));
-	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || statusPayload.error ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
+	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded || statusPayload.error ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state);
 	disposeControlInbox();
 	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
@@ -4020,10 +4108,14 @@ async function runSubagent(
 		const budget = statusPayload.turnBudget;
 		statusPayload.error = budget ? turnBudgetExceededMessage(budget, budget.turnCount) : "Subagent exceeded turn budget.";
 	}
+	if (usageBudgetExceeded && statusPayload.usageBudget && !statusPayload.error) {
+		statusPayload.error = usageBudgetExceededMessage(statusPayload.usageBudget);
+	}
 	statusPayload.endedAt = runEndedAt;
 	statusPayload.lastUpdate = runEndedAt;
 	statusPayload.sessionFile = effectiveSessionFile;
 	statusPayload.totalCost = finalTotalCost;
+	statusPayload.usageBudget = usageBudgetState(config.usageBudget, currentUsageTotals());
 	statusPayload.shareUrl = shareUrl;
 	statusPayload.gistUrl = gistUrl;
 	statusPayload.shareError = shareError;
@@ -4045,6 +4137,7 @@ async function runSubagent(
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,
 			totalCost: finalTotalCost,
+			usageBudget: statusPayload.usageBudget,
 		}),
 	);
 	writeRunLog(logPath, {
@@ -4072,9 +4165,9 @@ async function runSubagent(
 			id,
 			agent: agentName,
 			mode: resultMode,
-			success: !stopped && !timedOut && !turnBudgetExceeded && !interrupted && !signalTerminated && results.every((r) => r.success),
-			state: stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
-			summary: stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
+			success: !stopped && !timedOut && !turnBudgetExceeded && !usageBudgetExceeded && !interrupted && !signalTerminated && results.every((r) => r.success),
+			state: stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
+			summary: stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : usageBudgetExceeded ? (statusPayload.error ?? "Usage budget exhausted.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
 			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 			...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 			...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
@@ -4082,7 +4175,8 @@ async function runSubagent(
 			...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
 			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
 			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
-			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : {}),
+			...(statusPayload.usageBudget ? { usageBudget: statusPayload.usageBudget } : {}),
+			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : usageBudgetExceeded ? { error: statusPayload.error ?? "Usage budget exhausted." } : {}),
 			results: results.map((r) => ({
 				agent: r.agent,
 				context: r.context,
@@ -4129,11 +4223,12 @@ async function runSubagent(
 			parallelHandoff: statusPayload.parallelHandoff,
 			capabilityCeiling: statusPayload.capabilityCeiling,
 			capabilityAudit: statusPayload.capabilityAudit,
-			exitCode: stopped || timedOut || turnBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
+			exitCode: stopped || timedOut || turnBudgetExceeded || usageBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
 			timestamp: runEndedAt,
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,
 			totalCost: finalTotalCost,
+			usageBudget: statusPayload.usageBudget,
 			truncated,
 			artifactsDir,
 			cwd,

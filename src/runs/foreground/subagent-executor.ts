@@ -47,6 +47,7 @@ import { formatControlIntercomMessage, formatControlNoticeMessage, resolveContro
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
@@ -107,6 +108,7 @@ import {
 	type SingleResult,
 	type ToolBudgetConfig,
 	type TurnBudgetConfig,
+	type UsageBudgetConfig,
 	type SubagentRunMode,
 	type SubagentState,
 	ASYNC_DIR,
@@ -168,6 +170,7 @@ export interface SubagentParamsLike {
 	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
 	enforceHardTurnLimit?: boolean;
 	toolBudget?: ToolBudgetConfig;
+	usageBudget?: UsageBudgetConfig;
 	clarify?: boolean;
 	share?: boolean;
 	control?: ControlConfig;
@@ -246,6 +249,7 @@ interface ExecutionContextData {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	usageBudget?: UsageBudgetConfig;
 	allowZeroToolBudget?: boolean;
 	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
@@ -2134,6 +2138,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
+			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
 			capabilityCeiling: data.capabilityCeiling,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
@@ -2176,6 +2181,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
+			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
 			capabilityCeiling: data.capabilityCeiling,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
@@ -2234,6 +2240,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
+			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
 			capabilityCeiling: data.capabilityCeiling,
 		});
@@ -2310,6 +2317,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		turnBudget: data.turnBudget,
 		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events }),
 		toolBudget: data.toolBudget,
+		usageBudget: data.usageBudget,
 		configToolBudget: data.configToolBudget,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		capabilityCeiling: data.capabilityCeiling,
@@ -2369,6 +2377,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
+			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
 			capabilityCeiling: data.capabilityCeiling,
 			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
@@ -2380,6 +2389,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		updateForegroundNestedProjection(foregroundControl);
 		attachRootChildrenToSteps(runId, rawChainDetails.results, foregroundControl.nestedChildren);
 		rawChainDetails.totalCost = sumResultsCost(rawChainDetails.results);
+		rawChainDetails.usageBudget = usageBudgetState(data.usageBudget, rawChainDetails.totalCost);
 	}
 	const chainDetails = rawChainDetails ? compactForegroundDetails(rawChainDetails) : undefined;
 	if (chainDetails) rememberForegroundRun(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, results: chainDetails.results });
@@ -2450,6 +2460,7 @@ interface ForegroundParallelRunInput {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	usageBudget?: UsageBudgetConfig;
 	toolBudgets: (ResolvedToolBudget | undefined)[];
 	agentContract?: AgentContract;
 }
@@ -2608,7 +2619,20 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 	for (let i = 0; i < input.tasks.length; i++) {
 		input.sessionFileForTask(input.tasks[i]!.agent, i, input.modelOverrides[i]);
 	}
+	const completedResults: SingleResult[] = [];
 	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
+		const budgetState = usageBudgetState(input.usageBudget, sumResultsCost(completedResults));
+		if (budgetState?.exhausted) {
+			return {
+				agent: task.agent,
+				task: input.taskTexts[index] ?? "(skipped)",
+				exitCode: 1,
+				messages: [],
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+				error: usageBudgetExceededMessage(budgetState),
+				skipped: true,
+			} as SingleResult;
+		}
 		const behavior = input.behaviors[index];
 		const effectiveSkills = behavior?.skills;
 		const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd, input.worktreeSetup, index);
@@ -2641,7 +2665,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		const structuredRuntime = task.outputSchema
 			? createStructuredOutputRuntime(task.outputSchema, path.join(input.artifactsDir, "structured-output", input.runId))
 			: undefined;
-		return runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
+		const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			context: input.contextPolicy.contextForAgent(task.agent),
 			cwd: taskCwd,
@@ -2708,6 +2732,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		}).finally(() => {
 			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
 		});
+		completedResults.push(result);
+		return result;
 	}, input.globalSemaphore);
 }
 
@@ -2906,6 +2932,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				nestedRoute: data.nestedRoute,
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
+				usageBudget: data.usageBudget,
 				toolBudget: data.toolBudget,
 				configToolBudget: data.configToolBudget,
 				globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
@@ -3010,6 +3037,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			timeoutMs: data.timeoutMs,
 			deadlineAt,
 			turnBudget: data.turnBudget,
+			usageBudget: data.usageBudget,
 			toolBudgets,
 			agentContract: params.agentContract,
 		});
@@ -3033,6 +3061,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			handoff = finalizeParallelWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: effectiveCwd, tasks, results });
 		}
 		const interrupted = results.find((result) => result.interrupted);
+		const totalCost = sumResultsCost(results);
 		const details = compactForegroundDetails({
 			mode: "parallel",
 			runId,
@@ -3041,7 +3070,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			progress: params.includeProgress ? allProgress : undefined,
 			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 			totalChildUsage: sumResultsUsage(results),
-			totalCost: sumResultsCost(results),
+			totalCost,
+			usageBudget: usageBudgetState(data.usageBudget, totalCost),
 			...(handoff?.reference ? { parallelHandoff: handoff.reference } : {}),
 		});
 		rememberForegroundRun(deps.state, { runId, mode: "parallel", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
@@ -3244,6 +3274,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
 				toolBudget: effectiveToolBudget.toolBudget,
+				usageBudget: data.usageBudget,
 				allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 			});
 		}
@@ -3363,6 +3394,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		updateForegroundNestedProjection(foregroundControl);
 		attachRootChildrenToSteps(runId, [r], foregroundControl.nestedChildren);
 	}
+	const totalCost = sumResultsCost([r]);
 	const details = compactForegroundDetails({
 		mode: "single",
 		runId,
@@ -3374,7 +3406,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
 		truncation: r.truncation,
 		totalChildUsage: sumResultsUsage([r]),
-		totalCost: sumResultsCost([r]),
+		totalCost,
+		usageBudget: usageBudgetState(data.usageBudget, totalCost),
 	});
 	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
 
@@ -3870,6 +3903,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
 		const configToolBudget = resolveToolBudget(deps.config.toolBudget, "config.toolBudget");
 		if (configToolBudget.error) return buildRequestedModeError(effectiveParams, configToolBudget.error);
+		const usageBudget = validateUsageBudgetConfig(effectiveParams.usageBudget ?? deps.config.usageBudget, effectiveParams.usageBudget ? "usageBudget" : "config.usageBudget");
+		if (usageBudget.error) return buildRequestedModeError(effectiveParams, usageBudget.error);
 
 		const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
 		const effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
@@ -4064,6 +4099,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			timeoutMs: foregroundTimeout.timeoutMs,
 			turnBudget: turnBudget.turnBudget,
 			toolBudget: runToolBudget.toolBudget,
+			usageBudget: usageBudget.budget,
 			allowZeroToolBudget,
 			configToolBudget: configToolBudget.toolBudget,
 			contextPolicy,

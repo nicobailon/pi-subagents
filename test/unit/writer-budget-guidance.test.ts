@@ -12,7 +12,7 @@ describe("writer budget guidance", () => {
 		const reviewLoop = readProjectFile("prompts/review-loop.md");
 
 		for (const text of [readme, skill, reviewLoop]) {
-			assert.match(text, /As a conservative orchestration policy, do not (?:pass|set) `turnBudget` or a hard `toolBudget`/);
+			assert.match(text, /As a conservative orchestration policy, do not (?:pass|set) `turnBudget`(?:, a hard `toolBudget`, or a tight `usageBudget`| or a hard `toolBudget`)/);
 			assert.match(text, /default tool budget blocks read\/search tools rather than mutation tools/i);
 			assert.match(text, /checkpoint after the current tool returns/);
 			assert.match(text, /changed files/);

@@ -64,6 +64,7 @@ import {
 	type ResolvedToolBudget,
 	type SingleResult,
 	type ToolBudgetConfig,
+	type UsageBudgetConfig,
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
 } from "../../shared/types.ts";
@@ -78,6 +79,7 @@ import { acceptanceFailureMessage, aggregateAcceptanceReport, evaluateAcceptance
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import type { ChainOutputMap } from "../../shared/types.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 
@@ -97,6 +99,7 @@ interface ChainExecutionDetailsInput {
 	dynamicChildren?: Record<number, Array<{ agent: string; label?: string; flatIndex: number; itemKey: string; outputName?: string; structured?: boolean; error?: string }>>;
 	dynamicGroupStatuses?: Record<number, { status: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached"; error?: string; acceptance?: SingleResult["acceptance"] }>;
 	parallelHandoff?: Details["parallelHandoff"];
+	usageBudget?: UsageBudgetConfig;
 }
 
 interface ParallelChainRunInput {
@@ -145,6 +148,7 @@ interface ParallelChainRunInput {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	usageBudget?: UsageBudgetConfig;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ToolBudgetConfig;
@@ -165,6 +169,7 @@ function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details 
 		outputs: input.outputs,
 		totalChildUsage: sumResultsUsage(input.results),
 		totalCost: sumResultsCost(input.results),
+		usageBudget: usageBudgetState(input.usageBudget, sumResultsCost(input.results)),
 		...(input.parallelHandoff ? { parallelHandoff: input.parallelHandoff } : {}),
 		workflowGraph: buildWorkflowGraphSnapshot({
 			runId: input.runId,
@@ -277,10 +282,24 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 		input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModels[taskIndex]);
 	}
 
+	const completedResults: SingleResult[] = [];
 	const parallelResults = await mapConcurrent(
 		input.step.parallel,
 		concurrency,
 		async (task, taskIndex) => {
+			const childIndex = input.globalTaskIndex + taskIndex;
+			const budgetState = usageBudgetState(input.usageBudget, sumResultsCost(input.results.concat(completedResults)));
+			if (budgetState?.exhausted) {
+				return {
+					agent: task.agent,
+					task: input.parallelTemplates[taskIndex] ?? "(skipped)",
+					exitCode: 1,
+					messages: [],
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+					error: usageBudgetExceededMessage(budgetState),
+					skipped: true,
+				} as SingleResult;
+			}
 			if (aborted && failFast) {
 				return {
 					agent: task.agent,
@@ -324,7 +343,6 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				: undefined;
 			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
-			const childIndex = input.globalTaskIndex + taskIndex;
 			if (input.foregroundControl) {
 				beginForegroundChild(input.foregroundControl, {
 					index: childIndex,
@@ -423,6 +441,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				aborted = true;
 			}
 			recordRun(task.agent, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
+			completedResults.push(result);
 			return result;
 		},
 		input.globalSemaphore,
@@ -471,6 +490,7 @@ interface ChainExecutionParams {
 	turnBudget?: ResolvedTurnBudget;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
 	toolBudget?: ResolvedToolBudget;
+	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ToolBudgetConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
@@ -553,8 +573,15 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		dynamicChildren,
 		dynamicGroupStatuses,
 		...(parallelHandoff ? { parallelHandoff } : {}),
+		usageBudget: params.usageBudget,
 		...overrides,
 	});
+
+	const usageBudgetError = (stepIndex: number, flatIndex: number): ChainExecutionResult | undefined => {
+		const state = usageBudgetState(params.usageBudget, sumResultsCost(results));
+		if (!state?.exhausted) return undefined;
+		return buildChainExecutionErrorResult(usageBudgetExceededMessage(state), makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: flatIndex }));
+	};
 
 	const firstStep = chainSteps[0]!;
 	const originalTask = params.task
@@ -677,6 +704,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let progressCreated = false;
 
 	for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
+		const budgetError = usageBudgetError(stepIndex, globalTaskIndex);
+		if (budgetError) return budgetError;
 		const step = chainSteps[stepIndex]!;
 		const stepTemplates = templates[stepIndex]!;
 
@@ -768,6 +797,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					timeoutMs: params.timeoutMs,
 					deadlineAt,
 					turnBudget: params.turnBudget,
+					usageBudget: params.usageBudget,
 					onDetachedExit,
 					toolBudget: params.toolBudget,
 					configToolBudget: params.configToolBudget,
@@ -1024,6 +1054,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
+				usageBudget: params.usageBudget,
 				onDetachedExit,
 				toolBudget: params.toolBudget,
 				configToolBudget: params.configToolBudget,

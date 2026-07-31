@@ -119,6 +119,16 @@ const ToolBudgetOverride = Type.Object({
 	block: Type.Optional(ToolBudgetBlock),
 }, { additionalProperties: false, description: "Optional child tool-call budget. soft nudges the child; after hard, block tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
 
+const UsageBudgetLimitOverride = Type.Object({
+	soft: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+	hard: Type.Number({ exclusiveMinimum: 0 }),
+}, { additionalProperties: false });
+
+const UsageBudgetOverride = Type.Object({
+	tokens: Type.Optional(UsageBudgetLimitOverride),
+	costUsd: Type.Optional(UsageBudgetLimitOverride),
+}, { additionalProperties: false, description: "Optional root-only reported-usage budget. Hard limits prevent future child launches; running children are not stopped." });
+
 const TaskItem = Type.Object({
 	agent: Type.String(), 
 	task: Type.String(), 
@@ -306,6 +316,7 @@ const SubagentParamsSchema = Type.Object({
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs for foreground and async/background runs; foreground defaults to 30m absent call/agent." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
+	usageBudget: Type.Optional(UsageBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "Agent discovery scope: 'user', 'project', or 'both' (default: 'both'; project wins on name collisions)" })),
 	cwd: Type.Optional(Type.String()),
 	artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),

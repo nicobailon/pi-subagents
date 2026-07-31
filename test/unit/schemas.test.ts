@@ -38,6 +38,13 @@ interface SubagentParamsSchema {
 				graceTurns?: { minimum?: number };
 			};
 		};
+		usageBudget?: {
+			properties?: {
+				tokens?: { properties?: { soft?: { exclusiveMinimum?: number }; hard?: { exclusiveMinimum?: number } } };
+				costUsd?: { properties?: { soft?: { exclusiveMinimum?: number }; hard?: { exclusiveMinimum?: number } } };
+			};
+			description?: string;
+		};
 		id?: {
 			type?: string;
 			description?: string;
@@ -206,6 +213,19 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(toolBudgetSchema?.properties?.hard?.minimum, 1);
 	});
 
+	it("includes root-only reported usage budget", () => {
+		const usageBudgetSchema = SubagentParams?.properties?.usageBudget;
+		assert.ok(usageBudgetSchema, "usageBudget schema should exist");
+		assert.equal(usageBudgetSchema.properties?.tokens?.properties?.soft?.exclusiveMinimum, 0);
+		assert.equal(usageBudgetSchema.properties?.tokens?.properties?.hard?.exclusiveMinimum, 0);
+		assert.equal(usageBudgetSchema.properties?.costUsd?.properties?.soft?.exclusiveMinimum, 0);
+		assert.equal(usageBudgetSchema.properties?.costUsd?.properties?.hard?.exclusiveMinimum, 0);
+		assert.match(String(usageBudgetSchema.description ?? ""), /root-only/);
+		assert.match(String(usageBudgetSchema.description ?? ""), /running children are not stopped/i);
+		assert.equal(getPropertySchema(SubagentParams?.properties?.tasks?.items as JsonSchemaNode | undefined, ["usageBudget"]), undefined);
+		assert.equal(getPropertySchema(SubagentParams?.properties?.chain?.items as JsonSchemaNode | undefined, ["usageBudget"]), undefined);
+	});
+
 	it("includes subagent control fields", () => {
 		const idSchema = SubagentParams?.properties?.id;
 		assert.ok(idSchema, "id schema should exist");
@@ -318,7 +338,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		assert.ok(serialized.length < 15_000, `expected compact schema under 15k chars, got ${serialized.length}`);
+		assert.ok(serialized.length < 16_000, `expected compact schema under 16k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

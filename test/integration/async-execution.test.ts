@@ -35,10 +35,19 @@ interface LaunchResolvedExtensions {
 	effective?: string[];
 }
 
+interface UsageBudgetState {
+	version?: number;
+	source?: string;
+	exhausted?: boolean;
+	reason?: string;
+	tokens?: { used?: number; hard?: number; exhausted?: boolean };
+	costUsd?: { used?: number; hard?: number; exhausted?: boolean };
+}
+
 interface AsyncExecutionResult {
 	content: Array<{ text?: string }>;
 	isError?: boolean;
-	details: { asyncId?: string; asyncDir?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions };
+	details: { asyncId?: string; asyncDir?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; usageBudget?: UsageBudgetState };
 }
 
 interface AsyncResultPayload {
@@ -61,6 +70,7 @@ interface AsyncResultPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { input: number; output: number; total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+	usageBudget?: UsageBudgetState;
 	results: Array<{ agent?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; output?: string; success?: boolean; error?: string; protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number }; timedOut?: boolean; stopped?: boolean; turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number }; turnBudgetExceeded?: boolean; wrapUpRequested?: boolean; model?: string; attemptedModels?: string[]; modelAttempts?: Array<{ success?: boolean; error?: string }>; totalCost?: { inputTokens: number; outputTokens: number; costUsd: number }; structuredOutput?: unknown; agentContract?: { version: 1 }; execution?: { status?: string; success?: boolean; exitCode?: number }; effects?: { fileMutation?: { status?: string; expected?: boolean; attempted?: boolean } }; intercomTarget?: string; acceptance?: { status?: string; effectiveAcceptance?: { level?: string }; childReport?: unknown; runtimeChecks?: Array<{ id?: string; status?: string; message?: string }> }; artifactPaths?: { outputPath?: string; inputPath?: string; metadataPath?: string }; capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] }; capabilityAudit?: { effectiveTools?: string[]; removedTools?: string[]; extensionsDenied?: boolean } }>;
 	outputs?: Record<string, { text?: string; structured?: unknown }>;
 	workflowGraph?: { nodes?: Array<{ kind?: string; label?: string; phase?: string; status?: string; acceptanceStatus?: string; error?: string; outputName?: string; structured?: boolean; children?: Array<{ label?: string; outputName?: string; itemKey?: string; status?: string; acceptanceStatus?: string; error?: string }> }> };
@@ -89,6 +99,7 @@ interface AsyncStatusPayload {
 	wrapUpRequested?: boolean;
 	totalTokens?: { total: number };
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+	usageBudget?: UsageBudgetState;
 	parallelGroups?: Array<{ start: number; count: number; stepIndex: number }>;
 	parallelHandoff?: { version?: number; path?: string; groupCount?: number; childCount?: number; changedPatches?: number; cleanupState?: string };
 	capabilityCeiling?: { version?: number; allowedTools?: string[]; denyExtensions?: boolean; sources?: string[] };
@@ -513,6 +524,43 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(status.launchResolvedExtensions, launch.details.launchResolvedExtensions);
 		assert.deepEqual(status.steps?.[0]?.launchResolvedExtensions, launch.details.launchResolvedExtensions);
 		assert.ok(!JSON.stringify(launch.details.launchResolvedExtensions).includes(tempDir), "projection should not expose raw extension paths");
+	});
+
+	it("background parallel groups report usage budget state and block queued children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "first async result" });
+		const id = `async-usage-budget-${Date.now().toString(36)}`;
+		const launch = executeAsyncChain(id, {
+			chain: [{
+				parallel: [
+					{ agent: "first", task: "First task" },
+					{ agent: "second", task: "Second task" },
+				],
+				concurrency: 1,
+			}],
+			resultMode: "parallel",
+			usageBudget: { tokens: { hard: 10 } },
+			agents: [makeAgent("first"), makeAgent("second")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(launch.details.usageBudget?.exhausted, false);
+		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.success, false);
+		assert.equal(payload.state, "failed");
+		assert.match(payload.error ?? payload.summary ?? "", /Usage budget exhausted/);
+		assert.equal(payload.results.length, 2);
+		assert.equal(payload.results[1]?.skipped, true);
+		assert.match(payload.results[1]?.error ?? "", /Usage budget exhausted/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(payload.usageBudget?.exhausted, true);
+		assert.equal(payload.usageBudget?.reason, "tokens");
+		assert.equal(status.usageBudget?.exhausted, true);
+		assert.equal(status.steps?.[0]?.status, "complete");
+		assert.equal(status.steps?.[1]?.status, "failed");
 	});
 
 	it("background fails with protocol_output_limit for an oversized stdout line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1880,6 +1928,39 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.workflowGraph?.nodes?.[1]?.kind, "dynamic-parallel-group");
 		assert.deepEqual(payload.workflowGraph?.nodes?.[1]?.children?.map((child) => child.itemKey), ["src/a.ts", "src/b.ts"]);
 		assert.equal(payload.workflowGraph?.nodes?.[2]?.flatIndex, 3);
+	});
+
+	it("async dynamic fanout blocks queued children when hard reported usage is exhausted", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall({ matchArgIncludes: "Review src/a.ts", output: "review-a", structuredOutput: { ok: "a" } });
+		const id = `async-dynamic-usage-budget-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					collect: { as: "reviews" },
+					concurrency: 1,
+				},
+			],
+			usageBudget: { tokens: { hard: 200 } },
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-budget" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(payload.success, false);
+		assert.equal(payload.usageBudget?.exhausted, true);
+		assert.equal(status.steps?.[1]?.status, "complete");
+		assert.equal(status.steps?.[2]?.status, "failed");
+		assert.match(status.steps?.[2]?.error ?? "", /Usage budget exhausted/);
+		assert.equal(payload.results.find((result) => result.agent === "reviewer" && result.skipped)?.skipped, true);
 	});
 
 	it("rejects a shared explicit output before dynamic fanout children start", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

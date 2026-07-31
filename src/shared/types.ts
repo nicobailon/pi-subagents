@@ -776,6 +776,31 @@ export interface LaunchResolvedChildExtensionsV1 {
 	};
 }
 
+export interface UsageBudgetLimitConfig {
+	soft?: number;
+	hard: number;
+}
+
+export interface UsageBudgetConfig {
+	tokens?: UsageBudgetLimitConfig;
+	costUsd?: UsageBudgetLimitConfig;
+}
+
+export interface UsageBudgetMetricState extends UsageBudgetLimitConfig {
+	used: number;
+	outcome: "within-budget" | "soft-exceeded" | "hard-exceeded";
+}
+
+export interface UsageBudgetState {
+	version: 1;
+	/** Enforced from usage reported by completed or streaming child runs; no reservation estimates. */
+	source: "reported";
+	tokens?: UsageBudgetMetricState;
+	costUsd?: UsageBudgetMetricState;
+	exhausted: boolean;
+	reason?: "tokens" | "costUsd";
+}
+
 export interface SingleResult {
 	agent: string;
 	task: string;
@@ -869,6 +894,7 @@ export interface Details {
 	stopped?: boolean;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
+	usageBudget?: UsageBudgetState;
 	progress?: AgentProgress[];
 	progressSummary?: ProgressSummary;
 	artifacts?: {
@@ -1058,6 +1084,7 @@ export interface AsyncStartedEvent {
 	workflowGraph?: WorkflowGraphSnapshot;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
+	usageBudget?: UsageBudgetState;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
@@ -1093,6 +1120,7 @@ export interface AsyncStatus {
 	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
+	usageBudget?: UsageBudgetState;
 	pid?: number;
 	cwd?: string;
 	currentStep?: number;
@@ -1166,6 +1194,7 @@ export interface AsyncStatus {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	usageBudget?: UsageBudgetState;
 	totalCost?: CostSummary;
 	sessionFile?: string;
 	outputs?: ChainOutputMap;
@@ -1221,6 +1250,8 @@ export interface AsyncJobState {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
+	totalCost?: CostSummary;
+	usageBudget?: UsageBudgetState;
 	sessionFile?: string;
 	controlEventCursor?: number;
 	nestedRoute?: NestedRouteInfo;
@@ -1416,6 +1447,7 @@ export interface RunSyncOptions {
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
+	usageBudget?: UsageBudgetConfig;
 	/** Enforce maxTurns + graceTurns as a hard model-turn boundary. */
 	enforceHardTurnLimit?: boolean;
 	toolBudget?: ResolvedToolBudget;
@@ -1530,6 +1562,7 @@ export interface ExtensionConfig {
 	completionBatch?: CompletionBatchConfig;
 	turnBudget?: TurnBudgetConfig;
 	toolBudget?: ToolBudgetConfig;
+	usageBudget?: UsageBudgetConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;
 	worktreeSetupHook?: string;

@@ -1062,6 +1062,58 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.details?.totalCost, { inputTokens: 100, outputTokens: 50, costUsd: 0.001 });
 	});
 
+	it("blocks later foreground chain children when hard reported usage is exhausted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first result" });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+
+		const result = await executor.execute(
+			"foreground-usage-budget",
+			{
+				chain: [
+					{ agent: "echo", task: "First task" },
+					{ agent: "second", task: "Second task" },
+				],
+				usageBudget: { tokens: { hard: 10 } },
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Usage budget exhausted/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(result.details?.usageBudget?.exhausted, true);
+		assert.equal(result.details?.usageBudget?.reason, "tokens");
+	});
+
+	it("blocks queued foreground parallel children when hard reported usage is exhausted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first result" });
+		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+
+		const result = await executor.execute(
+			"foreground-parallel-usage-budget",
+			{
+				tasks: [
+					{ agent: "echo", task: "First task" },
+					{ agent: "second", task: "Second task" },
+				],
+				concurrency: 1,
+				usageBudget: { tokens: { hard: 10 } },
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(result.details?.results.length, 2);
+		assert.equal(result.details?.results[1]?.skipped, true);
+		assert.match(result.details?.results[1]?.error ?? "", /Usage budget exhausted/);
+		assert.equal(result.details?.usageBudget?.exhausted, true);
+	});
+
 	it("fails implementation runs that complete without mutation attempts", async () => {
 		mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });
 		const agents = [makeAgent("worker")];

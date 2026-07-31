@@ -36,4 +36,4 @@ For broad or uncertain requests, read more than one reference. For complex work,
 - Use async/background only when work can proceed independently; do not poll just to wait.
 - Preserve capability ceilings and child tool restrictions; role selection is not enforcement.
 - Escalate unresolved product, architecture, or safety decisions upward instead of letting a child decide silently.
-- As a conservative orchestration policy, do not pass `turnBudget` or a hard `toolBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools. If a worker is interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
+- As a conservative orchestration policy, do not pass `turnBudget`, a hard `toolBudget`, or a tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model. If a worker is interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
