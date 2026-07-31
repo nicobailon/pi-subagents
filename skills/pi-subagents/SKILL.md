@@ -33,7 +33,7 @@ For broad or uncertain requests, read more than one reference. For complex work,
 - Use one writer per cwd/worktree unless isolated worktrees are intentional.
 - For parallel fanout, compare child prompts before launch. Do not send clone prompts with only issue numbers, titles, or broad file globs swapped; each child needs a lane-specific task, source seam, prior evidence, and decision that remains distinct without the item number.
 - Prefer fresh-context review/validation fanout, then synthesize and apply fixes in the parent.
-- Use async/background only when work can proceed independently; do not poll just to wait.
+- Use async/background only when work can proceed independently; do not poll just to wait. For planned human gates in chains, use `{ checkpoint: "name", message?: "..." }` and approve or reject paused async checkpoints with `approve-checkpoint` / `reject-checkpoint`.
 - Preserve capability ceilings and child tool restrictions; role selection is not enforcement.
 - Escalate unresolved product, architecture, or safety decisions upward instead of letting a child decide silently.
 - As a conservative orchestration policy, do not pass `turnBudget`, a hard `toolBudget`, or a tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model. If a worker is interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.

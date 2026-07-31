@@ -1246,6 +1246,7 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
 { chain: [
   { agent: "scout", task: "Gather context for auth refactor" },
   { agent: "planner" },
+  { checkpoint: "implementation", message: "Approve implementation before review?" },
   { agent: "worker" },
   { agent: "reviewer" }
 ]}
@@ -1374,7 +1375,7 @@ Agent definitions are not loaded into context by default. Management actions let
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent name for single mode, or target for management actions. |
 | `task` | string | - | Task string for single mode. |
-| `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `stop`, `resume`, `steer`, `append-step`, or `doctor`. |
+| `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `stop`, `resume`, `steer`, `append-step`, `approve-checkpoint`, `reject-checkpoint`, or `doctor`. |
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or chain config for create/update. |
 | `output` | `string \| false` | agent default | Override single-agent output file. |
@@ -1386,7 +1387,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `tasks` | array | - | Top-level parallel tasks. Supports `agent`, `task`, `cwd`, `count`, `output`, `outputMode`, `outputSchema`, `reads`, `progress`, `skill`, `model`, `toolBudget`, `acceptance`, and `agentContract`. |
 | `concurrency` | number | config or `4` | Top-level parallel concurrency. |
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
-| `chain` | array | - | Sequential, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
+| `chain` | array | - | Sequential, checkpoint, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, `oracle`, and `advisor` default to `fork`. |
 | `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
@@ -1407,6 +1408,8 @@ Agent definitions are not loaded into context by default. Management actions let
 | `acceptance` | string/object/false | inferred | Configure evidence gates with `"auto"`, `"attested"`, `"checked"`, `"verified"`, or `{ level: "none", reason: "..." }`. Independent review is orthogonal: use `review: { required: true, agent?: "reviewer", focus?: "..." }`. `review-required` means evidence passed but review is pending; `reviewed` is achieved only after a real independent result. Explicit `"reviewed"` remains schema-recognized solely for actionable preflight recovery. For reviewer/read-only calls, omit acceptance. `false` disables gates. With `agentContract: { version: 1 }`, omitted, `"auto"`, and `false` mean no acceptance request for that run; explicit acceptance is reported separately from execution. |
 
 `agentContract: { version: 1 }` keeps existing fields and artifacts but adds derived `execution`, `acceptance`, `review`, and `effects` projections. In v1, acceptance failures do not rewrite execution success, and an explicit completion guard reports `effects.fileMutation` instead of failing the run by itself. Chain steps default to advancing on execution under v1; set `gateOn: "acceptance"` on a v1 step or parallel task when rejected acceptance should stop the chain.
+
+Checkpoint steps use `{ checkpoint: "stable-name", message?: "..." }`. A checkpoint does not launch a child, consume spawn budget, or produce an output reference. Foreground chains return a paused result at the checkpoint so the current parent can explicitly choose the next action. Async chains persist `checkpoint` in status/details and pause before the next step; approve with `subagent({ action: "approve-checkpoint", id: "<run-id>" })` or reject with `subagent({ action: "reject-checkpoint", id: "<run-id>" })`. Approval resumes from that boundary without rerunning completed steps. Rejection is terminal with `state: "rejected"`.
 
 As a conservative orchestration policy, do not set `turnBudget`, a hard `toolBudget`, or a tight `usageBudget` on implementation workers, fix workers, reviewers with edit authority, or other mutation-capable children. A default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model, so neither assistant turns, tool-call counts, nor token/cost totals measure whether a delivery slice is buildable or safe to hand off. Hard caps remain appropriate for explicitly read-only scouts, reviewers, and validators.
 
@@ -1435,6 +1438,8 @@ subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a ne
 subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
 subagent({ action: "steer", id: "<run-id>", index: 1, message: "guidance for child 2" })
 subagent({ action: "append-step", id: "<run-id>", chain: [{ agent: "worker", task: "Continue from {previous}" }] })
+subagent({ action: "approve-checkpoint", id: "<run-id>" })
+subagent({ action: "reject-checkpoint", id: "<run-id>" })
 subagent({ action: "doctor" })
 ```
 
@@ -1446,7 +1451,7 @@ subagent({ action: "doctor" })
 
 `steer` waits up to three seconds for a correlated child-Pi input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Delivery means Pi accepted the user message, not model compliance. A pending indexed child returns `scheduled`. Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; chain, parallel, and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery. The persisted `steering` ledger retains 20 requests and replaces the old `steerCount`/`lastSteerAt` fields.
 
-`append-step` accepts exactly one sequential, static parallel, or dynamic fanout chain step for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish; completed, failed, paused, foreground, single, and top-level parallel runs reject appends.
+`append-step` accepts exactly one sequential, checkpoint, static parallel, or dynamic fanout chain step for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish; completed, failed, rejected, paused, foreground, single, and top-level parallel runs reject appends.
 
 ## Worktree isolation
 

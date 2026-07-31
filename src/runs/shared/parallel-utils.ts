@@ -56,6 +56,13 @@ export interface RunnerSubagentStep {
 	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 }
 
+export interface RunnerCheckpointStep {
+	checkpoint: string;
+	message?: string;
+	phase?: string;
+	label?: string;
+}
+
 export interface ParallelStepGroup {
 	parallel: RunnerSubagentStep[];
 	concurrency?: number;
@@ -80,7 +87,11 @@ export interface DynamicRunnerGroup {
 	gateOn?: import("../../shared/types.ts").ChainGateLayer;
 }
 
-export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;
+export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup | RunnerCheckpointStep;
+
+export function isCheckpointRunnerStep(step: RunnerStep): step is RunnerCheckpointStep {
+	return "checkpoint" in step;
+}
 
 export function isParallelGroup(step: RunnerStep): step is ParallelStepGroup {
 	return "parallel" in step && Array.isArray(step.parallel);
@@ -93,7 +104,9 @@ export function isDynamicRunnerGroup(step: RunnerStep): step is DynamicRunnerGro
 export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
 	const flat: RunnerSubagentStep[] = [];
 	for (const step of steps) {
-		if (isParallelGroup(step)) {
+		if (isCheckpointRunnerStep(step)) {
+			continue;
+		} else if (isParallelGroup(step)) {
 			for (const task of step.parallel) flat.push(task);
 		} else if (isDynamicRunnerGroup(step)) {
 			continue;

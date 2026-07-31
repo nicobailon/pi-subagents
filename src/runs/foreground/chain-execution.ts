@@ -20,6 +20,7 @@ import {
 	createParallelDirs,
 	suppressProgressForReadOnlyTask,
 	aggregateParallelOutputs,
+	isCheckpointStep,
 	isDynamicParallelStep,
 	isParallelStep,
 	type StepOverrides,
@@ -64,6 +65,7 @@ import {
 	type ResolvedToolBudget,
 	type SingleResult,
 	type ToolBudgetConfig,
+	type ChainCheckpointState,
 	type UsageBudgetConfig,
 	MAX_CONCURRENCY,
 	resolveChildMaxSubagentDepth,
@@ -99,6 +101,7 @@ interface ChainExecutionDetailsInput {
 	dynamicChildren?: Record<number, Array<{ agent: string; label?: string; flatIndex: number; itemKey: string; outputName?: string; structured?: boolean; error?: string }>>;
 	dynamicGroupStatuses?: Record<number, { status: "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached"; error?: string; acceptance?: SingleResult["acceptance"] }>;
 	parallelHandoff?: Details["parallelHandoff"];
+	checkpoint?: ChainCheckpointState;
 	usageBudget?: UsageBudgetConfig;
 }
 
@@ -170,6 +173,7 @@ function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details 
 		totalChildUsage: sumResultsUsage(input.results),
 		totalCost: sumResultsCost(input.results),
 		usageBudget: usageBudgetState(input.usageBudget, sumResultsCost(input.results)),
+		...(input.checkpoint ? { checkpoint: input.checkpoint } : {}),
 		...(input.parallelHandoff ? { parallelHandoff: input.parallelHandoff } : {}),
 		workflowGraph: buildWorkflowGraphSnapshot({
 			runId: input.runId,
@@ -551,7 +555,9 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let parallelHandoff: Details["parallelHandoff"];
 
 	const chainAgents: string[] = chainSteps.map((step) =>
-		isParallelStep(step)
+		isCheckpointStep(step)
+			? `checkpoint:${step.checkpoint}`
+			: isParallelStep(step)
 			? `[${step.parallel.map((t) => t.agent).join("+")}]`
 			: isDynamicParallelStep(step)
 				? `expand:${step.parallel.agent}`
@@ -559,7 +565,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	);
 	const totalSteps = chainSteps.length;
 
-	const makeDetailsInput = (overrides: Pick<Partial<ChainExecutionDetailsInput>, "currentStepIndex" | "currentFlatIndex"> = {}): ChainExecutionDetailsInput => ({
+	const makeDetailsInput = (overrides: Pick<Partial<ChainExecutionDetailsInput>, "currentStepIndex" | "currentFlatIndex" | "checkpoint"> = {}): ChainExecutionDetailsInput => ({
 		results,
 		...(includeProgress !== undefined ? { includeProgress } : {}),
 		allProgress,
@@ -585,11 +591,13 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 
 	const firstStep = chainSteps[0]!;
 	const originalTask = params.task
-		?? (isParallelStep(firstStep)
-			? firstStep.parallel[0]!.task!
-			: isDynamicParallelStep(firstStep)
-				? firstStep.parallel.task!
-				: (firstStep as SequentialStep).task!);
+		?? (isCheckpointStep(firstStep)
+			? undefined
+			: isParallelStep(firstStep)
+				? firstStep.parallel[0]!.task!
+				: isDynamicParallelStep(firstStep)
+					? firstStep.parallel.task!
+					: (firstStep as SequentialStep).task!);
 	try {
 		validateChainOutputBindings(chainSteps, { maxItems: params.dynamicFanoutMaxItems });
 	} catch (error) {
@@ -604,7 +612,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	}
 
 	const chainDir = createChainDir(runId, chainDirBase);
-	const hasParallelSteps = chainSteps.some((step) => isParallelStep(step) || isDynamicParallelStep(step));
+	const hasParallelSteps = chainSteps.some((step) => isParallelStep(step) || isDynamicParallelStep(step) || isCheckpointStep(step));
 	let templates: ResolvedTemplates = resolveChainTemplates(chainSteps);
 	const shouldClarify = clarify === true && ctx.hasUI && !hasParallelSteps;
 	let tuiBehaviorOverrides: (BehaviorOverride | undefined)[] | undefined;
@@ -708,6 +716,16 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		if (budgetError) return budgetError;
 		const step = chainSteps[stepIndex]!;
 		const stepTemplates = templates[stepIndex]!;
+
+		if (isCheckpointStep(step)) {
+			const checkpoint = { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: "pending" as const, stepIndex };
+			return {
+				content: [{ type: "text", text: `Chain paused at checkpoint '${step.checkpoint}'. Approve with subagent({ action: "approve-checkpoint", id: "${runId}" }) or reject with subagent({ action: "reject-checkpoint", id: "${runId}" }).${step.message ? `
+
+${step.message}` : ""}` }],
+				details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex, checkpoint })),
+			};
+		}
 
 		if (isParallelStep(step)) {
 			const parallelTemplates = stepTemplates as string[];

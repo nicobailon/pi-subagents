@@ -205,6 +205,8 @@ export const DynamicCollectSchema = Type.Object({
 
 // Flattened so chain steps do not need an object-shape anyOf/oneOf union.
 export const ChainItem = Type.Object({
+	checkpoint: Type.Optional(Type.String({ description: "Approval checkpoint name. Pauses the chain without launching a child until approve-checkpoint or reject-checkpoint is called." })),
+	message: Type.Optional(Type.String({ description: "Optional approval message shown while the checkpoint is paused." })),
 	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
 	task: Type.Optional(Type.String({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder, {outputs.name}=prior named output. Required for first step, defaults to '{previous}' for subsequent steps."
@@ -239,7 +241,7 @@ export const ChainItem = Type.Object({
 		description: "Create isolated git worktrees for each parallel task."
 	})),
 }, {
-	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
+	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, {expand, parallel: {...}, collect} for dynamic fanout, or {checkpoint: name, message?} for an approval pause.",
 	additionalProperties: false,
 });
 
@@ -266,10 +268,10 @@ const SubagentParamsSchema = Type.Object({
 		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', or action='append-step'."
+		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', action='append-step', action='approve-checkpoint', or action='reject-checkpoint'."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt', action='stop', action='resume', action='steer', or action='append-step'. Prefer id for new calls."
+		description: "Target run ID for action='interrupt', action='stop', action='resume', action='steer', action='append-step', action='approve-checkpoint', or action='reject-checkpoint'. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."

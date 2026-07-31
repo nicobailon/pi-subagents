@@ -5,8 +5,8 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
 import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
-import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep } from "../shared/parallel-utils.ts";
-import { isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
+import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep, RunnerCheckpointStep } from "../shared/parallel-utils.ts";
+import { isCheckpointRunnerStep, isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
 
 const APPEND_REQUESTS_DIR = "append-requests";
 
@@ -51,7 +51,9 @@ export function countPendingChainAppendRequests(asyncDir: string): number {
 export function runnerStepOutputNames(steps: RunnerStep[]): string[] {
 	const names: string[] = [];
 	for (const step of steps) {
-		if (isParallelGroup(step)) {
+		if (isCheckpointRunnerStep(step)) {
+			continue;
+		} else if (isParallelGroup(step)) {
 			names.push(...step.parallel.map((task) => task.outputName).filter((name): name is string => Boolean(name)));
 		} else if (isDynamicRunnerGroup(step)) {
 			if (step.collect.as) names.push(step.collect.as);
@@ -147,7 +149,20 @@ function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 	};
 }
 
-function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
+function statusStepForCheckpoint(step: RunnerCheckpointStep, stepIndex: number): StatusStep {
+	return {
+		agent: `checkpoint:${step.checkpoint}`,
+		phase: step.phase,
+		label: step.label ?? step.checkpoint,
+		status: "pending",
+		checkpoint: { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: "pending", stepIndex },
+		recentTools: [],
+		recentOutput: [],
+	};
+}
+
+function statusStepsForRunnerStep(step: RunnerStep, stepIndex: number): StatusStep[] {
+	if (isCheckpointRunnerStep(step)) return [statusStepForCheckpoint(step, stepIndex)];
 	if (isParallelGroup(step)) return step.parallel.map(statusStepForTask);
 	if (isDynamicRunnerGroup(step)) {
 		return [{
@@ -239,6 +254,21 @@ function graphNodeForDynamic(step: DynamicRunnerGroup, stepIndex: number): Workf
 
 function appendWorkflowNode(graph: WorkflowGraphSnapshot | undefined, step: RunnerStep, stepIndex: number, flatIndex: number): void {
 	if (!graph) return;
+	if (isCheckpointRunnerStep(step)) {
+		const node: WorkflowGraphNode = {
+			id: `step-${stepIndex}`,
+			kind: "checkpoint",
+			phase: step.phase,
+			label: step.label?.trim() || step.checkpoint,
+			status: "pending",
+			flatIndex,
+			stepIndex,
+			checkpoint: { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: "pending", stepIndex },
+		};
+		graph.nodes.push(node);
+		pushPhase(graph, step.phase, node.id);
+		return;
+	}
 	if (isParallelGroup(step)) {
 		graph.nodes.push(graphNodeForParallel(step, stepIndex, flatIndex, graph));
 		return;
@@ -263,7 +293,7 @@ export function appendRunnerStepsToStatus(input: {
 	for (const step of input.steps) {
 		const stepIndex = input.status.chainStepCount ?? input.status.steps?.length ?? 0;
 		const flatIndex = input.status.steps?.length ?? 0;
-		const statusSteps = statusStepsForRunnerStep(step);
+		const statusSteps = statusStepsForRunnerStep(step, stepIndex);
 		input.status.steps ??= [];
 		input.status.steps.push(...statusSteps);
 		if (isParallelGroup(step)) {

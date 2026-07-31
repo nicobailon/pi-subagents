@@ -37,6 +37,7 @@ import {
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+	POLL_INTERVAL_MS,
 	truncateOutput,
 	getSubagentDepthEnv,
 } from "../../shared/types.ts";
@@ -51,6 +52,7 @@ import {
 import {
 	type RunnerSubagentStep as SubagentStep,
 	type RunnerStep,
+	isCheckpointRunnerStep,
 	isDynamicRunnerGroup,
 	isParallelGroup,
 	flattenSteps,
@@ -1812,6 +1814,9 @@ async function runSubagent(
 	let stopped = false;
 	let turnBudgetExceeded = false;
 	let usageBudgetExceeded = false;
+	let checkpointRejected = false;
+	let pendingCheckpointDecision: "approved" | "rejected" | undefined;
+	let wakeCheckpointDecision: (() => void) | undefined;
 	const timeoutMessage = config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
 	const stopMessage = "Subagent stopped by user.";
 	const timeoutAbortController = new AbortController();
@@ -1826,6 +1831,19 @@ async function runSubagent(
 	let flatStepCount = 0;
 	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
 		const step = steps[stepIndex]!;
+		if (isCheckpointRunnerStep(step)) {
+			initialStatusSteps.push({
+				agent: `checkpoint:${step.checkpoint}`,
+				phase: step.phase,
+				label: step.label ?? step.checkpoint,
+				status: "pending",
+				checkpoint: { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: "pending", stepIndex },
+				recentTools: [],
+				recentOutput: [],
+			});
+			flatStepCount++;
+			continue;
+		}
 		if (isParallelGroup(step)) {
 			parallelGroups.push({ start: flatStepCount, count: step.parallel.length, stepIndex });
 			for (const task of step.parallel) {
@@ -1984,9 +2002,9 @@ async function runSubagent(
 	const refreshWorkflowGraph = (): void => {
 		if (!config.workflowGraph) return;
 		const graph = structuredClone(statusPayload.workflowGraph ?? config.workflowGraph);
-		const normalize = (status: RunnerStatusStep["status"]): "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" => {
+		const normalize = (status: RunnerStatusStep["status"]): "pending" | "running" | "completed" | "failed" | "paused" | "stopped" | "detached" | "rejected" => {
 			if (status === "complete" || status === "completed") return "completed";
-			if (status === "running" || status === "failed" || status === "paused" || status === "stopped" || status === "pending") return status;
+			if (status === "running" || status === "failed" || status === "paused" || status === "stopped" || status === "pending" || status === "rejected") return status;
 			return "pending";
 		};
 		const updateNode = (node: NonNullable<typeof graph.nodes>[number]): void => {
@@ -1996,6 +2014,7 @@ async function runSubagent(
 					node.status = normalize(step.status);
 					node.error = step.error;
 					node.acceptanceStatus = step.acceptance?.status;
+					node.checkpoint = step.checkpoint;
 				}
 				if (statusPayload.currentStep === node.flatIndex) graph.currentNodeId = node.id;
 			}
@@ -2004,10 +2023,11 @@ async function runSubagent(
 				if (node.children.every((child) => child.status === "completed")) node.status = "completed";
 				else if (node.children.some((child) => child.status === "running")) node.status = "running";
 				else if (node.children.some((child) => child.status === "stopped")) node.status = "stopped";
+				else if (node.children.some((child) => child.status === "rejected")) node.status = "rejected";
 				else if (node.children.some((child) => child.status === "failed")) node.status = "failed";
 				else if (node.children.some((child) => child.status === "paused")) node.status = "paused";
 			}
-			if (node.error && node.status !== "stopped") node.status = "failed";
+			if (node.error && node.status !== "stopped" && node.status !== "rejected") node.status = "failed";
 		};
 		for (const node of graph.nodes) updateNode(node);
 		statusPayload.workflowGraph = graph;
@@ -2841,6 +2861,10 @@ async function runSubagent(
 		onInterrupt: interruptRunner,
 		onTimeout: timeoutRunner,
 		onStop: stopRunner,
+		onCheckpointDecision: (decision) => {
+			pendingCheckpointDecision = decision;
+			wakeCheckpointDecision?.();
+		},
 		onSteer: (request) => {
 			const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
 			if (targetStep?.status === "pending") {
@@ -2891,6 +2915,19 @@ async function runSubagent(
 
 	let flatIndex = 0;
 	let stepCursor = 0;
+	const waitForCheckpointDecision = async (): Promise<"approved" | "rejected" | undefined> => {
+		while (!pendingCheckpointDecision && !interrupted && !timedOut && !stopped) {
+			await new Promise<void>((resolve) => {
+				wakeCheckpointDecision = resolve;
+				const timer = setTimeout(resolve, POLL_INTERVAL_MS);
+				timer.unref?.();
+			});
+			wakeCheckpointDecision = undefined;
+		}
+		const decision = pendingCheckpointDecision;
+		pendingCheckpointDecision = undefined;
+		return decision;
+	};
 
 	while (true) {
 		if (interrupted || timedOut || stopped || turnBudgetExceeded) break;
@@ -2908,6 +2945,64 @@ async function runSubagent(
 		}
 		const stepIndex = stepCursor++;
 		const step = steps[stepIndex]!;
+
+		if (isCheckpointRunnerStep(step)) {
+			const now = Date.now();
+			const statusStep = statusPayload.steps[flatIndex];
+			const checkpoint = { name: step.checkpoint, ...(step.message ? { message: step.message } : {}), status: "pending" as const, stepIndex };
+			statusPayload.state = "paused";
+			statusPayload.currentStep = flatIndex;
+			statusPayload.checkpoint = checkpoint;
+			statusPayload.activityState = undefined;
+			statusPayload.lastUpdate = now;
+			if (statusStep) {
+				statusStep.status = "paused";
+				statusStep.startedAt = now;
+				statusStep.checkpoint = checkpoint;
+			}
+			writeStatusPayload();
+			appendJsonl(eventsPath, JSON.stringify({ type: "subagent.checkpoint.paused", ts: now, runId: id, stepIndex, checkpoint }));
+			const decision = await waitForCheckpointDecision();
+			if (decision === "approved") {
+				const approvedAt = Date.now();
+				const approved = { ...checkpoint, status: "approved" as const, approvedAt };
+				statusPayload.state = "running";
+				statusPayload.checkpoint = approved;
+				if (statusStep) {
+					statusStep.status = "complete";
+					statusStep.endedAt = approvedAt;
+					statusStep.durationMs = approvedAt - now;
+					statusStep.exitCode = 0;
+					statusStep.checkpoint = approved;
+				}
+				statusPayload.lastUpdate = approvedAt;
+				writeStatusPayload();
+				appendJsonl(eventsPath, JSON.stringify({ type: "subagent.checkpoint.approved", ts: approvedAt, runId: id, stepIndex, checkpoint: approved }));
+				flatIndex++;
+				continue;
+			}
+			if (decision === "rejected") {
+				const rejectedAt = Date.now();
+				const rejected = { ...checkpoint, status: "rejected" as const, rejectedAt };
+				checkpointRejected = true;
+				statusPayload.state = "rejected";
+				statusPayload.error = `Checkpoint '${step.checkpoint}' rejected.`;
+				statusPayload.checkpoint = rejected;
+				if (statusStep) {
+					statusStep.status = "rejected";
+					statusStep.error = statusPayload.error;
+					statusStep.endedAt = rejectedAt;
+					statusStep.durationMs = rejectedAt - now;
+					statusStep.exitCode = 1;
+					statusStep.checkpoint = rejected;
+				}
+				statusPayload.lastUpdate = rejectedAt;
+				writeStatusPayload();
+				appendJsonl(eventsPath, JSON.stringify({ type: "subagent.checkpoint.rejected", ts: rejectedAt, runId: id, stepIndex, checkpoint: rejected }));
+				break;
+			}
+			break;
+		}
 
 		if (isDynamicRunnerGroup(step)) {
 			const groupStartFlatIndex = flatIndex;
@@ -4075,7 +4170,7 @@ async function runSubagent(
 		stopped: result.stopped,
 		turnBudgetExceeded: result.turnBudgetExceeded,
 	}));
-	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded || statusPayload.error ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
+	statusPayload.state = checkpointRejected ? "rejected" : stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded || statusPayload.error ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state);
 	disposeControlInbox();
 	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
@@ -4165,9 +4260,9 @@ async function runSubagent(
 			id,
 			agent: agentName,
 			mode: resultMode,
-			success: !stopped && !timedOut && !turnBudgetExceeded && !usageBudgetExceeded && !interrupted && !signalTerminated && results.every((r) => r.success),
-			state: stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
-			summary: stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : usageBudgetExceeded ? (statusPayload.error ?? "Usage budget exhausted.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
+			success: !checkpointRejected && !stopped && !timedOut && !turnBudgetExceeded && !usageBudgetExceeded && !interrupted && !signalTerminated && results.every((r) => r.success),
+			state: checkpointRejected ? "rejected" : stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
+			summary: checkpointRejected ? (statusPayload.error ?? "Checkpoint rejected.") : stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : usageBudgetExceeded ? (statusPayload.error ?? "Usage budget exhausted.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
 			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 			...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 			...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
@@ -4176,6 +4271,7 @@ async function runSubagent(
 			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
 			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
 			...(statusPayload.usageBudget ? { usageBudget: statusPayload.usageBudget } : {}),
+			...(statusPayload.checkpoint ? { checkpoint: statusPayload.checkpoint } : {}),
 			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : usageBudgetExceeded ? { error: statusPayload.error ?? "Usage budget exhausted." } : {}),
 			results: results.map((r) => ({
 				agent: r.agent,
@@ -4223,12 +4319,13 @@ async function runSubagent(
 			parallelHandoff: statusPayload.parallelHandoff,
 			capabilityCeiling: statusPayload.capabilityCeiling,
 			capabilityAudit: statusPayload.capabilityAudit,
-			exitCode: stopped || timedOut || turnBudgetExceeded || usageBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
+			exitCode: checkpointRejected || stopped || timedOut || turnBudgetExceeded || usageBudgetExceeded ? 1 : interrupted || results.every((r) => r.success) ? 0 : 1,
 			timestamp: runEndedAt,
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,
 			totalCost: finalTotalCost,
 			usageBudget: statusPayload.usageBudget,
+			checkpoint: statusPayload.checkpoint,
 			truncated,
 			artifactsDir,
 			cwd,

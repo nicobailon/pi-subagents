@@ -43,7 +43,7 @@ export const EXPAND_KEYS = allowedKeysOf(DynamicExpandSchema);
 export const EXPAND_FROM_KEYS = allowedKeysOf(ExpandFromSchema);
 export const COLLECT_KEYS = allowedKeysOf(DynamicCollectSchema);
 
-const CHAIN_STEP_EXAMPLE = '{"agent": "worker", "task": "do X"}';
+const CHAIN_STEP_EXAMPLE = '{"agent": "worker", "task": "do X"} or {"checkpoint": "review", "message": "Approve before implementation?"}';
 const PARALLEL_TASK_EXAMPLE = '{"agent": "worker", "task": "do X"}';
 const DYNAMIC_TEMPLATE_EXAMPLE = '{"agent": "worker", "task": "Review {item.path}"}';
 const EXPAND_EXAMPLE = '{"from": {"output": "targets", "path": "/items"}, "maxItems": 4}';
@@ -56,6 +56,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function disallowedKeys(value: Record<string, unknown>, allowed: readonly string[]): string[] {
 	return Object.keys(value).filter((key) => !allowed.includes(key));
+}
+
+function validateCheckpointShape(step: Record<string, unknown>, path: string): void {
+	if (step.checkpoint === undefined) return;
+	const allowed = new Set(["checkpoint", "message", "phase", "label"]);
+	const mixed = Object.keys(step).filter((key) => !allowed.has(key));
+	if (mixed.length > 0) {
+		throw new Error(`subagent ${path}: checkpoint steps cannot be mixed with child-launch properties ${quoteList(mixed)}.\n\nExample: {"checkpoint": "review", "message": "Approve before implementation?"}`);
+	}
+	if (typeof step.checkpoint !== "string" || !step.checkpoint.trim()) {
+		throw new Error(`subagent ${path}.checkpoint: expected a non-empty string.`);
+	}
+	if (step.message !== undefined && typeof step.message !== "string") {
+		throw new Error(`subagent ${path}.message: expected a string.`);
+	}
 }
 
 function typeName(value: unknown): string {
@@ -120,6 +135,7 @@ export function validateChainInput(args: unknown): void {
 		const stepPath = `chain step validation failed at chain[${index}]`;
 		expectObject(step, stepPath, CHAIN_STEP_KEYS, CHAIN_STEP_EXAMPLE);
 		checkNoExtraKeys(step, stepPath, ChainItem, CHAIN_STEP_KEYS, CHAIN_STEP_EXAMPLE);
+		validateCheckpointShape(step, stepPath);
 
 		if (step.expand !== undefined) {
 			const expandPath = `${stepPath}.expand`;

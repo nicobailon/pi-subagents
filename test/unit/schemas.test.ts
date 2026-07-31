@@ -234,6 +234,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(idSchema.description ?? ""), /interrupt/i);
 		assert.match(String(idSchema.description ?? ""), /steer/i);
 		assert.match(String(idSchema.description ?? ""), /append-step/i);
+		assert.match(String(idSchema.description ?? ""), /approve-checkpoint/i);
+		assert.match(String(idSchema.description ?? ""), /reject-checkpoint/i);
+
+		const chainItemSchema = SubagentParams?.properties?.chain?.items;
+		assert.equal(chainItemSchema?.properties?.checkpoint?.type, "string");
+		assert.equal(chainItemSchema?.properties?.message?.type, "string");
 
 		const runIdSchema = SubagentParams?.properties?.runId;
 		assert.ok(runIdSchema, "runId schema should exist");

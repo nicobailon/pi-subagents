@@ -53,6 +53,13 @@ export interface StopRequest {
 	reason?: string;
 }
 
+export interface CheckpointDecisionRequest {
+	type: "approve-checkpoint" | "reject-checkpoint";
+	ts?: number;
+	source?: string;
+	reason?: string;
+}
+
 export interface SteerRequest {
 	type: "steer";
 	id: string;
@@ -108,6 +115,14 @@ export function timeoutRequestPath(asyncDir: string): string {
 /** Path of the portable manual stop request file. */
 export function stopRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "stop.json");
+}
+
+export function approveCheckpointRequestPath(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), "approve-checkpoint.json");
+}
+
+export function rejectCheckpointRequestPath(asyncDir: string): string {
+	return path.join(controlInboxDir(asyncDir), "reject-checkpoint.json");
 }
 
 /** Directory of parent-to-runner steering requests. */
@@ -250,6 +265,18 @@ export function requestAsyncStop(
 ): string {
 	const requestPath = stopRequestPath(asyncDir);
 	const request: StopRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "stop" };
+	writeAtomicJson(requestPath, request);
+	return requestPath;
+}
+
+export function requestAsyncCheckpointDecision(
+	asyncDir: string,
+	type: CheckpointDecisionRequest["type"],
+	payload: Omit<CheckpointDecisionRequest, "type"> = {},
+	deps: { now?: () => number } = {},
+): string {
+	const requestPath = type === "approve-checkpoint" ? approveCheckpointRequestPath(asyncDir) : rejectCheckpointRequestPath(asyncDir);
+	const request: CheckpointDecisionRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type };
 	writeAtomicJson(requestPath, request);
 	return requestPath;
 }
@@ -457,6 +484,21 @@ export function consumeStopRequest(
 	return true;
 }
 
+export function consumeCheckpointDecisionRequest(
+	asyncDir: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
+): "approved" | "rejected" | undefined {
+	if (fsImpl.existsSync(rejectCheckpointRequestPath(asyncDir))) {
+		try { fsImpl.rmSync(rejectCheckpointRequestPath(asyncDir), { force: true, recursive: true }); } catch {}
+		return "rejected";
+	}
+	if (fsImpl.existsSync(approveCheckpointRequestPath(asyncDir))) {
+		try { fsImpl.rmSync(approveCheckpointRequestPath(asyncDir), { force: true, recursive: true }); } catch {}
+		return "approved";
+	}
+	return undefined;
+}
+
 /**
  * Parent side: portable interrupt = authoritative file request + best-effort OS
  * signal. The signal is only a latency optimization on Unix; ENOSYS on Windows
@@ -513,6 +555,21 @@ export function deliverStopRequest(input: {
 	requestAsyncStop(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
 }
 
+export function deliverCheckpointDecisionRequest(input: {
+	asyncDir: string;
+	decision: "approved" | "rejected";
+	now?: () => number;
+	source?: string;
+	reason?: string;
+}): void {
+	requestAsyncCheckpointDecision(
+		input.asyncDir,
+		input.decision === "approved" ? "approve-checkpoint" : "reject-checkpoint",
+		{ ...(input.source ? { source: input.source } : {}), ...(input.reason ? { reason: input.reason } : {}) },
+		{ now: input.now },
+	);
+}
+
 /**
  * Runner side: watch the control inbox and route interrupt requests into
  * `onInterrupt`. Uses `fs.watch` when available plus an interval poll as a
@@ -526,6 +583,7 @@ export function watchAsyncControlInbox(
 		onTimeout?: () => void;
 		onStop?: () => void;
 		onSteer?: (request: SteerRequest) => void;
+		onCheckpointDecision?: (decision: "approved" | "rejected") => void;
 		onSteerCapability?: (capability: SteerCapability) => void;
 		onSteerAck?: (ack: SteerAck) => void;
 		pollIntervalMs?: number;
@@ -549,6 +607,8 @@ export function watchAsyncControlInbox(
 			if (consumeStopRequest(asyncDir, fsImpl)) opts.onStop?.();
 			if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
 			if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
+			const checkpointDecision = consumeCheckpointDecisionRequest(asyncDir, fsImpl);
+			if (checkpointDecision) opts.onCheckpointDecision?.(checkpointDecision);
 			for (const request of consumeSteerRequests(asyncDir, fsImpl)) opts.onSteer?.(request);
 			for (const capability of consumeSteerCapabilities(asyncDir, fsImpl)) opts.onSteerCapability?.(capability);
 			for (const ack of consumeSteerAcks(asyncDir, fsImpl)) opts.onSteerAck?.(ack);
