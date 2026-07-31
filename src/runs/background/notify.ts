@@ -197,12 +197,13 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const summary = typeof result.summary === "string" ? result.summary : "";
 	const stopped = result.stopped === true
 		|| result.state === "stopped"
-		|| (result.success !== true && result.exitCode !== 0 && isUnexplainedProcessSignal(result))
+		|| (result.success !== true && isUnexplainedProcessSignal(result))
 		|| result.results?.some((child) => child.stopped === true
 			|| child.status === "stopped"
-			|| (child.success !== true && child.exitCode !== 0 && isUnexplainedProcessSignal(child))) === true;
-	const paused = !stopped && !result.success && (
-		result.exitCode === 0
+			|| (child.success !== true && isUnexplainedProcessSignal(child))) === true;
+	const paused = !stopped && !result.success && !result.timedOut && !result.turnBudgetExceeded && (
+		result.interrupted === true
+		|| result.exitCode === 0
 		|| result.state === "paused"
 		|| summary.startsWith("Paused after interrupt.")
 	);

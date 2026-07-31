@@ -217,10 +217,13 @@ describe("result intercom formatter", () => {
 		assert.equal(stripped.results[0]?.truncation, undefined);
 	});
 
-	it("resolves paused, detached, and signal-terminated statuses", () => {
-		assert.equal(resolveSubagentResultStatus({ interrupted: true }), "paused");
+	it("resolves lifecycle terminal statuses before inferring success from exit code", () => {
+		assert.equal(resolveSubagentResultStatus({ interrupted: true, exitCode: 0 }), "paused");
+		assert.equal(resolveSubagentResultStatus({ stopped: true, exitCode: 0 }), "stopped");
+		assert.equal(resolveSubagentResultStatus({ timedOut: true, exitCode: 0 }), "failed");
+		assert.equal(resolveSubagentResultStatus({ turnBudgetExceeded: true, exitCode: 0 }), "failed");
 		assert.equal(resolveSubagentResultStatus({ detached: true }), "detached");
-		assert.equal(resolveSubagentResultStatus({ processSignal: "SIGTERM", exitCode: 1 }), "stopped");
+		assert.equal(resolveSubagentResultStatus({ processSignal: "SIGTERM", exitCode: 0 }), "stopped");
 		assert.equal(resolveSubagentResultStatus({ processSignal: "SIGTERM", exitCode: 1, timedOut: true }), "failed");
 		assert.equal(resolveSubagentResultStatus({ processSignal: "SIGTERM", exitCode: 0, success: true }), "completed");
 		assert.equal(resolveSubagentResultStatus({ success: true }), "completed");

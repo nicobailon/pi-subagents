@@ -472,11 +472,13 @@ describe("completion formatting helpers", () => {
 		notifier.dispose();
 	});
 
-	it("buildCompletionDetails derives paused and stopped statuses", () => {
-		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, state: "paused", summary: "Paused after interrupt.", timestamp: 1 }).status, "paused");
+	it("buildCompletionDetails derives lifecycle statuses before using exit code", () => {
+		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, state: "paused", interrupted: true, summary: "Paused after interrupt.", timestamp: 1 }).status, "paused");
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "boom", exitCode: 1, timestamp: 1 }).status, "failed");
-		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "terminated", exitCode: 1, processSignal: "SIGTERM", timestamp: 1 }).status, "stopped");
-		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "terminated", results: [{ success: false, exitCode: 1, processSignal: "SIGTERM" }], timestamp: 1 }).status, "stopped");
+		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "terminated", exitCode: 0, processSignal: "SIGTERM", timestamp: 1 }).status, "stopped");
+		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "timed out", exitCode: 0, timedOut: true, timestamp: 1 }).status, "failed");
+		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "budget exceeded", exitCode: 0, turnBudgetExceeded: true, timestamp: 1 }).status, "failed");
+		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: false, summary: "terminated", results: [{ success: false, exitCode: 0, processSignal: "SIGTERM" }], timestamp: 1 }).status, "stopped");
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: true, summary: "ok", exitCode: 0, processSignal: "SIGTERM", timestamp: 1 }).status, "completed");
 	});
 

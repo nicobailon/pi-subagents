@@ -30,8 +30,9 @@ export function resolveSubagentResultStatus(input: {
 	if (input.detached) return "detached";
 	if (input.stopped || input.state === "stopped") return "stopped";
 	if (input.interrupted || input.state === "paused") return "paused";
+	if (input.timedOut || input.turnBudgetExceeded) return "failed";
 	if (input.success === true) return "completed";
-	if (isUnexplainedProcessSignal(input) && input.exitCode !== 0) return "stopped";
+	if (isUnexplainedProcessSignal(input)) return "stopped";
 	if (input.success === false) return "failed";
 	if (input.state === "complete") return "completed";
 	if (input.state === "failed") return "failed";
