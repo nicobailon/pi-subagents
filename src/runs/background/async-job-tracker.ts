@@ -165,6 +165,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			const startedFromTail = savedCursor === undefined && stat.size > CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (startedFromTail) cursor = stat.size - CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (stat.size <= cursor) return;
+			const previousByte = Buffer.alloc(1);
+			const startsMidLine = cursor > 0
+				&& fs.readSync(fd, previousByte, 0, 1, cursor - 1) === 1
+				&& previousByte[0] !== 0x0a;
 			const scanEnd = Math.min(stat.size, cursor + CONTROL_EVENT_SCAN_WINDOW_BYTES);
 			const handleLine = (line: string) => {
 				if (!line.trim()) return;
@@ -217,7 +221,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			let lastCompleteCursor = cursor;
 			let lineParts: Buffer[] = [];
 			let lineBytes = 0;
-			let skippingOversizedLine = startedFromTail;
+			let skippingOversizedLine = startedFromTail || startsMidLine;
 			const appendLineSegment = (segment: Buffer) => {
 				if (segment.length === 0 || skippingOversizedLine) return;
 				if (lineBytes + segment.length > MAX_CONTROL_EVENT_LINE_BYTES) {

@@ -877,6 +877,69 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("resynchronizes when a saved cursor resumes inside an oversized JSONL record", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		console.error = (...args: unknown[]) => {
+			errors.push(args);
+		};
+		try {
+			const runDir = path.join(asyncRoot, "run-midline-oversized-control");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-midline-oversized-control",
+				mode: "single",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const largeDiagnostic = JSON.stringify({
+				type: "message_update",
+				message: { role: "assistant", content: [{ type: "text", text: "x".repeat(2_500_000) }] },
+			});
+			const controlEvent = JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 123,
+					runId: "run-midline-oversized-control",
+					agent: "worker",
+					message: "worker needs attention",
+				},
+			});
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${largeDiagnostic}\n${controlEvent}\n`, "utf-8");
+
+			const state = createState();
+			state.asyncJobs.set("run-midline-oversized-control", {
+				asyncId: "run-midline-oversized-control",
+				asyncDir: runDir,
+				status: "running",
+				agents: ["worker"],
+				startedAt: Date.now() - 1000,
+				updatedAt: Date.now(),
+				controlEventCursor: 0,
+			});
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.ensurePoller();
+
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				"control event after oversized diagnostic",
+			);
+			assert.equal(errors.some((args) => String(args[0]).includes("Ignoring malformed async control event")), false);
+		} finally {
+			console.error = originalError;
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("does not tail-skip control events for newly tracked large logs", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
