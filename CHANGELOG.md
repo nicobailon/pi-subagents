@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added Fleet inspector controls to steer the selected live async child and stop its top-level async run with confirmation. Thanks to @saleemlala for #692.
+
 ### Changed
 - Reduced repeated runtime filesystem work by caching stable Pi config-directory resolution, incrementally sanitizing run history, and limiting nested control-result polling to files created for the active request.
 

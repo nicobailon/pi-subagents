@@ -64,9 +64,10 @@ import {
 	stripDetailsOutputsForIntercomReceipt,
 } from "../../intercom/result-intercom.ts";
 import { applySteeringRecoveryAgentConfig, buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
-import { deliverInterruptRequest, deliverStopRequest, requestAsyncSteer } from "../background/control-channel.ts";
+import { deliverInterruptRequest, requestAsyncSteer } from "../background/control-channel.ts";
 import { waitForSteeringAction } from "../background/steering.ts";
 import { steerAsyncRun } from "./async-steering-action.ts";
+import { stopAsyncRun } from "./async-stop-action.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
@@ -743,50 +744,6 @@ function interruptAsyncRun(
 		const message = error instanceof Error ? error.message : String(error);
 		return {
 			content: [{ type: "text", text: `Failed to interrupt async run ${target.asyncId}: ${message}` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
-	}
-}
-
-function stopAsyncRun(
-	state: SubagentState,
-	runId: string | undefined,
-	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean,
-	location?: { asyncDir: string | null; resolvedId?: string },
-): AgentToolResult<Details> | null {
-	const target = getAsyncInterruptTarget(state, runId, location, { fallbackToNewest: false });
-	if (!target) return null;
-	const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
-	if (state.currentSessionId && status?.sessionId !== state.currentSessionId) {
-		return {
-			content: [{ type: "text", text: `Async run '${target.asyncId}' was not found in the active session.` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
-	}
-	if (!status || (status.state !== "running" && status.state !== "queued")) {
-		return {
-			content: [{ type: "text", text: `No running or queued async run was found for '${runId ?? "current"}'.` }],
-			isError: true,
-			details: { mode: "management", results: [] },
-		};
-	}
-	try {
-		deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action" });
-		const tracked = state.asyncJobs.get(target.asyncId);
-		if (tracked) {
-			tracked.activityState = undefined;
-			tracked.updatedAt = Date.now();
-		}
-		return {
-			content: [{ type: "text", text: `Stop requested for async run ${target.asyncId}.` }],
-			details: { mode: "management", results: [] },
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			content: [{ type: "text", text: `Failed to stop async run ${target.asyncId}: ${message}` }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};

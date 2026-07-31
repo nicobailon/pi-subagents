@@ -1,13 +1,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatTokens, shortenPath } from "../shared/formatters.ts";
-import { RESULTS_DIR, type AsyncJobState, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
+import { RESULTS_DIR, type AsyncJobState, type Details, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
+import { steerAsyncRun } from "../runs/foreground/async-steering-action.ts";
+import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
@@ -34,12 +37,23 @@ export interface FleetSnapshot {
 	error?: string;
 }
 
+export interface FleetActionResult {
+	text: string;
+	isError?: boolean;
+}
+
+export interface FleetActionHandlers {
+	steer(input: { runId: string; asyncDir: string; index?: number; message: string }): Promise<FleetActionResult>;
+	stop(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult> | FleetActionResult;
+}
+
 export interface FleetViewOptions {
 	asyncDirRoot?: string;
 	resultsDir?: string;
 	refreshMs?: number;
 	initialKey?: string;
 	markdownTheme?: MarkdownTheme;
+	actions?: FleetActionHandlers;
 }
 
 function belongsToCurrentSession(sessionId: string | undefined, currentSessionId: string | null): boolean {
@@ -282,6 +296,16 @@ function detailLines(item: FleetItem | undefined, error: string | undefined): st
 	return lines;
 }
 
+function isActionableAsyncState(state: string): boolean {
+	return state === "running" || state === "queued" || state === "pending";
+}
+
+function firstToolResultText(result: AgentToolResult<Details> | null, fallback: string): FleetActionResult {
+	if (!result) return { text: fallback, isError: true };
+	const text = result.content.find((item) => item.type === "text")?.text ?? fallback;
+	return { text, ...(result.isError ? { isError: true } : {}) };
+}
+
 function uniquePaths(values: Array<string | undefined>): string[] {
 	return [...new Set(values.filter((value): value is string => Boolean(value)).map((value) => path.resolve(value)))];
 }
@@ -436,6 +460,10 @@ export class SubagentFleetComponent implements Component {
 	private detailViewportHeight = 8;
 	private bodyHeight = 8;
 	private expandedTools = false;
+	private actionNotice: FleetActionResult | undefined;
+	private steerDraft: string | undefined;
+	private stopConfirming = false;
+	private actionBusy = false;
 	private transcriptCache: FleetTranscriptCache | undefined;
 	private disposed = false;
 	private readonly timer: ReturnType<typeof setInterval>;
@@ -482,7 +510,65 @@ export class SubagentFleetComponent implements Component {
 		this.selected = Math.max(0, Math.min(this.snapshot.items.length - 1, this.selected + delta));
 		this.selectedKey = this.snapshot.items[this.selected]?.key;
 		this.detailAutoFollow = true;
+		this.resetActionInput();
 		this.tui.requestRender();
+	}
+
+	private resetActionInput(): void {
+		this.steerDraft = undefined;
+		this.stopConfirming = false;
+	}
+
+	private selectedAsyncAction(): { item: Extract<FleetItem, { kind: "async" }> } | { reason: string } {
+		const item = this.snapshot.items[this.selected];
+		if (!item) return { reason: "No child is selected." };
+		if (item.kind !== "async") return { reason: "Fleet controls are available for current-session top-level async runs only." };
+		if (!isActionableAsyncState(item.run.state) || !isActionableAsyncState(item.state)) return { reason: `Selected child is ${item.state}; controls require a running or queued async child.` };
+		return { item };
+	}
+
+	private actionLines(): string[] {
+		const lines: string[] = [];
+		if (this.actionBusy) lines.push(this.theme.fg("accent", "Action pending..."));
+		if (this.steerDraft !== undefined) {
+			lines.push(this.theme.fg("accent", `Steer message: ${this.steerDraft}${this.theme.fg("dim", "▌")}`));
+			lines.push(this.theme.fg("dim", "Enter sends · Esc cancels · Backspace edits"));
+		} else if (this.stopConfirming) {
+			const selected = this.snapshot.items[this.selected];
+			lines.push(this.theme.fg("warning", `Confirm stop for async run ${selected?.runId ?? "selected run"}?`));
+			lines.push(this.theme.fg("dim", "Stop ends the run; use interrupt for a resumable pause. Enter/Y confirms · N returns · Esc cancels"));
+		} else if (this.actionNotice) {
+			lines.push(this.theme.fg(this.actionNotice.isError ? "error" : "success", this.actionNotice.text));
+		}
+		return lines;
+	}
+
+	private withActionLines(body: string[]): string[] {
+		const actionLines = this.actionLines();
+		return actionLines.length ? [...actionLines, "", ...body] : body;
+	}
+
+	private setActionNotice(result: FleetActionResult): void {
+		this.actionNotice = result;
+		this.resetActionInput();
+		this.detailAutoFollow = false;
+		this.detailScroll = 0;
+		this.refresh();
+		this.tui.requestRender();
+	}
+
+	private runAction(action: () => Promise<FleetActionResult>): void {
+		if (this.actionBusy) return;
+		this.actionBusy = true;
+		this.actionNotice = undefined;
+		this.tui.requestRender();
+		void action()
+			.then((result) => this.setActionNotice(result))
+			.catch((error) => this.setActionNotice({ text: error instanceof Error ? error.message : String(error), isError: true }))
+			.finally(() => {
+				this.actionBusy = false;
+				if (!this.disposed) this.tui.requestRender();
+			});
 	}
 
 	private scrollDetail(delta: number): void {
@@ -493,6 +579,53 @@ export class SubagentFleetComponent implements Component {
 	}
 
 	handleInput(data: string): void {
+		if (this.steerDraft !== undefined) {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+				this.resetActionInput();
+				this.tui.requestRender();
+				return;
+			}
+			if (matchesKey(data, "return") || data === "\r" || data === "\n") {
+				const message = this.steerDraft.trim();
+				if (!message) {
+					this.setActionNotice({ text: "Steer message cannot be empty.", isError: true });
+					return;
+				}
+				const target = this.selectedAsyncAction();
+				if ("reason" in target || !this.options.actions) {
+					this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
+					return;
+				}
+				this.runAction(() => this.options.actions!.steer({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}), message }));
+				return;
+			}
+			if (matchesKey(data, "backspace") || data === "\x7f") {
+				this.steerDraft = this.steerDraft.slice(0, -1);
+				this.tui.requestRender();
+				return;
+			}
+			if (data.length === 1 && data >= " " && data !== "\x7f") {
+				this.steerDraft += data;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (this.stopConfirming) {
+			if (matchesKey(data, "return") || data.toLowerCase() === "y") {
+				const target = this.selectedAsyncAction();
+				if ("reason" in target || !this.options.actions) {
+					this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
+					return;
+				}
+				this.runAction(() => Promise.resolve(this.options.actions!.stop({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}) })));
+				return;
+			}
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data.toLowerCase() === "n" || matchesKey(data, "backspace")) {
+				this.resetActionInput();
+				this.tui.requestRender();
+			}
+			return;
+		}
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || matchesKey(data, "q")) {
 			this.done(undefined);
 			return;
@@ -509,6 +642,30 @@ export class SubagentFleetComponent implements Component {
 			this.transcriptCache = undefined;
 			this.refresh();
 			this.tui.requestRender();
+			return;
+		}
+		if (data === "s") {
+			const target = this.selectedAsyncAction();
+			if ("reason" in target || !this.options.actions) this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
+			else {
+				this.actionNotice = undefined;
+				this.steerDraft = "";
+				this.detailAutoFollow = false;
+				this.detailScroll = 0;
+				this.tui.requestRender();
+			}
+			return;
+		}
+		if (data === "D") {
+			const target = this.selectedAsyncAction();
+			if ("reason" in target || !this.options.actions) this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
+			else {
+				this.actionNotice = undefined;
+				this.stopConfirming = true;
+				this.detailAutoFollow = false;
+				this.detailScroll = 0;
+				this.tui.requestRender();
+			}
 			return;
 		}
 		if (data.toLowerCase() === "x" || matchesKey(data, "ctrl+o")) {
@@ -567,7 +724,7 @@ export class SubagentFleetComponent implements Component {
 							: latest?.kind === "tool"
 								? `${latest.name} · ${latest.status}`
 								: "activity";
-					return { header: structuredHeader(selected, width, this.theme, conversationState), body };
+					return { header: structuredHeader(selected, width, this.theme, conversationState), body: this.withActionLines(body) };
 				}
 			}
 		}
@@ -588,7 +745,7 @@ export class SubagentFleetComponent implements Component {
 			const wrapped = wrapTextWithAnsi(styled, Math.max(1, width));
 			lines.push(...(wrapped.length ? wrapped : [""]));
 		}
-		return { header: [], body: lines };
+		return { header: [], body: this.withActionLines(lines) };
 	}
 
 	render(width: number): string[] {
@@ -612,7 +769,7 @@ export class SubagentFleetComponent implements Component {
 		];
 		const lines = [this.theme.fg("border", `╭${"─".repeat(innerWidth)}╮`)];
 		const selected = this.snapshot.items[this.selected];
-		const title = ` ${this.theme.bold("Subagent fleet inspector")} ${this.theme.fg("dim", "· inspection only · live")}`;
+		const title = ` ${this.theme.bold("Subagent fleet inspector")} ${this.theme.fg("dim", "· live controls")}`;
 		const selectedStatus = selected
 			? `${statusGlyph(selected, this.theme)} ${selected.agent} · ${selected.state} `
 			: this.theme.fg("dim", "no children ");
@@ -629,7 +786,7 @@ export class SubagentFleetComponent implements Component {
 		}
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = this.snapshot.items.length ? `${this.selected + 1}/${this.snapshot.items.length}` : "0/0";
-		const footer = ` ↑↓/jk agent · ⇧k/⇧j scroll · PgUp/PgDn page · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
+		const footer = ` ↑↓/jk agent · s steer · D stop · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -650,9 +807,19 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 	const wasOpen = state.fleetInspectorOpen === true;
 	state.fleetInspectorOpen = true;
 	if (typeof ctx.ui.setWidget === "function") ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+	const actions = options.actions ?? {
+		steer: async (input: { runId: string; asyncDir: string; index?: number; message: string }) => firstToolResultText(await steerAsyncRun({
+			state,
+			runId: input.runId,
+			...(input.index !== undefined ? { index: input.index } : {}),
+			message: input.message,
+			location: { asyncDir: input.asyncDir, resolvedId: input.runId },
+		}), `Failed to steer async run ${input.runId}.`),
+		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),
+	} satisfies FleetActionHandlers;
 	try {
 		await ctx.ui.custom<undefined>(
-			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, options),
+			(tui, theme, _keybindings, done) => new SubagentFleetComponent(tui, theme, state, done, { ...options, actions }),
 			{
 				overlay: true,
 				overlayOptions: { anchor: "center", width: "95%", minWidth: 60, maxHeight: "85%", margin: 1 },

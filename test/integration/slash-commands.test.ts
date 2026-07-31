@@ -2063,7 +2063,7 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 
 		assert.equal(opened, 2);
 		assert.match(rendered, /Subagent fleet/);
-		assert.match(rendered, /inspection only/);
+		assert.match(rendered, /live controls/);
 	});
 
 	it("routes subagents-stop with an id directly to the stop action", async () => {

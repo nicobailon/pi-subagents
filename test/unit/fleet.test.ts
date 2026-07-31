@@ -539,6 +539,128 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("steers the selected async child with an inline message", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-steer-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-steer", agents: ["worker", "reviewer"] });
+			const state = stateForTest();
+			const calls: Array<{ runId: string; asyncDir: string; index?: number; message: string }> = [];
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					initialKey: "async:async-steer:0",
+					refreshMs: 60_000,
+					actions: {
+						async steer(input) {
+							calls.push(input);
+							return { text: "Steering queued." };
+						},
+						stop() {
+							return { text: "unused" };
+						},
+					},
+				},
+			);
+			try {
+				component.handleInput("s");
+				assert.ok(component.render(100).some((line) => line.includes("Steer message:")));
+				for (const char of "please continue") component.handleInput(char);
+				component.handleInput("\r");
+				await new Promise((resolve) => setImmediate(resolve));
+				assert.deepEqual(calls, [{ runId: "async-steer", asyncDir, index: 0, message: "please continue" }]);
+				assert.ok(component.render(100).some((line) => line.includes("Steering queued.")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("confirms stop for the selected async child before calling the action", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-stop-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-stop" });
+			const state = stateForTest();
+			const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					refreshMs: 60_000,
+					actions: {
+						async steer() {
+							return { text: "unused" };
+						},
+						stop(input) {
+							calls.push(input);
+							return { text: "Stop requested." };
+						},
+					},
+				},
+			);
+			try {
+				component.handleInput("D");
+				assert.ok(component.render(100).some((line) => line.includes("Confirm stop for async run async-stop")));
+				component.handleInput("n");
+				assert.deepEqual(calls, []);
+				component.handleInput("D");
+				component.handleInput("y");
+				await new Promise((resolve) => setImmediate(resolve));
+				assert.deepEqual(calls, [{ runId: "async-stop", asyncDir, index: 0 }]);
+				assert.ok(component.render(100).some((line) => line.includes("Stop requested.")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("explains unavailable controls for completed async children", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-unavailable-"));
+		try {
+			writeAsyncRun(root, { id: "async-complete", state: "complete" });
+			const state = stateForTest();
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					refreshMs: 60_000,
+					actions: {
+						async steer() {
+							return { text: "unused" };
+						},
+						stop() {
+							return { text: "unused" };
+						},
+					},
+				},
+			);
+			try {
+				component.handleInput("s");
+				assert.ok(component.render(100).some((line) => line.includes("Selected child is complete")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refreshes the roster while the overlay remains open", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-refresh-"));
 		try {
