@@ -31,6 +31,7 @@ For broad or uncertain requests, read more than one reference. For complex work,
 
 - Keep the parent as orchestrator and final decision-maker.
 - Use one writer per cwd/worktree unless isolated worktrees are intentional.
+- For parallel fanout, compare child prompts before launch. Do not send clone prompts with only issue numbers, titles, or broad file globs swapped; each child needs a lane-specific task, source seam, prior evidence, and decision that remains distinct without the item number.
 - Prefer fresh-context review/validation fanout, then synthesize and apply fixes in the parent.
 - Use async/background only when work can proceed independently; do not poll just to wait.
 - Preserve capability ceilings and child tool restrictions; role selection is not enforcement.
