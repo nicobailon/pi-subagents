@@ -99,6 +99,7 @@ interface RunSyncResult {
 	transcriptPath?: string;
 	transcriptError?: string;
 	finalOutput?: string;
+	processSignal?: string | null;
 	interrupted?: boolean;
 	timedOut?: boolean;
 	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; exceededAtTurn?: number };
@@ -1471,8 +1472,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.processSignal, "SIGKILL");
+		assert.equal(result.error, "Subagent process terminated by signal SIGKILL.");
 		assert.equal(result.modelAttempts?.length, 1);
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("prefers signal termination errors over stderr tails", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
+		mockPi.onCall({ stderr: "INFO benign startup line\n", signal: "SIGTERM" });
+		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			runId: "signal-error-over-stderr",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.processSignal, "SIGTERM");
+		assert.equal(result.error, "Subagent process terminated by signal SIGTERM.");
+		assert.doesNotMatch(result.error ?? "", /INFO benign startup line/);
 	});
 
 	it("does not retry a child exit with raw stdout diagnostics", async () => {

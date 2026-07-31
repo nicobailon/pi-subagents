@@ -8,6 +8,7 @@ import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
+import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
@@ -415,7 +416,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	if (resultPath) {
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -424,7 +425,21 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
 				}
 			}
-			const status = data.state === "stopped" ? "stopped" : data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
+			const childStatuses = Array.isArray(data.results)
+				? data.results.map((child) => resolveSubagentResultStatus({
+					success: child.success,
+					state: child.state,
+					interrupted: child.interrupted,
+					timedOut: child.timedOut,
+					stopped: child.stopped,
+					turnBudgetExceeded: child.turnBudgetExceeded,
+					processSignal: child.processSignal,
+					exitCode: typeof child.exitCode === "number" ? child.exitCode : undefined,
+				}))
+				: [];
+			const status = data.state === "stopped" || data.stopped === true || childStatuses.includes("stopped")
+				? "stopped"
+				: data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
 			const lines = [`Run: ${runId}`, `State: ${status}`, `Result: ${resultPath}`];
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);

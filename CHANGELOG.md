@@ -5,6 +5,9 @@
 ### Changed
 - Reduced repeated runtime filesystem work by caching stable Pi config-directory resolution, incrementally sanitizing run history, and limiting nested control-result polling to files created for the active request.
 
+### Fixed
+- Report signal-terminated child processes with a canonical signal error instead of stderr-tail noise and classify those results separately from ordinary task failures. Thanks to @cking000bigdemon for #688.
+
 ## [0.38.0] - 2026-07-30
 
 ### Added

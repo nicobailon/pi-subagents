@@ -994,6 +994,36 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows signal-terminated result-only runs as stopped", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-signal-result-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(path.join(asyncRoot, "run-signal-result"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(path.join(resultsDir, "run-signal-result.json"), JSON.stringify({
+				id: "run-signal-result",
+				agent: "worker",
+				success: false,
+				state: "failed",
+				summary: "Subagent process terminated by signal SIGTERM.",
+				results: [{ agent: "worker", success: false, exitCode: 1, processSignal: "SIGTERM" }],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-signal-result" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /State: stopped/);
+			assert.match(text, /Resume: unavailable; stopped runs are not resumable/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("falls back to an existing result when async dir has no status file", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-fallback-"));
 		try {

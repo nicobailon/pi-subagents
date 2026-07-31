@@ -75,6 +75,7 @@ describe("result watcher", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-native-delivery-"));
 		try {
 			const emitted: Array<{ event: string; data: unknown }> = [];
+			const delivered: unknown[] = [];
 			const pi = {
 				events: {
 					on: () => () => {},
@@ -89,15 +90,15 @@ describe("result watcher", () => {
 				runId: "native-run",
 				sessionId: "session-native",
 				mode: "single",
-				success: true,
-				state: "complete",
-				summary: "done",
-				results: [{ agent: "worker", output: "done", success: true }],
+				success: false,
+				state: "failed",
+				summary: "Subagent process terminated by signal SIGTERM.",
+				results: [{ agent: "worker", output: "", success: false, exitCode: 1, processSignal: "SIGTERM" }],
 				intercomTarget: "native-parent",
 			}), "utf-8");
 			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
 				deliverIntercomResults: false,
-				notifier: { deliver: async () => true },
+				notifier: { deliver: async (result) => { delivered.push(result); return true; } },
 			});
 			try {
 				watcher.primeExistingResults();
@@ -107,6 +108,8 @@ describe("result watcher", () => {
 			}
 			assert.equal(emitted.some((entry) => entry.event === "subagent:result-intercom"), false);
 			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+			const notification = delivered[0] as { results?: Array<{ status?: string }> } | undefined;
+			assert.equal(notification?.results?.[0]?.status, "stopped");
 			assert.equal(fs.existsSync(resultPath), false);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });

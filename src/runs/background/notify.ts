@@ -15,10 +15,11 @@ import {
 	resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ParallelHandoffReference, type SubagentState } from "../../shared/types.ts";
+import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 
 export interface SubagentNotifyDetails {
 	agent: string;
-	status: "completed" | "failed" | "paused";
+	status: "completed" | "failed" | "paused" | "stopped";
 	source?: "async" | "foreground";
 	taskInfo?: string;
 	resultPreview: string;
@@ -37,6 +38,21 @@ export interface CompletionNotification {
 	summary?: string;
 	exitCode?: number;
 	state?: string;
+	processSignal?: string | null;
+	interrupted?: boolean;
+	timedOut?: boolean;
+	stopped?: boolean;
+	turnBudgetExceeded?: boolean;
+	results?: Array<{
+		status?: string;
+		success?: boolean;
+		exitCode?: number | null;
+		processSignal?: string | null;
+		interrupted?: boolean;
+		timedOut?: boolean;
+		stopped?: boolean;
+		turnBudgetExceeded?: boolean;
+	}>;
 	timestamp?: number;
 	durationMs?: number;
 	cwd?: string;
@@ -92,7 +108,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 
 export function parseSubagentNotifyContent(content: string): SubagentNotifyDetails | undefined {
 	const lines = content.split("\n");
-	const match = (lines[0] ?? "").match(/^(Background task|Detached foreground task) (completed|failed|paused): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
+	const match = (lines[0] ?? "").match(/^(Background task|Detached foreground task) (completed|failed|paused|stopped): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
 	if (!match) return undefined;
 	const body = lines.slice(2);
 	let sessionIndex = -1;
@@ -179,12 +195,18 @@ function completionBatchKey(result: CompletionNotification): string {
 export function buildCompletionDetails(result: CompletionNotification): SubagentNotifyDetails {
 	const agent = result.agent ?? "unknown";
 	const summary = typeof result.summary === "string" ? result.summary : "";
-	const paused = !result.success && (
+	const stopped = result.stopped === true
+		|| result.state === "stopped"
+		|| (result.success !== true && result.exitCode !== 0 && isUnexplainedProcessSignal(result))
+		|| result.results?.some((child) => child.stopped === true
+			|| child.status === "stopped"
+			|| (child.success !== true && child.exitCode !== 0 && isUnexplainedProcessSignal(child))) === true;
+	const paused = !stopped && !result.success && (
 		result.exitCode === 0
 		|| result.state === "paused"
 		|| summary.startsWith("Paused after interrupt.")
 	);
-	const status = paused ? "paused" : result.success ? "completed" : "failed";
+	const status = stopped ? "stopped" : paused ? "paused" : result.success ? "completed" : "failed";
 	const taskInfo =
 		result.taskIndex !== undefined && result.totalTasks !== undefined
 			? ` (${result.taskIndex + 1}/${result.totalTasks})`
