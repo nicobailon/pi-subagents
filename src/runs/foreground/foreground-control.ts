@@ -61,6 +61,20 @@ function clearCurrentChild(control: ForegroundRunControl): void {
 	control.interrupt = undefined;
 }
 
+export function retainForegroundSchedulingOwner(control: ForegroundRunControl): void {
+	control.schedulingOwners = (control.schedulingOwners ?? 0) + 1;
+	control.updatedAt = Date.now();
+}
+
+export function settleForegroundSchedulingOwner(control: ForegroundRunControl): void {
+	control.schedulingOwners = Math.max(0, (control.schedulingOwners ?? 0) - 1);
+	control.updatedAt = Date.now();
+}
+
+export function foregroundSchedulingSettled(control: ForegroundRunControl): boolean {
+	return (control.schedulingOwners ?? 0) === 0;
+}
+
 export function beginForegroundChild(control: ForegroundRunControl, input: BeginForegroundChildInput): void {
 	const now = Date.now();
 	const child: ForegroundChildControl = {

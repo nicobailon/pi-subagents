@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentProgress, ForegroundRunControl } from "../../src/shared/types.ts";
-import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "../../src/runs/foreground/foreground-control.ts";
+import {
+	beginForegroundChild,
+	finishForegroundChild,
+	foregroundSchedulingSettled,
+	retainForegroundSchedulingOwner,
+	settleForegroundSchedulingOwner,
+	updateForegroundChild,
+} from "../../src/runs/foreground/foreground-control.ts";
 
 function progress(index: number, agent: string, tokens: number): AgentProgress {
 	return {
@@ -72,5 +79,22 @@ describe("foreground child control", () => {
 		assert.equal(control.inputTokens, undefined);
 		assert.equal(control.outputTokens, undefined);
 		assert.equal(control.interrupt, undefined);
+	});
+
+	it("settles scheduling only after every owner releases", () => {
+		const control: ForegroundRunControl = {
+			runId: "owned-run",
+			mode: "parallel",
+			startedAt: 1,
+			updatedAt: 1,
+			schedulingOwners: 1,
+		};
+
+		retainForegroundSchedulingOwner(control);
+		settleForegroundSchedulingOwner(control);
+		assert.equal(foregroundSchedulingSettled(control), false);
+		settleForegroundSchedulingOwner(control);
+		assert.equal(foregroundSchedulingSettled(control), true);
+		assert.equal(control.schedulingOwners, 0);
 	});
 });

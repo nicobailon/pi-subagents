@@ -153,6 +153,28 @@ describe("mapConcurrent", () => {
 		assert.ok(d2 < 20, `worker 2 should start immediately, got ${d2}ms delay`);
 	});
 
+	it("notifies scheduling settlement only after workers outliving an early rejection stop", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const started: number[] = [];
+		let schedulingSettled = false;
+		const run = mapConcurrent([0, 1, 2], 2, async (item) => {
+			started.push(item);
+			if (item === 0) throw new Error("early rejection");
+			await gate;
+			return item;
+		}, undefined, () => { schedulingSettled = true; });
+
+		await assert.rejects(run, /early rejection/);
+		assert.equal(schedulingSettled, false);
+		release();
+		for (let attempt = 0; attempt < 20 && !schedulingSettled; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+		assert.equal(schedulingSettled, true);
+		assert.deepEqual(started, [0, 1, 2]);
+	});
+
 	it("respects a shared global semaphore across simultaneous calls", async () => {
 		const globalSemaphore = new Semaphore(2);
 		let running = 0;

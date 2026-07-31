@@ -8,7 +8,14 @@ import { getArtifactsDir, getProjectChainRunsDir } from "../../shared/artifacts.
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
-import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "./foreground-control.ts";
+import {
+	beginForegroundChild,
+	finishForegroundChild,
+	foregroundSchedulingSettled,
+	retainForegroundSchedulingOwner,
+	settleForegroundSchedulingOwner,
+	updateForegroundChild,
+} from "./foreground-control.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
@@ -261,6 +268,15 @@ interface ExecutionContextData {
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
 	return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
+}
+
+function removeForegroundControlIfIdle(state: SubagentState, runId: string): boolean {
+	const control = state.foregroundControls.get(runId);
+	if (control && (!foregroundSchedulingSettled(control) || (control.activeChildren?.size ?? 0) > 0)) return false;
+	clearPendingForegroundControlNotices(state, runId);
+	state.foregroundControls.delete(runId);
+	if (state.lastForegroundControlId === runId) state.lastForegroundControlId = null;
+	return true;
 }
 
 function getForegroundControl(state: SubagentState, runId: string | undefined) {
@@ -2377,7 +2393,16 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		timeoutMs: data.timeoutMs,
 		deadlineAt: data.deadlineAt,
 		turnBudget: data.turnBudget,
-		onDetachedExit: (index, result) => updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events }),
+		onDetachedExit: (index, result) => {
+			try {
+				updateRememberedForegroundChild(deps.state, { runId, mode: "chain", cwd: effectiveCwd, sessionId: data.parentSessionId, index, result, events: deps.pi.events });
+			} finally {
+				removeForegroundControlIfIdle(deps.state, runId);
+			}
+		},
+		onForegroundChildSettled: () => {
+			removeForegroundControlIfIdle(deps.state, runId);
+		},
 		toolBudget: data.toolBudget,
 		usageBudget: data.usageBudget,
 		configToolBudget: data.configToolBudget,
@@ -2682,6 +2707,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		input.sessionFileForTask(input.tasks[i]!.agent, i, input.modelOverrides[i]);
 	}
 	const completedResults: SingleResult[] = [];
+	if (input.foregroundControl) retainForegroundSchedulingOwner(input.foregroundControl);
 	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
 		const budgetState = usageBudgetState(input.usageBudget, sumResultsCost(completedResults));
 		if (budgetState?.exhausted) {
@@ -2727,6 +2753,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		const structuredRuntime = task.outputSchema
 			? createStructuredOutputRuntime(task.outputSchema, path.join(input.artifactsDir, "structured-output", input.runId))
 			: undefined;
+		let detachedReceipt = false;
 		const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			context: input.contextPolicy.contextForAgent(task.agent),
@@ -2750,7 +2777,17 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			capabilityCeiling: input.capabilityCeiling,
 			controlConfig: input.controlConfig,
 			onControlEvent: input.onControlEvent,
-			onDetachedExit: (result) => updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, sessionId: input.parentSessionId, index, result, events: input.intercomEvents }),
+			onDetachedExit: (result) => {
+				try {
+					updateRememberedForegroundChild(input.state, { runId: input.runId, mode: "parallel", cwd: taskCwd, sessionId: input.parentSessionId, index, result, events: input.intercomEvents });
+				} finally {
+					try {
+						if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
+					} finally {
+						removeForegroundControlIfIdle(input.state, input.runId);
+					}
+				}
+			},
 			intercomSessionName: input.childIntercomTarget?.(task.agent, index),
 			orchestratorIntercomTarget: input.orchestratorIntercomTarget,
 			nestedRoute: input.foregroundControl?.nestedRoute,
@@ -2791,12 +2828,24 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 					});
 				}
 				: undefined,
+		}).then((result) => {
+			detachedReceipt = result.detached === true;
+			return result;
 		}).finally(() => {
-			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
+			// mapConcurrent rejects before siblings settle, so every attached child
+			// attempts idle removal after releasing its own control. Detached receipts
+			// transfer both responsibilities to the authoritative exit callback.
+			if (!detachedReceipt) {
+				if (input.foregroundControl) finishForegroundChild(input.foregroundControl, index);
+				removeForegroundControlIfIdle(input.state, input.runId);
+			}
 		});
 		completedResults.push(result);
 		return result;
-	}, input.globalSemaphore);
+	}, input.globalSemaphore, () => {
+		if (input.foregroundControl) settleForegroundSchedulingOwner(input.foregroundControl);
+		removeForegroundControlIfIdle(input.state, input.runId);
+	});
 }
 
 async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details>> {
@@ -3423,7 +3472,22 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			agentContract: params.agentContract,
 			acceptance: params.acceptance,
 			acceptanceContext: { mode: "single" },
-			onDetachedExit: (result) => updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events }),
+			onDetachedExit: (result) => {
+				try {
+					updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events });
+				} finally {
+					try {
+						if (!artifactConfig.enabled) cleanupStructuredOutputRuntime(structuredRuntime);
+					} finally {
+						try {
+							if (foregroundControl) finishForegroundChild(foregroundControl, 0);
+						} finally {
+							removeForegroundControlIfIdle(deps.state, runId);
+						}
+					}
+				}
+				recordRun(params.agent!, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
+			},
 			timeoutMs: data.timeoutMs,
 			deadlineAt,
 			turnBudget: data.turnBudget,
@@ -3433,10 +3497,17 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 		});
 	} finally {
-		if (!artifactConfig.enabled) cleanupStructuredOutputRuntime(structuredRuntime);
+		// An attached runSync rejection still owns its child and structured runtime.
+		// A successful detached receipt transfers both to onDetachedExit while the
+		// authoritative completion remains live.
+		if (!r?.detached) {
+			if (!artifactConfig.enabled) cleanupStructuredOutputRuntime(structuredRuntime);
+			if (foregroundControl) finishForegroundChild(foregroundControl, 0);
+		}
 	}
-	if (foregroundControl) finishForegroundChild(foregroundControl, 0);
-	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
+	if (!r.detached) {
+		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
+	}
 
 	if (r.progress) allProgress.push(r.progress);
 	if (r.artifactPaths) allArtifactPaths.push(r.artifactPaths);
@@ -4244,6 +4315,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				description: foregroundDescription,
 				currentActivityState: undefined,
 				activeChildren: new Map(),
+				// The outer executor owns scheduling until its finally block settles.
+				schedulingOwners: 1,
 				nestedRoute,
 				interrupt: undefined,
 			};
@@ -4341,11 +4414,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return errorResult;
 		} finally {
 			if (foregroundControl) {
-				clearPendingForegroundControlNotices(deps.state, runId);
-				deps.state.foregroundControls.delete(runId);
-				if (deps.state.lastForegroundControlId === runId) {
-					deps.state.lastForegroundControlId = null;
-				}
+				settleForegroundSchedulingOwner(foregroundControl);
+				removeForegroundControlIfIdle(deps.state, runId);
 			}
 		}
 

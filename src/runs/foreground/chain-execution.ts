@@ -34,7 +34,13 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
-import { beginForegroundChild, finishForegroundChild, updateForegroundChild } from "./foreground-control.ts";
+import {
+	beginForegroundChild,
+	finishForegroundChild,
+	retainForegroundSchedulingOwner,
+	settleForegroundSchedulingOwner,
+	updateForegroundChild,
+} from "./foreground-control.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -153,6 +159,8 @@ interface ParallelChainRunInput {
 	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
+	/** Called after an attached child releases its foreground ownership. */
+	onForegroundChildSettled?: () => void;
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
@@ -287,6 +295,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 	}
 
 	const completedResults: SingleResult[] = [];
+	if (input.foregroundControl) retainForegroundSchedulingOwner(input.foregroundControl);
 	const parallelResults = await mapConcurrent(
 		input.step.parallel,
 		concurrency,
@@ -364,7 +373,9 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				? createStructuredOutputRuntime(task.outputSchema, path.join(input.chainDir, "structured-output"))
 				: undefined;
 			const agentContract = task.agentContract ?? input.step.agentContract ?? input.agentContract;
-			const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
+			let result!: SingleResult;
+			try {
+				result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: input.capabilityCeiling,
 				context: input.contextForAgent?.(task.agent),
@@ -402,9 +413,13 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
-				onDetachedExit: input.onDetachedExit
-					? (result) => input.onDetachedExit?.(childIndex, result)
-					: undefined,
+				onDetachedExit: (result) => {
+					try {
+						if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
+					} finally {
+						input.onDetachedExit?.(childIndex, result);
+					}
+				},
 				toolBudget: toolBudget.toolBudget,
 				onUpdate: input.onUpdate
 					? (progressUpdate) => {
@@ -438,8 +453,15 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 						});
 					}
 					: undefined,
-			});
-			if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
+				});
+			} finally {
+				// Rejected attached attempts still release their parallel child control;
+				// detached receipts transfer ownership to onDetachedExit.
+				if (!result?.detached) {
+					if (input.foregroundControl) finishForegroundChild(input.foregroundControl, childIndex);
+					input.onForegroundChildSettled?.();
+				}
+			}
 
 			if (result.exitCode !== 0 && failFast) {
 				aborted = true;
@@ -449,6 +471,10 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			return result;
 		},
 		input.globalSemaphore,
+		() => {
+			if (input.foregroundControl) settleForegroundSchedulingOwner(input.foregroundControl);
+			input.onForegroundChildSettled?.();
+		},
 	);
 
 	return parallelResults;
@@ -493,6 +519,8 @@ interface ChainExecutionParams {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
+	/** Ownership callback used when parallel siblings outlive executeChain rejection. */
+	onForegroundChildSettled?: () => void;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ToolBudgetConfig;
@@ -817,6 +845,7 @@ ${step.message}` : ""}` }],
 					turnBudget: params.turnBudget,
 					usageBudget: params.usageBudget,
 					onDetachedExit,
+					onForegroundChildSettled: params.onForegroundChildSettled,
 					toolBudget: params.toolBudget,
 					configToolBudget: params.configToolBudget,
 					globalSemaphore,
@@ -1074,6 +1103,7 @@ ${step.message}` : ""}` }],
 				turnBudget: params.turnBudget,
 				usageBudget: params.usageBudget,
 				onDetachedExit,
+				onForegroundChildSettled: params.onForegroundChildSettled,
 				toolBudget: params.toolBudget,
 				configToolBudget: params.configToolBudget,
 				globalSemaphore,
@@ -1278,28 +1308,30 @@ ${step.message}` : ""}` }],
 				});
 			}
 
-			const structuredRuntime = seqStep.outputSchema
-				? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
-				: undefined;
 			const agentContract = seqStep.agentContract ?? params.agentContract;
-			const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
-			if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
-				results,
-				includeProgress,
-				allProgress,
-				allArtifactPaths,
-				artifactsDir: params.artifactsDir,
-				chainAgents,
-				chainSteps,
-				totalSteps,
-				currentStepIndex: stepIndex,
-				runId: params.runId,
-				outputs,
-				currentFlatIndex: globalTaskIndex,
-				dynamicChildren,
-				dynamicGroupStatuses,
-			});
-			const r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
+			let r!: SingleResult;
+			try {
+				const structuredRuntime = seqStep.outputSchema
+					? createStructuredOutputRuntime(seqStep.outputSchema, path.join(chainDir, "structured-output"))
+					: undefined;
+				const toolBudget = resolveChainToolBudget({ stepBudget: seqStep.toolBudget, runBudget: params.toolBudget, agentBudget: agentConfig?.toolBudget, configBudget: params.configToolBudget });
+				if (toolBudget.error) return buildChainExecutionErrorResult(toolBudget.error, {
+					results,
+					includeProgress,
+					allProgress,
+					allArtifactPaths,
+					artifactsDir: params.artifactsDir,
+					chainAgents,
+					chainSteps,
+					totalSteps,
+					currentStepIndex: stepIndex,
+					runId: params.runId,
+					outputs,
+					currentFlatIndex: globalTaskIndex,
+					dynamicChildren,
+					dynamicGroupStatuses,
+				});
+				r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: params.capabilityCeiling,
 				context: params.contextForAgent?.(seqStep.agent),
@@ -1337,9 +1369,13 @@ ${step.message}` : ""}` }],
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,
-				onDetachedExit: onDetachedExit
-					? (result) => onDetachedExit(childIndex, result)
-					: undefined,
+				onDetachedExit: (result) => {
+					try {
+						if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
+					} finally {
+						onDetachedExit?.(childIndex, result);
+					}
+				},
 				toolBudget: toolBudget.toolBudget,
 				onUpdate: onUpdate
 					? (p) => {
@@ -1373,8 +1409,15 @@ ${step.message}` : ""}` }],
 						});
 					}
 					: undefined,
-			});
-			if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
+				});
+			} finally {
+				// Rejected attempts and early validation returns release the child here.
+				// A detached receipt transfers cleanup ownership to onDetachedExit.
+				if (!r?.detached) {
+					if (foregroundControl) finishForegroundChild(foregroundControl, childIndex);
+					params.onForegroundChildSettled?.();
+				}
+			}
 			recordRun(seqStep.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 
 			globalTaskIndex++;

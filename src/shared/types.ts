@@ -1370,6 +1370,8 @@ export interface ForegroundRunControl {
 	toolCount?: number;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;
+	/** Scheduling owners that may still launch another child. Removal is safe only at zero. */
+	schedulingOwners?: number;
 	nestedRoute?: NestedRouteInfo;
 	nestedChildren?: NestedRunSummary[];
 	interrupt?: () => boolean;
