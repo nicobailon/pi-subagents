@@ -15,6 +15,7 @@ import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { detachedChildrenRequireSupervisor } from "../shared/foreground-detach.ts";
 
 interface RunStatusParams {
 	action?: "status";
@@ -139,7 +140,9 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 		return lines.join("\n");
 	}
 	if (detached) {
-		lines.push(`Recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
+		lines.push(detachedChildrenRequireSupervisor(run.children)
+			? `Recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`
+			: `Recovery: this run was detached at user request. Wait with subagent_wait({ id: "${run.runId}" }) or inspect status; do not resume or launch a replacement while its child remains live.`);
 	} else if (resumable) {
 		lines.push(run.children.length === 1
 			? `Revive: subagent({ action: "resume", id: "${run.runId}", message: "..." })`

@@ -1140,6 +1140,22 @@ export function buildChainExpressionSteps(
 	return { chain, task: sharedTask };
 }
 
+function resolveForegroundDetachControl(state: SubagentState, requested: string | undefined) {
+	const controls = [...state.foregroundControls.values()];
+	if (requested) {
+		const exact = state.foregroundControls.get(requested);
+		if (exact) return exact;
+		const matches = controls.filter((control) => control.runId.startsWith(requested));
+		if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((control) => control.runId).join(", ")}. Provide a longer id.`);
+		return matches[0];
+	}
+	// No-arg detach selects the newest run that can actually satisfy the command;
+	// a newer parallel/chain control must not hide an older detachable single run.
+	return controls
+		.filter((control) => control.mode === "single" && typeof control.detach === "function")
+		.sort((left, right) => right.updatedAt - left.updatedAt)[0];
+}
+
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
@@ -1290,6 +1306,37 @@ export function registerSlashCommands(
 	pi.registerShortcut(Key.ctrlAlt("f"), {
 		description: "Open subagent fleet inspector",
 		handler: async (ctx) => showFleet(ctx),
+	});
+
+	pi.registerCommand("subagents-detach", {
+		description: "Release the wait for an active foreground single-subagent run without terminating it",
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/).filter(Boolean);
+			if (parts.length > 1) {
+				ctx.ui.notify("Usage: /subagents-detach [run-id]", "error");
+				return;
+			}
+			let control: ReturnType<typeof resolveForegroundDetachControl>;
+			try {
+				control = resolveForegroundDetachControl(state, parts[0]);
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				return;
+			}
+			if (!control) {
+				ctx.ui.notify(parts[0] ? `No active foreground run found for '${parts[0]}'.` : "No active foreground run to detach.", "info");
+				return;
+			}
+			if (control.mode !== "single") {
+				ctx.ui.notify(`Foreground ${control.mode} run '${control.runId}' cannot be detached. /subagents-detach currently supports single-subagent runs only.`, "error");
+				return;
+			}
+			if (!control.detach?.()) {
+				ctx.ui.notify(`Foreground run '${control.runId}' has no active child available to detach.`, "error");
+				return;
+			}
+			sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. The current wait is released; recover the eventual result with subagent_wait or status. This is not async-runner migration and does not guarantee survival across Pi reload/restart.`);
+		},
 	});
 
 	pi.registerCommand("subagents-stop", {

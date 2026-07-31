@@ -39,11 +39,13 @@ describe("foreground child control", () => {
 		};
 		let firstInterrupts = 0;
 		let secondInterrupts = 0;
+		let firstDetaches = 0;
 		beginForegroundChild(control, {
 			index: 0,
 			agent: "reviewer",
 			description: "Review correctness",
 			interrupt: () => { firstInterrupts++; return true; },
+			detach: () => { firstDetaches++; return true; },
 		});
 		beginForegroundChild(control, {
 			index: 1,
@@ -65,6 +67,8 @@ describe("foreground child control", () => {
 		assert.equal(control.interrupt?.(), true);
 		assert.equal(firstInterrupts, 1);
 		assert.equal(secondInterrupts, 0);
+		assert.equal(control.detach?.(), true);
+		assert.equal(firstDetaches, 1);
 
 		updateForegroundChild(control, 1, progress(1, "reviewer", 240));
 		finishForegroundChild(control, 1);
@@ -79,6 +83,7 @@ describe("foreground child control", () => {
 		assert.equal(control.inputTokens, undefined);
 		assert.equal(control.outputTokens, undefined);
 		assert.equal(control.interrupt, undefined);
+		assert.equal(control.detach, undefined);
 	});
 
 	it("settles scheduling only after every owner releases", () => {

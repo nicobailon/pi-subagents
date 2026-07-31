@@ -384,6 +384,35 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("uses user-detach wording without inventing a supervisor request", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-user-detach-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-user-detached", {
+				runId: "foreground-user-detached",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: 1,
+				children: [{ agent: "worker", index: 0, status: "detached", detachedReason: "user request", updatedAt: 1 }],
+			}]]);
+			const controller = new AbortController();
+			controller.abort();
+			let updateText = "";
+			const result = await waitForSubagents({ id: "foreground-user-detached" }, controller.signal, baseDeps(root, state, {
+				onUpdate: (update) => { updateText = textOf(update); },
+			}));
+
+			assert.equal(result.isError, true);
+			assert.match(textOf(result), /user-detached run is not waiting for a supervisor reply/i);
+			assert.doesNotMatch(textOf(result), /Reply to any pending supervisor request/);
+			assert.match(updateText, /working after user-requested detach/);
+			assert.doesNotMatch(updateText, /supervisor handoff/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("wakes a remembered foreground wait on a repeated supervisor request event", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-supervisor-"));
 		try {

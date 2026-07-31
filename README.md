@@ -487,6 +487,7 @@ Skip this section until you want exact syntax.
 | `/subagent-cost` | Show parent plus child subagent token usage and cost for this session |
 | `/subagents [agent] [model\|thinking\|prompt\|details]` | Interactively inspect or edit an agent's model, thinking level, or system prompt |
 | `/subagents-doctor` | Show read-only setup diagnostics |
+| `/subagents-detach [run-id]` | Release the wait for an active foreground single-subagent run without terminating it |
 | `/subagents-models [agent]` | Show the runtime-loaded builtin model mapping, optionally filtered to one builtin |
 | `/subagents-watchdog [status|on|off|recommend-model|model ...|session model ...|check]` | Show or configure the opt-in watchdog; use a strong complementary model such as Opus 4.8 high or GPT 5.5 high |
 | `/subagents-profiles` | List saved subagent profiles from `~/.pi/agent/profiles/pi-subagents/` |
@@ -496,6 +497,8 @@ Skip this section until you want exact syntax.
 | `/subagents-check-profile <name>` | Check a saved profile against the current registry and live model probes |
 
 Commands validate agent names locally, support tab completion, and send results back into the conversation.
+
+`/subagents-detach` is limited to active foreground single-subagent runs. It releases the current foreground wait while the existing child stays observed through `status`/`subagent_wait` and can still emit completion; its configured runtime timeout, turn budget, watchdog, and lifecycle drain enforcement remain active until exit. This is same-runtime only: it does not migrate the child into the detached async runner, daemonize it, support process adoption, or guarantee survival across Pi reload/restart.
 
 `/subagents` opens a compact administration flow for builtin, package, user, and project agents. Model choices refresh Pi's model registry first, thinking choices are filtered to levels declared by the selected model, and prompt editing uses Pi's native multiline editor; press Ctrl+G to open the configured external editor. Full metadata is opt-in through `details`. Edits are persisted to the field-owning layer: explicit custom-agent frontmatter remains in the agent file, while settings/profile-managed fields remain in `settings.subagents.agentOverrides`. Package-owned fields and definitions loaded through `PI_SUBAGENT_EXTRA_AGENT_DIRS` stay read-only; settings can still supply model or thinking fields omitted by a package definition.
 

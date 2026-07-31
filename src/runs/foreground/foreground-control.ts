@@ -5,6 +5,7 @@ interface BeginForegroundChildInput {
 	agent: string;
 	description?: string;
 	interrupt: () => boolean;
+	detach?: () => boolean;
 }
 
 function copyProgress(target: ForegroundChildControl, progress: AgentProgress | undefined): void {
@@ -40,6 +41,7 @@ function syncCurrentChild(control: ForegroundRunControl, child: ForegroundChildC
 	control.thinking = child.thinking;
 	control.toolCount = child.toolCount;
 	control.interrupt = child.interrupt;
+	control.detach = child.detach;
 	control.updatedAt = child.updatedAt;
 }
 
@@ -59,6 +61,7 @@ function clearCurrentChild(control: ForegroundRunControl): void {
 	control.thinking = undefined;
 	control.toolCount = undefined;
 	control.interrupt = undefined;
+	control.detach = undefined;
 }
 
 export function retainForegroundSchedulingOwner(control: ForegroundRunControl): void {
@@ -91,6 +94,15 @@ export function beginForegroundChild(control: ForegroundRunControl, input: Begin
 		syncCurrentChild(control, child);
 		return true;
 	};
+	if (input.detach) {
+		child.detach = () => {
+			if (!input.detach?.()) return false;
+			child.currentActivityState = undefined;
+			child.updatedAt = Date.now();
+			syncCurrentChild(control, child);
+			return true;
+		};
+	}
 	control.activeChildren ??= new Map();
 	control.activeChildren.set(input.index, child);
 	syncCurrentChild(control, child);

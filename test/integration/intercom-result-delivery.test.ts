@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
+import { buildCompletionDetails, type CompletionNotification } from "../../src/runs/background/notify.ts";
 import { sessionLeaseDir } from "../../src/runs/shared/session-lease.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -245,6 +246,202 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
 		assert.match(result.content[0]?.text ?? "", /Legacy foreground output/);
 	});
+
+	it("wires explicit foreground detachment through the live single-run control and remembers later completion", async () => {
+		mockPi.onCall({ steps: [{ delay: 500, jsonl: [events.assistantMessage("recovered after explicit detach")] }] });
+		const { executor, events: bus, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker")] });
+		const runPromise = executor.execute(
+			"single-user-detach",
+			{ agent: "worker", task: "Keep working" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		let control: { runId: string; detach?: () => boolean } | undefined;
+		for (let attempt = 0; attempt < 100 && !control?.detach; attempt++) {
+			control = [...state.foregroundControls.values()][0] as typeof control;
+			if (!control?.detach) await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		assert.ok(control?.detach, "expected a live foreground detach callback");
+		assert.equal(control.detach(), true);
+
+		const original = await runPromise;
+		assert.match(original.content[0]?.text ?? "", /Detached at user request/);
+		assert.match(original.content[0]?.text ?? "", /does not migrate the run into the detached async runner/);
+		const runId = original.details?.runId;
+		assert.ok(runId);
+
+		for (let attempt = 0; attempt < 100; attempt++) {
+			const remembered = state.foregroundRuns.get(runId) as { children?: Array<{ status?: string }> } | undefined;
+			if (remembered?.children?.[0]?.status === "completed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		const status = await executor.execute(
+			"single-user-detach-status",
+			{ action: "status", id: runId },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.match(status.content[0]?.text ?? "", /worker completed/);
+		assert.match(status.content[0]?.text ?? "", /recovered after explicit detach/);
+		assert.equal(bus.emitted.some((entry) => entry.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT), true);
+	});
+
+	it("keeps an explicitly interrupted user-detached run paused with one terminal event", async () => {
+		mockPi.onCall({ steps: [{ delay: 10_000, jsonl: [events.assistantMessage("too late")] }] });
+		const { executor, events: bus, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker")] });
+		const runPromise = executor.execute(
+			"single-user-detach-interrupt",
+			{ agent: "worker", task: "Keep working", acceptance: { level: "checked", criteria: ["result is checked"] } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		let control: { runId: string; detach?: () => boolean; interrupt?: () => boolean } | undefined;
+		for (let attempt = 0; attempt < 100 && !control?.detach; attempt++) {
+			control = [...state.foregroundControls.values()][0] as typeof control;
+			if (!control?.detach) await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		assert.equal(control?.detach?.(), true);
+		const receipt = await runPromise;
+		const runId = receipt.details?.runId;
+		assert.ok(runId);
+		const detachedControl = state.foregroundControls.get(runId);
+		assert.ok(detachedControl?.interrupt, "live control must remain registered after foreground receipt");
+		assert.equal(detachedControl.interrupt(), true);
+		for (let attempt = 0; attempt < 100 && state.foregroundControls.has(runId); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(state.foregroundControls.has(runId), false, "control must be removed after terminal completion");
+		const remembered = state.foregroundRuns.get(runId)?.children[0];
+		assert.equal(remembered?.status, "paused");
+		assert.equal(remembered?.acceptance?.status, "pending");
+		const completions = bus.emitted.filter((entry) => entry.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT
+			&& (entry.payload as { runId?: string }).runId === runId);
+		assert.equal(completions.length, 1);
+		const payload = completions[0]!.payload as CompletionNotification & { runId?: string; mode?: string };
+		assert.deepEqual(payload, {
+			id: `${runId}:0`,
+			runId,
+			source: "foreground",
+			mode: "single",
+			agent: "worker",
+			success: false,
+			summary: "Interrupted. Waiting for explicit next action.",
+			exitCode: 0,
+			state: "paused",
+			interrupted: true,
+			processSignal: "SIGINT",
+			timestamp: remembered.updatedAt,
+			cwd: tempDir,
+			sessionFile: remembered.sessionFile,
+			sessionId: "session-123",
+			taskIndex: 0,
+		});
+		assert.equal(buildCompletionDetails(payload).status, "paused");
+	});
+
+	for (const scenario of ["success", "error", "interrupt", "timeout", "pipeline-failure"] as const) {
+		it(`emits exactly one foreground completion event after detached ${scenario}`, async () => {
+			if (scenario === "success") mockPi.onCall({ output: "detached success", delay: 400 });
+			else if (scenario === "error") mockPi.onCall({ output: "detached error", exitCode: 1, delay: 400 });
+			else if (scenario === "interrupt" || scenario === "timeout") mockPi.onCall({ output: "too late", delay: 10_000 });
+			else mockPi.onCall({ output: "completed before pipeline failure", delay: 400 });
+			const { executor, events: bus, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker")] });
+			const agentContract = { version: 1 };
+			const runPromise = executor.execute(
+				`detached-event-${scenario}`,
+				{
+					agent: "worker",
+					task: `detached ${scenario}`,
+					acceptance: scenario === "pipeline-failure" ? { level: "checked", criteria: ["checked"] } : false,
+					...(scenario === "timeout" ? { timeoutMs: 100 } : {}),
+					...(scenario === "pipeline-failure" ? { agentContract } : {}),
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			let control: { detach?: () => boolean; interrupt?: () => boolean } | undefined;
+			for (let attempt = 0; attempt < 100; attempt++) {
+				control = [...state.foregroundControls.values()][0] as typeof control;
+				if (control?.detach) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			assert.equal(control?.detach?.(), true);
+			const receipt = await runPromise;
+			const runId = receipt.details?.runId;
+			assert.ok(runId);
+			const metadataPath = receipt.details?.results?.[0]?.artifactPaths?.metadataPath;
+			if (scenario === "interrupt") assert.equal(control?.interrupt?.(), true);
+			if (scenario === "pipeline-failure") {
+				// Force an unexpected strict-projection boundary failure after receipt;
+				// expected artifact/provider I/O failures are handled as result fields.
+				Object.defineProperty(agentContract, "version", {
+					get: () => { throw new Error("strict projection failed"); },
+				});
+			}
+			for (let attempt = 0; attempt < 200; attempt++) {
+				const completions = bus.emitted.filter((entry) => entry.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT
+					&& (entry.payload as { runId?: string }).runId === runId);
+				if (completions.length > 0 && !state.foregroundControls.has(runId)) break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			const completions = bus.emitted.filter((entry) => entry.channel === SUBAGENT_FOREGROUND_COMPLETE_EVENT
+				&& (entry.payload as { runId?: string }).runId === runId);
+			assert.equal(completions.length, 1);
+			assert.equal(state.foregroundControls.has(runId), false);
+			const payload = completions[0]!.payload as CompletionNotification;
+			if (scenario === "success") {
+				assert.deepEqual({ success: payload.success, state: payload.state, notifierStatus: buildCompletionDetails(payload).status }, {
+					success: true,
+					state: "complete",
+					notifierStatus: "completed",
+				});
+			} else if (scenario === "error") {
+				assert.deepEqual({ success: payload.success, state: payload.state, notifierStatus: buildCompletionDetails(payload).status }, {
+					success: false,
+					state: "failed",
+					notifierStatus: "failed",
+				});
+			} else if (scenario === "timeout") {
+				assert.deepEqual({ success: payload.success, state: payload.state, timedOut: payload.timedOut, notifierStatus: buildCompletionDetails(payload).status }, {
+					success: false,
+					state: "failed",
+					timedOut: true,
+					notifierStatus: "failed",
+				});
+			}
+			if (scenario === "pipeline-failure") {
+				const remembered = state.foregroundRuns.get(runId)?.children[0];
+				assert.equal(remembered?.status, "failed");
+				assert.match(remembered?.error ?? "", /Detached completion pipeline failed after receipt/);
+				assert.equal(remembered?.acceptance?.status, "rejected");
+				assert.ok(metadataPath);
+				const terminalMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as {
+					exitCode?: number;
+					error?: string;
+					acceptance?: { status?: string };
+					execution?: { status?: string; success?: boolean; exitCode?: number; error?: string };
+					review?: { status?: string };
+					effects?: Record<string, unknown>;
+				};
+				assert.equal(terminalMetadata.exitCode, 1);
+				assert.match(terminalMetadata.error ?? "", /Detached completion pipeline failed after receipt/);
+				assert.equal(terminalMetadata.acceptance?.status, "rejected");
+				assert.deepEqual(terminalMetadata.execution, {
+					status: "failed",
+					success: false,
+					exitCode: 1,
+					error: terminalMetadata.error,
+				});
+				assert.equal(terminalMetadata.review?.status, "not-requested");
+				assert.deepEqual(terminalMetadata.effects, {});
+			}
+		});
+	}
 
 	it("keeps native foreground output without attempting external grouped delivery when disabled", async () => {
 		mockPi.onCall({ output: "Native foreground output" });
@@ -1416,6 +1613,51 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(resumed.isError, true);
 		assert.match(resumed.content[0]?.text ?? "", /cannot be revived safely while any child may still be live/);
 		assert.match(resumed.content[0]?.text ?? "", /do not launch a replacement/);
+	});
+
+	it("uses user-detach wording in remembered status, fleet, and resume recovery", async () => {
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
+		state.foregroundRuns.set("user-detached-run", {
+			runId: "user-detached-run",
+			mode: "single",
+			cwd: tempDir,
+			sessionId: "session-123",
+			updatedAt: Date.now(),
+			children: [{ agent: "a", index: 0, status: "detached", detachedReason: "user request", updatedAt: Date.now() }],
+		});
+
+		const status = await executor.execute(
+			"user-detached-status",
+			{ action: "status", id: "user-detached-run" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const statusText = status.content[0]?.text ?? "";
+		assert.match(statusText, /detached at user request/);
+		assert.doesNotMatch(statusText, /reply to the supervisor request/i);
+
+		const fleet = await executor.execute(
+			"user-detached-fleet",
+			{ action: "status", view: "fleet" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const fleetText = fleet.content[0]?.text ?? "";
+		assert.match(fleetText, /recovery: detached at user request/);
+		assert.doesNotMatch(fleetText, /reply to the supervisor request/i);
+
+		const resumed = await executor.execute(
+			"user-detached-resume",
+			{ action: "resume", id: "user-detached-run", message: "replace" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(resumed.isError, true);
+		assert.match(resumed.content[0]?.text ?? "", /detached at user request/);
+		assert.doesNotMatch(resumed.content[0]?.text ?? "", /Reply to the supervisor request/);
 	});
 
 	it("resume action rejects detached foreground children that may still be live", async () => {

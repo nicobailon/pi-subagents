@@ -17,6 +17,7 @@ import {
 import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { contextModeLabel, summarizeContextModes } from "../shared/context-mode.ts";
+import { detachedChildrenRequireSupervisor } from "../shared/foreground-detach.ts";
 import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 
 const DEFAULT_TRANSCRIPT_LINES = 80;
@@ -265,7 +266,9 @@ function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
 		const childSummary = detachedChildren.map((child) => `${child.agent} #${child.index}`).join(", ");
 		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
-		lines.push(`  recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
+		lines.push(detachedChildrenRequireSupervisor(detachedChildren)
+			? `  recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`
+			: `  recovery: detached at user request; wait with subagent_wait({ id: "${run.runId}" }) or inspect status. Do not resume or launch a replacement while its child remains live.`);
 	}
 	return lines;
 }
@@ -333,11 +336,12 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 	}
 
-	const foregroundControls = deps.state ? [...deps.state.foregroundControls.values()] : [];
-	const activeForegroundIds = new Set(foregroundControls.map((control) => control.runId));
+	const allForegroundControls = deps.state ? [...deps.state.foregroundControls.values()] : [];
 	const detachedForegroundRuns = deps.state?.foregroundRuns
-		? [...deps.state.foregroundRuns.values()].filter((run) => run.sessionId === deps.state?.currentSessionId && !activeForegroundIds.has(run.runId) && run.children.some((child) => child.status === "detached"))
+		? [...deps.state.foregroundRuns.values()].filter((run) => run.sessionId === deps.state?.currentSessionId && run.children.some((child) => child.status === "detached"))
 		: [];
+	const detachedForegroundIds = new Set(detachedForegroundRuns.map((run) => run.runId));
+	const foregroundControls = allForegroundControls.filter((control) => !detachedForegroundIds.has(control.runId));
 	const total = foregroundControls.length + detachedForegroundRuns.length + asyncRuns.length;
 	if (total === 0) {
 		return {

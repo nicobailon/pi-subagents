@@ -61,6 +61,7 @@ import {
 	type SubagentState,
 } from "../../shared/types.ts";
 import { formatDuration } from "../../shared/formatters.ts";
+import { detachedChildActivityLabel, detachedChildrenRequireSupervisor } from "../shared/foreground-detach.ts";
 export { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
 /** States that mean a run is still in flight (not yet resolved). */
@@ -225,8 +226,11 @@ function foregroundChildrenNeedingAttention(run: ForegroundResumeRun, indices: S
 
 function formatForegroundAttention(run: ForegroundResumeRun, children: ReturnType<typeof foregroundChildrenNeedingAttention>, elapsedMs: number): AgentToolResult<Details> {
 	const childList = children.map((child) => `${child.agent}${child.index !== undefined ? `#${child.index}` : ""}`).join(", ");
+	const guidance = detachedChildrenRequireSupervisor(children)
+		? `Reply to any pending supervisor request, then call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`
+		: `Inspect status, then call subagent_wait({ id: "${run.runId}" }) again; this user-detached child is not waiting for a supervisor reply and must not be resumed or replaced while still live.`;
 	return result(
-		`Waited ${formatDuration(elapsedMs)} for remembered detached foreground run "${run.runId}"; attention required. ${children.length} child run(s) need attention: ${childList}. Reply to any pending supervisor request, then call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
+		`Waited ${formatDuration(elapsedMs)} for remembered detached foreground run "${run.runId}"; attention required. ${children.length} child run(s) need attention: ${childList}. ${guidance}`,
 	);
 }
 
@@ -391,7 +395,7 @@ function detachedForegroundWaitUpdate(run: ForegroundResumeRun, pendingIndices: 
 		if (!pendingIndices.has(child.index) || child.status !== "detached") continue;
 		const activity = readTranscriptActivity(child.transcriptPath);
 		const age = activity?.latestAt !== undefined ? ` · activity ${formatDuration(Math.max(0, nowMs - activity.latestAt))} ago` : "";
-		lines.push(`${child.agent} · working after supervisor handoff${age}`);
+		lines.push(`${child.agent} · ${detachedChildActivityLabel(child)}${age}`);
 		if (activity?.currentTool) {
 			lines.push(`  current: ${activity.currentTool}${activity.currentToolArgs ? `: ${activity.currentToolArgs}` : ""}`);
 		}
@@ -414,7 +418,10 @@ async function waitForDetachedForegroundRun(
 	const initialDetachedIndices = new Set(run.children.filter((child) => child.status === "detached").map((child) => child.index));
 	while (true) {
 		if (deps.state.currentSessionId !== run.sessionId) {
-			return result(`Wait stopped because the active session changed while remembered foreground run "${run.runId}" was still detached. Return to the originating session to inspect or wait for it. Reply to any pending supervisor request before resuming or launching a replacement.`, true);
+			const guidance = detachedChildrenRequireSupervisor(run.children)
+				? "Reply to any pending supervisor request before resuming or launching a replacement."
+				: "This user-detached run is not waiting for a supervisor reply; do not resume or launch a replacement while its child may still be live.";
+			return result(`Wait stopped because the active session changed while remembered foreground run "${run.runId}" was still detached. Return to the originating session to inspect or wait for it. ${guidance}`, true);
 		}
 		const current = deps.state.foregroundRuns?.get(run.runId);
 		if (!current || current.sessionId !== run.sessionId) {
@@ -432,11 +439,17 @@ async function waitForDetachedForegroundRun(
 		const updateNow = now();
 		deps.onUpdate?.(detachedForegroundWaitUpdate(current, initialDetachedIndices, updateNow, updateNow - startedAt));
 		if (signal?.aborted) {
-			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Remembered foreground run "${run.runId}" remains detached. Reply to any pending supervisor request before resuming or launching a replacement.`, true);
+			const guidance = detachedChildrenRequireSupervisor(pending)
+				? "Reply to any pending supervisor request before resuming or launching a replacement."
+				: "This user-detached run is not waiting for a supervisor reply; do not resume or launch a replacement while its child remains live.";
+			return result(`Wait aborted after ${formatDuration(now() - startedAt)}. Remembered foreground run "${run.runId}" remains detached. ${guidance}`, true);
 		}
 		if (now() - startedAt >= timeoutMs) {
+			const guidance = detachedChildrenRequireSupervisor(pending)
+				? `Reply to any pending supervisor request, then call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`
+				: `This user-detached run is not waiting for a supervisor reply. Call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while its child remains live.`;
 			return result(
-				`Wait timed out after ${formatDuration(timeoutMs)} with remembered foreground run "${run.runId}" still detached. Reply to any pending supervisor request, then call subagent_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
+				`Wait timed out after ${formatDuration(timeoutMs)} with remembered foreground run "${run.runId}" still detached. ${guidance}`,
 				true,
 			);
 		}

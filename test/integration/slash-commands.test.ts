@@ -2066,6 +2066,66 @@ describe("subagents-doctor slash command", { skip: !available ? "slash-commands.
 		assert.match(rendered, /live controls/);
 	});
 
+	it("detaches the latest active foreground single run without terminating it", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const sent: unknown[] = [];
+		const state = createState(process.cwd());
+		let detached = 0;
+		state.foregroundControls.set("foreground-single", {
+			runId: "foreground-single",
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 2,
+			detach: () => { detached++; return true; },
+		});
+		state.foregroundControls.set("newer-parallel", {
+			runId: "newer-parallel",
+			mode: "parallel",
+			startedAt: 2,
+			updatedAt: 3,
+		});
+		state.lastForegroundControlId = "newer-parallel";
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage(message: unknown) { sent.push(message); },
+		}, state);
+
+		await commands.get("subagents-detach")!.handler("", createCommandContext());
+
+		assert.equal(detached, 1);
+		const content = String((sent[0] as { content?: unknown }).content ?? "");
+		assert.match(content, /Detached foreground run foreground-single without terminating its child/);
+		assert.match(content, /does not guarantee survival across Pi reload\/restart/);
+	});
+
+	it("reports missing and unsupported foreground detach targets", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const notifications: string[] = [];
+		const state = createState(process.cwd());
+		state.foregroundControls.set("parallel-run", {
+			runId: "parallel-run",
+			mode: "parallel",
+			startedAt: 1,
+			updatedAt: 1,
+			detach: () => true,
+		});
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage() {},
+		}, state);
+		const ctx = createCommandContext({ notify: (message) => notifications.push(message) });
+
+		await commands.get("subagents-detach")!.handler("missing", ctx);
+		await commands.get("subagents-detach")!.handler("parallel", ctx);
+
+		assert.match(notifications[0] ?? "", /No active foreground run found for 'missing'/);
+		assert.match(notifications[1] ?? "", /currently supports single-subagent runs only/);
+	});
+
 	it("routes subagents-stop with an id directly to the stop action", async () => {
 		const { params } = await captureSlashCommandParams("subagents-stop", "run-123", process.cwd());
 		assert.deepEqual(params, { action: "stop", id: "run-123" });

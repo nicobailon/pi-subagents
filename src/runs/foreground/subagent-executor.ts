@@ -79,6 +79,7 @@ import { stopAsyncRun } from "./async-stop-action.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { detachedChildrenRequireSupervisor } from "../shared/foreground-detach.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
@@ -577,7 +578,11 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (matches.length === 0) return undefined;
 	if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((run) => run.runId).join(", ")}. Provide a longer id.`);
 	const run = matches[0]!;
-	if (run.children.some((child) => child.status === "detached")) throw new Error(`Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); use status to recover the result and do not launch a replacement while it remains detached.`);
+	if (run.children.some((child) => child.status === "detached")) {
+		throw new Error(detachedChildrenRequireSupervisor(run.children)
+			? `Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); use status to recover the result and do not launch a replacement while it remains detached.`
+			: `Foreground run '${run.runId}' was detached at user request and cannot be revived safely while its child may still be live. Wait with subagent_wait({ id: "${run.runId}" }) or use status to recover the result; do not launch a replacement while it remains detached.`);
+	}
 	if (run.children.length > 1 && params.index === undefined) throw new Error(`Foreground run '${run.runId}' has ${run.children.length} children. Provide index to choose one.`);
 	const index = params.index ?? 0;
 	if (!Number.isInteger(index)) throw new Error(`Foreground run '${run.runId}' index must be an integer.`);
@@ -3417,6 +3422,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		effectiveSkills = skillOverride;
 	}
 	const interruptController = new AbortController();
+	let detachActiveChild: ((reason?: string) => boolean) | undefined;
 	const foregroundControl = deps.state.foregroundControls.get(runId);
 	if (foregroundControl) {
 		beginForegroundChild(foregroundControl, {
@@ -3428,15 +3434,15 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				interruptController.abort();
 				return true;
 			},
+			detach: () => detachActiveChild?.("user request") ?? false,
 		});
 	}
 
-	const forwardSingleUpdate = onUpdate
-		? (update: AgentToolResult<Details>) => {
-			if (foregroundControl) updateForegroundChild(foregroundControl, 0, update.details?.progress?.[0]);
-			onUpdate(update);
-		}
-		: undefined;
+	let foregroundDetached = false;
+	const forwardSingleUpdate = (update: AgentToolResult<Details>) => {
+		if (foregroundControl) updateForegroundChild(foregroundControl, 0, update.details?.progress?.[0]);
+		if (!foregroundDetached) onUpdate?.(update);
+	};
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	let r: Awaited<ReturnType<typeof runSync>>;
@@ -3463,6 +3469,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			onUpdate: forwardSingleUpdate,
 			controlConfig,
 			onControlEvent,
+			onDetachReady: (detach) => { detachActiveChild = detach; },
 			intercomSessionName: childIntercomTarget,
 			orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 			nestedRoute: foregroundControl?.nestedRoute,
@@ -3510,6 +3517,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			if (foregroundControl) finishForegroundChild(foregroundControl, 0);
 		}
 	}
+	foregroundDetached = r.detached === true;
 	if (!r.detached) {
 		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 	}
@@ -3569,8 +3577,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 
 	if (r.detached) {
+		const text = r.detachedReason === "intercom coordination"
+			? `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`
+			: `Detached at user request: ${params.agent}. The current foreground wait was released without terminating the child. Wait with subagent_wait({ id: "${runId}" }) or use subagent({ action: "status", id: "${runId}" }) to recover its eventual result. This does not migrate the run into the detached async runner or guarantee survival across Pi reload/restart.`;
 		return {
-			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
+			content: [{ type: "text", text }],
 			details,
 		};
 	}
