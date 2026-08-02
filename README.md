@@ -348,6 +348,18 @@ Background runs keep working after control returns to you. Inspect active runs w
 
 FleetView replaces the legacy above-editor async widget by default, while completion notifications remain enabled. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
+When Pi runs inside [Herdr](https://herdr.dev), pi-subagents automatically reports active async-run counts through Herdr pane metadata. The bridge is enabled only when Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`; outside Herdr it registers no listeners or timers. It restores current-session active runs after `/reload` or `/resume`, refreshes metadata while work is active, and clears it on completion or shutdown. To show the reported label in the expanded Agent sidebar, include `state_text` or `$summary` in its row layout, for example:
+
+```toml
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "workspace", "tab"],
+  ["agent", "state_text"],
+]
+```
+
+The bridge uses Herdr's existing `herdr:blocked` sibling event when an async child needs attention. It also emits `herdr:busy` while async work remains. Herdr versions that support that sibling event keep the pane's semantic state `working`; older versions ignore it safely and still display the metadata label while the Pi integration remains the lifecycle authority.
+
 You can also ask naturally:
 
 ```text

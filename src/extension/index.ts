@@ -38,6 +38,7 @@ import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
+import { registerHerdrStatusBridge } from "../integrations/herdr-status.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
@@ -482,6 +483,20 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
 	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
+	const activeHerdrRuns = () => [...state.asyncJobs.values()]
+		.filter((job) => job.status === "queued" || job.status === "running")
+		.map((job) => ({
+			id: job.asyncId,
+			agents: job.agents,
+			needsAttention: job.activityState === "needs_attention",
+		}));
+	const herdrStatusBridge = registerHerdrStatusBridge({
+		events: pi.events,
+		getRuns: activeHerdrRuns,
+		async runHerdr(args) {
+			await pi.exec(process.env.HERDR_BIN || "herdr", [...args], { timeout: 5_000 });
+		},
+	});
 	const controlEventHandler = (payload: unknown) => {
 		handleSubagentControlNotice({
 			pi,
@@ -506,6 +521,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
+		herdrStatusBridge.dispose,
 		rpcBridge.dispose,
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
@@ -569,14 +585,22 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		fleetStatus?.setContext(ctx);
 	};
 
+	pi.on("agent_start", () => {
+		herdrStatusBridge.agentStarted();
+	});
+
 	pi.on("session_start", (event, ctx) => {
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering);
+		herdrStatusBridge.sessionStarted({
+			hasUI: ctx.hasUI === true,
+			runs: activeHerdrRuns(),
+		});
 		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
 	});
 
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", async () => {
 		stopResultWatcher();
 		state.currentSessionId = null;
 		state.parentSessionFile = null;
@@ -618,5 +642,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		} catch (error) {
 			if (!isStaleExtensionContextError(error)) throw error;
 		}
+		await herdrStatusBridge.flush();
 	});
 }
