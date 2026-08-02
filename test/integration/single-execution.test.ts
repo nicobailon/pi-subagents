@@ -39,7 +39,7 @@ import {
 	type SubagentDelegationV2Response,
 	type SubagentDelegationV2Started,
 } from "../../src/api/delegation.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
@@ -2305,6 +2305,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(result.details.artifacts.files[0].outputPath, "utf-8"), "session artifact result");
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 	});
+
+	for (const artifactDir of ["session", "temp"] as const) {
+		it(`keeps foreground chain scratch files out of the project for artifactDir=${artifactDir}`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			mockPi.onCall({ output: `${artifactDir} chain result` });
+			const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionFile = () => sessionFile;
+			const executor = makeExecutor([makeAgent("echo")], { artifactDir });
+
+			const result = await executor.execute(
+				`${artifactDir}-chain-artifact-dir`,
+				{ chain: [{ agent: "echo", task: "Run without project-local scratch files in {chain_dir}" }] },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+
+			const taskArg = readCallArgs().at(-1) ?? "";
+			assert.equal(result.isError, undefined);
+			assert.ok(taskArg.includes(`${CHAIN_RUNS_DIR}${path.sep}`), taskArg);
+			assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents")), false);
+		});
+	}
 
 	it("writes a failure stub to foreground output artifacts when no output was produced", async () => {
 		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });

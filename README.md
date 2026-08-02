@@ -1453,7 +1453,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `worktree` | boolean | false | Create isolated git worktrees for parallel tasks. |
 | `chain` | array | - | Sequential, checkpoint, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, `oracle`, and `advisor` default to `fork`. |
-| `chainDir` | string | temp chain dir | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. |
+| `chainDir` | string | follows `artifactDir` | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. When omitted, `artifactDir: "project"` uses `<cwd>/.pi-subagents/chain-runs/`; `"session"` and `"temp"` use user-scoped temp storage. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
@@ -1747,7 +1747,9 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored. Defaults to `"project"`, which writes to `<cwd>/.pi-subagents/artifacts/`. Set to `"session"` to store artifacts under pi's session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. Set to `"temp"` to use the OS temp directory.
 
-The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically.
+This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory. An explicit `chainDir` always takes precedence.
+
+The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
 
 ### `completionBatch`
 
@@ -1770,13 +1772,13 @@ Failed and paused completions bypass batching and fire immediately, flushing any
 
 ## Files, logs, and observability
 
-Each chain run creates a user-scoped temp directory like:
+Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "project"`, that root is `<cwd>/.pi-subagents/chain-runs/`. With `artifactDir: "session"` or `"temp"`, it is user-scoped temp storage:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/
 ```
 
-It may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. Directories older than 24 hours are cleaned up on extension startup.
+An explicit `chainDir` overrides both defaults. A run directory may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. User-scoped temp chain directories older than 24 hours are cleaned up on extension startup; project-local and explicit persistent roots are not age-scanned.
 
 Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. Per task you may see:
 

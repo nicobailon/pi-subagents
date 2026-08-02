@@ -312,7 +312,7 @@ const SubagentParamsSchema = Type.Object({
 		enum: ["fresh", "fork"],
 		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without defaultContext: 'fork' run fresh.",
 	})),
-	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; defaults to user-scoped temp storage." })),
+	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; otherwise follows artifactDir (project-local for project, user-scoped temp for session/temp)." })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout for foreground and async/background runs; foreground defaults to 30m absent call/agent. Alias maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs for foreground and async/background runs; foreground defaults to 30m absent call/agent." })),
