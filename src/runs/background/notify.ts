@@ -170,14 +170,15 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCom
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
 	const content = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
+	const display = details.some((detail) => detail.source === "foreground" || detail.status !== "completed");
 	try {
 		pi.sendMessage(
 			{
 				customType: "subagent-notify",
 				content,
-				display: true,
+				display,
 			},
-			{ triggerTurn: items.some((item) => item.triggerTurn) },
+			{ triggerTurn: display && items.some((item) => item.triggerTurn) },
 		);
 		return true;
 	} catch {
