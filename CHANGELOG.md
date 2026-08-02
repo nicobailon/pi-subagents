@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
-- Routed foreground chain scratch files to user-scoped temp storage when `artifactDir` is `"session"` or `"temp"`, preventing `.pi-subagents/` clutter in the working directory.
+- Routed foreground chain scratch files to user-scoped temp storage when `artifactDir` is `"session"` or `"temp"`, preventing `.pi-subagents/` clutter in the working directory. Thanks to @magoz for #729.
 
 ## [0.40.0] - 2026-08-01
 
