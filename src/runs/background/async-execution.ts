@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { runFileSystemOperationWithRetry } from "../../shared/file-system-retry.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isCheckpointStep, isDynamicParallelStep, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
@@ -376,7 +377,14 @@ function writeRunnerStartupControl(filePath: string, payload: { action: "ack" | 
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
 	try {
 		fs.writeFileSync(tempPath, JSON.stringify(payload), { encoding: "utf-8", mode: 0o600 });
-		fs.renameSync(tempPath, filePath);
+		// On Windows, atomically replacing an existing startup-control file can
+		// transiently fail with EPERM/EBUSY/EACCES when the target is briefly held
+		// by an antivirus/indexer scan or a concurrently polling parent process.
+		// Retry the rename the same way atomic-json does, so a transient lock does
+		// not make the parent believe the runner never reached the ready state.
+		runFileSystemOperationWithRetry(() => {
+			fs.renameSync(tempPath, filePath);
+		});
 	} catch (error) {
 		try {
 			fs.rmSync(tempPath, { force: true });
