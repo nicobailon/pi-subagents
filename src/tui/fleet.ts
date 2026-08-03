@@ -14,6 +14,7 @@ import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
+import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
 
 const REFRESH_MS = 750;
 const MAX_RECENT_ASYNC_RUNS = 20;
@@ -45,6 +46,7 @@ export interface FleetActionResult {
 export interface FleetActionHandlers {
 	steer(input: { runId: string; asyncDir: string; index?: number; message: string }): Promise<FleetActionResult>;
 	stop(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult> | FleetActionResult;
+	inspect?(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult>;
 }
 
 export interface FleetViewOptions {
@@ -662,6 +664,12 @@ export class SubagentFleetComponent implements Component {
 			}
 			return;
 		}
+		if (data === "H") {
+			const target = this.selectedAsyncAction();
+			if ("reason" in target || !this.options.actions?.inspect) this.setActionNotice({ text: "reason" in target ? target.reason : "Herdr inspector controls are unavailable in this context.", isError: true });
+			else this.runAction(() => this.options.actions!.inspect!({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}) }));
+			return;
+		}
 		if (data === "D") {
 			const target = this.selectedAsyncAction();
 			if ("reason" in target || !this.options.actions) this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
@@ -792,7 +800,7 @@ export class SubagentFleetComponent implements Component {
 		}
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = this.snapshot.items.length ? `${this.selected + 1}/${this.snapshot.items.length}` : "0/0";
-		const footer = ` ↑↓/jk agent · s steer · D stop · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
+		const footer = ` ↑↓/jk agent · H Herdr · s steer · D stop · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
@@ -822,6 +830,16 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			location: { asyncDir: input.asyncDir, resolvedId: input.runId },
 		}), `Failed to steer async run ${input.runId}.`),
 		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),
+		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleHerdrInspectorAction("inspector.open", {
+			id: input.runId,
+			dir: input.asyncDir,
+			...(input.index !== undefined ? { index: input.index } : {}),
+		}, {
+			state,
+			cwd: state.baseCwd,
+			...(state.authorityPolicy ? { authorityPolicy: state.authorityPolicy } : {}),
+			...(state.missionStoreConfig ? { missions: state.missionStoreConfig } : {}),
+		}), `Failed to open Herdr inspector for async run ${input.runId}.`),
 	} satisfies FleetActionHandlers;
 	try {
 		await ctx.ui.custom<undefined>(

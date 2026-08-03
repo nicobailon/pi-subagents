@@ -10,6 +10,8 @@ import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
+import type { AuthorityPolicyConfig } from "../policy/authority.ts";
+import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
 
 // ============================================================================
 // Basic Types
@@ -258,6 +260,8 @@ export interface ParallelHandoffCleanupTask {
 	branch: string;
 	worktreeRemoved: boolean;
 	branchRemoved: boolean;
+	preserved?: boolean;
+	reason?: string;
 	errors?: string[];
 }
 
@@ -964,6 +968,17 @@ export interface Details {
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	/** Original launch contract whose persisted session is being revived. */
 	sourceLaunchContractDigest?: string;
+	/** Durable mission attached to this run, when mission mode was explicitly used. */
+	missionId?: string;
+	missionPath?: string;
+	/** Non-fatal automatic mission persistence failure. */
+	missionWarning?: string;
+	mission?: MissionRecord;
+	missions?: {
+		records?: MissionRecord[];
+		globalEntries?: GlobalMissionIndexRecord[];
+		warnings: string[];
+	};
 }
 
 // ============================================================================
@@ -1419,6 +1434,10 @@ export interface SubagentState {
 	currentSessionId: string | null;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
 	artifactDirPreference?: ArtifactDirPreference;
+	/** Runtime authority snapshot used by optional inspector controls. */
+	authorityPolicy?: AuthorityPolicyConfig;
+	/** Runtime mission-store snapshot used by optional inspector context. */
+	missionStoreConfig?: MissionStoreConfig;
 	parentSessionFile?: string | null;
 	/** Last valid parent session model observed for this session; used when continuation contexts omit ctx.model. */
 	lastParentModel?: { provider: string; id: string };
@@ -1633,6 +1652,10 @@ export interface ExtensionConfig {
 	intercomBridge?: IntercomBridgeConfig;
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
 	scheduledRuns?: ScheduledRunsConfig;
+	/** Durable mission behavior. Missions are automatic by default; set enabled:false to disable auto-create. Explicit mission actions/fields still work. */
+	missions?: MissionStoreConfig;
+	/** Small fixed authority policy for the supported operational actions. */
+	authorityPolicy?: AuthorityPolicyConfig;
 }
 
 // ============================================================================
@@ -1726,7 +1749,7 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "status", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.attach-run", "mission.close", "worktree.discard", "inspector.open", "inspector.status", "inspector.close", "status", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "append-step", "approve-checkpoint", "reject-checkpoint", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

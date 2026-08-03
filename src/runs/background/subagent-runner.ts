@@ -118,7 +118,7 @@ import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChai
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
-import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
+import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
@@ -3572,6 +3572,18 @@ async function runSubagent(
 			}
 
 			try {
+				if (worktreeSetup) {
+					writePendingParallelHandoff({
+						manifestPath: parallelHandoffPath(asyncDir),
+						runId: id,
+						mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" : "chain",
+						source: "async",
+						cwd,
+						stepIndex,
+						flatStartIndex: groupStartFlatIndex,
+						setup: worktreeSetup,
+					});
+				}
 				if (group.worktree) ensureParallelProgressFile(cwd, group);
 				const groupStartTime = Date.now();
 				markParallelGroupRunning({
@@ -3856,35 +3868,37 @@ async function runSubagent(
 					const captured = captureParallelWorktreeDiffs(worktreeSetup, asyncDir, stepIndex, group);
 					if (captured.summary) previousOutput = `${previousOutput}\n\n${captured.summary}`;
 					worktreeFinalized = true;
-					const cleanup = cleanupWorktrees(worktreeSetup);
+					const manifestPath = parallelHandoffPath(asyncDir);
+					const handoff = {
+						manifestPath,
+						runId: id,
+						mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" as const : "chain" as const,
+						source: "async" as const,
+						cwd,
+						stepIndex,
+						flatStartIndex: groupStartFlatIndex,
+						setup: worktreeSetup,
+						diffs: captured.diffs,
+						results: parallelResults.map((result) => ({
+							agent: result.agent,
+							status: result.stopped || (result.exitCode !== 0 && isUnexplainedProcessSignal({
+								processSignal: result.processSignal,
+								interrupted: result.interrupted,
+								timedOut: result.timedOut,
+								stopped: result.stopped,
+								turnBudgetExceeded: result.turnBudgetExceeded,
+							})) ? "stopped" as const : result.interrupted ? "paused" as const : result.exitCode === 0 ? "completed" as const : "failed" as const,
+							summary: result.output || result.error || "(no output)",
+							...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
+							...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
+							...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
+							...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
+						})),
+					};
 					try {
-						statusPayload.parallelHandoff = writeParallelHandoffGroup({
-							manifestPath: parallelHandoffPath(asyncDir),
-							runId: id,
-							mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" : "chain",
-							source: "async",
-							cwd,
-							stepIndex,
-							flatStartIndex: groupStartFlatIndex,
-							setup: worktreeSetup,
-							diffs: captured.diffs,
-							cleanup,
-							results: parallelResults.map((result) => ({
-								agent: result.agent,
-								status: result.stopped || (result.exitCode !== 0 && isUnexplainedProcessSignal({
-									processSignal: result.processSignal,
-									interrupted: result.interrupted,
-									timedOut: result.timedOut,
-									stopped: result.stopped,
-									turnBudgetExceeded: result.turnBudgetExceeded,
-								})) ? "stopped" : result.interrupted ? "paused" : result.exitCode === 0 ? "completed" : "failed",
-								summary: result.output || result.error || "(no output)",
-								...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
-								...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
-								...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
-								...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
-							})),
-						});
+						writeParallelHandoffGroup(handoff);
+						const cleanup = cleanupWorktrees(worktreeSetup, { kind: "preserve", capturedDiffs: captured.diffs, handoffManifestPath: manifestPath });
+						statusPayload.parallelHandoff = writeParallelHandoffGroup({ ...handoff, cleanup });
 						previousOutput = `${previousOutput}\n\n${formatParallelHandoffReference(statusPayload.parallelHandoff)}`;
 					} catch (error) {
 						previousOutput = `${previousOutput}\n\n${formatParallelHandoffError(error)}`;

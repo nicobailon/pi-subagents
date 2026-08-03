@@ -2325,7 +2325,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const taskArg = readCallArgs().at(-1) ?? "";
 			assert.equal(result.isError, undefined);
 			assert.ok(taskArg.includes(`${CHAIN_RUNS_DIR}${path.sep}`), taskArg);
-			assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents")), false);
+			assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "chain-runs")), false);
+			assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
 		});
 	}
 
@@ -2637,6 +2638,39 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 		assert.equal(agentResult.details?.timeoutMs, 4_000);
+	});
+
+	it("runs omitted async launches in the background when the global default is enabled", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")], {}, true);
+
+		const result = await executor.execute(
+			"global-async-default",
+			{ agent: "echo", task: "Task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /Async:/);
+		assert.equal(typeof result.details?.asyncId, "string");
+	});
+
+	it("keeps omitted async launches foreground when the global default is disabled", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "config foreground default finished" });
+		const executor = makeExecutor([makeAgent("echo")], {}, false);
+
+		const result = await executor.execute(
+			"global-foreground-opt-out",
+			{ agent: "echo", task: "Task" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /config foreground default finished/);
+		assert.equal(result.details?.asyncId, undefined);
 	});
 
 	it("applies agent frontmatter defaults to single-agent launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

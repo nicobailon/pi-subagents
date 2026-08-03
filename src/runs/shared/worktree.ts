@@ -2,14 +2,16 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 
 export interface WorktreeSetup {
 	cwd: string;
 	worktrees: WorktreeInfo[];
 	baseCommit: string;
+	capturedDiffs?: WorktreeDiff[];
 }
 
-interface WorktreeInfo {
+export interface WorktreeInfo {
 	path: string;
 	agentCwd: string;
 	branch: string;
@@ -36,8 +38,20 @@ export interface WorktreeCleanupTask {
 	branch: string;
 	worktreeRemoved: boolean;
 	branchRemoved: boolean;
+	preserved?: boolean;
+	reason?: string;
 	errors?: string[];
 }
+
+export type WorktreeCleanupIntent =
+	| { kind: "preserve"; capturedDiffs?: WorktreeDiff[]; handoffManifestPath?: string }
+	| {
+		kind: "discard";
+		authorization:
+			| { kind: "policy"; policy?: AuthorityPolicyConfig }
+			| { kind: "confirmed"; policy?: AuthorityPolicyConfig };
+	}
+	| { kind: "setup-rollback" };
 
 export interface WorktreeCleanupReport {
 	state: "complete" | "partial";
@@ -121,7 +135,9 @@ function resolveRepoState(cwd: string): RepoState {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
 	const toplevel = runGitChecked(cwd, ["rev-parse", "--show-toplevel"]).trim();
 
-	const status = runGitChecked(toplevel, ["status", "--porcelain"]);
+	// pi-subagents writes durable runtime state under .pi-subagents/ by default;
+	// that state must not make managed isolation unusable for later runs.
+	const status = runGitChecked(toplevel, ["status", "--porcelain", "--", ":!.pi-subagents"]);
 	if (status.trim().length > 0) {
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}
@@ -515,21 +531,111 @@ function writeEmptyPatch(patchPath: string): void {
 	}
 }
 
-function cleanupSingleWorktree(repoCwd: string, worktree: WorktreeInfo): WorktreeCleanupTask {
+function handoffRecordsPatch(manifestPath: string | undefined, patchPath: string): boolean {
+	if (!manifestPath || !fs.existsSync(manifestPath)) return false;
+	try {
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as {
+			version?: unknown;
+			groups?: Array<{ children?: Array<{ patch?: { path?: unknown; error?: unknown } }> }>;
+		};
+		if (manifest.version !== 1 || !Array.isArray(manifest.groups)) return false;
+		const resolvedPatchPath = path.resolve(patchPath);
+		return manifest.groups.some((group) => Array.isArray(group.children) && group.children.some((child) =>
+			child.patch?.error === undefined
+			&& typeof child.patch?.path === "string"
+			&& path.resolve(child.patch.path) === resolvedPatchPath,
+		));
+	} catch {
+		return false;
+	}
+}
+
+function cleanupSingleWorktree(
+	setup: WorktreeSetup,
+	worktree: WorktreeInfo,
+	intent: WorktreeCleanupIntent,
+): WorktreeCleanupTask {
 	const errors: string[] = [];
 	let worktreeRemoved = false;
 	let branchRemoved = false;
+	if (intent.kind !== "setup-rollback") {
+		try {
+			removeSyntheticPathsBeforeDiff(worktree);
+		} catch (error) {
+			errors.push(`synthetic path cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		const status = runGit(worktree.path, ["status", "--porcelain"]);
+		const baseDiff = runGit(worktree.path, ["diff", "--quiet", setup.baseCommit, "--"]);
+		if (status.status !== 0 || (baseDiff.status !== 0 && baseDiff.status !== 1)) {
+			const reason = status.status !== 0
+				? status.stderr.trim() || status.stdout.trim() || "git status failed"
+				: baseDiff.stderr.trim() || baseDiff.stdout.trim() || "git diff check failed";
+			return {
+				index: worktree.index,
+				path: worktree.path,
+				branch: worktree.branch,
+				worktreeRemoved: false,
+				branchRemoved: false,
+				preserved: true,
+				reason: "cleanup safety check failed",
+				errors: [...errors, `cleanup refused: ${reason}`],
+			};
+		}
+		const hasWork = status.stdout.trim().length > 0 || baseDiff.status === 1;
+		if (hasWork && intent.kind === "preserve") {
+			const captured = (intent.capturedDiffs ?? setup.capturedDiffs)?.find((diff) => diff.index === worktree.index);
+			const patchCaptured = captured !== undefined
+				&& captured.error === undefined
+				&& fs.existsSync(captured.patchPath)
+				&& fs.statSync(captured.patchPath).size > 0
+				&& handoffRecordsPatch(intent.handoffManifestPath, captured.patchPath);
+			if (!patchCaptured) {
+				const reason = "worktree contains changes that are not represented by a captured handoff patch";
+				return {
+					index: worktree.index,
+					path: worktree.path,
+					branch: worktree.branch,
+					worktreeRemoved: false,
+					branchRemoved: false,
+					preserved: true,
+					reason,
+					errors: [...errors, `cleanup refused: ${reason}; preserved ${worktree.path}`],
+				};
+			}
+		}
+		if (hasWork && intent.kind === "discard") {
+			const decision = resolveAuthorityDecision({ action: "discardWorktree", policy: intent.authorization.policy });
+			const authorized = decision === "auto" || (decision === "confirm" && intent.authorization.kind === "confirmed");
+			if (!authorized) {
+				const reason = decision === "forbid"
+					? "authority policy forbids worktree discard"
+					: "worktree discard requires explicit user confirmation";
+				return {
+					index: worktree.index,
+					path: worktree.path,
+					branch: worktree.branch,
+					worktreeRemoved: false,
+					branchRemoved: false,
+					preserved: true,
+					reason,
+					errors: [...errors, `cleanup refused: ${reason}; preserved ${worktree.path}`],
+				};
+			}
+		}
+	}
 	try {
-		runGitChecked(repoCwd, ["worktree", "remove", "--force", worktree.path]);
+		runGitChecked(setup.cwd, ["worktree", "remove", "--force", worktree.path]);
 		worktreeRemoved = true;
 	} catch (error) {
 		errors.push(`worktree removal failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	try {
-		runGitChecked(repoCwd, ["branch", "-D", worktree.branch]);
-		branchRemoved = true;
-	} catch (error) {
-		errors.push(`branch removal failed: ${error instanceof Error ? error.message : String(error)}`);
+	if (worktreeRemoved) {
+		try {
+			runGitChecked(setup.cwd, ["branch", "-D", worktree.branch]);
+			branchRemoved = true;
+		} catch (error) {
+			errors.push(`branch removal failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 	return {
 		index: worktree.index,
@@ -569,7 +675,7 @@ export function createWorktrees(cwd: string, runId: string, count: number, optio
 			cwd: repo.toplevel,
 			worktrees,
 			baseCommit: repo.baseCommit,
-		});
+		}, { kind: "setup-rollback" });
 		throw error;
 	}
 
@@ -602,13 +708,17 @@ export function diffWorktrees(setup: WorktreeSetup, agents: string[], diffsDir: 
 		}
 	}
 
+	setup.capturedDiffs = diffs;
 	return diffs;
 }
 
-export function cleanupWorktrees(setup: WorktreeSetup): WorktreeCleanupReport {
+export function cleanupWorktrees(
+	setup: WorktreeSetup,
+	intent: WorktreeCleanupIntent = { kind: "preserve", ...(setup.capturedDiffs ? { capturedDiffs: setup.capturedDiffs } : {}) },
+): WorktreeCleanupReport {
 	const tasks: WorktreeCleanupTask[] = [];
 	for (let index = setup.worktrees.length - 1; index >= 0; index--) {
-		tasks.push(cleanupSingleWorktree(setup.cwd, setup.worktrees[index]!));
+		tasks.push(cleanupSingleWorktree(setup, setup.worktrees[index]!, intent));
 	}
 	tasks.sort((left, right) => left.index - right.index);
 	const errors: string[] = [];

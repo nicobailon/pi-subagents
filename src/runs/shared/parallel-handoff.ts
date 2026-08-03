@@ -11,7 +11,9 @@ import type {
 	WorktreeCleanupReport,
 	WorktreeDiff,
 	WorktreeSetup,
+	WorktreeCleanupIntent,
 } from "./worktree.ts";
+import { cleanupWorktrees } from "./worktree.ts";
 
 export interface ParallelHandoffResult {
 	agent: string;
@@ -79,7 +81,7 @@ export function writeParallelHandoffGroup(input: {
 	flatStartIndex: number;
 	setup: WorktreeSetup;
 	diffs: WorktreeDiff[];
-	cleanup: WorktreeCleanupReport;
+	cleanup?: WorktreeCleanupReport;
 	results: ParallelHandoffResult[];
 	now?: number;
 }): ParallelHandoffReference {
@@ -122,7 +124,19 @@ export function writeParallelHandoffGroup(input: {
 				},
 			};
 		}),
-		cleanup: input.cleanup,
+		cleanup: input.cleanup ?? {
+			state: "partial",
+			pruned: false,
+			tasks: input.setup.worktrees.map((worktree) => ({
+				index: worktree.index,
+				path: worktree.path,
+				branch: worktree.branch,
+				worktreeRemoved: false,
+				branchRemoved: false,
+				preserved: true,
+				reason: "cleanup pending durable handoff capture",
+			})),
+		},
 	};
 	const groups = existing?.groups.filter((candidate) => candidate.stepIndex !== input.stepIndex) ?? [];
 	groups.push(group);
@@ -145,10 +159,80 @@ export function parallelHandoffPath(baseDir: string, runId?: string): string {
 	return runId ? path.join(baseDir, "handoffs", `${runId}.json`) : path.join(baseDir, "handoff.json");
 }
 
+export function writePendingParallelHandoff(input: {
+	manifestPath: string;
+	runId: string;
+	mode: "parallel" | "chain";
+	source: "foreground" | "async";
+	cwd: string;
+	stepIndex: number;
+	flatStartIndex: number;
+	setup: WorktreeSetup;
+}): ParallelHandoffReference {
+	return writeParallelHandoffGroup({ ...input, diffs: [], results: [] });
+}
+
 export function formatParallelHandoffReference(reference: ParallelHandoffReference): string {
 	return `Parallel handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})`;
 }
 
 export function formatParallelHandoffError(error: unknown): string {
 	return `Parallel handoff unavailable: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+export function discardPreservedWorktrees(
+	manifestPath: string,
+	authorization: Extract<WorktreeCleanupIntent, { kind: "discard" }>["authorization"],
+): { manifest: ParallelHandoffManifest; text: string } {
+	const resolvedPath = path.resolve(manifestPath);
+	const manifest = readManifest(resolvedPath);
+	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${resolvedPath}`);
+	let attempted = 0;
+	for (const group of manifest.groups) {
+		const pending = group.cleanup.tasks.filter((task) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));
+		if (pending.length === 0) continue;
+		attempted += pending.length;
+		const report = cleanupWorktrees({
+			cwd: group.repoRoot,
+			baseCommit: group.baseCommit,
+			worktrees: pending.map((task) => ({
+				path: task.path,
+				agentCwd: task.path,
+				branch: task.branch,
+				index: task.index,
+				nodeModulesLinked: false,
+				syntheticPaths: [],
+			})),
+		}, { kind: "discard", authorization });
+		const updates = new Map(report.tasks.map((task) => [task.index, task.worktreeRemoved && task.branchRemoved
+			? task
+			: { ...task, preserved: true, reason: task.reason ?? "discard cleanup remains incomplete" }]));
+		group.cleanup = {
+			state: group.cleanup.tasks.every((task) => {
+				const next = updates.get(task.index) ?? task;
+				return next.worktreeRemoved && next.branchRemoved;
+			}) && report.pruned ? "complete" : "partial",
+			tasks: group.cleanup.tasks.map((task) => updates.get(task.index) ?? task),
+			pruned: report.pruned,
+			...(report.errors ? { errors: report.errors } : {}),
+		};
+	}
+	manifest.updatedAt = Date.now();
+	writeAtomicJson(resolvedPath, manifest);
+	const remaining = manifest.groups.flatMap((group) => group.cleanup.tasks.map((task) => ({ group, task })))
+		.filter(({ task }) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));
+	const lines = attempted === 0
+		? [`No preserved worktrees remain in ${resolvedPath}.`]
+		: [`Discard processed ${attempted} preserved worktree${attempted === 1 ? "" : "s"}.`, `Manifest: ${resolvedPath}`];
+	if (remaining.length > 0) {
+		lines.push("", "Some worktrees remain. Inspect and remove them manually if appropriate:");
+		for (const { group, task } of remaining) {
+			lines.push(
+				`  git -C ${JSON.stringify(group.repoRoot)} status --short`,
+				`  git -C ${JSON.stringify(group.repoRoot)} worktree remove --force ${JSON.stringify(task.path)}`,
+				`  git -C ${JSON.stringify(group.repoRoot)} branch -D ${JSON.stringify(task.branch)}`,
+			);
+		}
+	}
+	return { manifest, text: lines.join("\n") };
 }

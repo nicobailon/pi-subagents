@@ -3,9 +3,17 @@
 ## [Unreleased]
 
 ### Added
+- Added default-on durable project missions with management actions, launch attachment, lifecycle/artifact links, explicit opt-out, a user-local cross-project pointer index, and typed delivery receipts for pull requests, CI, deployments, and releases.
+- Made ordinary top-level subagent launches run asynchronously by default; `async: false`, agent defaults, and clarify UI retain foreground escape hatches.
+- Added a small fixed authority policy for worktree discard, destructive cleanup, spawn-budget grants, schedule creation, stop, and steer actions.
 - Added automatic Herdr status metadata for active async runs, including reload recovery, needs-attention blocking, and a forward-compatible `herdr:busy` sibling event for semantic working state. Thanks to @magoz for #730.
+- Added optional Herdr 0.7.5+ drill-in inspector panes for async runs, with durable pane bindings, lifecycle/transcript/mission dashboards, FleetView opening, and steer/stop controls through the existing file control channel.
 
 ### Fixed
+- Journaled managed worktree ownership before child execution so abrupt exits retain a manifest-backed cleanup path.
+- Made automatic mission persistence best-effort without weakening explicit mission requests, bounded terminal mission retention and stale global pointers, exposed auto missions without modifying structured JSON output, added authority-consistent manifest-backed preserved-worktree discard, and clarified the Herdr inspector/schema surface.
+- Recovered valid structured acceptance reports from unterminated explicit `acceptance-report` fences while retaining hard failures for malformed or invalid reports.
+- Preserved dirty or divergent managed worktrees when no successful handoff patch was captured, instead of force-removing uncaptured work and its temporary branch.
 - Routed foreground chain scratch files to user-scoped temp storage when `artifactDir` is `"session"` or `"temp"`, preventing `.pi-subagents/` clutter in the working directory. Thanks to @magoz for #729.
 - Retry transient Windows `EPERM`/`EBUSY`/`EACCES` locks when atomically replacing the async runner startup-control handshake file, so a transient antivirus/indexer lock no longer makes the parent believe the runner never reached the ready state. Thanks to @franktheglock for #731.
 - Kept successful background subagent completions quiet so inactive Pi tabs are not marked unread, while failed and paused completions still notify the originating session. Thanks to @killianMei for #728.

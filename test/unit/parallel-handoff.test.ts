@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
 	formatParallelHandoffReference,
 	writeParallelHandoffGroup,
+	writePendingParallelHandoff,
 } from "../../src/runs/shared/parallel-handoff.ts";
 import type { ParallelHandoffManifest } from "../../src/shared/types.ts";
 import type { WorktreeCleanupReport, WorktreeDiff, WorktreeSetup } from "../../src/runs/shared/worktree.ts";
@@ -46,6 +47,35 @@ function cleanup(state: "complete" | "partial" = "complete"): WorktreeCleanupRep
 }
 
 describe("parallel handoff", () => {
+	it("journals worktree ownership before child results exist", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-pending-"));
+		try {
+			const manifestPath = path.join(dir, "handoff.json");
+			const reference = writePendingParallelHandoff({
+				manifestPath,
+				runId: "run-pending",
+				mode: "parallel",
+				source: "foreground",
+				cwd: "/repo",
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: {
+					...setup("/repo", "base-1"),
+					worktrees: [{ path: "/tmp/worktree-0", agentCwd: "/tmp/worktree-0", branch: "branch-0", index: 0, nodeModulesLinked: false, syntheticPaths: [] }],
+				},
+			});
+
+			assert.equal(reference.childCount, 0);
+			assert.equal(reference.cleanupState, "partial");
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
+			assert.equal(manifest.groups[0]?.cleanup.tasks[0]?.path, "/tmp/worktree-0");
+			assert.equal(manifest.groups[0]?.cleanup.tasks[0]?.preserved, true);
+			assert.match(manifest.groups[0]?.cleanup.tasks[0]?.reason ?? "", /cleanup pending/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("writes and aggregates versioned worktree handoff groups", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parallel-handoff-"));
 		try {

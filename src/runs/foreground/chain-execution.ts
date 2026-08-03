@@ -44,7 +44,7 @@ import {
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
-import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
+import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
 	cleanupWorktrees,
@@ -228,30 +228,32 @@ function finalizeParallelWorktreeHandoff(input: {
 	results: SingleResult[];
 }): { output: string; reference?: NonNullable<Details["parallelHandoff"]> } {
 	const diffs = diffWorktrees(input.worktreeSetup, input.agents, path.join(input.artifactsDir, "worktree-diffs", input.runId, `step-${input.stepIndex}`));
-	const cleanup = cleanupWorktrees(input.worktreeSetup);
 	const diffSummary = formatWorktreeDiffSummary(diffs);
+	const manifestPath = parallelHandoffPath(input.artifactsDir, input.runId);
+	const handoff = {
+		manifestPath,
+		runId: input.runId,
+		mode: "chain" as const,
+		source: "foreground" as const,
+		cwd: input.cwd,
+		stepIndex: input.stepIndex,
+		flatStartIndex: input.flatStartIndex,
+		setup: input.worktreeSetup,
+		diffs,
+		results: input.results.map((result) => ({
+			agent: result.agent,
+			status: result.stopped ? "stopped" as const : result.detached ? "detached" as const : result.interrupted ? "paused" as const : result.exitCode === 0 ? "completed" as const : "failed" as const,
+			summary: getSingleResultOutput(result) || result.error || "(no output)",
+			...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
+			...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
+			...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
+			...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
+		})),
+	};
 	try {
-		const reference = writeParallelHandoffGroup({
-			manifestPath: parallelHandoffPath(input.artifactsDir, input.runId),
-			runId: input.runId,
-			mode: "chain",
-			source: "foreground",
-			cwd: input.cwd,
-			stepIndex: input.stepIndex,
-			flatStartIndex: input.flatStartIndex,
-			setup: input.worktreeSetup,
-			diffs,
-			cleanup,
-			results: input.results.map((result) => ({
-				agent: result.agent,
-				status: result.stopped ? "stopped" : result.detached ? "detached" : result.interrupted ? "paused" : result.exitCode === 0 ? "completed" : "failed",
-				summary: getSingleResultOutput(result) || result.error || "(no output)",
-				...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
-				...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
-				...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
-				...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
-			})),
-		});
+		writeParallelHandoffGroup(handoff);
+		const cleanup = cleanupWorktrees(input.worktreeSetup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath });
+		const reference = writeParallelHandoffGroup({ ...handoff, cleanup });
 		const suffix = [diffSummary, formatParallelHandoffReference(reference)].filter(Boolean).join("\n\n");
 		return { output: suffix ? `${input.output}\n\n${suffix}` : input.output, reference };
 	} catch (error) {
@@ -788,6 +790,18 @@ ${step.message}` : ""}` }],
 			}
 
 			try {
+				if (worktreeSetup) {
+					writePendingParallelHandoff({
+						manifestPath: parallelHandoffPath(artifactsDir, runId),
+						runId,
+						mode: "chain",
+						source: "foreground",
+						cwd: parallelCwd,
+						stepIndex,
+						flatStartIndex: globalTaskIndex,
+						setup: worktreeSetup,
+					});
+				}
 				const agentNames = step.parallel.map((task) => task.agent);
 				const parallelBehaviors = resolveParallelBehaviors(step.parallel, agents, stepIndex, chainSkills)
 					.map((behavior, taskIndex) => suppressProgressForReadOnlyTask(behavior, parallelTemplates[taskIndex] ?? step.parallel[taskIndex]?.task, originalTask));

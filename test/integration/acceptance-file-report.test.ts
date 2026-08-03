@@ -313,7 +313,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 
 			assert.equal(result.acceptance?.status, "rejected");
 			assert.equal(result.exitCode, 1);
-			assert.match(result.error ?? "", /Empty or unterminated acceptance-report fence.*configured output/);
+			assert.match(result.error ?? "", /Failed to parse acceptance-report: Expected property name.*configured output/);
 		});
 	});
 

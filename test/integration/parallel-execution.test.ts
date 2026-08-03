@@ -297,7 +297,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(handoff.groups[0]!.cleanup.tasks[0]!.path), false);
 	});
 
-	it("keeps worktree parallel runs successful when handoff manifest writing fails", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+	it("aborts and cleans up before child execution when the ownership journal cannot be written", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		git(["init"]);
 		git(["config", "user.email", "test@example.com"]);
 		git(["config", "user.name", "Test User"]);
@@ -326,10 +326,12 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				ctx,
 			);
 
-			assert.equal(result.isError, undefined);
+			assert.equal(result.isError, true);
 			assert.equal(result.details?.parallelHandoff, undefined);
-			assert.match(result.content[0]?.text ?? "", /Parallel handoff unavailable:/);
+			assert.match(result.content[0]?.text ?? "", /handoff|not a directory|EEXIST/i);
+			assert.equal(mockPi.callCount(), 0);
 			assert.doesNotMatch(git(["worktree", "list", "--porcelain"]), /pi-parallel-/);
+			assert.equal(git(["branch", "--list", "pi-parallel-*"]), "");
 		} finally {
 			fs.rmSync(sessionDir, { recursive: true, force: true });
 		}

@@ -15,6 +15,7 @@ import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { readMissionBinding } from "../../missions/lifecycle.ts";
 
 interface RunStatusParams {
 	action?: "status";
@@ -366,9 +367,16 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const steeringText = formatSteeringSummary(status);
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+			let missionId: string | undefined;
+			try {
+				missionId = readMissionBinding(asyncDir)?.missionId;
+			} catch (error) {
+				nestedWarning = `${nestedWarning ? `${nestedWarning}; ` : ""}Mission binding unavailable: ${error instanceof Error ? error.message : String(error)}`;
+			}
 
 			const lines = [
 				`Run: ${status.runId}`,
+				missionId ? `Mission: ${missionId}` : undefined,
 				`State: ${status.state}`,
 				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
 				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,

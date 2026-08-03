@@ -11,7 +11,7 @@ import { readNestedControlRequests, resolveNestedRouteFromEnv, writeNestedContro
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { SubagentParams } from "./schemas.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { type Details, type SubagentState } from "../shared/types.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {
@@ -146,7 +146,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		pi,
 		state,
 		config,
-		asyncByDefault: config.asyncByDefault === true,
+		asyncByDefault: resolveAsyncByDefault(config),
 		waitToolEnabled: resolveWaitToolConfig(config.waitTool).enabled,
 		tempArtifactsDir: getArtifactsDir(null),
 		getSubagentSessionRoot,

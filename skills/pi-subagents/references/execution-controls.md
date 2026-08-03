@@ -151,7 +151,7 @@ const run = subagent({
 // Continue local inspection, then later call status with the returned id.
 ```
 
-While children run, the persistent FleetView and the collapsed foreground tool-result card show live per-child detail: resolved model and thinking level, `[fresh]`/`[fork]` context, tool/token/elapsed counters, and current activity. The collapsed running card also prints the configured expand-key hint ("Press … for live detail"); expanding it shows nested children, recent tools, and recent output. Model badges appear once the child's model resolves at first attempt start. `/subagents-fleet` opens the live fleet inspector, which also has per-child controls (`s` steer, `D` stop with confirmation).
+While children run, the persistent FleetView and the collapsed foreground tool-result card show live per-child detail: resolved model and thinking level, `[fresh]`/`[fork]` context, tool/token/elapsed counters, and current activity. The collapsed running card also prints the configured expand-key hint ("Press … for live detail"); expanding it shows nested children, recent tools, and recent output. Model badges appear once the child's model resolves at first attempt start. `/subagents-fleet` opens the live fleet inspector, which also has per-child controls (`s` steer, `D` stop with confirmation). When optional Herdr 0.7.5+ is available, `H` opens a raw inspector dashboard for the selected active async child; this mirrors artifacts rather than attaching to the headless child. Use it for confusing or long-running active async work when the human wants a dedicated visual pane or FleetView is insufficient, not for routine headless runs.
 
 Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
@@ -315,8 +315,35 @@ subagent({
 })
 ```
 
-Tool calls launch directly by default. Set `clarify: true` on single, parallel, or chain runs when you want the clarify UI. Clarify edits affect only the next run; use management actions, settings, or markdown files for persistent changes.
-For programmatic background launches, use `async: true`. `clarify: true` keeps the run foreground for the clarify UI.
+Ordinary tool calls launch in the background by default. Set `async: false` when the current turn needs a foreground result, or `clarify: true` when you want the clarify UI; clarify always stays foreground. Clarify edits affect only the next run; use management actions, settings, or markdown files for persistent changes.
+
+## Missions and cross-project routing
+
+Missions are the durable orchestration layer. Use this noun map:
+
+- **Project/codebase** — where work happens.
+- **Mission** — why delegated work exists and how to recover it later.
+- **Run** — one actual subagent execution.
+- **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
+
+Ordinary launches with a task create a mission by default, so substantial delegated work has a persisted goal, status, run links, decisions, artifacts, and delivery receipts that survive compaction or a new parent chat. Automatic persistence failures leave the run intact and set `details.missionWarning`; explicit `missionId` or `mission` remains strict before launch. Human receipts end with a mission id/status line, while structured JSON text remains untouched and `details.missionId` is authoritative. Pass `missionId` to attach an existing mission, use `mission: { title, goal?, labels? }` to control the auto-created record, pass `mission: false` for intentionally ephemeral work, or set `missions.enabled: false` to opt out globally.
+
+Use `mission.update` while work runs to record decisions, artifacts, labels, summaries, or delivery receipts. A receipt records a pull request, CI, deployment, or release link with a concise status; it does not authorize or automate merge, CI polling, or deployment. Record open product, architecture, or safety decisions there and escalate them upward; do not let a child decide silently. Use `mission.attach-run` only for runs launched outside the normal mission-backed path, and use `mission.close` with a terminal status and concise summary when the mission is done.
+
+After compaction, restart, or confusing history, recover from durable state first: `mission.list` in the project, `mission.list` with `missionScope: "global"` for the user-local cross-project pointer index, then `mission.show` for the relevant mission. `mission.show` refreshes linked async status when available and returns warnings instead of hiding the mission if a linked status file is temporarily unreadable. Use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions. Project mission JSON remains authoritative over chat history.
+
+Routing rule:
+- Same project: ordinary mission-backed subagents.
+- Different project, small/bounded task: ordinary subagent with explicit `cwd`.
+- Different project, substantial or long-running work: a project-owning orchestrator session rooted there, with a narrow mission and return contract. Do not model it as ordinary child nesting. Phase 1 does not launch this session automatically, and the Herdr inspector is not this orchestrator.
+
+```typescript
+subagent({ action: "mission.create", mission: { title: "Ship auth refresh", goal: "Implement and validate refresh handling" } })
+subagent({ agent: "worker", task: "Implement the approved plan", missionId: "<mission-id>" })
+subagent({ agent: "scout", task: "Quickly answer whether this file exists", mission: false })
+subagent({ action: "mission.list", missionScope: "global" })
+subagent({ action: "mission.close", missionId: "<mission-id>", missionStatus: "completed", summary: "Auth refresh shipped and tests pass." })
+```
 
 ## Worktree Isolation
 
@@ -339,11 +366,13 @@ write workflows. On completion, use the versioned aggregate handoff at
 `parallelHandoff.path` from foreground details or async status/results instead of scraping the combined
 text. Its versioned manifest records child status and output references, full
 patch paths and stats, and whether each temporary worktree and branch was
-removed. If you want one writer thread and several advisory agents, prefer a
+removed. The manifest is journaled immediately after managed worktree setup, before children run, so abrupt exits retain owned paths and branches for recovery. Dirty or divergent work without a successfully captured patch is preserved with a partial-cleanup warning. Permanently discard recorded preserved work with `subagent({ action: "worktree.discard", handoffPath: "<parallelHandoff.path>" })`; authority defaults to interactive confirmation and refuses headlessly, and partial results print manual Git recovery commands. If you want one writer thread and several advisory agents, prefer a
 single-writer pattern instead.
 
 Git worktrees start from tracked files, so ignored or untracked build state
-such as `node_modules` may be absent. `pi-subagents` attempts to symlink the
+such as `node_modules` may be absent. The clean-check ignores pi-subagents'
+own `.pi-subagents/` runtime state, including default mission records, but still
+rejects ordinary source/config changes. `pi-subagents` attempts to symlink the
 root checkout's `node_modules` into each managed worktree when it exists, but
 agents should still treat dependency setup as an explicit bootstrap step before
 running tests, typecheck, or builds. If module resolution fails in a fresh

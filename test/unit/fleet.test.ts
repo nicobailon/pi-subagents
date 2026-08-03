@@ -612,6 +612,40 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("opens the selected async child in a Herdr inspector", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-herdr-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-herdr" });
+			const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				stateForTest(),
+				() => {},
+				{
+					asyncDirRoot: root,
+					resultsDir: path.join(root, "results"),
+					refreshMs: 60_000,
+					actions: {
+						async steer() { return { text: "unused" }; },
+						stop() { return { text: "unused" }; },
+						async inspect(input) { calls.push(input); return { text: "Inspector opened." }; },
+					},
+				},
+			);
+			try {
+				component.handleInput("H");
+				await new Promise((resolve) => setImmediate(resolve));
+				assert.deepEqual(calls, [{ runId: "async-herdr", asyncDir, index: 0 }]);
+				assert.ok(component.render(100).some((line) => line.includes("Inspector opened.")));
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("confirms stop for the selected async child before calling the action", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-stop-"));
 		try {

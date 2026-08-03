@@ -360,6 +360,16 @@ rows = [
 
 The bridge uses Herdr's existing `herdr:blocked` sibling event when an async child needs attention. It also emits `herdr:busy` while async work remains. Herdr versions that support that sibling event keep the pane's semantic state `working`; older versions ignore it safely and still display the metadata label while the Pi integration remains the lifecycle authority.
 
+Herdr 0.7.5+ can also open an on-demand inspector for an existing async run:
+
+```ts
+subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
+subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
+```
+
+The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run. Herdr remains optional, ordinary launches stay headless, and missing/older Herdr versions affect only inspector actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+
 You can also ask naturally:
 
 ```text
@@ -686,7 +696,7 @@ Inline `[...]` values must not contain spaces or commas — keep `label`/`phase`
 
 ### Background and forked runs
 
-Add `--bg` to run in the background:
+Subagent launches run in the background by default. `--bg` remains an explicit no-op shorthand when clarity is useful:
 
 ```text
 /run scout "audit the codebase" --bg
@@ -719,7 +729,7 @@ The `oracle`/`advisor` and `worker` builtins are designed for an explicit decisi
 
 ## Clarify and launch UI
 
-Tool calls launch directly by default. Set `clarify: true` on single, parallel, or chain runs when you want to preview and edit the workflow before it runs; slash commands launch directly.
+Tool calls start background work by default. Set `async: false` when the current turn needs a foreground result, or `clarify: true` on single, parallel, or chain runs when you want to preview and edit the workflow before it runs; clarify stays foreground.
 
 Common clarify keys:
 
@@ -1451,7 +1461,7 @@ Agent definitions are not loaded into context by default. Management actions let
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent name or alias for single mode, or target for management actions. Execution records use the canonical agent name. |
 | `task` | string | - | Task string for single mode. |
-| `action` | string | - | `list`, `get`, `create`, `update`, `delete`, `status`, `interrupt`, `stop`, `resume`, `steer`, `append-step`, `approve-checkpoint`, `reject-checkpoint`, or `doctor`. |
+| `action` | string | - | Agent, mission (`mission.create/list/show/update/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or chain config for create/update. |
 | `output` | `string \| false` | agent default | Override single-agent output file. |
@@ -1466,6 +1476,10 @@ Agent definitions are not loaded into context by default. Management actions let
 | `chain` | array | - | Sequential, checkpoint, static parallel, and dynamic fanout chain steps. Steps and chain parallel tasks support `phase`, `label`, `as`, `outputSchema`, `acceptance`, `agentContract`, and v1-only `gateOn` in addition to the usual execution fields. Dynamic fanout uses `expand`, one child `parallel` template, and `collect`. With `action: "append-step"`, pass exactly one step to append to a running async chain. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every child. When omitted, each agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, `oracle`, and `advisor` default to `fork`. |
 | `chainDir` | string | follows `artifactDir` | Persistent directory for chain artifacts. Relative chain `output`, `reads`, and `progress` paths live under this directory. When omitted, `artifactDir: "project"` uses `<cwd>/.pi-subagents/chain-runs/`; `"session"` and `"temp"` use user-scoped temp storage. |
+| `missionId` | string | - | Attach a single, parallel, or chain launch to an existing project mission. |
+| `mission` | object/false | - | Create-and-attach shortcut: `{ title, goal?, labels? }`; pass `false` for an intentionally ephemeral launch with no mission record. Explicit mission persistence failures are strict. |
+| `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
+| `focus` | boolean | true | Focus the newly split pane for `action: "inspector.open"`; not a standalone action. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
@@ -1529,6 +1543,32 @@ subagent({ action: "doctor" })
 
 `append-step` accepts exactly one sequential, checkpoint, static parallel, or dynamic fanout chain step for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish; completed, failed, rejected, paused, foreground, single, and top-level parallel runs reject appends.
 
+## Durable missions
+
+Missions are durable wrappers around runs. The noun map is:
+
+- **Project/codebase** — where work happens.
+- **Mission** — why delegated work exists and how to recover it later.
+- **Run** — one actual subagent execution.
+- **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
+
+Ordinary task launches create a mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking goals, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Automatic persistence failures do not block the run and are reported as `details.missionWarning`; explicit `missionId` and `mission` requests remain strict before launch. Human receipts end with `Mission: <id> (<status>)`, while JSON/structured output text stays unchanged and `details.missionId` is authoritative. Pass `mission: false` for an intentionally ephemeral launch that should not leave a durable mission record. Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.
+
+```ts
+const created = subagent({
+  action: "mission.create",
+  mission: { title: "Ship auth refresh", goal: "Implement and validate token refresh" }
+})
+subagent({ agent: "worker", task: "Implement the approved auth refresh plan", missionId: "<mission-id>" })
+
+// Or create and attach in one launch
+subagent({ agent: "worker", task: "Implement the approved plan", mission: { title: "Ship auth refresh" } })
+```
+
+Use `mission.list`, `mission.show`, `mission.update`, `mission.attach-run`, and `mission.close` for management. Use `mission.update` to record decisions, artifacts, labels, summaries, and delivery receipts while work runs; receipts are durable links for pull requests, CI, deployments, or releases, each with `kind`, `status`, `title`, `url`, and optional `description`. They record delivery state only; pi-subagents does not merge, poll CI, or deploy. Use `mission.close` with a terminal status and summary when a mission is done. After compaction or restart, resume from `mission.list`/`mission.show` first: `mission.show` refreshes linked async status where available, then use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions. `mission.list` with `missionScope: "global"` reads the user-local pointer index under the Pi agent directory; project records remain the source of truth, and missing records are reported as stale rather than hiding other projects.
+
+For cross-project work, keep same-project tasks on ordinary subagents. Use an explicit `cwd` for small bounded work in another project. Route substantial or long-running work to a project-owning orchestrator session rooted in that repository, and give it a narrow mission/result contract; Phase 1 records the routing metadata but does not launch that pane/session automatically.
+
 ## Worktree isolation
 
 Parallel agents can clobber each other if they edit the same checkout. `worktree: true` gives each parallel child its own git worktree branched from `HEAD`.
@@ -1557,11 +1597,13 @@ Requirements:
 - task-level `cwd` overrides must be omitted or match the shared cwd
 - configured `worktreeSetupHook` must return valid JSON before timeout
 
-Git worktrees start from tracked files, so ignored dependency state may be absent. `pi-subagents` attempts the `node_modules` symlink above, but if module resolution fails in a fresh worktree, first confirm dependencies were linked, installed, or provisioned by `worktreeSetupHook` before treating it as a code failure.
+Git worktrees start from tracked files, so ignored dependency state may be absent. The clean-check ignores pi-subagents' own `.pi-subagents/` runtime state, including default mission records, but still rejects ordinary source/config changes. `pi-subagents` attempts the `node_modules` symlink above, but if module resolution fails in a fresh worktree, first confirm dependencies were linked, installed, or provisioned by `worktreeSetupHook` before treating it as a code failure.
 
 By default, worktrees are created under the system temp directory. Set `worktreeBaseDir` in config, or `PI_SUBAGENTS_WORKTREE_DIR` when config is unset, to put them under a stable trusted directory. Missing base directories are created automatically.
 
-After a worktree parallel step completes, per-agent diff stats are appended to the output and full patch files are written to artifacts. The runtime also writes a versioned aggregate handoff manifest: foreground runs use the artifact directory's `handoffs/<run-id>.json`, while async runs use `<async-dir>/handoff.json`. The manifest records each child's terminal status, summary, output/session/structured-output references, patch stats and path, and whether its worktree and temporary branch were actually removed. Foreground `details`, async `status.json` and result files, status output, intercom delivery, and completion notifications expose the manifest path. Worktrees and temp branches still receive best-effort fallback cleanup if handoff finalization cannot run.
+After a worktree parallel step completes, per-agent diff stats are appended to the output and full patch files are written to artifacts. The runtime also writes a versioned aggregate handoff manifest: foreground runs use the artifact directory's `handoffs/<run-id>.json`, while async runs use `<async-dir>/handoff.json`. The manifest records each child's terminal status, summary, output/session/structured-output references, patch stats and path, and whether its worktree and temporary branch were actually removed. Foreground `details`, async `status.json` and result files, status output, intercom delivery, and completion notifications expose the manifest path.
+
+Cleanup preserves a worktree and temporary branch when Git reports dirty or divergent work that is not represented by a successfully captured patch. The handoff manifest is written immediately after managed worktree setup, before children run, so an abrupt process exit still leaves owned paths and branches recoverable through `worktree.discard`. To permanently discard every preserved entry recorded in a handoff, call `subagent({ action: "worktree.discard", handoffPath: "<parallelHandoff.path>" })`. The default authority policy asks for interactive confirmation and refuses headlessly; `auto` and `forbid` are honored. If cleanup remains partial, the result prints exact `git worktree remove --force` and `git branch -D` recovery commands.
 
 ## Configuration
 
@@ -1580,10 +1622,10 @@ Controls the parent-facing `subagent` tool description registered at startup. `f
 ### `asyncByDefault`
 
 ```json
-{ "asyncByDefault": true }
+{ "asyncByDefault": false }
 ```
 
-Makes top-level calls use background execution when the request does not explicitly set `async`. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
+Ordinary top-level calls use background execution when the request omits `async`. Set `asyncByDefault` to `false` to restore foreground-by-default behavior. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled; `clarify: true` remains foreground for its UI.
 
 ### `fleetView`
 
@@ -1748,6 +1790,38 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 ```
 
 `syntheticPaths` must be relative to the worktree root. They are removed before diff capture so helper files do not pollute patches. Tracked files are never excluded; marking a tracked path as synthetic fails setup. Default timeout is `30000` ms.
+
+### `missions`
+
+```json
+{
+  "missions": {
+    "enabled": true,
+    "directory": ".pi-subagents/missions",
+    "globalIndex": true,
+    "retainTerminal": 200
+  }
+}
+```
+
+Automatic missions are enabled by default for ordinary launches with a task. Use per-launch `mission: false` for intentionally ephemeral work, or set `enabled: false` to disable automatic creation globally; explicit mission actions and `missionId`/`mission` launch fields still work. `directory` may be absolute, `~/...`, or project-relative. `retainTerminal` is a positive count (default `200`); pruning removes only the oldest completed, failed, or cancelled records and their pointers, never planned, active, waiting, needs-decision, or corrupt records. The user-global index contains pointers only; missing-record pointers self-heal when globally listed. Set `globalIndex: false` to disable writes or `globalIndexDir` to redirect it.
+
+### `authorityPolicy`
+
+```json
+{
+  "authorityPolicy": {
+    "discardWorktree": "confirm",
+    "destructiveCleanup": "confirm",
+    "spawnBudgetGrant": "confirm",
+    "scheduleCreate": "auto",
+    "stopRun": "auto",
+    "steerRun": "auto"
+  }
+}
+```
+
+Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is intentionally a small action map, not a generic policy language. Confirm-required control actions fail closed without an interactive UI.
 
 ### `artifactDir`
 

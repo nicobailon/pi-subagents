@@ -8,8 +8,8 @@ const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents or chains.
-• Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for list/get/models/create/update/delete/status/grant-spawn-budget/interrupt/stop/resume/steer/append-step/approve-checkpoint/reject-checkpoint/doctor.
-• Async/background runs: launch with async:true only when work can proceed independently. Do not sleep or poll status just to wait. In an interactive session, normally return control and let Pi wake you; do not call subagent_wait merely to wait. Override that default and call subagent_wait when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill must finish in one turn. Headless sessions auto-drain current-session work at agent_end; use subagent_wait when this turn must receive results before it ends.
+• Keep execution and management separate: omit action for SINGLE/PARALLEL/CHAIN execution; use action only for management/control, including mission.create/list/show/update/attach-run/close.
+• Async/background runs are the default for ordinary launches. Use async:false only when a blocking foreground result is needed; clarify:true also stays foreground. Do not sleep or poll status just to wait. In an interactive session, normally return control and let Pi wake you; do not call subagent_wait merely to wait. Override that default and call subagent_wait when the current request is run-to-completion — for example, the user asked you to report results back before continuing or a skill must finish in one turn. Headless sessions auto-drain current-session work at agent_end; use subagent_wait when this turn must receive results before it ends.
 • Child-safety boundary: ordinary child subagents are not orchestrators and must not run subagents. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Writing/review safety: keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers/validators for independent review, then have the parent synthesize and apply fixes as the sole writer unless an isolated worktree was intentionally requested.
 • Artifacts/status essentials: chain outputs live under {chain_dir}; async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Include output paths and residual risks when reporting results.`;
@@ -22,6 +22,7 @@ EXECUTION (use exactly ONE mode):
 • CHAIN: { chain: [{agent:"agent-a"}, {checkpoint:"review"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional approval checkpoints and parallel fan-out
 • PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
 • Optional context: { context: "fresh" | "fork" } (explicit value overrides every child; when omitted, each requested agent uses its own defaultContext, otherwise "fresh"; inspect agent defaults via { action: "list" })
+• Durable mission attachment is automatic for ordinary task launches by default; pass missionId to attach an existing mission, mission:{title,goal?,labels?} to override the auto-created record, mission:false for intentionally ephemeral work, or set config.missions.enabled=false to disable auto-create.
 • Fork thinking: model strings accept a thinking suffix (provider/model:off|minimal|low|medium|high|xhigh|max). Forking over a parent transcript that carries signed Anthropic thinking blocks forces thinking off only when a child's effective primary or fallback model resolves to the Anthropic provider or anthropic-messages API; unresolved models are treated conservatively. The result notes affected children, including on failures. Use fresh context when an Anthropic child needs thinking.
 • Optional timeout: { timeoutMs } or { maxRuntimeMs } sets a run-level max runtime for foreground and async/background runs; foreground defaults to 30 minutes only when neither value nor an agent timeout is provided
 • Acceptance: omit acceptance for reviewer/read-only calls. Evidence levels end at verified. Use acceptance.review.required to require independent review of a writer result. Never request acceptance:"reviewed"; reviewed is achieved only after an independent reviewer result.
@@ -51,7 +52,10 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "disable", agent: "reviewer", agentScope?: "user" | "project" } - hide any agent from runtime discovery via a reversible settings override (default scope: user)
 • { action: "enable", agent: "reviewer", agentScope?: "user" | "project" } - remove a disabled override and restore discovery
 • { action: "reset", agent: "reviewer", agentScope?: "user" | "project" } - delete the scope's custom agent file and/or settings override, restoring the bundled default
-• { action: "grant-spawn-budget", additional: 10 } - add bounded capacity from the root interactive parent after native user confirmation; grants are rejected while children are active and cumulative grants cannot exceed the original configured cap
+• { action: "grant-spawn-budget", additional: 10 } - add bounded capacity from the root interactive parent after authority resolution; grants are rejected while children are active and cumulative grants cannot exceed the original configured cap
+• Mission actions: mission.create/list/show/update/attach-run/close. Project records live under .pi-subagents/missions by default; mission.show is the resume entry point, and mission.list with missionScope:"global" reads the user-global pointer index.
+• { action: "worktree.discard", handoffPath: "<parallelHandoff.path>" } - permanently remove preserved managed worktrees and temporary branches after authority resolution.
+• Herdr drill-in (optional, Herdr 0.7.5+): inspector.open/status/close target async lifecycle artifacts; focus is an inspector.open option; ordinary subagents remain headless.
 • Use chainName for chain operations; packaged chains also use dotted runtime names
 
 CONTROL:
@@ -88,13 +92,13 @@ EXECUTE:
 • If list shows proactive skill subagent suggestions, use a small fresh-context fanout only when the task is broad enough.
 
 MANAGE / CONTROL:
-• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
+• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, mission.create/list/show/update/attach-run/close, worktree.discard, inspector.open/status/close, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
 • Agent acceptanceRole (read-only or writer) affects inferred acceptance only, never tools. Explicit task intent wins; omission keeps name heuristics. Update with false or an empty string to clear it.
 • Async control actions: status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint. Use stop with an id for current-session top-level async runs. Use status view:"fleet" for active-run overview, view:"transcript" to tail child output, steer for acknowledged top-level live async guidance, and resume for paused/completed/failed revival or a routed nested follow-up. Stopped runs are non-resumable. Steering delivery means Pi accepted the correlated user input, not model compliance; use index for a specific child.
 • Opt-in schedule actions: schedule, schedule-list, schedule-status, schedule-cancel. Schedule only explicit delayed runs the user asked for.
 
 ASYNC / WAIT:
-• async:true detaches background work. Do not sleep or poll just to wait. In an interactive session, normally return control to the user and let Pi wake you on completion; do not call subagent_wait merely to wait. Override that default with subagent_wait only for run-to-completion requests (the user asked for results back this turn, or a skill must finish in one turn). Non-interactive runs (pi -p) auto-drain current-session work at agent_end; call subagent_wait when this turn must receive results before it ends. Otherwise continue useful work or respond.
+• Omitted async detaches background work; use async:false for a foreground result. Do not sleep or poll just to wait. In an interactive session, normally return control to the user and let Pi wake you on completion; do not call subagent_wait merely to wait. Override that default with subagent_wait only for run-to-completion requests (the user asked for results back this turn, or a skill must finish in one turn). Non-interactive runs (pi -p) auto-drain current-session work at agent_end; call subagent_wait when this turn must receive results before it ends. Otherwise continue useful work or respond.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, session files, and { action:"status", id:"..." }.
 
 SAFETY:

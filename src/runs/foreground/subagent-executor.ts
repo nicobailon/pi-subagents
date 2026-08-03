@@ -61,7 +61,7 @@ import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOut
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
-import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
+import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -83,6 +83,10 @@ import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
+import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
+import { attachMissionToLaunchResult, prepareMissionLaunch, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { resolveAuthorityDecision } from "../../policy/authority.ts";
+import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -134,7 +138,7 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "worktree.discard"]);
 interface TaskParam {
 	agent: string;
 	task: string;
@@ -157,6 +161,7 @@ export interface SubagentParamsLike {
 	id?: string;
 	runId?: string;
 	dir?: string;
+	handoffPath?: string;
 	index?: number;
 	view?: "fleet" | "transcript";
 	lines?: number;
@@ -190,6 +195,7 @@ export interface SubagentParamsLike {
 	thinking?: string | false;
 	scope?: string;
 	target?: string;
+	focus?: boolean;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: "inline" | "file-only";
@@ -201,6 +207,14 @@ export interface SubagentParamsLike {
 	schedule?: string;
 	scheduleName?: string;
 	additional?: number;
+	missionId?: string;
+	mission?: unknown;
+	missionUpdate?: unknown;
+	missionStatus?: string;
+	missionScope?: string;
+	runMode?: string;
+	runStatus?: string;
+	summary?: string;
 }
 
 function rememberParentModel(state: { currentSessionId?: string | null; lastParentModel?: ParentModel }, sessionId: string | null, model: unknown): ParentModel | undefined {
@@ -2643,39 +2657,41 @@ function finalizeParallelWorktreeHandoff(input: {
 }): { suffix: string; reference?: NonNullable<Details["parallelHandoff"]> } {
 	const diffsDir = path.join(input.artifactsDir, "worktree-diffs", input.runId);
 	const diffs = diffWorktrees(input.worktreeSetup, input.tasks.map((task) => task.agent), diffsDir);
-	const cleanup = cleanupWorktrees(input.worktreeSetup);
 	const diffSummary = formatWorktreeDiffSummary(diffs);
+	const manifestPath = parallelHandoffPath(input.artifactsDir, input.runId);
+	const handoff = {
+		manifestPath,
+		runId: input.runId,
+		mode: "parallel" as const,
+		source: "foreground" as const,
+		cwd: input.cwd,
+		stepIndex: 0,
+		flatStartIndex: 0,
+		setup: input.worktreeSetup,
+		diffs,
+		results: input.results.map((result) => ({
+			agent: result.agent,
+			status: resolveSubagentResultStatus({
+				exitCode: result.exitCode,
+				interrupted: result.interrupted,
+				detached: result.detached,
+				state: result.stopped ? "stopped" : undefined,
+				processSignal: result.processSignal,
+				timedOut: result.timedOut,
+				stopped: result.stopped,
+				turnBudgetExceeded: result.turnBudgetExceeded,
+			}),
+			summary: resultSummaryForIntercom(result),
+			...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
+			...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
+			...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
+			...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
+		})),
+	};
 	try {
-		const reference = writeParallelHandoffGroup({
-			manifestPath: parallelHandoffPath(input.artifactsDir, input.runId),
-			runId: input.runId,
-			mode: "parallel",
-			source: "foreground",
-			cwd: input.cwd,
-			stepIndex: 0,
-			flatStartIndex: 0,
-			setup: input.worktreeSetup,
-			diffs,
-			cleanup,
-			results: input.results.map((result) => ({
-				agent: result.agent,
-				status: resolveSubagentResultStatus({
-					exitCode: result.exitCode,
-					interrupted: result.interrupted,
-					detached: result.detached,
-					state: result.stopped ? "stopped" : undefined,
-					processSignal: result.processSignal,
-					timedOut: result.timedOut,
-					stopped: result.stopped,
-					turnBudgetExceeded: result.turnBudgetExceeded,
-				}),
-				summary: resultSummaryForIntercom(result),
-				...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
-				...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
-				...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
-				...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
-			})),
-		});
+		writeParallelHandoffGroup(handoff);
+		const cleanup = cleanupWorktrees(input.worktreeSetup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath });
+		const reference = writeParallelHandoffGroup({ ...handoff, cleanup });
 		return {
 			suffix: [diffSummary, formatParallelHandoffReference(reference)].filter(Boolean).join("\n\n"),
 			reference,
@@ -3090,6 +3106,18 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 
 	let worktreeFinalized = false;
 	try {
+		if (worktreeSetup) {
+			writePendingParallelHandoff({
+				manifestPath: parallelHandoffPath(artifactsDir, runId),
+				runId,
+				mode: "parallel",
+				source: "foreground",
+				cwd: effectiveCwd,
+				stepIndex: 0,
+				flatStartIndex: 0,
+				setup: worktreeSetup,
+			});
+		}
 		const outputBaseDir = path.join(artifactsDir, "outputs", runId);
 		const duplicateOutputError = findDuplicateParallelOutputPath({
 			tasks,
@@ -3696,6 +3724,73 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			requestParentModel = normalizeParentModel(ctx.model);
 		}
 		if (action) {
+			if (action === "worktree.discard") {
+				if (deps.allowMutatingManagementActions === false) {
+					return { content: [{ type: "text", text: "Action 'worktree.discard' is not available from child-safe subagent fanout mode." }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (!paramsWithResolvedCwd.handoffPath?.trim()) {
+					return { content: [{ type: "text", text: "worktree.discard requires handoffPath from parallelHandoff.path or async status." }], isError: true, details: { mode: "management", results: [] } };
+				}
+				const decision = resolveAuthorityDecision({ action: "discardWorktree", policy: deps.config.authorityPolicy });
+				if (decision === "forbid") {
+					return { content: [{ type: "text", text: "Authority policy forbids worktree discard." }], isError: true, details: { mode: "management", results: [] } };
+				}
+				let confirmed = decision === "auto";
+				if (decision === "confirm") {
+					if (!ctx.hasUI) return { content: [{ type: "text", text: "Authority policy requires user confirmation for worktree discard, but this session has no interactive UI. Preserved worktrees were not changed." }], isError: true, details: { mode: "management", results: [] } };
+					confirmed = await ctx.ui.confirm("Discard preserved subagent worktrees?", `This permanently removes preserved worktrees and temporary branches recorded in:\n${paramsWithResolvedCwd.handoffPath}`);
+				}
+				if (!confirmed) return { content: [{ type: "text", text: "Worktree discard canceled; preserved worktrees were not changed." }], details: { mode: "management", results: [] } };
+				try {
+					const discarded = discardPreservedWorktrees(
+						path.isAbsolute(paramsWithResolvedCwd.handoffPath) ? paramsWithResolvedCwd.handoffPath : path.resolve(requestCwd, paramsWithResolvedCwd.handoffPath),
+						{ kind: decision === "confirm" ? "confirmed" : "policy", ...(deps.config.authorityPolicy ? { policy: deps.config.authorityPolicy } : {}) },
+					);
+					return { content: [{ type: "text", text: discarded.text }], details: { mode: "management", results: [] } };
+				} catch (error) {
+					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+				}
+			}
+			if ((HERDR_INSPECTOR_ACTIONS as readonly string[]).includes(action)) {
+				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+					return { content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }], isError: true, details: { mode: "management", results: [] } };
+				}
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				return handleHerdrInspectorAction(action as (typeof HERDR_INSPECTOR_ACTIONS)[number], paramsWithResolvedCwd, {
+					state: deps.state,
+					cwd: requestCwd,
+					...(deps.config.missions ? { missions: deps.config.missions } : {}),
+					...(deps.config.authorityPolicy ? { authorityPolicy: deps.config.authorityPolicy } : {}),
+					signal,
+				});
+			}
+			if ((MISSION_ACTIONS as readonly string[]).includes(action)) {
+				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+					return {
+						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				const currentSessionId = deps.state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
+				return handleMissionAction(action as (typeof MISSION_ACTIONS)[number], paramsWithResolvedCwd, {
+					cwd: requestCwd,
+					...(deps.config.missions ? { config: deps.config.missions } : {}),
+					...(currentSessionId ? { currentSessionId } : {}),
+				});
+			}
+			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : action === "schedule" ? "scheduleCreate" : undefined;
+			if (policyAction) {
+				const decision = resolveAuthorityDecision({ action: policyAction, policy: deps.config.authorityPolicy });
+				if (decision === "forbid") {
+					return { content: [{ type: "text", text: `Authority policy forbids action '${action}'.` }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (decision === "confirm") {
+					if (!ctx.hasUI) return { content: [{ type: "text", text: `Authority policy requires user confirmation for action '${action}', but this session has no interactive UI.` }], isError: true, details: { mode: "management", results: [] } };
+					const confirmed = await ctx.ui.confirm(`Authorize subagent ${action}?`, `Authority policy requires confirmation before '${action}'.`);
+					if (!confirmed) return { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
+				}
+			}
 			if ((WATCHDOG_TOOL_ACTIONS as readonly string[]).includes(action)) {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 					return {
@@ -3740,7 +3835,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						details: { mode: "management", results: [], spawnBudget: preview.snapshot },
 					};
 				}
-				const confirmed = await ctx.ui.confirm(
+				const authority = resolveAuthorityDecision({ action: "spawnBudgetGrant", policy: deps.config.authorityPolicy });
+				if (authority === "forbid") {
+					return {
+						content: [{ type: "text", text: "Authority policy forbids spawn budget grants." }],
+						isError: true,
+						details: { mode: "management", results: [], spawnBudget: preview.snapshot },
+					};
+				}
+				const confirmed = authority === "auto" || await ctx.ui.confirm(
 					"Grant subagent spawn budget?",
 					`Add ${additional} launches to this logical session?\n\n${formatSpawnBudget(preview.snapshot)}\n\nUsage is not reset. Compaction keeps the same budget; a new parent session starts a fresh one.`,
 				);
@@ -4284,13 +4387,46 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}, contextPolicy.contextSummary))
 			: undefined;
 
+		let missionBinding: MissionLaunchBinding | undefined;
+		let missionWarning: string | undefined;
+		const explicitMission = effectiveParams.missionId !== undefined || effectiveParams.mission !== undefined;
+		try {
+			missionBinding = prepareMissionLaunch({
+				params: effectiveParams,
+				projectRoot: effectiveCwd,
+				...(deps.config.missions ? { config: deps.config.missions } : {}),
+				...(deps.state.currentSessionId ? { ownerSessionId: deps.state.currentSessionId } : {}),
+			});
+		} catch (error) {
+			if (explicitMission) return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
+			missionWarning = `Mission tracking unavailable: ${error instanceof Error ? error.message : String(error)}`;
+		}
+
+		const attachMission = (result: AgentToolResult<Details>): AgentToolResult<Details> => {
+			if (!missionBinding) return missionWarning ? { ...result, details: { ...result.details, missionWarning } } : result;
+			try {
+				return attachMissionToLaunchResult({ binding: missionBinding, result });
+			} catch (error) {
+				const warning = `Mission tracking unavailable after launch: ${error instanceof Error ? error.message : String(error)}`;
+				if (explicitMission) {
+					return {
+						...result,
+						isError: true,
+						content: [...result.content, { type: "text", text: warning }],
+						details: { ...result.details, missionWarning: warning },
+					};
+				}
+				return { ...result, details: { ...result.details, missionWarning: warning } };
+			}
+		};
+
 		const reservation = reserveSpawnBudget(
 			deps.state,
 			deps.config,
 			deps.state.currentSessionId,
 			requestedSpawns,
 		);
-		if (reservation.error) return spawnBudgetErrorResult(reservation.error, foregroundMode);
+		if (reservation.error) return attachMission(spawnBudgetErrorResult(reservation.error, foregroundMode));
 
 		const execData: ExecutionContextData = {
 			params: effectiveParams,
@@ -4416,7 +4552,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let nestedForegroundStarted = false;
 		try {
 			const asyncResult = runAsyncPath(execData, deps);
-			if (asyncResult) return withResolvedContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), contextPolicy.contextSummary);
+			if (asyncResult) return attachMission(withResolvedContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), contextPolicy.contextSummary));
 			if (foregroundControl) {
 				writeNestedForegroundEvent("subagent.nested.started");
 				nestedForegroundStarted = true;
@@ -4424,22 +4560,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (hasChain && effectiveParams.chain) {
 				const result = await runChainPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary);
+				return attachMission(withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary));
 			}
 			if (hasTasks && effectiveParams.tasks) {
 				const result = await runParallelPath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary);
+				return attachMission(withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary));
 			}
 			if (hasSingle) {
 				const result = await runSinglePath(execData, deps);
 				writeNestedForegroundEvent("subagent.nested.completed", result);
-				return withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary);
+				return attachMission(withResolvedContext(withForkThinkingNotes(result, forkThinkingDowngrades), contextPolicy.contextSummary));
 			}
 		} catch (error) {
 			const errorResult = withForkThinkingNotes(toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary), forkThinkingDowngrades);
 			if (nestedForegroundStarted) writeNestedForegroundEvent("subagent.nested.completed", errorResult);
-			return errorResult;
+			return attachMission(errorResult);
 		} finally {
 			if (foregroundControl) {
 				settleForegroundSchedulingOwner(foregroundControl);

@@ -650,6 +650,21 @@ function parseAcceptanceReportBody(body: string): { report?: AcceptanceReport; e
 	return validateAcceptanceReport(parseReportJson(body));
 }
 
+function parseUnterminatedAcceptanceReportFence(output: string): { report?: AcceptanceReport; error?: string } {
+	const opener = /```acceptance[-_]report\b[^\n]*\n/gi.exec(output);
+	if (!opener) return {};
+	const bodyStart = opener.index + opener[0].length;
+	if (output.indexOf("```", bodyStart) !== -1) return {};
+	try {
+		const validation = validateAcceptanceReport(JSON.parse(output.slice(bodyStart).trim()) as unknown);
+		return validation.report
+			? { report: validation.report }
+			: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
+	} catch (error) {
+		return { error: `Failed to parse acceptance-report: ${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
 function parseGenericJsonAcceptanceReportBody(body: string): { report?: AcceptanceReport; error?: string } {
 	const parsed = parseReportJson(body);
 	const normalized = normalizeAcceptanceReportValue(parsed);
@@ -681,6 +696,8 @@ export function parseAcceptanceReport(output: string): { report?: AcceptanceRepo
 	}
 	if (parseErrors.length > 0) return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
 	if (explicitFencePresent) {
+		const recovered = parseUnterminatedAcceptanceReportFence(output);
+		if (recovered.report || recovered.error) return recovered;
 		return { error: "Failed to parse acceptance-report: Empty or unterminated acceptance-report fence." };
 	}
 	for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {

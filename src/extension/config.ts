@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ArtifactDirPreference, ExtensionConfig } from "../shared/types.ts";
+import { validateMissionStoreConfig } from "../missions/store.ts";
+import { validateAuthorityPolicy } from "../policy/authority.ts";
 import { getAgentDir } from "../shared/utils.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
@@ -19,6 +21,8 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
+	validateMissionStoreConfig(config.missions);
+	validateAuthorityPolicy(config.authorityPolicy);
 	return parsed as ExtensionConfig;
 }
 
@@ -32,6 +36,10 @@ export function updateConfig(updater: (config: ExtensionConfig) => ExtensionConf
 	const next = updater(readConfigForUpdate(configPath));
 	saveConfig(next, configPath);
 	return next;
+}
+
+export function resolveAsyncByDefault(config: Pick<ExtensionConfig, "asyncByDefault">): boolean {
+	return config.asyncByDefault !== false;
 }
 
 export function loadConfig(): ExtensionConfig {

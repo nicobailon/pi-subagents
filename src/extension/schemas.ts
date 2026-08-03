@@ -245,6 +245,17 @@ export const ChainItem = Type.Object({
 	additionalProperties: false,
 });
 
+// Runtime mission handlers validate these untrusted nested objects loudly. Keeping
+// their provider schema shallow avoids repeating a full durable-record schema in
+// every tool request.
+const MissionLaunchOverride = Type.Unsafe({
+	anyOf: [
+		{ type: "object", additionalProperties: true },
+		{ type: "boolean", enum: [false] },
+	],
+});
+const MissionUpdateOverride = Type.Unsafe({ type: "object", additionalProperties: true });
+
 const ControlOverrides = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ description: "Enable/disable subagent control attention tracking for this run" })),
 	needsAttentionAfterMs: Type.Optional(Type.Integer({ minimum: 1, description: "No-observed-activity window before a run needs attention" })),
@@ -268,14 +279,15 @@ const SubagentParamsSchema = Type.Object({
 		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for action='status', action='interrupt', action='stop', action='resume', action='steer', action='append-step', action='approve-checkpoint', or action='reject-checkpoint'."
+		description: "Run id or prefix for status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for action='interrupt', action='stop', action='resume', action='steer', action='append-step', action='approve-checkpoint', or action='reject-checkpoint'. Prefer id for new calls."
+		description: "Target run ID for interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."
 	})),
+	handoffPath: Type.Optional(Type.String({ description: "worktree.discard manifest." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
 	view: Type.Optional(Type.String({
 		enum: ["fleet", "transcript"],
@@ -286,10 +298,19 @@ const SubagentParamsSchema = Type.Object({
 	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls; extension RPC steering forces false so callers retain exact child ownership." })),
 	additional: Type.Optional(Type.Integer({ minimum: 1, description: "Positive launches to add with action='grant-spawn-budget'. Root interactive parent with native user confirmation only; total grants cannot exceed the original configured cap." })),
 	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
-	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for action='watchdog.configure'. Defaults to main. Use target='child' with agent for a per-agent child watchdog override." })),
+	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for watchdog actions." })),
+	focus: Type.Optional(Type.Boolean({ description: "inspector.open focus." })),
 	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
 	schedule: Type.Optional(Type.String({ description: "Explicit one-shot schedule for action='schedule'. Only honored when scheduledRuns.enabled is true. Use '+10m' or a future ISO timestamp with timezone; scheduled runs always launch async with fresh context." })),
 	scheduleName: Type.Optional(Type.String({ description: "Optional display name for action='schedule'." })),
+	missionId: Type.Optional(Type.String({ description: "Mission id." })),
+	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission." })),
+	missionUpdate: Type.Optional(Type.Unsafe({ ...MissionUpdateOverride, description: "Mission update: summary, labels, decisions, artifacts, or delivery receipts." })),
+	missionStatus: Type.Optional(Type.String({ description: "Mission status." })),
+	missionScope: Type.Optional(Type.String({ description: "Mission list scope: project (default) or global pointer index." })),
+	runMode: Type.Optional(Type.String({ description: "Attached run mode." })),
+	runStatus: Type.Optional(Type.String({ description: "Attached run status." })),
+	summary: Type.Optional(Type.String({ description: "Mission close summary." })),
 	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
 	chainName: Type.Optional(Type.String({
 		description: "Chain name for get/update/delete management actions"

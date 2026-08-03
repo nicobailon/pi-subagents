@@ -316,13 +316,29 @@ describe("acceptance gates", () => {
 		for (const malformedOutput of [
 			"```acceptance-report\n{bad-json\n```",
 			"```acceptance-report\n```",
-			"```acceptance-report\n{\"criteriaSatisfied\": []}",
+			"```acceptance-report\n{\"changedFiles\": false}",
 			"ACCEPTANCE_REPORT: { not json",
 			"ACCEPTANCE_REPORT: no object",
 		]) {
 			const malformed = parseAcceptanceReport(malformedOutput);
 			assert.equal(malformed.report, undefined);
 			assert.match(malformed.error ?? "", /Failed to parse acceptance-report/, malformedOutput);
+		}
+	});
+
+	it("recovers a valid report from an unterminated explicit fence only", () => {
+		const recovered = parseAcceptanceReport(`done\n\`\`\`acceptance-report\n${JSON.stringify(reportData())}`);
+		assert.deepEqual(recovered.report?.changedFiles, ["src/file.ts"]);
+		assert.equal(recovered.error, undefined);
+
+		for (const invalid of [
+			"```acceptance-report\n{ not json",
+			`\`\`\`acceptance-report\n${JSON.stringify(reportData())}\ntrailing prose`,
+			`\`\`\`acceptance-report\n${JSON.stringify({ changedFiles: false })}`,
+		]) {
+			const parsed = parseAcceptanceReport(invalid);
+			assert.equal(parsed.report, undefined);
+			assert.match(parsed.error ?? "", /Failed to parse acceptance-report/);
 		}
 	});
 
@@ -901,7 +917,7 @@ describe("acceptance gates", () => {
 			const malformedReports = [
 				"```acceptance-report\n{ not json\n```",
 				"```acceptance-report\n```",
-				"```acceptance-report\n{\"criteriaSatisfied\": []}",
+				"```acceptance-report\n{\"changedFiles\": false}",
 				"ACCEPTANCE_REPORT: { not json",
 			];
 

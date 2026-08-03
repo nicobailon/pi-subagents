@@ -6,7 +6,7 @@
  * - Async: Background execution, emits events when done
  *
  * Modes: single (agent + task), parallel (tasks[]), chain (chain[] with {previous})
- * Toggle: async parameter (default: false, configurable via config.json)
+ * Toggle: async parameter (default: true; set asyncByDefault:false in config.json to opt out)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
  *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
@@ -50,8 +50,9 @@ import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_M
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
+import { syncMissionFromAsyncCompletion } from "../missions/lifecycle.ts";
 import {
 	type Details,
 	type SubagentState,
@@ -75,7 +76,7 @@ import {
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
 
-export { loadConfig } from "./config.ts";
+export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
 /**
  * Derive subagent session base directory from parent session file.
@@ -195,7 +196,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const config = loadConfig();
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
-	const asyncByDefault = config.asyncByDefault === true;
+	const asyncByDefault = resolveAsyncByDefault(config);
 	const fleetViewEnabled = config.fleetView !== false;
 	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget === true || (!fleetViewEnabled && config.asyncWidget !== false);
@@ -206,6 +207,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		baseCwd: "",
 		currentSessionId: null,
 		artifactDirPreference: config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
+		...(config.authorityPolicy ? { authorityPolicy: config.authorityPolicy } : {}),
+		...(config.missions ? { missionStoreConfig: config.missions } : {}),
 		parentSessionFile: null,
 		subagentInProgress: false,
 		subagentSpawns: {
@@ -514,6 +517,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
+		try {
+			syncMissionFromAsyncCompletion(payload);
+		} catch (error) {
+			console.error("Failed to update mission from async completion:", error);
+		}
 		fleetStatus?.refresh();
 	};
 	const eventUnsubscribes = [
