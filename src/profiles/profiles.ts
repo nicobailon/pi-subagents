@@ -18,11 +18,15 @@ export type RecommendedRoleTier = "cheap" | "medium" | "strong";
 
 interface ProfileAgentOverride {
 	model?: string;
+	thinking?: string | false;
+	fallbackModels?: string[] | false;
 }
 
 export interface SubagentProfileFile {
 	subagents: {
 		agentOverrides: Record<string, ProfileAgentOverride>;
+		disableBuiltins?: boolean;
+		[key: string]: unknown;
 	};
 }
 
@@ -130,10 +134,23 @@ function validateSubagentProfile(filePath: string, parsed: Record<string, unknow
 		if (!value || typeof value !== "object" || Array.isArray(value)) {
 			throw new Error(`Profile '${filePath}' has invalid override '${name}'; expected an object.`);
 		}
-		const model = (value as Record<string, unknown>).model;
+		const override = value as Record<string, unknown>;
+		const model = override.model;
 		if (model !== undefined && typeof model !== "string") {
 			throw new Error(`Profile '${filePath}' has invalid model for '${name}'; expected a string.`);
 		}
+		const thinking = override.thinking;
+		if (thinking !== undefined && thinking !== false && typeof thinking !== "string") {
+			throw new Error(`Profile '${filePath}' has invalid thinking for '${name}'; expected a string or false.`);
+		}
+		const fallbackModels = override.fallbackModels;
+		if (fallbackModels !== undefined && fallbackModels !== false && (!Array.isArray(fallbackModels) || fallbackModels.some((item) => typeof item !== "string"))) {
+			throw new Error(`Profile '${filePath}' has invalid fallbackModels for '${name}'; expected an array of strings or false.`);
+		}
+	}
+	const disableBuiltins = (subagents as Record<string, unknown>).disableBuiltins;
+	if (disableBuiltins !== undefined && typeof disableBuiltins !== "boolean") {
+		throw new Error(`Profile '${filePath}' has invalid subagents.disableBuiltins; expected a boolean.`);
 	}
 	return parsed as unknown as SubagentProfileFile;
 }
@@ -468,7 +485,16 @@ export function applySubagentProfile(name: string): { filePath: string; settings
 	const { filePath, profile } = readSubagentProfile(name);
 	const settingsPath = getUserSettingsPath();
 	const settings = readSettingsFile(settingsPath);
-	settings.subagents = profile.subagents;
+	const existing = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
+		? settings.subagents as Record<string, unknown>
+		: {};
+	// A profile owns the complete agent mapping, but unrelated subagent settings
+	// (notably disableBuiltins, modelScope, watchdog, etc.) survive profile switches.
+	settings.subagents = {
+		...existing,
+		...profile.subagents,
+		agentOverrides: profile.subagents.agentOverrides,
+	};
 	writeJsonFile(settingsPath, settings);
 	return { filePath, settingsPath };
 }
