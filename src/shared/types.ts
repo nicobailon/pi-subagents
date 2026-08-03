@@ -1715,6 +1715,24 @@ export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
 export const TEMP_ARTIFACTS_DIR = path.join(TEMP_ROOT_DIR, "artifacts");
+
+/**
+ * Mutable container for runtime directory paths. Properties can be reassigned
+ * at runtime (e.g. by `ensureAccessibleDir` when a primary path is blocked by a
+ * persistent Windows EPERM/EACCES — typically corrupted NTFS ACLs after
+ * wake-from-sleep — and it falls back to a pid-scoped path), while the const
+ * binding itself remains read-only, which is ES-module compatible.
+ */
+export const DIRS = {
+	results: RESULTS_DIR,
+	async: ASYNC_DIR,
+	chain: CHAIN_RUNS_DIR,
+	artifacts: TEMP_ARTIFACTS_DIR,
+};
+// Note: RESULTS_DIR/ASYNC_DIR/CHAIN_RUNS_DIR/TEMP_ARTIFACTS_DIR above are
+// static aliases evaluated once at import time and do NOT track DIRS
+// mutations. Prefer DIRS.* wherever a live, potentially fallback-adjusted
+// path is needed.
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_RESULT_TYPE = "subagent-slash-result";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";

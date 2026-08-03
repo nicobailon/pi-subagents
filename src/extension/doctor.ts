@@ -6,9 +6,8 @@ import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared
 import { diagnoseIntercomBridge, type IntercomBridgeDiagnostic } from "../intercom/intercom-bridge.ts";
 import { discoverAvailableSkills, type SkillSource } from "../agents/skills.ts";
 import {
-	ASYNC_DIR,
 	CHAIN_RUNS_DIR,
-	RESULTS_DIR,
+	DIRS,
 	TEMP_ROOT_DIR,
 	type ExtensionConfig,
 	type SubagentState,
@@ -45,8 +44,8 @@ interface DoctorReportInput {
 
 const DEFAULT_PATHS: DoctorPaths = {
 	tempRootDir: TEMP_ROOT_DIR,
-	asyncDir: ASYNC_DIR,
-	resultsDir: RESULTS_DIR,
+	asyncDir: DIRS.async,
+	resultsDir: DIRS.results,
 	chainRunsDir: CHAIN_RUNS_DIR,
 };
 

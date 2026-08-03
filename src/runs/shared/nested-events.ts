@@ -2,8 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-	ASYNC_DIR,
-	RESULTS_DIR,
+	DIRS,
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
@@ -1012,11 +1011,11 @@ export function nestedArtifactEnv(rootRunId: string, parentRunId: string): Recor
 
 export function isTopLevelAsyncDir(asyncDir: string): boolean {
 	const resolved = path.resolve(asyncDir);
-	return containedPath(ASYNC_DIR, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved);
+	return containedPath(DIRS.async, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved);
 }
 
 export function nestedResultsPath(rootRunId: string, id: string): string {
 	assertSafeId("rootRunId", rootRunId);
 	assertSafeId("id", id);
-	return path.join(RESULTS_DIR, "nested", rootRunId, `${id}.json`);
+	return path.join(DIRS.results, "nested", rootRunId, `${id}.json`);
 }

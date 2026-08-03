@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
+import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -381,8 +381,8 @@ function validateResumeSessionFile(runId: string, sessionFile: string): string {
 }
 
 export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncResumeDeps = {}, options: AsyncResumeOptions = {}): AsyncResumeTarget {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const requireSessionFile = options.requireSessionFile ?? true;
 	const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
 	if (!location.asyncDir && !location.resultPath) {

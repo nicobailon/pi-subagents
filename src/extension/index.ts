@@ -55,9 +55,8 @@ import { buildSubagentToolDescription } from "./tool-description.ts";
 import {
 	type Details,
 	type SubagentState,
-	ASYNC_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
-	RESULTS_DIR,
+	DIRS,
 	SLASH_RESULT_TYPE,
 	SLASH_TEXT_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -189,8 +188,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	ensureAccessibleDir(RESULTS_DIR);
-	ensureAccessibleDir(ASYNC_DIR);
+	DIRS.results = ensureAccessibleDir(DIRS.results);
+	DIRS.async = ensureAccessibleDir(DIRS.async);
 	cleanupOldChainDirs();
 
 	const config = loadConfig();
@@ -246,7 +245,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
-		RESULTS_DIR,
+		DIRS.results,
 		10 * 60 * 1000,
 		{
 			notifier: completionNotifier,
@@ -270,7 +269,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
-	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR, {
+	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
 	});
 	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;

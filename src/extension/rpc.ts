@@ -11,8 +11,7 @@ import {
 	type AsyncJobStep,
 	type Details,
 	type SubagentState,
-	ASYNC_DIR,
-	RESULTS_DIR,
+	DIRS,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_PROCESS_TERMINAL_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -468,8 +467,8 @@ function stopAsyncRun(
 ): { runId: string; asyncDir: string; previousState: string; state: "stopping"; message: string } {
 	const target = normalizeTargetParams(params, "stop");
 	assertSubagentParams({ action: "status", ...target }, "RPC stop target params");
-	const asyncDirRoot = options.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = options.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = options.asyncDirRoot ?? DIRS.async;
+	const resultsDir = options.resultsDir ?? DIRS.results;
 	let location;
 	try {
 		location = resolveAsyncRunLocation(target, asyncDirRoot, resultsDir);
