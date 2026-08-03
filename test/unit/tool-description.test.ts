@@ -111,6 +111,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /view:"transcript"/);
 		assert.match(description, /steer/);
 		assert.match(description, /schedule-list/);
+		assert.match(description, /Schedule actions \(enabled by default; disable with scheduledRuns\.enabled:false\)/);
 		assert.match(description, /eject/);
 		assert.match(description, /disable/);
 		assert.match(description, /grant-spawn-budget/);
