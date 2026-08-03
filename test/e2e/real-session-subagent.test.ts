@@ -48,7 +48,7 @@ describe("real Pi-session subagent E2E", { skip: !available ? "pi runtime packag
 		run = undefined;
 	});
 
-	it("loads requested extension tools in direct and chain children and diagnoses missing providers", async () => {
+	it("loads requested extension tools in direct and workflow children and diagnoses missing providers", async () => {
 		const { runRealSubagentSession, subagentCall, subagentToolResults } = await import("../support/real-session-runner.ts");
 		const extensionAgent = `---
 name: extension-worker
@@ -76,7 +76,7 @@ Use the available tools.`;
 }`;
 
 		run = await runRealSubagentSession({
-			prompt: "Run the direct, chain, and missing-provider child checks.",
+			prompt: "Run the direct, workflow, and missing-provider child checks.",
 			childText: CHILD_MARKER,
 			reportChildTools: true,
 			projectFiles: {
@@ -90,26 +90,27 @@ Use the available tools.`;
 					return subagentCall({ agent: "extension-worker", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-direct-extension");
 				}
 				if (resultCount === 1) {
-					return subagentCall({ chain: [{ agent: "extension-worker", task: "Report active tools." }], async: false, clarify: false, agentScope: "project" }, "call-chain-extension");
-				}
-				if (resultCount === 2) {
 					return subagentCall({
-						chain: [{
-							agent: "extension-worker",
-							task: "Submit the required structured marker.",
-							outputSchema: {
-								type: "object",
-								properties: { marker: { type: "string" } },
-								required: ["marker"],
-								additionalProperties: false,
+						workflowScript: `return await runs.all([
+							{ key: "extension", agent: "extension-worker", task: "Report active tools." },
+							{
+								key: "structured",
+								agent: "extension-worker",
+								task: "Submit the required structured marker.",
+								outputSchema: {
+									type: "object",
+									properties: { marker: { type: "string" } },
+									required: ["marker"],
+									additionalProperties: false,
+								},
 							},
-						}],
+						]);`,
 						async: false,
 						clarify: false,
 						agentScope: "project",
-					}, "call-structured-output");
+					}, "call-workflow-extension");
 				}
-				if (resultCount === 3) {
+				if (resultCount === 2) {
 					return subagentCall({ agent: "missing-extension-worker", task: "Report active tools.", context: "fresh", async: false, clarify: false, agentScope: "project" }, "call-missing-extension");
 				}
 				return "Child tool checks complete.";
@@ -119,16 +120,15 @@ Use the available tools.`;
 
 		const results = subagentToolResults(run.parentSession);
 		const toolMessages = run.parentSession.messages.filter((message) => message.role === "toolResult" && (message as { toolName?: string }).toolName === "subagent");
-		const chainDetails = JSON.stringify((toolMessages[1] as { details?: unknown } | undefined)?.details);
-		const structuredDetails = JSON.stringify((toolMessages[2] as { details?: unknown } | undefined)?.details);
-		assert.equal(results.length, 4);
+		const workflowDetails = JSON.stringify((toolMessages[1] as { details?: unknown } | undefined)?.details);
+		assert.equal(results.length, 3);
 		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*fixture_search/);
 		assert.match(results[0] ?? "", /ACTIVE_TOOLS:[^\n]*read/);
-		assert.match(chainDetails, /ACTIVE_TOOLS:[^\n]*fixture_search/);
-		assert.match(chainDetails, /ACTIVE_TOOLS:[^\n]*read/);
-		assert.match(structuredDetails, /STRUCTURED_OUTPUT_OK/);
-		assert.match(results[3] ?? "", /requested unavailable child tools: missing_search/);
-		assert.match(results[3] ?? "", /subagentOnlyExtensions/);
+		assert.match(workflowDetails, /ACTIVE_TOOLS:[^\n]*fixture_search/);
+		assert.match(workflowDetails, /ACTIVE_TOOLS:[^\n]*read/);
+		assert.match(workflowDetails, /STRUCTURED_OUTPUT_OK/);
+		assert.match(results[2] ?? "", /requested unavailable child tools: missing_search/);
+		assert.match(results[2] ?? "", /subagentOnlyExtensions/);
 	});
 
 	it("accepts child tools registered by async before_agent_start hooks", async () => {

@@ -3794,7 +3794,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (requestParams.workflowScript !== undefined) {
 			const invalidMode = requestParams.action !== undefined || requestParams.agent !== undefined || requestParams.step !== undefined || requestParams.tasks !== undefined || requestParams.chain !== undefined;
 			if (invalidMode) {
-				return { content: [{ type: "text", text: "workflowScript is its own execution mode; do not combine it with action, agent, or step." }], isError: true, details: { mode: "workflow", results: [] } };
+				return { content: [{ type: "text", text: "workflowScript is its own execution mode; do not combine it with action, agent, step, tasks, or chain." }], isError: true, details: { mode: "workflow", results: [] } };
 			}
 			if (requestParams.clarify === true) {
 				return { content: [{ type: "text", text: "workflowScript does not support clarify UI." }], isError: true, details: { mode: "workflow", results: [] } };
