@@ -4356,7 +4356,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				if (resolved?.kind === "nested") return { content: [{ type: "text", text: "action='stop' supports current-session top-level async runs only." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='stop' supports async runs only. Use action='interrupt' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
-				if (resolved?.kind === "async" && readStatus(resolved.location.asyncDir ?? "")?.mode === "workflow") {
+				const existingStatus = resolved?.kind === "async" ? readStatus(resolved.location.asyncDir ?? "") : undefined;
+				if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
 					return { content: [{ type: "text", text: `Workflow ${resolved.id} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
 				}
 				const stopResult = stopAsyncRun(

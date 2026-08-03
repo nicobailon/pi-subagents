@@ -524,6 +524,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Stop requested for async workflow workflow-stop/);
 	});
 
+	it("reports completed async workflows as not running when stopped after completion", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const runId = `workflow-stop-complete-${Date.now()}`;
+		const asyncDir = path.join(DIRS.async, runId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId,
+			sessionId: "session-123",
+			mode: "workflow",
+			state: "complete",
+			startedAt: Date.now(),
+			lastUpdate: Date.now(),
+			cwd: tempDir,
+			pid: process.pid,
+		}), "utf-8");
+		const asyncJobs: SubagentState["asyncJobs"] = new Map([[runId, {
+			asyncId: runId,
+			asyncDir,
+			cwd: tempDir,
+			status: "complete",
+			mode: "workflow",
+			agents: [],
+			steps: [],
+			startedAt: Date.now(),
+			updatedAt: Date.now(),
+		}]]);
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, asyncJobs);
+
+		const result = await executor.execute(
+			"stop-completed-workflow",
+			{ action: "stop", id: runId },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /No running or queued async run was found/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /reload recovery/);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+	});
+
 	it("routes workflow script children through ordinary foreground execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "scanned auth" });
 		mockPi.onCall({ output: "reviewed auth" });
