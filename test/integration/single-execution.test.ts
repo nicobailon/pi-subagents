@@ -500,7 +500,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(childStatus.parentWorkflowRunId, workflowRunId);
 		assert.equal(childStatus.workflowKey, "background");
-		const childResult = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${childRunId}.json`), "utf-8")) as { parentWorkflowRunId?: string; workflowKey?: string };
+		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
+		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		const childResult = JSON.parse(fs.readFileSync(childResultPath, "utf-8")) as { parentWorkflowRunId?: string; workflowKey?: string };
 		assert.equal(childResult.parentWorkflowRunId, workflowRunId);
 		assert.equal(childResult.workflowKey, "background");
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
