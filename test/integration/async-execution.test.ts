@@ -1186,7 +1186,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.turnBudget?.turnCount, 2);
 	});
 
-	it("async turn budget hard-aborts beyond the final grace turn at a safe assistant boundary", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("async turn budget preserves a clean terminal response beyond the final grace turn", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [
 				mockAssistantMessage("working before wrap-up", "tool_use"),
@@ -1209,24 +1209,22 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(payload.success, false);
-		assert.equal(payload.state, "failed");
-		assert.equal(payload.exitCode, 1);
-		assert.equal(payload.turnBudgetExceeded, true);
+		assert.equal(payload.success, true);
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.turnBudgetExceeded, undefined);
 		assert.equal(payload.wrapUpRequested, true);
-		assert.equal(payload.turnBudget?.outcome, "exceeded");
+		assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
 		assert.equal(payload.turnBudget?.turnCount, 3);
-		assert.equal(payload.turnBudget?.exceededAtTurn, 3);
-		assert.equal(payload.results[0]?.turnBudgetExceeded, true);
-		assert.match(payload.results[0]?.output ?? "", /Partial output before turn-budget abort:/);
+		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
 		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary after tool work/);
-		assert.equal(status.state, "failed");
-		assert.equal(status.turnBudgetExceeded, true);
-		assert.equal(status.steps?.[0]?.turnBudgetExceeded, true);
-		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
+		assert.equal(status.state, "complete");
+		assert.equal(status.turnBudgetExceeded, undefined);
+		assert.equal(status.steps?.[0]?.turnBudgetExceeded, undefined);
+		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "wrap-up-requested");
 	});
 
-	it("defers an async hard turn limit through active tool work and aborts at the next assistant boundary", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("preserves an async clean completion after turn-budget work defers", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
 				{
@@ -1267,15 +1265,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(payload.state, "failed");
-		assert.equal(payload.turnBudgetExceeded, true);
-		assert.equal(payload.turnBudget?.outcome, "exceeded");
+		assert.equal(payload.state, "complete");
+		assert.equal(payload.turnBudgetExceeded, undefined);
+		assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
 		assert.equal(payload.turnBudget?.turnCount, 2);
-		assert.equal(payload.results[0]?.turnBudgetExceeded, true);
+		assert.equal(payload.results[0]?.turnBudgetExceeded, undefined);
 		assert.match(payload.results[0]?.output ?? "", /safe assistant boundary reached/);
-		assert.equal(status.state, "failed");
-		assert.equal(status.turnBudgetExceeded, true);
-		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
+		assert.equal(status.state, "complete");
+		assert.equal(status.turnBudgetExceeded, undefined);
+		assert.equal(status.steps?.[0]?.turnBudget?.outcome, "wrap-up-requested");
 	});
 
 	it("lets timeout delivery preempt deferred turn-budget termination", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

@@ -3207,7 +3207,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.finalOutput ?? "", /final wrapped output/);
 	});
 
-	it("defers a foreground hard turn limit through active tool work and aborts at the next assistant boundary", async () => {
+	it("preserves a clean foreground completion after turn-budget work defers", async () => {
 		mockPi.onCall({
 			steps: [
 				{
@@ -3257,8 +3257,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(duringTool.turnBudgetExceeded, undefined);
 		assert.equal(duringTool.error, undefined);
 		assert.equal(duringTool.status, "running");
-		assert.equal(result.turnBudgetExceeded, true);
-		assert.equal(result.turnBudget?.outcome, "exceeded");
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.turnBudgetExceeded, undefined);
+		assert.equal(result.turnBudget?.outcome, "wrap-up-requested");
 		assert.equal(result.turnBudget?.turnCount, 2);
 		assert.match(result.finalOutput ?? "", /safe assistant boundary reached/);
 		assert.ok(result.messages?.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("build completed")));

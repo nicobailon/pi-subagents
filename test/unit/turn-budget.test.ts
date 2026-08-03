@@ -178,9 +178,10 @@ describe("turn-budget module", () => {
 	});
 
 	describe("turnBudgetDecision", () => {
-		it("continues below the hard limit and for a terminal response on the final grace turn", () => {
+		it("continues for a clean terminal response even after the hard limit", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 3, false, false), "continue");
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, false), "continue");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, false), "continue");
 		});
 
 		it("defers termination when the hard-limit assistant response starts tool work", () => {
@@ -193,9 +194,9 @@ describe("turn-budget module", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, true, true), "continue");
 		});
 
-		it("aborts at the next safe assistant boundary", () => {
+		it("aborts non-terminal work at the next safe assistant boundary", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, false), "abort");
-			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, false), "abort");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, false, false), "abort");
 		});
 
 		it("allows a terminal response at the soft limit when grace turns are zero", () => {
