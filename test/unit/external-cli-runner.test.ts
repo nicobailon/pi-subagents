@@ -32,10 +32,12 @@ describe("external CLI runner", () => {
 		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), result.output);
 	});
 
-	it("keeps only a bounded stdout tail in memory while retaining the full log", async () => {
+	it("flushes the full log before returning while retaining a bounded stdout tail", async () => {
 		const dir = tempDir();
 		const output = "x".repeat(70 * 1024) + "TAIL";
-		const result = await runExternalCli({ command: process.execPath, args: ["-e", `process.stdout.write(${JSON.stringify(output)})`], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });
+		const scriptPath = path.join(dir, "large-output.mjs");
+		fs.writeFileSync(scriptPath, "process.stdout.write('x'.repeat(70 * 1024) + 'TAIL')");
+		const result = await runExternalCli({ command: process.execPath, args: [scriptPath], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.output.length, 64 * 1024);
 		assert.match(result.output, /TAIL$/);
