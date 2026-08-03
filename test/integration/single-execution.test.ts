@@ -657,6 +657,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			ctx,
 		);
 		assert.equal(v2Delegated.isError, undefined);
+		assert.deepEqual(v2Delegated.details.toolBudget, zeroBudget);
 		const env = JSON.parse(v2Delegated.content[0]?.text ?? "{}") as Record<string, string>;
 		assert.deepEqual(JSON.parse(env[TOOL_BUDGET_ENV] ?? "null"), zeroBudget);
 		assert.equal(env[TOOL_BUDGET_ZERO_AUTH_ENV], "1");
