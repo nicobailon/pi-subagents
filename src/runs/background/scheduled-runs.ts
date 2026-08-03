@@ -67,7 +67,7 @@ export function isScheduledRunAction(action: unknown): action is ScheduledRunAct
 }
 
 export function scheduledRunsEnabled(config: ExtensionConfig): boolean {
-	return config.scheduledRuns?.enabled === true;
+	return config.scheduledRuns?.enabled !== false;
 }
 
 export function scheduledRunStorePath(cwd: string, sessionId: string, root = SCHEDULED_RUNS_DIR): string {
@@ -290,7 +290,7 @@ export class ScheduledRunManager {
 		this.ctx = ctx;
 		try {
 			if (!scheduledRunsEnabled(this.deps.config)) {
-				return textResult("Scheduled subagent runs are disabled. Set { \"scheduledRuns\": { \"enabled\": true } } in ~/.pi/agent/extensions/subagent/config.json, then reload Pi. Schedule only explicit delayed runs the user asked for.", true);
+				return textResult("Scheduled subagent runs are disabled by { \"scheduledRuns\": { \"enabled\": false } } in ~/.pi/agent/extensions/subagent/config.json. Remove that opt-out or set enabled to true, then reload Pi. Schedule only explicit delayed runs the user asked for.", true);
 			}
 			if (!this.store) this.bindSession(ctx);
 			if (!this.store) return textResult("Scheduled subagent store is unavailable for this session.", true);

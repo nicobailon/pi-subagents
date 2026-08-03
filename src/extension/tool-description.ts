@@ -69,7 +69,7 @@ CONTROL:
 • { action: "append-step", id: "...", chain: [{agent:"agent-c", task:"Use {previous}"}] } - append one step to the tail of a running async chain
 • { action: "approve-checkpoint", id: "..." } / { action: "reject-checkpoint", id: "..." } - decide a paused current-session async chain checkpoint
 
-SCHEDULE (opt-in; requires { "scheduledRuns": { "enabled": true } } in config.json):
+SCHEDULE (enabled by default; disable with { "scheduledRuns": { "enabled": false } } in config.json):
 • { action: "schedule", agent, task?, schedule: "+10m" | "2030-01-01T09:00:00Z", scheduleName? } - defer a subagent launch until a future time. Also accepts tasks[] or chain[]. Scheduled runs always launch async with fresh context; they become normal tracked async runs once they fire. Only schedule explicit delayed runs the user asked for.
 • { action: "schedule-list" } - list scheduled runs for this session
 • { action: "schedule-status", id: "..." } - inspect one scheduled run

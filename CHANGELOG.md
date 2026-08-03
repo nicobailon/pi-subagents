@@ -10,6 +10,9 @@
 - Added optional Herdr 0.7.5+ drill-in inspector panes for async runs, with durable pane bindings, lifecycle/transcript/mission dashboards, FleetView opening, and steer/stop controls through the existing file control channel.
 - Added Herdr project panes so an orchestrator can open a project-rooted Pi session for substantial cross-codebase work.
 
+### Changed
+- Scheduled subagent runs are now enabled by default; set `{ "scheduledRuns": { "enabled": false } }` to opt out.
+
 ### Fixed
 - Journaled managed worktree ownership before child execution so abrupt exits retain a manifest-backed cleanup path.
 - Made automatic mission persistence best-effort without weakening explicit mission requests, bounded terminal mission retention and stale global pointers, exposed auto missions without modifying structured JSON output, added authority-consistent manifest-backed preserved-worktree discard, and clarified the Herdr inspector/schema surface.

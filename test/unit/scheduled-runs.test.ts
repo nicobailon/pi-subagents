@@ -123,9 +123,9 @@ describe("scheduled-runs helpers", () => {
 		assert.equal(isScheduledRunAction(undefined), false);
 	});
 
-	it("scheduledRunsEnabled is true only when explicitly enabled", () => {
-		assert.equal(scheduledRunsEnabled({}), false);
-		assert.equal(scheduledRunsEnabled({ scheduledRuns: {} }), false);
+	it("scheduledRunsEnabled defaults to enabled and honors an explicit opt-out", () => {
+		assert.equal(scheduledRunsEnabled({}), true);
+		assert.equal(scheduledRunsEnabled({ scheduledRuns: {} }), true);
 		assert.equal(scheduledRunsEnabled({ scheduledRuns: { enabled: false } }), false);
 		assert.equal(scheduledRunsEnabled({ scheduledRuns: { enabled: true } }), true);
 	});
