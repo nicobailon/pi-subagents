@@ -26,7 +26,6 @@ import {
 } from "../support/helpers.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT } from "../../src/shared/types.ts";
 import { PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
-import { SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV } from "../../src/runs/shared/pi-args.ts";
 
 interface TestSequentialStep {
 	agent: string;
@@ -240,8 +239,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("applies global permissions to foreground chain children without requiring intercom", async () => {
-		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, PERMISSION_AUDIT_PATH_ENV] });
+	it("applies global permissions to foreground chain children", async () => {
+		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV] });
 		const agents = [makeAgent("worker")];
 
 		const result = await executeChain!(makeChainParams(
@@ -253,7 +252,6 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.isError, undefined);
 		const env = JSON.parse(result.details.results[0]?.finalOutput ?? "{}") as Record<string, string | null>;
 		assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
-		assert.match(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] ?? "", /supervisor-channels/);
 		assert.match(env[PERMISSION_AUDIT_PATH_ENV] ?? "", /permission-audit\.jsonl$/);
 	});
 
@@ -717,6 +715,39 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.kind, "dynamic-parallel-group");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.itemKey), ["src/a.ts", "src/b.ts"]);
+	});
+
+	it("applies global permissions to materialized dynamic parallel children", async () => {
+		mockPi.onCall({
+			output: "targets",
+			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
+		});
+		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV], structuredOutput: { ok: "a" } });
+		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV], structuredOutput: { ok: "b" } });
+		const agents = [makeAgent("scout"), makeAgent("reviewer")];
+
+		const result = await executeChain!(makeChainParams(
+			[
+				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 4 },
+					parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" } },
+					collect: { as: "reviews" },
+					concurrency: 1,
+				},
+			],
+			agents,
+			{ permissions: { rules: { write: "ask" } } },
+		));
+
+		assert.equal(result.isError, undefined);
+		const reviewerResults = result.details.results.filter((entry) => entry.agent === "reviewer");
+		assert.equal(reviewerResults.length, 2);
+		for (const child of reviewerResults) {
+			const env = JSON.parse(child.finalOutput ?? "{}") as Record<string, string | null>;
+			assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
+			assert.match(env[PERMISSION_AUDIT_PATH_ENV] ?? "", /permission-audit\.jsonl$/);
+		}
 	});
 
 	it("persists checked child evidence and pending aggregate review for dynamic fanout", async () => {
@@ -1404,6 +1435,31 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 		assert.ok(!result.isError, `should succeed: ${JSON.stringify(result.content)}`);
 		assert.equal(result.details.results.length, 2);
 		assert.deepEqual(result.details.results.map((row) => row.index), [0, 1]);
+	});
+
+	it("applies global permissions to foreground static parallel children", async () => {
+		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV] });
+		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, PERMISSION_AUDIT_PATH_ENV] });
+		const agents = [makeAgent("reviewer-a"), makeAgent("reviewer-b")];
+
+		const result = await executeChain!(makeChainParams(
+			[{
+				parallel: [
+					{ agent: "reviewer-a", task: "Review A" },
+					{ agent: "reviewer-b", task: "Review B" },
+				],
+			}],
+			agents,
+			{ permissions: { rules: { write: "ask" } } },
+		));
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results.length, 2);
+		for (const child of result.details.results) {
+			const env = JSON.parse(child.finalOutput ?? "{}") as Record<string, string | null>;
+			assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
+			assert.match(env[PERMISSION_AUDIT_PATH_ENV] ?? "", /permission-audit\.jsonl$/);
+		}
 	});
 
 	it("aggregates worktree handoffs across foreground chain groups", { skip: process.platform === "win32" ? "worktree paths differ on Windows" : undefined }, async () => {

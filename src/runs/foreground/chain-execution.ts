@@ -166,6 +166,7 @@ interface ParallelChainRunInput {
 	configToolBudget?: ToolBudgetConfig;
 	globalSemaphore?: Semaphore;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	permissions?: PermissionConfig;
 	dynamic?: boolean;
 }
 
@@ -384,6 +385,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			let result!: SingleResult;
 			try {
 				result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
+				permissions: input.permissions,
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: input.capabilityCeiling,
 				context: input.contextForAgent?.(task.agent),
@@ -871,6 +873,7 @@ ${step.message}` : ""}` }],
 					toolBudget: params.toolBudget,
 					configToolBudget: params.configToolBudget,
 					globalSemaphore,
+					permissions: params.permissions,
 				});
 				globalTaskIndex += step.parallel.length;
 
@@ -1129,6 +1132,7 @@ ${step.message}` : ""}` }],
 				toolBudget: params.toolBudget,
 				configToolBudget: params.configToolBudget,
 				globalSemaphore,
+				permissions: params.permissions,
 				dynamic: true,
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
