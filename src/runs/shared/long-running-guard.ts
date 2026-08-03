@@ -103,26 +103,24 @@ function unquotedShellText(command: string): string {
 	let result = "";
 	for (const char of command) {
 		if (escaped) {
-			result += inSingle || inDouble ? " " : char;
+			result += inSingle || inDouble ? "_" : char;
 			escaped = false;
 			continue;
 		}
 		if (char === "\\" && !inSingle) {
 			escaped = true;
-			result += inDouble ? " " : char;
+			result += inDouble ? "_" : char;
 			continue;
 		}
 		if (char === "'" && !inDouble) {
 			inSingle = !inSingle;
-			result += " ";
 			continue;
 		}
 		if (char === '"' && !inSingle) {
 			inDouble = !inDouble;
-			result += " ";
 			continue;
 		}
-		result += inSingle || inDouble ? " " : char;
+		result += inSingle || inDouble ? "_" : char;
 	}
 	return result;
 }
@@ -132,7 +130,7 @@ function hasMutatingGitCommand(command: string): boolean {
 	for (const segment of unquoted.split(/(?:&&|\|\||[;|()\n])/)) {
 		const trimmed = segment.trim();
 		if (!trimmed || /^(?:echo|printf)\b/.test(trimmed)) continue;
-		if (/^git\s+(?:(?:(?:-C|--git-dir|--work-tree)\s+\S+|(?:--git-dir|--work-tree)=\S+|--[\w-]+)\s+)*(?:add|commit|push)\b/.test(trimmed)) return true;
+		if (/^git\s+(?:(?:(?:-C|--git-dir|--work-tree)\s+\S+|(?:--git-dir|--work-tree)=\S+)\s+)*(?:add|commit|push)\b/.test(trimmed)) return true;
 	}
 	return false;
 }
