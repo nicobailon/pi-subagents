@@ -49,6 +49,29 @@ const capturedConsole = Object.freeze(Object.fromEntries(
   }]),
 ));
 
+function assertJsonValue(value, path = "emit", seen = new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(path + " must contain only finite JSON numbers.");
+    return;
+  }
+  if (typeof value !== "object") throw new Error(path + " must be a JSON value; received " + typeof value + ".");
+  if (seen.has(value)) throw new Error(path + " must not contain cycles.");
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.prototype.hasOwnProperty.call(value, index)) throw new Error(path + " must not contain sparse array entries.");
+      assertJsonValue(value[index], path + "[" + index + "]", seen);
+    }
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== null && (!prototype.constructor || prototype.constructor.name !== "Object")) throw new Error(path + " must contain only plain JSON objects.");
+    if (Object.getOwnPropertySymbols(value).length > 0) throw new Error(path + " must not contain symbol keys.");
+    for (const [key, entry] of Object.entries(value)) assertJsonValue(entry, path + "." + key, seen);
+  }
+  seen.delete(value);
+}
+
 parentPort.on("message", async (message) => {
   if (message.type === "response") {
     const entry = pending.get(message.callId);
@@ -60,7 +83,7 @@ parentPort.on("message", async (message) => {
   }
   if (message.type !== "start") return;
   try {
-    const sandbox = { runs, emit(value) { parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    const sandbox = { runs, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     const compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
     const value = await compiled.runInContext(context);
@@ -122,6 +145,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+export function assertWorkflowJsonValue(value: unknown, path = "value", seen = new Set<object>()): void {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return;
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) throw new Error(`${path} must contain only finite JSON numbers.`);
+		return;
+	}
+	if (typeof value !== "object") throw new Error(`${path} must be a JSON value; received ${typeof value}.`);
+	if (seen.has(value)) throw new Error(`${path} must not contain cycles.`);
+	seen.add(value);
+	if (Array.isArray(value)) {
+		for (let index = 0; index < value.length; index++) {
+			if (!Object.hasOwn(value, index)) throw new Error(`${path} must not contain sparse array entries.`);
+			assertWorkflowJsonValue(value[index], `${path}[${index}]`, seen);
+		}
+	} else {
+		const prototype = Object.getPrototypeOf(value);
+		if (prototype !== null && (typeof prototype.constructor !== "function" || prototype.constructor.name !== "Object")) throw new Error(`${path} must contain only plain JSON objects.`);
+		if (Object.getOwnPropertySymbols(value).length > 0) throw new Error(`${path} must not contain symbol keys.`);
+		for (const [key, entry] of Object.entries(value)) assertWorkflowJsonValue(entry, `${path}.${key}`, seen);
+	}
+	seen.delete(value);
+}
+
+export function formatWorkflowJsonPreview(value: unknown, maxLength: number): string | undefined {
+	try {
+		assertWorkflowJsonValue(value);
+		const serialized = JSON.stringify(value);
+		return typeof serialized === "string" ? serialized.slice(0, maxLength) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 function stableJson(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
 	if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
@@ -173,6 +229,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		});
 		worker.on("message", (message: Record<string, unknown>) => {
 			if (message.type === "emit") {
+				try {
+					assertWorkflowJsonValue(message.value, "emit");
+				} catch (error) {
+					finish({ error: new Error(`Workflow emit could not be persisted: ${error instanceof Error ? error.message : String(error)}`) });
+					return;
+				}
 				emits.push(message.value);
 				try {
 					options.onEmit?.([...emits]);

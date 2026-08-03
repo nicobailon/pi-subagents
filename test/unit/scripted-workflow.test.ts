@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { formatWorkflowJsonPreview, runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 
 describe("scripted workflow runtime", () => {
 	it("runs keyed children, streams progress, and exposes no host capabilities", async () => {
@@ -73,19 +73,47 @@ describe("scripted workflow runtime", () => {
 		assert.equal(childAborted, true);
 	});
 
-	it("fails cleanly when an emitted value cannot be persisted", async () => {
-		await assert.rejects(
-			runWorkflowScript({
-				script: `emit(1n); return "unreachable";`,
-				timeoutMs: 2_000,
-				onEmit: (emits) => { JSON.stringify(emits); },
-				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
-				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
-			}),
-			(error: unknown) => error instanceof WorkflowScriptError
-				&& /Workflow emit could not be persisted/.test(error.message)
-				&& error.partial.emits.length === 0,
-		);
+	it("rejects non-JSON-safe emitted values without persisting them", async () => {
+		const invalidScripts = [
+			`emit(undefined);`,
+			`emit(NaN);`,
+			`emit(Infinity);`,
+			`emit(new Map([["a", 1]]));`,
+			`emit(new Set([1]));`,
+			`emit(new (class Value { constructor() { this.ok = true; } })());`,
+			`emit(() => true);`,
+			`emit(Symbol("value"));`,
+			`const value = {}; value.self = value; emit(value);`,
+			`emit(1n);`,
+		];
+		for (const script of invalidScripts) {
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					timeoutMs: 2_000,
+					async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && error.partial.emits.length === 0,
+			);
+		}
+	});
+
+	it("formats persisted JSON values without assuming stringify returns a string", () => {
+		assert.equal(formatWorkflowJsonPreview(undefined, 120), undefined);
+		assert.equal(formatWorkflowJsonPreview(NaN, 120), undefined);
+		assert.equal(formatWorkflowJsonPreview(new Map(), 120), undefined);
+		assert.equal(formatWorkflowJsonPreview({ stage: ["review", 2] }, 120), '{"stage":["review",2]}');
+	});
+
+	it("accepts JSON-safe object and array emits", async () => {
+		const result = await runWorkflowScript({
+			script: `emit({ ok: true, values: [1, "two", null] }); return "done";`,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(result.emits, [{ ok: true, values: [1, "two", null] }]);
 	});
 
 	it("terminates scripts and aborts an in-flight child at the controller timeout", async () => {

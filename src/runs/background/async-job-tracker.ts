@@ -131,6 +131,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			sessionFile: run.sessionFile,
 			controlEventCursor: restoredControlEventCursor(run.asyncDir),
 			nestedChildren: run.nestedChildren,
+			parentWorkflowRunId: run.parentWorkflowRunId,
+			workflowKey: run.workflowKey,
+			workflow: run.workflow,
 		};
 	};
 	const cancelCleanup = (asyncId: string) => {
@@ -332,6 +335,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						job.toolCount = status.toolCount ?? job.toolCount;
 						job.steering = status.steering ?? job.steering;
 						job.mode = status.mode;
+						job.parentWorkflowRunId = status.parentWorkflowRunId ?? job.parentWorkflowRunId;
+						job.workflowKey = status.workflowKey ?? job.workflowKey;
+						job.workflow = status.workflow ?? job.workflow;
 						job.currentStep = status.currentStep ?? job.currentStep;
 						job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
 						job.startedAt = status.startedAt ?? job.startedAt;

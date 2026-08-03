@@ -19,6 +19,7 @@ import {
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { validateChainInput } from "./chain-validation.ts";
+import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
 export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
@@ -193,12 +194,13 @@ function buildFleetStatus(
 		if (job.sessionId !== authoritativeSessionId || !activeState(job.status)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt;
 		if (job.mode === "workflow") {
+			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			addCandidate({
 				internalKey: `async:${job.asyncId}`,
 				agent: "workflow",
 				startedAt,
 				tokens: job.totalTokens,
-				goal: job.workflow?.emits?.length ? `latest emit: ${JSON.stringify(job.workflow.emits.at(-1)).slice(0, 120)}` : job.description,
+				goal: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
 			});
 			continue;
 		}

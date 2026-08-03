@@ -89,7 +89,7 @@ import { attachMissionToLaunchResult, prepareMissionLaunch, type MissionLaunchBi
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { assertWorkflowJsonValue, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -3859,7 +3859,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							signal: controller.signal,
 							onTrace: updateTrace,
 							onEmit: (emits) => {
-								JSON.stringify(emits);
+								assertWorkflowJsonValue(emits, "workflow emits");
 								status.workflow = { ...(status.workflow ?? { trace: [], console: [] }), emits };
 								persist();
 								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });

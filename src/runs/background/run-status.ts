@@ -16,6 +16,7 @@ import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-grou
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import { readMissionBinding } from "../../missions/lifecycle.ts";
+import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
 
 interface RunStatusParams {
 	action?: "status";
@@ -375,6 +376,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				nestedWarning = `${nestedWarning ? `${nestedWarning}; ` : ""}Mission binding unavailable: ${error instanceof Error ? error.message : String(error)}`;
 			}
 
+			const workflowReturnPreview = status.workflow?.value !== undefined ? formatWorkflowJsonPreview(status.workflow.value, 240) : undefined;
+			const workflowEmitPreview = status.workflow?.emits.length ? formatWorkflowJsonPreview(status.workflow.emits.at(-1), 240) : undefined;
 			const lines = [
 				`Run: ${status.runId}`,
 				missionId ? `Mission: ${missionId}` : undefined,
@@ -387,8 +390,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
 				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
-				status.mode === "workflow" && status.workflow?.value !== undefined ? `Return: ${JSON.stringify(status.workflow.value).slice(0, 240)}` : undefined,
-				status.mode === "workflow" && status.workflow?.emits.length ? `Latest emit: ${JSON.stringify(status.workflow.emits.at(-1)).slice(0, 240)}` : undefined,
+				status.mode === "workflow" && workflowReturnPreview !== undefined ? `Return: ${workflowReturnPreview}` : undefined,
+				status.mode === "workflow" && workflowEmitPreview !== undefined ? `Latest emit: ${workflowEmitPreview}` : undefined,
 				`Progress: ${progressLabel}`,
 				status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
 				`Started: ${started}`,

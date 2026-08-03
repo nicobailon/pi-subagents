@@ -269,6 +269,73 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("restores workflow state and refreshes live workflow progress after reload", async () => {
+		const asyncRoot = createTempDir("pi-async-job-restore-workflow-");
+		try {
+			const runDir = path.join(asyncRoot, "workflow-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			const statusPath = path.join(runDir, "status.json");
+			fs.writeFileSync(statusPath, JSON.stringify({
+				runId: "workflow-run",
+				mode: "workflow",
+				state: "running",
+				sessionId: "session-workflow",
+				startedAt: 1000,
+				lastUpdate: 2000,
+				steps: [{ agent: "scan", label: "scan", status: "running" }],
+				workflow: { trace: [{ operation: "run", key: "scan", state: "started" }], emits: [{ stage: "scan" }], console: [] },
+			}), "utf-8");
+			const state = createState();
+			state.currentSessionId = "session-workflow";
+			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.restoreActiveJobs();
+			assert.deepEqual(state.asyncJobs.get("workflow-run")?.workflow?.emits, [{ stage: "scan" }]);
+
+			fs.writeFileSync(statusPath, JSON.stringify({
+				runId: "workflow-run",
+				mode: "workflow",
+				state: "running",
+				sessionId: "session-workflow",
+				startedAt: 1000,
+				lastUpdate: 3000,
+				steps: [{ agent: "scan", label: "scan", status: "complete" }, { agent: "review", label: "review", status: "running" }],
+				workflow: { trace: [{ operation: "run", key: "review", state: "started" }], emits: [{ stage: "review" }], console: [] },
+			}), "utf-8");
+			await waitForCondition(() => JSON.stringify(state.asyncJobs.get("workflow-run")?.workflow?.emits) === JSON.stringify([{ stage: "review" }]), "workflow poll refresh", 1000);
+			assert.equal(state.asyncJobs.get("workflow-run")?.workflow?.trace[0]?.key, "review");
+			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("restores async workflow child ownership after reload", () => {
+		const asyncRoot = createTempDir("pi-async-job-restore-workflow-child-");
+		try {
+			const runDir = path.join(asyncRoot, "workflow-child");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "workflow-child",
+				mode: "single",
+				state: "running",
+				sessionId: "session-workflow",
+				startedAt: 1000,
+				parentWorkflowRunId: "workflow-parent",
+				workflowKey: "review",
+				steps: [{ agent: "reviewer", status: "running" }],
+			}), "utf-8");
+			const state = createState();
+			state.currentSessionId = "session-workflow";
+			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.restoreActiveJobs();
+			assert.equal(state.asyncJobs.get("workflow-child")?.parentWorkflowRunId, "workflow-parent");
+			assert.equal(state.asyncJobs.get("workflow-child")?.workflowKey, "review");
+			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("restores only active async runs for the current session", () => {
 		const asyncRoot = createTempDir("pi-async-job-restore-scope-");
 		try {
