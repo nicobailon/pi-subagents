@@ -19,34 +19,18 @@ import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjec
 import { isAgentContractV1 } from "../runs/shared/agent-contract.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
-export interface PromptTemplateDelegationTask {
-	agent: string;
-	task: string;
-	model?: string;
-	cwd?: string;
-}
-
-export interface PromptTemplateDelegationParallelResult {
-	agent: string;
-	messages: unknown[];
-	isError: boolean;
-	errorText?: string;
-}
 
 export interface PromptTemplateDelegationRequest {
 	requestId: string;
 	agent: string;
 	task: string;
-	tasks?: PromptTemplateDelegationTask[];
 	context: "fresh" | "fork";
 	model: string;
 	cwd: string;
-	worktree?: boolean;
 }
 
 export interface PromptTemplateDelegationResponse extends PromptTemplateDelegationRequest {
 	messages: unknown[];
-	parallelResults?: PromptTemplateDelegationParallelResult[];
 	contentText?: string;
 	isError: boolean;
 	errorText?: string;
@@ -137,11 +121,9 @@ export interface PromptTemplateBridgeResult {
 export interface DelegatedSubagentExecutionParams {
 	agent?: string;
 	task?: string;
-	tasks?: PromptTemplateDelegationTask[];
 	context: "fresh" | "fork";
 	model?: string;
 	cwd: string;
-	worktree?: boolean;
 	timeoutMs?: number;
 	turnBudget?: TurnBudgetConfig;
 	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
@@ -163,52 +145,24 @@ export interface DelegatedSubagentExecutionParams {
 	clarify: false;
 }
 
-function parseDelegationTasks(tasks: unknown): PromptTemplateDelegationTask[] {
-	if (!Array.isArray(tasks)) return [];
-	const parsed: PromptTemplateDelegationTask[] = [];
-	for (const item of tasks) {
-		if (!item || typeof item !== "object") return [];
-		const value = item as Partial<PromptTemplateDelegationTask>;
-		if (typeof value.agent !== "string" || !value.agent.trim()) return [];
-		if (typeof value.task !== "string" || !value.task.trim()) return [];
-		const model = typeof value.model === "string" && value.model.trim().length > 0 ? value.model : undefined;
-		const cwd = typeof value.cwd === "string" && value.cwd.trim().length > 0 ? value.cwd : undefined;
-		parsed.push({
-			agent: value.agent,
-			task: value.task,
-			...(model ? { model } : {}),
-			...(cwd ? { cwd } : {}),
-		});
-	}
-	return parsed;
-}
 
 export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegationRequest | undefined {
 	if (!data || typeof data !== "object") return undefined;
-	const value = data as Partial<PromptTemplateDelegationRequest> & { tasks?: unknown };
+	const value = data as Partial<PromptTemplateDelegationRequest> & { tasks?: unknown; worktree?: unknown };
+	if (value.tasks !== undefined || value.worktree !== undefined) return undefined;
 	if (typeof value.requestId !== "string" || !value.requestId) return undefined;
+	if (typeof value.agent !== "string" || !value.agent) return undefined;
+	if (typeof value.task !== "string" || !value.task) return undefined;
 	if (typeof value.model !== "string" || !value.model) return undefined;
 	if (typeof value.cwd !== "string" || !value.cwd) return undefined;
 	if (value.context !== "fresh" && value.context !== "fork") return undefined;
-	const tasks = parseDelegationTasks(value.tasks);
-	const worktree = value.worktree === true ? true : undefined;
-	const hasSingle =
-		typeof value.agent === "string" &&
-		value.agent.length > 0 &&
-		typeof value.task === "string" &&
-		value.task.length > 0;
-	if (!hasSingle && tasks.length === 0) return undefined;
-
-	const fallbackTask = tasks[0];
 	return {
 		requestId: value.requestId,
-		agent: hasSingle ? value.agent! : fallbackTask!.agent,
-		task: hasSingle ? value.task! : fallbackTask!.task,
-		...(tasks.length > 0 ? { tasks } : {}),
+		agent: value.agent,
+		task: value.task,
 		context: value.context,
 		model: value.model,
 		cwd: value.cwd,
-		...(worktree ? { worktree } : {}),
 	};
 }
 
@@ -339,17 +293,6 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 }
 
 export function toLegacyExecutionParams(request: PromptTemplateDelegationRequest): DelegatedSubagentExecutionParams {
-	if (request.tasks && request.tasks.length > 0) {
-		return {
-			tasks: request.tasks,
-			context: request.context,
-			cwd: request.cwd,
-			worktree: request.worktree,
-			async: false,
-			foregroundOnly: true,
-			clarify: false,
-		};
-	}
 	return {
 		agent: request.agent,
 		task: request.task,
@@ -581,28 +524,9 @@ export function toPromptTemplateResponse(
 ): PromptTemplateDelegationResponse {
 	const contentText = firstTextContent(result.content);
 	const messages = buildDelegationMessages(result.details?.results?.[0] ?? {}, contentText);
-	const parallelResults = request.tasks?.map<PromptTemplateDelegationParallelResult>((task, index) => {
-		const step = result.details?.results?.[index];
-		if (!step) {
-			return {
-				agent: task.agent,
-				messages: [],
-				isError: true,
-				errorText: "Missing result for delegated parallel task.",
-			};
-		}
-		const exitCode = typeof step.exitCode === "number" ? step.exitCode : undefined;
-		return {
-			agent: step.agent ?? task.agent,
-			messages: buildDelegationMessages(step),
-			isError: (exitCode !== undefined && exitCode !== 0) || !!step.error,
-			errorText: step.error || undefined,
-		};
-	});
 	return {
 		...request,
 		messages,
-		...(parallelResults ? { parallelResults } : {}),
 		...(contentText ? { contentText } : {}),
 		isError: result.isError === true,
 		errorText: result.isError ? contentText : undefined,

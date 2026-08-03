@@ -318,91 +318,27 @@ describe("prompt-template delegation bridge", () => {
 		bridge.dispose();
 	});
 
-	it("accepts tasks payloads and emits parallelResults", async () => {
+	it("rejects removed tasks and worktree payloads without executor dispatch", async () => {
 		const events = new FakeEvents();
-		let executeTasks: Array<{ agent: string; task: string; model?: string; cwd?: string }> | undefined;
+		let executeCalls = 0;
 		const bridge = registerPromptTemplateDelegationBridge({
 			events,
 			getContext: () => ({ cwd: "/repo" }),
-			execute: async (_requestId, request) => {
-				executeTasks = request.tasks;
-				return {
-					details: {
-						results: [
-							{ agent: "worker-a", messages: [{ role: "assistant", content: [{ type: "text", text: "a" }] }], exitCode: 0 },
-							{ agent: "worker-b", messages: [], exitCode: 1, error: "failed" },
-						],
-					},
-				};
-			},
+			execute: async () => { executeCalls++; return {}; },
 		});
 
-		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
+		const tasksResponse = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
 		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, {
 			requestId: "r6",
-			tasks: [
-				{ agent: "worker-a", task: "A", model: "openai/gpt-5", cwd: "/repo/a" },
-				{ agent: "worker-b", task: "B", model: "anthropic/claude-sonnet-4-20250514", cwd: "/repo/b" },
-			],
+			tasks: [{ agent: "worker-a", task: "A" }],
 			context: "fresh",
 			model: "openai/gpt-5",
 			cwd: "/repo",
 		});
-
-		const response = await responsePromise as {
-			isError: boolean;
-			parallelResults?: Array<{ agent: string; isError: boolean; errorText?: string }>;
-		};
-		assert.equal(Array.isArray(executeTasks), true);
-		assert.equal(executeTasks?.length, 2);
-		assert.equal(executeTasks?.[0]?.model, "openai/gpt-5");
-		assert.equal(executeTasks?.[1]?.model, "anthropic/claude-sonnet-4-20250514");
-		assert.equal(executeTasks?.[0]?.cwd, "/repo/a");
-		assert.equal(executeTasks?.[1]?.cwd, "/repo/b");
-		assert.equal(response.isError, false);
-		assert.equal(response.parallelResults?.[0]?.agent, "worker-a");
-		assert.equal(response.parallelResults?.[0]?.isError, false);
-		assert.equal(response.parallelResults?.[1]?.agent, "worker-b");
-		assert.equal(response.parallelResults?.[1]?.isError, true);
-		assert.equal(response.parallelResults?.[1]?.errorText, "failed");
-
-		bridge.dispose();
-	});
-
-	it("marks missing parallel task results as errors", async () => {
-		const events = new FakeEvents();
-		const bridge = registerPromptTemplateDelegationBridge({
-			events,
-			getContext: () => ({ cwd: "/repo" }),
-			execute: async () => ({
-				details: {
-					results: [{ agent: "worker-a", messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }], exitCode: 0 }],
-				},
-			}),
-		});
-
-		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
-		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, {
-			requestId: "r7",
-			tasks: [
-				{ agent: "worker-a", task: "A" },
-				{ agent: "worker-b", task: "B" },
-			],
-			context: "fresh",
-			model: "openai/gpt-5",
-			cwd: "/repo",
-		});
-
-		const response = await responsePromise as {
-			isError: boolean;
-			parallelResults?: Array<{ agent: string; isError: boolean; errorText?: string }>;
-		};
-		assert.equal(response.isError, false);
-		assert.equal(response.parallelResults?.[0]?.isError, false);
-		assert.equal(response.parallelResults?.[1]?.agent, "worker-b");
-		assert.equal(response.parallelResults?.[1]?.isError, true);
-		assert.match(response.parallelResults?.[1]?.errorText ?? "", /missing result/i);
-
+		const response = await tasksResponse as { isError: boolean; errorText?: string };
+		assert.equal(response.isError, true);
+		assert.match(response.errorText ?? "", /removed.*workflowScript/i);
+		assert.equal(executeCalls, 0);
 		bridge.dispose();
 	});
 });

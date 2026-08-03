@@ -51,4 +51,33 @@ describe("slash subagent bridge requester context", () => {
     events.emit(REQUEST, { requestId: "ctx-test", params: { action: "list" }, ctx: requestCtx });
     await done;
   });
+
+  it("rejects removed chain and parallel inputs before executor dispatch", async () => {
+    const events = eventBus();
+    let executeCalls = 0;
+    registerSlashSubagentBridge({
+      events,
+      getContext: () => ({ cwd: "/repo" }) as any,
+      execute: async () => {
+        executeCalls++;
+        return { content: [{ type: "text", text: "unexpected" }], details: { mode: "single", results: [] } } as any;
+      },
+    });
+
+    const done = new Promise<void>((resolve, reject) => {
+      events.on(RESPONSE, (data: any) => {
+        try {
+          assert.equal(data.isError, true);
+          assert.match(data.errorText, /removed.*workflowScript/i);
+          assert.equal(executeCalls, 0);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    events.emit(REQUEST, { requestId: "legacy-parallel", params: { tasks: [{ agent: "worker", task: "work" }] } });
+    await done;
+  });
 });

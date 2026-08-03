@@ -1,7 +1,7 @@
 {
   "name": "pi-subagents",
   "version": "0.40.0",
-  "description": "Pi extension for delegating tasks to subagents with chains, parallel execution, and TUI clarification",
+  "description": "Pi extension for single-agent delegation and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",
   "type": "module",

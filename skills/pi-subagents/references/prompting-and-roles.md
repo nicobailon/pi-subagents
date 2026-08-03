@@ -24,9 +24,7 @@ Agents can use the `subagent(...)` tool directly for execution, management, stat
 Humans often use the slash-command layer instead:
 
 - `/run` — launch a single agent
-- `/chain` — launch a chain of steps
-- `/parallel` — launch top-level parallel tasks
-- `/run-chain` — launch a saved `.chain.md` or `.chain.json` workflow
+- `workflowScript` — the sole public surface for sequence, parallelism, branching, retries, and aggregation
 - `/subagents` — interactive admin for inspecting agents and editing model, thinking, or system prompt
 - `/subagents-stop [run-id]` — stop a current-session top-level async run; opens a selector when no id is given
 - `/subagents-detach [run-id]` — detach an active foreground single-subagent run without terminating its child
@@ -36,7 +34,7 @@ Humans often use the slash-command layer instead:
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
 - `/subagents-models [agent]` — show the live runtime-loaded builtin model mapping
 - `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile` — manage model profiles and provider catalogs
-- `/prompt-workflow` and `/chain-prompts` — run prompt templates through native subagent single/chain workflows
+- `/prompt-workflow` — run a prompt template through native single-agent or workflowScript execution
 
 Prefer the tool when you are writing agent logic. Prefer the slash commands when
 you are guiding a human through an interactive flow.
@@ -94,21 +92,18 @@ Use this when the question needs both external evidence and local implications. 
 
 ### Parallel context-build technique
 
-Use this before planning or implementation when a stronger handoff is needed. Run a chain with one parallel step of `context-builder` agents rather than top-level parallel tasks, so relative output files live under the temporary chain directory. Give every task a distinct output path such as `context-build/request-and-scope.md`, `context-build/codebase-and-patterns.md`, and `context-build/validation-and-risks.md`. Choose two or three builders: request/scope, codebase/patterns, and validation/risks. Each builder must read every relevant file needed to understand its slice, follow imports/callers/tests/docs/config, conduct tool-available web research when needed, and include a compact `meta-prompt` section. The parent synthesizes the outputs into important context, recommended next meta-prompt, open questions, assumptions, and artifact paths.
+Use this before planning or implementation when a stronger handoff is needed. Use `workflowScript` with `runs.all` to launch distinct `context-builder` lanes, each with an explicit output path. Give every task a distinct output path such as `context-build/request-and-scope.md`, `context-build/codebase-and-patterns.md`, and `context-build/validation-and-risks.md`. Choose two or three builders: request/scope, codebase/patterns, and validation/risks. Each builder must read every relevant file needed to understand its slice, follow imports/callers/tests/docs/config, conduct tool-available web research when needed, and include a compact `meta-prompt` section. The parent synthesizes the outputs into important context, recommended next meta-prompt, open questions, assumptions, and artifact paths.
 
 Example shape:
 
 ```typescript
-subagent({
-  chain: [{
-    parallel: [
-      { agent: "context-builder", task: "Build request/scope context for: ...", output: "context-build/request-and-scope.md" },
-      { agent: "context-builder", task: "Build codebase/pattern context for: ...", output: "context-build/codebase-and-patterns.md" },
-      { agent: "context-builder", task: "Build validation/risk context for: ...", output: "context-build/validation-and-risks.md" }
-    ]
-  }],
-  context: "fresh"
-})
+subagent({ workflowScript: `
+  const results = await runs.all([
+    { key: "lane-a", agent: "reviewer", task: "Inspect lane A" },
+    { key: "lane-b", agent: "reviewer", task: "Inspect lane B" }
+  ]);
+  return results.map(result => result.output);
+` })
 ```
 
 ### Parallel handoff-plan technique
@@ -118,17 +113,13 @@ Use this when the user needs a solution brief or implementation-ready handoff fr
 Example shape:
 
 ```typescript
-subagent({
-  chain: [
-    { parallel: [
-      { agent: "researcher", task: "Research the external reference and transferable implementation ideas for: ...", output: "handoff/external-reference.md" },
-      { agent: "context-builder", task: "Build local codebase context for: ...", output: "handoff/local-context.md" },
-      { agent: "context-builder", task: "Compare evidence and propose implementation strategy for: ...", output: "handoff/implementation-strategy.md" }
-    ] },
-    { agent: "context-builder", task: "Read {previous} and synthesize the final handoff plan and implementation-ready meta-prompt.", output: "handoff/final-handoff-plan.md" }
-  ],
-  context: "fresh"
-})
+subagent({ workflowScript: `
+  const results = await runs.all([
+    { key: "lane-a", agent: "reviewer", task: "Inspect lane A" },
+    { key: "lane-b", agent: "reviewer", task: "Inspect lane B" }
+  ]);
+  return results.map(result => result.output);
+` })
 ```
 
 ### Gather-context-and-clarify technique
@@ -149,7 +140,7 @@ Use this when a broad diff has known reviewer findings across several items and 
 
 Prefer `async: true`, `context: "fresh"` for planners/validators, `outputMode: "file-only"` for large summaries, and per-stage output names that will not collide. Add `phase` and `label` to make async status readable, and use `as` plus `{outputs.name}` when a later step needs a specific earlier result instead of the whole `{previous}` blob. Use this pattern instead of launching several writer workers into a dirty worktree. Include non-blocking suggestions in the writer prompt only when they are small, safe, and do not expand product scope; otherwise record them as deferred.
 
-When the first step can return a structured target list, prefer dynamic fanout instead of hand-authoring a static parallel group. Use `outputSchema` and `as` on the producer, then an `expand` step with `from: { output, path }`, an explicit `maxItems`, one `parallel` child template, and `collect.as`. Item templates may use `{item}` or a named item such as `{target.path}`. Do not use dynamic fanout for prose outputs, nested fanout, dynamic agent selection, reducers, `when` conditions, or arbitrary expressions; `.chain.md` does not support this syntax, so use direct JSON or a saved `.chain.json`.
+When one child returns a structured target list, use ordinary JavaScript to validate/filter it and map bounded entries into `runs.all`; do not use the removed chain fanout DSL.
 
 Example shape:
 

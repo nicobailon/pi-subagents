@@ -9,11 +9,7 @@ Agent files can live in:
 - `.pi/agents/**/*.md` — canonical project scope
 - legacy `.agents/**/*.md` — still read for compatibility, but `.pi/agents/` wins on conflicts
 
-Chains live in:
-- `~/.pi/agent/chains/**/*.chain.md` and `~/.pi/agent/chains/**/*.chain.json` — user scope
-- `.pi/chains/**/*.chain.md` and `.pi/chains/**/*.chain.json` — project scope
-
-Discovery is recursive. `.chain.md` files do not define agents. Use `.chain.md` for simple saved chains and `.chain.json` for dynamic fanout or inline schema objects. Agents and chains can set optional frontmatter/package metadata; `name: scout` plus `package: code-analysis` registers as runtime name `code-analysis.scout` while serialization keeps `name` and `package` separate.
+Saved chain files may still be discovered for management and existing durable run state, but they are not a public execution surface. Author new orchestration with `workflowScript`.
 
 Precedence is by parsed runtime name:
 1. project scope
@@ -58,94 +54,28 @@ Foreground results, async status, fleet, and widget surfaces label each child wi
 its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
 `[mixed]` when a run uses both modes.
 
-### Parallel execution
-
-```typescript
-subagent({
-  tasks: [
-    { agent: "scout", task: "Explore the auth module" },
-    { agent: "reviewer", task: "Review the API client" }
-  ]
-})
-```
-
-Top-level parallel tasks can override per-task behavior:
-
-```typescript
-subagent({
-  tasks: [
-    { agent: "scout", task: "Map auth", output: "auth-context.md", progress: true },
-    { agent: "researcher", task: "Research OAuth best practices", output: "oauth-research.md" },
-    { agent: "reviewer", task: "Review auth tests", model: "anthropic/claude-sonnet-4" }
-  ],
-  concurrency: 3
-})
-```
-
-Repeat one parallel task N times with the same settings via `count` (useful for identical scouts or review angles without hand-duplicating entries):
-
-```typescript
-subagent({
-  tasks: [
-    { agent: "scout", task: "Map a distinct slice of the auth surface and return compressed context.", count: 3 }
-  ],
-  concurrency: 3,
-  context: "fresh"
-})
-```
-
-Avoid duplicate output paths in parallel tasks. Concurrent children should not write to the same file. For large saved outputs, set `outputMode: "file-only"` together with an `output` path. The parent result then contains only a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` instead of the full saved content. Do not use `output: false` for this; `output: false` means no file output. In chains, relative `output` paths are chain-artifact paths under `{chain_dir}`, not project CWD paths; use an absolute `output` path or a persistent `chainDir` when a saved artifact must outlive the temp chain directory. Read-only children return the complete artifact in their final response and the runtime persists it, so missing write tools are not a supervisor blocker. Mutation-capable children still receive direct-write instructions. Failed runs and save errors still return inline details for debugging.
-
 ### Scripted workflows
 
-Use `workflowScript` for adaptive multi-step work: branching, filtering structured results, dynamic fanout, and conditional fix/review steps. Scripts run in a timed worker with only `runs.run(key, params)`, `runs.all([{ key, ...params }])`, `runs.status(keyOrRunId)`, `runs.ref/refs`, `emit`, and captured `console`. Stable keys are required. Child params follow the ordinary subagent execution path, so agent contracts, budgets, missions, worktrees, artifacts, and status still apply.
+`workflowScript` is the sole public orchestration surface. Use `runs.run(key, { agent, task, ... })` for one child, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation.
 
-```typescript
+```js
 subagent({
   workflowScript: `
-    const scan = await runs.run("scan", { agent: "scout", task: "Return structured targets", outputSchema: { type: "object" } });
-    const reviews = await runs.all(scan.structuredOutput.items.map((item) => ({ key: "review-" + item.id, agent: "reviewer", task: "Review " + item.path })));
-    emit({ reviewed: reviews.length });
-    return runs.refs(reviews);
-  `,
-  timeoutMs: 1_800_000
+    const scan = await runs.run("scan", { agent: "scout", task: "Map the target" });
+    const reviews = await runs.all([
+      { key: "correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
+      { key: "tests", agent: "reviewer", task: "Review tests: " + scan.output }
+    ]);
+    return reviews.map(result => result.output);
+  `
 })
 ```
 
-The worker has no filesystem, shell, edit tools, arbitrary Pi tools, `process`, or `require`. Script errors, child failures, and timeout return the captured milestones, console output, and call trace. Controller durability/crash replay and saved workflow discovery are deferred; inline scripts currently run foreground only.
-
-### Chain execution (compatibility)
-
-Existing static chains continue to work. Prefer `workflowScript` instead of adding adaptive behavior to the chain DSL.
-
-```typescript
-subagent({
-  chain: [
-    { agent: "scout", task: "Map the auth flow and summarize key files" },
-    { agent: "planner", task: "Create an implementation plan from {previous}" },
-    { agent: "worker", task: "Implement the approved plan based on {previous}" }
-  ]
-})
-```
-
-Chain steps can use templated variables such as `{task}`, `{previous}`,
-`{chain_dir}`, and `{outputs.name}`. Use `as: "name"` on a successful step or
-parallel task to make that output available to later steps. Prefer named outputs
-when a later step needs one specific result; keep `{previous}` for simple linear
-handoffs or full fan-in summaries. Use `phase` and `label` for status readability.
-Use `outputSchema` when later steps need reliable structured data; the child must
-call `structured_output` with schema-valid JSON, or the step fails.
-
-Use `agentContract: { version: 1 }` when a caller needs generic result projections
-instead of acceptance or mutation effects rewriting execution success. V1 adds
-`execution`, `acceptance`, `review`, and `effects`; omitted acceptance means no
-acceptance request. Chain steps advance on execution by default under v1. Set
-`gateOn: "acceptance"` only when a rejected explicit acceptance report should stop
-the chain.
+Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `runs.ref/refs`, `emit`, captured `console`, and standard JavaScript. Stable keys are required. Child launches follow ordinary single-agent execution controls.
 
 ### Async/background
 
-Prefer async mode for every subagent launch. Set `async: true` no matter the task unless there is a specific reason to opt into a foreground/blocking run. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, chains, and parallel groups. Keep the write path single-threaded even when the run is async.
+Prefer async mode for every subagent launch. Set `async: true` no matter the task unless there is a specific reason to opt into a foreground/blocking run. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, and scripted workflows. Keep the write path single-threaded even when the run is async.
 
 Async does not mean parallel writes. Do not edit the same active worktree while an async worker is changing it. Parent-side overlap should be reading, validation prep, synthesis, command planning, or review of unaffected context unless the writer is isolated in a separate worktree.
 
@@ -163,7 +93,7 @@ subagent({
 })
 ```
 
-File-only output mode also works for async single runs, top-level parallel task items, sequential chain steps, and chain parallel task items. In chains, `{previous}` receives the compact saved-file reference when the prior step used file-only mode. Relative chain output paths are resolved under `{chain_dir}`; pass a persistent `chainDir` or an absolute `output` path when a later human or process needs a stable path outside the temp chain run.
+File-only output mode works for async single runs and workflowScript child launches. Use distinct absolute or durable output paths when later script steps need stable references.
 
 For review fanout where the parent continues a local audit:
 
@@ -181,14 +111,14 @@ While children run, the persistent FleetView and the collapsed foreground tool-r
 
 Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
-Stop a current-session top-level async run with `stop` (or `/subagents-stop`). Stopped runs finish as `stopped`/cancelled and are not resumable. For an active foreground single-subagent run, `/subagents-detach [run-id]` leaves the child running without terminating it and returns the eventual result through status/wait. Append one more step to the tail of a still-running async chain with `append-step` (`chain` must contain exactly one step). Use checkpoint steps for planned human gates; they pause without launching a child and are approved or rejected through current-session control actions:
+Stop a current-session top-level async run with `stop` (or `/subagents-stop`). Stopped runs finish as `stopped`/cancelled and are not resumable. For an active foreground single-subagent run, `/subagents-detach [run-id]` leaves the child running without terminating it and returns the eventual result through status/wait. Append one more step to the tail of a still-running durable chain with `append-step` (`step` must contain exactly one step object). Use checkpoint steps for planned human gates; they pause without launching a child and are approved or rejected through current-session control actions:
 
 ```typescript
 subagent({ action: "stop", id: "run-id" })
 subagent({
   action: "append-step",
   id: "run-id",
-  chain: [{ checkpoint: "review", message: "Approve the next implementation step?" }]
+  step: { checkpoint: "review", message: "Approve the next implementation step?" }
 })
 subagent({ action: "approve-checkpoint", id: "run-id" })
 subagent({ action: "reject-checkpoint", id: "run-id" })
@@ -229,8 +159,6 @@ Scheduled runs defer a subagent launch until a future time. They are enabled by 
 // Launch a reviewer in 30 minutes
 subagent({ action: "schedule", agent: "reviewer", task: "Review the diff for correctness issues.", schedule: "+30m", scheduleName: "evening review" })
 
-// Schedule a parallel fanout
-subagent({ action: "schedule", tasks: [{ agent: "scout", task: "Map the auth module" }, { agent: "scout", task: "Map the billing module" }], schedule: "+1h" })
 
 // Inspect, list, and cancel
 subagent({ action: "schedule-list" })
@@ -238,7 +166,7 @@ subagent({ action: "schedule-status", id: "ab12" })
 subagent({ action: "schedule-cancel", id: "ab12" })
 ```
 
-`schedule` accepts the same execution fields as a normal async run (`agent`/`tasks`/`chain`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs` / `maxRuntimeMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `subagent_wait()`, and delivers the normal completion notification.
+`schedule` accepts single-agent execution fields (`agent`, `cwd`, `model`, `output`, `reads`, `progress`, `acceptance`, `timeoutMs` / `maxRuntimeMs`) plus `schedule` (a relative delay like `+10m`/`+2h`/`+1d` or a future ISO timestamp with a timezone such as `2030-01-01T09:00:00Z`) and an optional `scheduleName`. Scheduled runs always launch async with fresh context; `context: "fork"`, `async: false`, and `clarify: true` are rejected. Once the timer fires, the run becomes a normal tracked async run: it appears in the async widget, is inspectable with `subagent({ action: "status" })`, can be awaited with `subagent_wait()`, and delivers the normal completion notification.
 
 Schedules are persisted per session and restored after a Pi restart. A job whose scheduled time passed by more than `scheduledRuns.maxLatenessMs` (default 5 minutes) while Pi was unavailable is marked `missed` instead of firing late. `scheduledRuns.maxPending` (default 20) caps pending or running scheduled jobs per session.
 

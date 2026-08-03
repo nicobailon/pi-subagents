@@ -202,6 +202,20 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 				params = toSubagentDelegationExecutionParams(parsed.request);
 			}
 		} else {
+			if (data && typeof data === "object" && !Array.isArray(data)) {
+				const legacy = data as Record<string, unknown>;
+				if (legacy.tasks !== undefined || legacy.worktree !== undefined) {
+					if (typeof legacy.requestId === "string" && legacy.requestId) {
+						options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, {
+							requestId: legacy.requestId,
+							messages: [],
+							isError: true,
+							errorText: "Legacy prompt-template tasks/worktree orchestration was removed; use workflowScript.",
+						});
+					}
+					return;
+				}
+			}
 			legacyRequest = parsePromptTemplateRequest(data);
 			if (!legacyRequest) return;
 			requestId = legacyRequest.requestId;

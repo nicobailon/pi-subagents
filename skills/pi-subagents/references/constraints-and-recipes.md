@@ -76,14 +76,12 @@ Use `/name` so intercom targeting stays stable.
 
 ### Recon → Plan → Implement
 
-```typescript
-subagent({
-  chain: [
-    { agent: "scout", task: "Map the auth flow and summarize relevant files" },
-    { agent: "planner", task: "Plan the migration from {previous}" },
-    { agent: "worker", task: "Implement the approved plan from {previous}" }
-  ]
-})
+```js
+subagent({ workflowScript: `
+  const context = await runs.run("recon", { agent: "scout", task: "Inspect the codebase and identify the implementation seam" });
+  const plan = await runs.run("plan", { agent: "planner", task: "Plan from: " + context.output });
+  return (await runs.run("implement", { agent: "worker", task: "Implement this approved plan: " + plan.output })).output;
+` })
 ```
 
 ### Fable mode for complex work
@@ -112,7 +110,7 @@ When the user approves launching a subagent to carry out a plan or workflow, tre
 - `/parallel-review` maps to: launch fresh-context `reviewer` agents with distinct review angles; synthesize the feedback before applying anything.
 - `/review-loop` maps to: keep the parent in charge of worker → fresh reviewers → synthesized fix worker cycles until no fixes worth doing now remain, an unapproved decision appears, or the review-round cap is reached.
 - `/parallel-research` maps to: combine local `scout` context with external `researcher` evidence when current docs, ecosystem behavior, or API details matter.
-- `/parallel-context-build` maps to: run a chain-mode parallel group of `context-builder` agents with distinct temp output paths, then synthesize their context and meta-prompt sections.
+- `/parallel-context-build` maps to: use `workflowScript` with `runs.all` for distinct `context-builder` lanes, then synthesize their context and meta-prompt sections.
 - `/parallel-handoff-plan` maps to: run external `researcher` plus local/strategy `context-builder` passes, then a synthesis `context-builder` that writes an implementation handoff plan and implementation-ready meta-prompt.
 - `/parallel-cleanup` maps to: use review-only cleanup passes after implementation, especially for simplicity, verbosity, and redundant tests.
 
@@ -195,22 +193,16 @@ For explicit review-loop requests, repeat worker → fresh-reviewer → synthesi
 
 ### Parallel non-conflicting analysis
 
-```typescript
-subagent({
-  tasks: [
-    { agent: "scout", task: "Audit frontend auth flow" },
-    { agent: "researcher", task: "Research current retry/backoff best practices" }
-  ]
-})
+```js
+subagent({ workflowScript: `
+  return await runs.all([
+    { key: "frontend", agent: "scout", task: "Inspect the frontend" },
+    { key: "backend", agent: "scout", task: "Inspect the backend" }
+  ]);
+` })
 ```
 
-### Saved chain
-
-```text
-/run-chain review-chain -- review this branch
-```
-
-Use saved `.chain.md` or `.chain.json` workflows when the user wants a repeatable multi-agent flow without rewriting the chain each time. Prefer `.chain.json` for dynamic fanout or inline `outputSchema` objects; `.chain.md` remains the simple sequential/static authoring format.
+Use distinct keys, prompts, and output paths. Do not launch parallel writers into the same checkout.
 
 ## Error Handling
 

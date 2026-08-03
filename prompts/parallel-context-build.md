@@ -4,7 +4,7 @@ description: Parallel context builders for planning handoff
 
 Launch fresh-context `context-builder` subagents in parallel to build grounded handoff context for planning or implementation.
 
-Use the `subagent` tool in chain mode with a single parallel step, not top-level parallel tasks, so relative output files live under the temporary chain directory. Use `context: "fresh"` unless I explicitly ask for forked context. Give every parallel task a distinct `output` path, `label`, and `as` name, for example:
+Use the `subagent` tool with `workflowScript` and `runs.all(...)`; assign each child a distinct absolute or durable output path. Use `context: "fresh"` unless I explicitly ask for forked context. Give every parallel task a distinct `output` path, `label`, and `as` name, for example:
 
 - `context-build/request-and-scope.md`
 - `context-build/codebase-and-patterns.md`

@@ -40,6 +40,20 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(emitSnapshots, [1]);
 	});
 
+	it("rejects legacy orchestration params in runs.run", async () => {
+		let launches = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return await runs.run("legacy", { tasks: [{ agent: "scout", task: "scan" }] });`,
+				timeoutMs: 2_000,
+				launch: async () => { launches++; return { ok: true, output: "unexpected" }; },
+				status: async () => ({ ok: true, output: "unused" }),
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /accepts one child.*runs\.all/i.test(error.message),
+		);
+		assert.equal(launches, 0);
+	});
+
 	it("rejects a duplicate key with incompatible params", async () => {
 		await assert.rejects(
 			runWorkflowScript({

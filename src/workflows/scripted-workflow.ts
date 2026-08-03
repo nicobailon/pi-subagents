@@ -301,6 +301,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (!isRecord(params)) return respond(Promise.reject(new Error(`runs.run('${key}', params) requires a params object.`)));
 			if (params.action !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') accepts execution params only; management action is not allowed.`)));
 			if (params.workflowScript !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') cannot start a nested workflow script.`)));
+			if (params.tasks !== undefined || params.chain !== undefined || params.concurrency !== undefined || params.worktree !== undefined || params.chainDir !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') accepts one child via { agent, task }; use runs.all(...) and JavaScript control flow for orchestration.`)));
+			}
 			const fingerprint = stableJson(params);
 			const existing = launches.get(key);
 			if (existing) {

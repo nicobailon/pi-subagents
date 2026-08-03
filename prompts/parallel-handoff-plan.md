@@ -10,7 +10,7 @@ $@
 
 Use `context: "fresh"` unless I explicitly ask for forked context. First read or fetch any URLs, issue links, PRs, screenshots, plans, docs, or local files mentioned in the request. Treat them as primary scope, not optional context.
 
-Use the `subagent` tool in chain mode:
+Use the `subagent` tool with `workflowScript`:
 
 1. First step: a parallel group.
    - `researcher`, when the request includes external references, APIs, libraries, docs, current best practices, or prompt-guidance research.

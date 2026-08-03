@@ -87,7 +87,7 @@ Review $1 with $ARGUMENTS
 			run: async (params) => { runs.push(params); },
 		});
 
-		await commands.get("prompt-workflow")!.handler('native-run target --fork --worktree', makeCtx(cwd));
+		await commands.get("prompt-workflow")!.handler('native-run target --fork', makeCtx(cwd));
 
 		assert.equal(sent.length, 0);
 		assert.equal(runs.length, 1);
@@ -95,14 +95,14 @@ Review $1 with $ARGUMENTS
 		assert.equal(runs[0]?.model, "anthropic/claude-sonnet-4");
 		assert.deepEqual(runs[0]?.skill, ["deslop", "typescript-code"]);
 		assert.equal(runs[0]?.context, "fork");
-		assert.equal(runs[0]?.worktree, true);
 		assert.equal(runs[0]?.task, "Review target with target");
 	});
 
-	it("runs prompt templates as a native chain", async () => {
+	it("runs declared prompt sequences through workflowScript", async () => {
 		writePrompt(path.join(cwd, ".pi", "prompts"), "native-analyze", `---
 description: Analyze
 subagent: scout
+chain: native-analyze -> native-fix
 ---
 Analyze $@
 `);
@@ -122,13 +122,12 @@ Fix from {previous}: $@
 			run: async (params) => { runs.push(params); },
 		});
 
-		await commands.get("chain-prompts")!.handler("native-analyze -> native-fix -- bug report", makeCtx(cwd));
+		await commands.get("prompt-workflow")!.handler("native-analyze bug report", makeCtx(cwd));
 
 		assert.equal(runs.length, 1);
-		assert.equal(runs[0]?.chain?.length, 2);
-		assert.equal(runs[0]?.chain?.[0]?.agent, "scout");
-		assert.equal(runs[0]?.chain?.[0]?.task, "Analyze bug report");
-		assert.equal(runs[0]?.chain?.[1]?.agent, "worker");
-		assert.equal(runs[0]?.chain?.[1]?.task, "Fix from {previous}: bug report");
+		assert.match(runs[0]?.workflowScript ?? "", /runs\.run\("prompt-1-native-analyze"/);
+		assert.match(runs[0]?.workflowScript ?? "", /runs\.run\("prompt-2-native-fix"/);
+		assert.match(runs[0]?.workflowScript ?? "", /replaceAll\("\{previous\}"/);
+		assert.equal(commands.has("chain-prompts"), false);
 	});
 });

@@ -129,23 +129,6 @@ const UsageBudgetOverride = Type.Object({
 	costUsd: Type.Optional(UsageBudgetLimitOverride),
 }, { additionalProperties: false, description: "Optional root-only reported-usage budget. Hard limits prevent future child launches; running children are not stopped." });
 
-const TaskItem = Type.Object({
-	agent: Type.String(), 
-	task: Type.String(), 
-	cwd: Type.Optional(Type.String()),
-	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
-	output: Type.Optional(OutputOverride),
-	outputMode: Type.Optional(OutputModeOverride),
-	reads: Type.Optional(ReadsOverride),
-	progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking for this task" })),
-	model: Type.Optional(Type.String({ description: "Override model for this task (e.g. 'google/gemini-3-pro')" })),
-	skill: Type.Optional(SkillOverride),
-	toolBudget: Type.Optional(ToolBudgetOverride),
-	outputSchema: Type.Optional(JsonSchemaObject),
-	acceptance: Type.Optional(AcceptanceOverride),
-	agentContract: Type.Optional(AgentContractOverride),
-});
-
 // Parallel task item (within a parallel step)
 export const ParallelTaskSchema = Type.Object({
 	agent: Type.String(),
@@ -276,7 +259,7 @@ const SubagentParamsSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({
-		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task}, {tasks}, or {chain}); use it only for management/control actions."
+		description: "Optional management/control action. Omit this field entirely for execution/delegation ({agent, task} or {workflowScript}); use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
 		description: "Run id or prefix for status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run."
@@ -323,18 +306,12 @@ const SubagentParamsSchema = Type.Object({
 		],
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
 	})),
-	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript orchestration. Starts asynchronously by default; pass async:false for a small foreground run. Use await runs.run(key, params), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. No filesystem, shell, Pi tools, or host globals." })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
-	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
-	worktree: Type.Optional(Type.Boolean({
-		description: "Create isolated git worktrees for parallel tasks; requires clean git state."
-	})),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "CHAIN mode: sequential steps; each result becomes {previous}. append-step takes one tail step and may use {chain_dir}/{outputs.name}." })),
+	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript orchestration. Starts asynchronously by default; pass async:false for a small foreground run. Use await runs.run(key, {agent, task}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
+	step: Type.Optional(Type.Unsafe({ ...ChainItem, description: "One chain step for action='append-step' only. Not an execution mode." })),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork"],
 		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without defaultContext: 'fork' run fresh.",
 	})),
-	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; otherwise follows artifactDir (project-local for project, user-scoped temp for session/temp)." })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout for foreground and async/background runs; foreground defaults to 30m absent call/agent. Alias maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs for foreground and async/background runs; foreground defaults to 30m absent call/agent." })),

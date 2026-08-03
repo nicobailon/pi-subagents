@@ -18,7 +18,6 @@ import {
 } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
-import { validateChainInput } from "./chain-validation.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
@@ -329,13 +328,6 @@ function assertRecordParams(params: unknown, method: SubagentRpcMethod): Record<
 }
 
 function assertSubagentParams(params: SubagentParamsLike, label: string): void {
-	// Friendly chain validation first: name the disallowed property, list allowed
-	// ones, and show a valid example instead of raw TypeBox diagnostics.
-	try {
-		validateChainInput(params);
-	} catch (error) {
-		throw new SubagentRpcError("invalid_params", `${label}: ${error instanceof Error ? error.message : String(error)}`);
-	}
 	if (subagentParamsValidator.Check(params)) return;
 	const messages = [...subagentParamsValidator.Errors(params)]
 		.slice(0, 4)
@@ -428,6 +420,9 @@ async function executeChecked(
 
 function spawnParams(params: unknown): SubagentParamsLike {
 	const input = assertRecordParams(params, "spawn");
+	if (input.tasks !== undefined || input.chain !== undefined || input.concurrency !== undefined || input.worktree !== undefined || input.chainDir !== undefined) {
+		throw new SubagentRpcError("invalid_params", "RPC spawn no longer accepts top-level chain or parallel inputs; use workflowScript.");
+	}
 	if (input.action !== undefined) {
 		throw new SubagentRpcError("invalid_params", "RPC spawn does not accept management/control actions. Use status or interrupt RPC methods instead.");
 	}

@@ -178,9 +178,11 @@ export interface SubagentParamsLike {
 	message?: string;
 	steeringRecovery?: boolean;
 	workflowScript?: string;
+	step?: ChainStep;
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
 	concurrency?: number;
@@ -844,14 +846,15 @@ function appendStepToAsyncChain(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
-	if (!input.params.chain || input.params.chain.length !== 1) {
+	if (!input.params.step) {
 		return {
-			content: [{ type: "text", text: "action='append-step' requires chain with exactly one step." }],
+			content: [{ type: "text", text: "action='append-step' requires step." }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
 	}
-	const acceptanceErrors = validateExecutionAcceptance(input.params as Parameters<typeof validateExecutionAcceptance>[0]);
+	const chain = [input.params.step];
+	const acceptanceErrors = validateExecutionAcceptance({ ...input.params, chain } as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length > 0) {
 		return {
 			content: [{ type: "text", text: `Cannot append step: ${acceptanceErrors.join(" ")}` }],
@@ -920,7 +923,7 @@ function appendStepToAsyncChain(input: {
 		...pendingAppendRequests.flatMap((request) => runnerStepOutputNames(request.steps)),
 	]);
 	try {
-		validateChainOutputBindingsWithContext(input.params.chain, { maxItems: input.deps.config.chain?.dynamicFanout?.maxItems }, {
+		validateChainOutputBindingsWithContext(chain, { maxItems: input.deps.config.chain?.dynamicFanout?.maxItems }, {
 			priorOutputNames: reservedOutputNames,
 			startStepIndex: status.chainStepCount ?? status.steps?.length ?? 0,
 		});
@@ -951,7 +954,7 @@ function appendStepToAsyncChain(input: {
 		interactive: input.ctx.hasUI,
 	};
 	const built = buildAsyncRunnerSteps(resolved.id, {
-		chain: wrapChainTasksForFork(input.params.chain, contextPolicy),
+		chain: wrapChainTasksForFork(chain, contextPolicy),
 		task: input.params.task,
 		resultMode: "chain",
 		agents,
@@ -3789,9 +3792,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.lastForegroundControlId ??= null;
 		const requestParams = omitExecutionModeActionAlias(params);
 		if (requestParams.workflowScript !== undefined) {
-			const invalidMode = requestParams.action !== undefined || requestParams.agent !== undefined || requestParams.tasks !== undefined || requestParams.chain !== undefined;
+			const invalidMode = requestParams.action !== undefined || requestParams.agent !== undefined || requestParams.step !== undefined || requestParams.tasks !== undefined || requestParams.chain !== undefined;
 			if (invalidMode) {
-				return { content: [{ type: "text", text: "workflowScript is its own execution mode; do not combine it with action, agent, tasks, or chain." }], isError: true, details: { mode: "workflow", results: [] } };
+				return { content: [{ type: "text", text: "workflowScript is its own execution mode; do not combine it with action, agent, or step." }], isError: true, details: { mode: "workflow", results: [] } };
 			}
 			if (requestParams.clarify === true) {
 				return { content: [{ type: "text", text: "workflowScript does not support clarify UI." }], isError: true, details: { mode: "workflow", results: [] } };

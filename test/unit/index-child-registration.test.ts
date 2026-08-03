@@ -71,7 +71,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("does not show async badge for explicit foreground clarify chain calls", () => {
+	it("renders only the public single and workflow execution modes", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -79,40 +79,17 @@ describe("subagent extension child mode", () => {
 			const fakePi = new Proxy({
 				events,
 				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
-				registerCommand() {},
-				registerShortcut() {},
-				registerMessageRenderer() {},
-				sendMessage() {},
-				getSessionName() { return undefined; },
-			}, {
-				get(target, prop) {
-					if (prop in target) return target[prop];
-					return () => undefined;
-				},
-			});
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
 			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
-			const asyncChain = registeredTool.renderCall({ chain: [{ agent: "worker" }, { agent: "reviewer" }], async: true }, theme).text;
-			const asyncParallel = registeredTool.renderCall({ tasks: [{ agent: "worker" }, { agent: "reviewer", count: 2 }], async: true }, theme).text;
-			const clarifyChain = registeredTool.renderCall({ chain: [{ agent: "worker" }, { agent: "reviewer" }], async: true, clarify: true }, theme).text;
-			if (!asyncChain.includes("[async]")) throw new Error("expected async chain badge, got " + asyncChain);
-			if (!asyncParallel.includes("parallel (3) [async]")) throw new Error("expected async parallel badge, got " + asyncParallel);
-			if (clarifyChain.includes("[async]")) throw new Error("unexpected clarify async badge: " + clarifyChain);
+			const single = registeredTool.renderCall({ agent: "worker", async: true }, theme).text;
+			const workflow = registeredTool.renderCall({ workflowScript: "return null" }, theme).text;
+			if (!single.includes("worker [async]")) throw new Error("expected async single badge, got " + single);
+			if (!workflow.includes("workflow script")) throw new Error("expected workflow label, got " + workflow);
 		`;
-
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
+		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
 	it("does not animate foreground results on a timer", () => {
