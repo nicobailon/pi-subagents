@@ -1160,6 +1160,15 @@ async function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "
 	return { content: [{ type: "text", text: `Nested run ${run.id} is not a live async Pi child session with a steering inbox. action='steer' cannot target foreground nested runs.` }], isError: true, details: { mode: "management", results: [] } };
 }
 
+function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"): AgentToolResult<Details> | undefined {
+	const status = readStatus(asyncDir);
+	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli")) return undefined;
+	const message = action === "steer"
+		? "One-shot external CLI runners do not accept live steer messages."
+		: "One-shot external CLI runners do not persist sessions and cannot be resumed.";
+	return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+}
+
 async function resumeAsyncRun(input: {
 	params: SubagentParamsLike;
 	requestCwd: string;
@@ -1223,6 +1232,10 @@ async function resumeAsyncRun(input: {
 			];
 			target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
 		} else {
+			if (resolved?.kind === "async") {
+				const unsupported = externalRunnerControlError(resolved.location.asyncDir, "resume");
+				if (unsupported) return unsupported;
+			}
 			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: !attachChain });
 		}
 	} catch (error) {
@@ -4112,6 +4125,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
+						if (location.asyncDir) {
+							const unsupported = externalRunnerControlError(location.asyncDir, "steer");
+							if (unsupported) return unsupported;
+						}
 						return steerAsyncRun({
 							state: deps.state,
 							runId,
@@ -4144,6 +4161,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index, signal });
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+				const unsupported = externalRunnerControlError(resolved.location.asyncDir, "steer");
+				if (unsupported) return unsupported;
 				return steerAsyncRun({
 					state: deps.state,
 					runId: resolved.id,
@@ -4412,6 +4431,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
+		const selectedAgentNames = hasSingle
+			? [effectiveParams.agent!]
+			: hasTasks
+				? (effectiveParams.tasks ?? []).map((task) => task.agent)
+				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
+		const externalAgent = selectedAgentNames
+			.map((name) => agents.find((agent) => agent.name === name))
+			.find((agent) => agent?.runner?.type === "external-cli");
+		if (externalAgent && (!effectiveAsync || effectiveParams.foregroundOnly === true)) {
+			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='external-cli', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
+		}
 		const foregroundTimeout = resolveForegroundTimeout(
 			effectiveParams,
 			effectiveAsync ? undefined : DEFAULT_FOREGROUND_TIMEOUT_MS,

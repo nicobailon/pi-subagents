@@ -1,8 +1,11 @@
+export type ResolvedRunnerConfig = import("../../shared/types.ts").AgentRunnerConfig;
+
 export interface RunnerSubagentStep {
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
 	agent: string;
 	task: string;
+	runner?: ResolvedRunnerConfig;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	importAsyncRoot?: {

@@ -13,6 +13,8 @@ import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleO
 import {
 	type ActivityState,
 	type ArtifactConfig,
+	type ExternalCliRunnerStatus,
+	type ExternalProcessStatus,
 	type ArtifactPaths,
 	type AsyncParallelGroupStatus,
 	type AsyncStatus,
@@ -122,6 +124,7 @@ import { formatParallelHandoffError, formatParallelHandoffReference, parallelHan
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
+import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
@@ -222,6 +225,8 @@ interface StepResult {
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 	writerProcesses?: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }>;
 	writerAttemptCount?: number;
+	runner?: ExternalCliRunnerStatus;
+	externalProcess?: ExternalProcessStatus;
 }
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -1021,6 +1026,7 @@ interface SingleStepContext {
 	onAttemptStart?: (attempt: { model?: string; thinking?: string }) => void;
 	onChildEvent?: (event: ChildEvent) => void;
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void;
+	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	skipAcceptance?: () => boolean;
 }
 
@@ -1063,6 +1069,8 @@ async function runSingleStep(
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 	writerAttemptCount?: number;
+	runner?: ExternalCliRunnerStatus;
+	externalProcess?: ExternalProcessStatus;
 }> {
 	if (step.importAsyncRoot) {
 		let importTimedOut = false;
@@ -1167,6 +1175,66 @@ async function runSingleStep(
 		}
 	}
 	transcriptWriter?.writeInitialUserMessage(task);
+
+	if (step.runner?.type === "external-cli") {
+		const runner: ExternalCliRunnerStatus = {
+			type: "external-cli",
+			command: step.runner.command,
+			args: step.runner.args ?? [],
+			promptDelivery: step.runner.promptDelivery ?? "stdin",
+			capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
+		};
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const external = await runExternalCli({
+			command: runner.command,
+			args: runner.args,
+			cwd: step.cwd ?? ctx.cwd,
+			prompt: buildExternalCliPrompt(step.systemPrompt ?? "", task),
+			asyncDir: path.dirname(ctx.outputFile),
+			stepIndex: ctx.flatIndex,
+			registerTimeout: ctx.registerTimeout,
+			registerStop: ctx.registerStop,
+			timeoutMessage: ctx.timeoutMessage,
+			stopMessage: ctx.stopMessage,
+			onProcess: ctx.onExternalProcess,
+		});
+		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
+		const resolvedOutput = step.outputPath && external.exitCode === 0
+			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot)
+			: { fullOutput: external.output };
+		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
+		const finalizedOutput = finalizeSingleOutput({
+			fullOutput: resolvedOutput.fullOutput,
+			outputPath: step.outputPath,
+			outputMode: step.outputMode,
+			exitCode: external.exitCode ?? 1,
+			savedPath: resolvedOutput.savedPath,
+			outputReference,
+			saveError: resolvedOutput.saveError,
+		});
+		if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
+			if (ctx.artifactConfig?.includeOutput !== false) {
+				fs.writeFileSync(artifactPaths.outputPath, formatOutputArtifactContent({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath }), "utf-8");
+			}
+			if (ctx.artifactConfig?.includeMetadata !== false) {
+				fs.writeFileSync(artifactPaths.metadataPath, JSON.stringify({ runId: ctx.id, agent: step.agent, task, runner, externalProcess: external.externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() }, null, 2), "utf-8");
+			}
+		}
+		return {
+			agent: step.agent,
+			context: step.context,
+			output: finalizedOutput.displayOutput,
+			outputState: external.output.trim() ? "present" : "absent",
+			exitCode: external.exitCode,
+			error: external.error,
+			timedOut: external.timedOut,
+			stopped: external.stopped,
+			processSignal: external.processSignal,
+			artifactPaths,
+			runner,
+			externalProcess: external.externalProcess,
+		};
+	}
 
 	const candidates = step.modelCandidates && step.modelCandidates.length > 0
 		? step.modelCandidates
@@ -1640,6 +1708,17 @@ type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 	description?: string;
 };
 
+function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunnerStatus | undefined {
+	if (runner?.type !== "external-cli") return undefined;
+	return {
+		type: "external-cli",
+		command: runner.command,
+		args: runner.args ?? [],
+		promptDelivery: runner.promptDelivery ?? "stdin",
+		capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
+	};
+}
+
 function appendCapabilityCeilingAppliedEvent(eventsPath: string, runId: string, stepIndex: number, agent: string, result: StepResult): void {
 	if (!result.capabilityCeiling) return;
 	appendJsonl(eventsPath, JSON.stringify({
@@ -1873,6 +1952,7 @@ async function runSubagent(
 				const transcriptPath = resolveAsyncStepTranscriptPath({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: taskFlatIndex, flatStepCount: initialFlatStepCount });
 				initialStatusSteps.push({
 					agent: task.agent,
+					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					phase: task.phase,
@@ -1900,6 +1980,7 @@ async function runSubagent(
 			parallelGroups.push({ start: flatStepCount, count: 1, stepIndex });
 			initialStatusSteps.push({
 				agent: `expand:${step.parallel.agent}`,
+				...(externalRunnerStatus(step.parallel.runner) ? { runner: externalRunnerStatus(step.parallel.runner) } : {}),
 				...(step.parallel.context ? { context: step.parallel.context } : {}),
 				phase: step.phase ?? step.parallel.phase,
 				label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`,
@@ -1918,6 +1999,7 @@ async function runSubagent(
 			const transcriptPath = resolveAsyncStepTranscriptPath({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: stepFlatIndex, flatStepCount: initialFlatStepCount });
 			initialStatusSteps.push({
 				agent: step.agent,
+				...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
 				...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
 				...(step.context ? { context: step.context } : {}),
 				phase: step.phase,
@@ -2060,6 +2142,11 @@ async function runSubagent(
 		refreshWorkflowGraph();
 		writeAtomicJson(statusPath, statusPayload);
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
+	};
+	const updateExternalProcess = (index: number, process: ExternalProcessStatus): void => {
+		statusPayload.steps[index].externalProcess = process;
+		statusPayload.lastUpdate = Date.now();
+		writeStatusPayload();
 	};
 	const registerStepInterrupt = (flatIndex: number, interrupt: (() => void) | undefined): void => {
 		if (!interrupt) {
@@ -3313,6 +3400,7 @@ async function runSubagent(
 					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 					onWriterProcess,
+					onExternalProcess: (process) => updateExternalProcess(fi, process),
 					skipAcceptance: () => timedOut || stopped,
 				});
 				const taskEndTime = Date.now();
@@ -3694,6 +3782,7 @@ async function runSubagent(
 							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking),
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 							onWriterProcess,
+							onExternalProcess: (process) => updateExternalProcess(fi, process),
 							skipAcceptance: () => timedOut || stopped,
 						});
 						if (task.sessionFile) {
@@ -3982,6 +4071,7 @@ async function runSubagent(
 				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking),
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 				onWriterProcess,
+				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
 				skipAcceptance: () => timedOut || stopped,
 			});
 			if (seqStep.sessionFile) {
@@ -4030,6 +4120,8 @@ async function runSubagent(
 				wrapUpRequested: singleResult.wrapUpRequested,
 				toolBudget: singleResult.toolBudget,
 				toolBudgetBlocked: singleResult.toolBudgetBlocked,
+				runner: singleResult.runner,
+				externalProcess: singleResult.externalProcess,
 			});
 			if (seqStep.outputName) {
 				outputs[seqStep.outputName] = outputEntryFromAsyncResult({
@@ -4354,6 +4446,8 @@ async function runSubagent(
 				launchContractDigest: r.launchContractDigest,
 				launchResolvedExtensions: r.launchResolvedExtensions,
 				runtimeAcknowledgedExtensions: r.runtimeAcknowledgedExtensions,
+				runner: r.runner,
+				externalProcess: r.externalProcess,
 				execution: r.execution,
 				review: r.review,
 				effects: r.effects,

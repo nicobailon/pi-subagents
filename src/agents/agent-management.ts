@@ -266,6 +266,7 @@ export function preservedAgentFrontmatterFields(agent: AgentConfig, cfg: Record<
 	if (hasKey(cfg, "description")) changed("description");
 	if (hasKey(cfg, "aliases")) changed("alias", "aliases");
 	if (hasKey(cfg, "systemPrompt")) changed("systemPrompt");
+	if (hasKey(cfg, "runner")) changed("runner");
 	if (hasKey(cfg, "model")) changed("model");
 	if (hasKey(cfg, "fallbackModels")) changed("fallbackModels");
 	if (hasKey(cfg, "tools")) changed("tools");
@@ -398,6 +399,19 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		if (cfg.systemPrompt === false || cfg.systemPrompt === "") target.systemPrompt = "";
 		else if (typeof cfg.systemPrompt === "string") target.systemPrompt = cfg.systemPrompt;
 		else return "config.systemPrompt must be a string or false when provided.";
+	}
+	if (hasKey(cfg, "runner")) {
+		if (cfg.runner === false || cfg.runner === "") target.runner = undefined;
+		else if (cfg.runner && typeof cfg.runner === "object" && !Array.isArray(cfg.runner)) {
+			const runner = cfg.runner as Record<string, unknown>;
+			if (runner.type === "pi" && Object.keys(runner).every((key) => key === "type")) target.runner = { type: "pi" };
+			else if (runner.type === "external-cli" && typeof runner.command === "string" && runner.command.trim()
+				&& (runner.args === undefined || (Array.isArray(runner.args) && runner.args.every((arg) => typeof arg === "string")))
+				&& (runner.promptDelivery === undefined || runner.promptDelivery === "stdin")
+				&& Object.keys(runner).every((key) => ["type", "command", "args", "promptDelivery"].includes(key))) {
+				target.runner = { type: "external-cli", command: runner.command.trim(), ...(runner.args ? { args: [...runner.args] as string[] } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
+			} else return "config.runner must be { type: 'pi' } or { type: 'external-cli', command: string, args?: string[], promptDelivery?: 'stdin' }.";
+		} else return "config.runner must be an object, false, or empty string when provided.";
 	}
 	if (hasKey(cfg, "model")) {
 		if (cfg.model === false || cfg.model === "") target.model = undefined;
@@ -534,6 +548,21 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.toolBudget = cfg.toolBudget as ToolBudgetConfig;
 		}
 	}
+	if (target.runner?.type === "external-cli") {
+		const unsupported = [
+			target.tools?.length || target.mcpDirectTools?.length ? "tools" : undefined,
+			target.model ? "model" : undefined,
+			target.fallbackModels?.length ? "fallbackModels" : undefined,
+			target.thinking ? "thinking" : undefined,
+			target.extensions?.length ? "extensions" : undefined,
+			target.subagentOnlyExtensions?.length ? "subagentOnlyExtensions" : undefined,
+			target.skills?.length || target.skillPath?.length ? "skills" : undefined,
+			target.maxSubagentDepth !== undefined ? "maxSubagentDepth" : undefined,
+			target.completionGuard !== undefined ? "completionGuard" : undefined,
+			target.toolBudget ? "toolBudget" : undefined,
+		].filter((field): field is string => Boolean(field));
+		if (unsupported.length > 0) return `config.runner type 'external-cli' does not support Pi-only fields: ${unsupported.join(", ")}.`;
+	}
 	return undefined;
 }
 
@@ -599,6 +628,7 @@ function formatAgentDetail(agent: AgentConfig): string {
 	if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
 	if (agent.skillPath?.length) lines.push(`Skill paths: ${agent.skillPath.join(", ")}`);
 	lines.push(`System prompt mode: ${agent.systemPromptMode}`);
+	if (agent.runner) lines.push(`Runner: ${JSON.stringify(agent.runner)}`);
 	lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
 	lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
 	if (agent.defaultContext) lines.push(`Default context: ${agent.defaultContext}`);

@@ -408,12 +408,19 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const display = step.label ? `${step.label} (${step.agent})` : step.agent;
 				const phase = step.phase ? `[${step.phase}] ` : "";
 				lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+				if (step.runner?.type === "external-cli") {
+					lines.push(`  Runner: external-cli (${step.runner.command}${step.runner.args.length ? ` ${step.runner.args.join(" ")}` : ""})`);
+					if (step.externalProcess?.pid !== undefined) lines.push(`  Process: ${step.externalProcess.pid}`);
+					if (step.externalProcess) lines.push(`  Stdout: ${step.externalProcess.stdoutPath}`, `  Stderr: ${step.externalProcess.stderrPath}`);
+				}
 				lines.push(...formatNestedRunStatusLines(step.children, { indent: "  ", commandHints: true, maxLines: 20 }));
 				const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
 				if (stepOutputPath !== outputPath && fs.existsSync(stepOutputPath)) lines.push(`  Output: ${stepOutputPath}`);
-				if (step.status === "running") {
+				if (step.status === "running" && step.runner?.type !== "external-cli") {
 					lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
 					lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`);
+				} else if (step.status === "running" && step.runner?.type === "external-cli") {
+					lines.push("  Steer: unavailable; one-shot external CLI runners do not accept live messages.");
 				}
 			}
 			const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
@@ -421,9 +428,12 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			lines.push(...formatNestedRunStatusLines(unattached, { indent: "", commandHints: true, maxLines: 20 }));
 			if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
 			if (status.sessionFile) lines.push(`Session: ${status.sessionFile}`);
-			if (status.state === "running") lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
+			const allExternal = (status.steps?.length ?? 0) > 0 && status.steps!.every((step) => step.runner?.type === "external-cli");
+			if (status.state === "running" && !allExternal) lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
 			if (status.state !== "running") {
-				lines.push(formatCheckpointGuidance(status.runId, status.checkpoint) ?? formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
+				lines.push(allExternal
+					? "Resume: unavailable; one-shot external CLI runners do not persist sessions."
+					: formatCheckpointGuidance(status.runId, status.checkpoint) ?? formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
 			}
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);

@@ -84,6 +84,30 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 4, block: ["read"] });
 	});
 
+	it("attaches external runner config and rejects unsupported Pi-only overrides", () => {
+		const external = agent("external");
+		external.runner = { type: "external-cli", command: process.execPath, args: ["fake.mjs"] };
+		const built = buildAsyncRunnerSteps("external-run", {
+			chain: [{ agent: "external", task: "review" }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-external-test"),
+			maxSubagentDepth: 2,
+		});
+		assert.ok("steps" in built);
+		assert.deepEqual(built.steps[0]?.runner, external.runner);
+		assert.equal(built.steps[0]?.model, undefined);
+
+		const rejected = buildAsyncRunnerSteps("external-rejected", {
+			chain: [{ agent: "external", task: "review", model: "provider/model" }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-external-test"),
+			maxSubagentDepth: 2,
+		});
+		assert.deepEqual(rejected, { error: "Agent 'external' uses runner.type='external-cli' and does not support: model override." });
+	});
+
 	it("uses config default when no step, run, or agent budget exists", () => {
 		const result = buildAsyncRunnerSteps("run-3", {
 			chain: [{ agent: "worker", task: "config default" }],

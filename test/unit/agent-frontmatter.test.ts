@@ -136,6 +136,49 @@ body`);
 	});
 });
 
+describe("agent runner frontmatter", () => {
+	it("parses and serializes an external-cli runner", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "external.md"), `---
+name: external
+ description: External runner
+runner:
+  type: external-cli
+  command: ${JSON.stringify(process.execPath)}
+  args: ["-e", "process.stdin.pipe(process.stdout)"]
+  promptDelivery: stdin
+async: true
+---
+Review carefully.`.replace(" description:", "description:"));
+
+		const external = discoverAgents(project, "project").agents.find((agent) => agent.name === "external")!;
+		assert.deepEqual(external.runner, { type: "external-cli", command: process.execPath, args: ["-e", "process.stdin.pipe(process.stdout)"], promptDelivery: "stdin" });
+		assert.match(serializeAgent(external), /runner:\n  type: external-cli\n  command:/);
+		assert.deepEqual(discoverAgents(project, "project").agents.find((agent) => agent.name === "external")?.runner, external.runner);
+	}));
+
+	it("rejects invalid and Pi-only external runner fields", () => withTempHome(() => {
+		const invalidCases = [
+			"type: unknown\n  command: node",
+			"type: external-cli\n  command: ''",
+			"type: external-cli\n  command: node\n  args: nope",
+			"type: external-cli\n  command: node\n  args: [ok, 1]",
+			"type: external-cli\n  command: node\n  promptDelivery: argv",
+		];
+		for (const [index, runner] of invalidCases.entries()) {
+			const project = fs.mkdtempSync(path.join(os.tmpdir(), `pi-subagents-invalid-runner-${index}-`));
+			tempDirs.push(project);
+			writeAgent(path.join(project, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  ${runner}\n---\nBody`);
+			assert.throws(() => discoverAgents(project, "project"), /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'/);
+		}
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-pi-only-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  type: external-cli\n  command: node\nmodel: provider/model\n---\nBody`);
+		assert.throws(() => discoverAgents(project, "project"), /unsupported Pi-only fields: model/);
+	}));
+});
+
 describe("agent skillPath frontmatter", () => {
 	it("parses and serializes comma-separated paths", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-skill-path-agent-"));

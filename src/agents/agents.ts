@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceInput, AcceptanceRole, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig, TurnBudgetConfig } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
@@ -115,6 +115,7 @@ export interface AgentModelSourceInfo {
 
 export interface AgentConfig {
 	name: string;
+	runner?: AgentRunnerConfig;
 	localName?: string;
 	packageName?: string;
 	description: string;
@@ -1397,6 +1398,54 @@ function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
 	return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
 
+function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string): AgentRunnerConfig | undefined {
+	if (raw === undefined || !raw.trim()) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = parseYaml(raw);
+	} catch (error) {
+		throw new Error(`Agent '${agentName}' has invalid runner frontmatter: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new Error(`Agent '${agentName}' has invalid runner frontmatter; expected an object.`);
+	}
+	const runner = parsed as Record<string, unknown>;
+	if (runner.type === "pi") {
+		if (Object.keys(runner).some((key) => key !== "type")) throw new Error(`Agent '${agentName}' has invalid Pi runner frontmatter; only 'type' is supported.`);
+		return { type: "pi" };
+	}
+	if (runner.type !== "external-cli") {
+		throw new Error(`Agent '${agentName}' has invalid runner.type; expected 'pi' or 'external-cli'.`);
+	}
+	if (typeof runner.command !== "string" || !runner.command.trim()) {
+		throw new Error(`Agent '${agentName}' external-cli runner requires a non-empty command string.`);
+	}
+	if (runner.args !== undefined && (!Array.isArray(runner.args) || runner.args.some((arg) => typeof arg !== "string"))) {
+		throw new Error(`Agent '${agentName}' external-cli runner args must be an array of strings.`);
+	}
+	if (runner.promptDelivery !== undefined && runner.promptDelivery !== "stdin") {
+		throw new Error(`Agent '${agentName}' external-cli runner promptDelivery must be 'stdin'.`);
+	}
+	const supported = new Set(["type", "command", "args", "promptDelivery"]);
+	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
+	if (unknown.length > 0) throw new Error(`Agent '${agentName}' external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
+	return {
+		type: "external-cli",
+		command: runner.command.trim(),
+		...(runner.args ? { args: [...runner.args] as string[] } : {}),
+		...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}),
+	};
+}
+
+function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
+	if (runner?.type !== "external-cli") return;
+	const unsupported = ["tools", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget"]
+		.filter((field) => frontmatter[field] !== undefined);
+	if (unsupported.length > 0) {
+		throw new Error(`Agent '${agentName}' uses runner.type='external-cli' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
+	}
+}
+
 function parseAgentAcceptanceFrontmatter(raw: string | undefined, agentName: string): AcceptanceInput | undefined {
 	if (raw === undefined || !raw.trim()) return undefined;
 	let parsed: unknown;
@@ -1437,6 +1486,8 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		const packageName = parsedPackage.packageName;
 		const runtimeName = buildRuntimeName(localName, packageName);
 
+		const runner = parseAgentRunnerFrontmatter(frontmatter.runner, localName);
+		validateExternalRunnerProfile(frontmatter, localName, runner);
 		const rawTools = parseFrontmatterList(frontmatter.tools);
 		const parsedTools = splitToolList(rawTools);
 		const tools = parsedTools.tools ?? [];
@@ -1520,6 +1571,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 
 		const agent: AgentConfig = {
 			name: runtimeName,
+			runner,
 			localName,
 			packageName,
 			description: frontmatter.description,

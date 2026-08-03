@@ -1160,6 +1160,40 @@ export interface AsyncStartedEvent {
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
 
+export type AgentRunnerConfig =
+	| { type: "pi" }
+	| {
+		type: "external-cli";
+		command: string;
+		args?: string[];
+		promptDelivery?: "stdin";
+	};
+
+export interface ExternalCliRunnerStatus {
+	type: "external-cli";
+	command: string;
+	args: string[];
+	promptDelivery: "stdin";
+	capabilities: {
+		stop: true;
+		steer: false;
+		resume: false;
+		structuredOutput: false;
+		toolEvents: false;
+	};
+}
+
+export interface ExternalProcessStatus {
+	pid?: number;
+	startedAt: number;
+	endedAt?: number;
+	durationMs?: number;
+	exitCode?: number | null;
+	processSignal?: string | null;
+	stdoutPath: string;
+	stderrPath: string;
+}
+
 export interface AsyncStatus {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
@@ -1205,6 +1239,8 @@ export interface AsyncStatus {
 	capabilityAudit?: SubagentCapabilityAudit;
 	steps?: Array<{
 		agent: string;
+		runner?: ExternalCliRunnerStatus;
+		externalProcess?: ExternalProcessStatus;
 		/** Resolved launch context for this child step. */
 		context?: "fresh" | "fork";
 		/** Short caller-facing task/goal shown in fleet surfaces when available. */

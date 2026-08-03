@@ -4,6 +4,7 @@
 
 ### Added
 - Added trusted inline `workflowScript` orchestration with stable-key child launches through the ordinary executor, timed worker isolation, captured console and emitted milestones, artifact references, status lookup, and a concise call trace. Chains remain supported for compatibility; durable replay and saved scripts are deferred.
+- Added opt-in async one-shot `external-cli` agent profiles with stdin prompt delivery, argv-only spawning, lifecycle/status artifacts, stdout/stderr logs, timeout, and stop support.
 - Added default-on durable project missions with management actions, launch attachment, lifecycle/artifact links, explicit opt-out, a user-local cross-project pointer index, and typed delivery receipts for pull requests, CI, deployments, and releases.
 - Made ordinary top-level subagent launches run asynchronously by default; `async: false`, agent defaults, and clarify UI retain foreground escape hatches.
 - Added a small fixed authority policy for worktree discard, destructive cleanup, spawn-budget grants, schedule creation, stop, and steer actions.

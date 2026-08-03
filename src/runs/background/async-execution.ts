@@ -636,6 +636,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }) => {
 		const a = agents.find((x) => x.name === s.agent)!;
+		const externalRunner = a.runner?.type === "external-cli";
+		if (externalRunner) {
+			const unsupported: string[] = [];
+			if (s.model !== undefined) unsupported.push("model override");
+			if (s.outputSchema !== undefined) unsupported.push("structured output");
+			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
+			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
+			if (params.contextForAgent?.(s.agent) === "fork") unsupported.push("fork context");
+			if (unsupported.length > 0) throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='external-cli' and does not support: ${unsupported.join(", ")}.`);
+		}
 		try {
 			assertAgentAllowedByCapabilityCeiling(a.name, intersectSubagentCapabilityCeilings(params.capabilityCeiling, decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV])));
 		} catch (error) {
@@ -689,7 +699,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const taskText = `${readInstructions.prefix}${taskTemplate}${progressInstructions.suffix}`;
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
-		const primaryModel = resolveEffectiveSubagentModel(
+		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
 			s.model,
 			a.model,
 			ctx.currentModel,
@@ -698,8 +708,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			{ scope: ctx.modelScope },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
-		const effectiveThinking = thinkingOverride ?? a.thinking;
-		const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
+		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
+		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const agentContract = s.agentContract ?? params.agentContract;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
@@ -713,12 +723,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			agentName: a.name,
 		});
-		const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
+		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
 			agent: s.agent,
 			task,
+			...(a.runner ? { runner: a.runner } : {}),
 			...(params.contextForAgent ? { context: params.contextForAgent(s.agent) } : {}),
 			...(agentContract ? { agentContract } : {}),
 			phase: s.phase,
@@ -729,7 +740,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			launchResolvedExtensions,
-			modelCandidates: buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
+			modelCandidates: externalRunner ? undefined : buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
 				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
 			),
 			tools: a.tools,
@@ -1177,6 +1188,18 @@ export function executeAsyncSingle(
 		nestedRoute,
 	} = params;
 	const task = params.task ?? "";
+	const externalRunner = agentConfig.runner?.type === "external-cli";
+	if (externalRunner) {
+		const unsupported: string[] = [];
+		if (params.modelOverride !== undefined) unsupported.push("model override");
+		if (params.thinkingOverride !== undefined) unsupported.push("thinking override");
+		if (params.structuredOutputSchema !== undefined) unsupported.push("structured output");
+		if (params.acceptance !== undefined || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
+		if (params.toolBudget !== undefined || agentConfig.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
+		if (params.context === "fork") unsupported.push("fork context");
+		if ((params.skills?.length ?? 0) > 0) unsupported.push("skills");
+		if (unsupported.length > 0) return formatAsyncStartError("single", `Agent '${agentConfig.name}' uses runner.type='external-cli' and does not support: ${unsupported.join(", ")}.`);
+	}
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]));
 	try {
 		assertAgentAllowedByCapabilityCeiling(agentConfig.name, capabilityCeiling);
@@ -1227,14 +1250,14 @@ export function executeAsyncSingle(
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath, agentConfig);
-	const primaryModel = resolveSubagentModelOverride(
+	const primaryModel = externalRunner ? undefined : resolveSubagentModelOverride(
 		params.modelOverride ?? agentConfig.model,
 		ctx.currentModel,
 		availableModels,
 		ctx.currentModelProvider,
 	);
-	const effectiveThinking = params.thinkingOverride ?? agentConfig.thinking;
-	const model = applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
+	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
+	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
@@ -1265,7 +1288,7 @@ export function executeAsyncSingle(
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agentConfig.name,
 	});
-	const launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
+	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({
 		definitionDigest: agentDefinitionDigest(agentConfig),
 		task,
@@ -1334,10 +1357,12 @@ export function executeAsyncSingle(
 		artifactConfig,
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 	};
-	try {
-		writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
-	} catch (error) {
-		return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
+	if (!externalRunner) {
+		try {
+			writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
+		} catch (error) {
+			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 	let spawnResult: { pid?: number; error?: string } = {};
 	try {
@@ -1350,6 +1375,7 @@ export function executeAsyncSingle(
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
 						agent,
 						task: taskWithOutputInstruction,
+						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
 						...(params.context ? { context: params.context } : {}),
 						cwd: runnerCwd,
 						model,
@@ -1367,7 +1393,7 @@ export function executeAsyncSingle(
 						skills: resolvedSkills.map((r) => r.name),
 						outputPath,
 						outputMode,
-						sessionFile,
+						...(!externalRunner && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						waitToolEnabled: params.waitToolEnabled,
 						...(params.agentContract ? { agentContract: params.agentContract } : {}),
