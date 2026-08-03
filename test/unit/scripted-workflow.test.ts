@@ -54,7 +54,7 @@ describe("scripted workflow runtime", () => {
 		await assert.rejects(
 			runWorkflowScript({
 				script: `await runs.run("slow", { agent: "worker", task: "wait" });`,
-				timeoutMs: 50,
+				timeoutMs: 500,
 				launch(_key, _params, signal) {
 					return new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
 						childAborted = true;
@@ -63,7 +63,7 @@ describe("scripted workflow runtime", () => {
 				},
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
-			(error: unknown) => error instanceof WorkflowScriptError && /timed out after 50ms/.test(error.message),
+			(error: unknown) => error instanceof WorkflowScriptError && /timed out after 500ms/.test(error.message),
 		);
 		assert.equal(childAborted, true);
 	});

@@ -3755,12 +3755,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return { content: [{ type: "text", text: "workflowScript currently runs in the foreground only; detached durability and clarify UI are deferred." }], isError: true, details: { mode: "chain", results: [] } };
 			}
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
+			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
+			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, ...workflowChildDefaults } = requestParams;
+			const workflowResults: SingleResult[] = [];
 			try {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
 					timeoutMs: timeout,
 					signal,
-					launch: async (key, childParams, workflowSignal) => workflowChildResult(key, await execute(randomUUID(), childParams as SubagentParamsLike, workflowSignal, undefined, ctx)),
+					launch: async (key, childParams, workflowSignal) => {
+						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
+						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
+						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
+						const result = await execute(randomUUID(), { ...workflowChildDefaults, ...childParams } as SubagentParamsLike, workflowSignal, undefined, ctx);
+						workflowResults.push(...result.details.results);
+						return workflowChildResult(key, result);
+					},
 					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx)),
 				});
 				const traceLines = workflow.trace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
@@ -3770,7 +3781,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				return {
 					content: [{ type: "text", text: sections.join("\n\n") }],
-					details: { mode: "chain", results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), workflow: { trace: workflow.trace, emits: workflow.emits, console: workflow.console } },
+					details: { mode: "chain", results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: workflow.trace, emits: workflow.emits, console: workflow.console } },
 				};
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -3783,7 +3794,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return {
 					content: [{ type: "text", text: sections.join("\n\n") }],
 					isError: true,
-					details: { mode: "chain", results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } },
+					details: { mode: "chain", results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } },
 				};
 			}
 		}
