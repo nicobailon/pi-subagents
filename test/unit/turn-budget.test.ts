@@ -189,9 +189,10 @@ describe("turn-budget module", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, false, true), "defer");
 		});
 
-		it("enforces the hard limit for strict foreground delegation but allows the exact terminal boundary", () => {
+		it("enforces the hard limit for strict foreground delegation but allows terminal completion", () => {
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, false, true, true), "abort");
 			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 4, true, true, true), "continue");
+			assert.equal(turnBudgetDecision(budget({ maxTurns: 3, graceTurns: 1 }), 5, true, true, true), "continue");
 		});
 
 		it("aborts non-terminal work at the next safe assistant boundary", () => {
