@@ -23,7 +23,7 @@ describe("scripted workflow runtime", () => {
 				launches.push({ key, params });
 				return key === "scan"
 					? { key, ok: true, runId: "run-scan", output: "targets", structuredOutput: { items: ["a", "b"] }, artifactPaths: ["/tmp/scan.json"], results: [] }
-					: { key, ok: true, runId: `run-${key}`, output: `reviewed ${params.task}`, artifactPaths: [`/tmp/${key}.md`], results: [] };
+					: { key, ok: true, runId: `run-${key}-complete`, output: `reviewed ${params.task}`, artifactPaths: [`/tmp/${key}.md`], results: [] };
 			},
 			async status(keyOrRunId) {
 				return { key: keyOrRunId, ok: true, output: "complete", artifactPaths: [] };
@@ -34,8 +34,7 @@ describe("scripted workflow runtime", () => {
 		assert.equal(launches.every(({ params }) => params.async === false), true);
 		assert.deepEqual(result.emits, [{ count: 2 }]);
 		assert.deepEqual(result.console, [{ level: "log", text: "reviewed 2" }]);
-		assert.match(JSON.stringify(result.value), /run review-a; id=run-review-a/);
-		assert.doesNotMatch(JSON.stringify(result.value), /artifacts=/);
+		assert.match(JSON.stringify(result.value), /run review-a; id=run-review-a-complete; artifacts=\/tmp\/review-a\.md/);
 		assert.equal(result.trace.filter((entry) => entry.state === "completed").length, 3);
 		assert.ok(traceSnapshots.length >= 6);
 		assert.deepEqual(emitSnapshots, [1]);
@@ -107,7 +106,6 @@ describe("scripted workflow runtime", () => {
 			`return 1n;`,
 			`return new (class Object { constructor() { this.ok = true; } })();`,
 			`const value = {}; value.self = value; return value;`,
-			`return undefined;`,
 			`return () => true;`,
 			`return Symbol("value");`,
 		];
@@ -121,6 +119,18 @@ describe("scripted workflow runtime", () => {
 				}),
 				(error: unknown) => error instanceof WorkflowScriptError && /return/.test(error.message),
 			);
+		}
+	});
+
+	it("normalizes omitted and explicit undefined workflow returns to null", async () => {
+		for (const script of [`await Promise.resolve();`, `return undefined;`]) {
+			const result = await runWorkflowScript({
+				script,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			});
+			assert.equal(result.value, null);
 		}
 	});
 

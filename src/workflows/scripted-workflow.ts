@@ -21,7 +21,9 @@ function hostCall(method, args) {
 function formatRef(result) {
   if (!result || typeof result !== "object") throw new Error("runs.ref(result) requires a run result object.");
   const parts = ["run " + (result.key || "unknown")];
-  if (result.runId) parts.push("id=" + String(result.runId).slice(0, 12));
+  if (result.runId) parts.push("id=" + result.runId);
+  const paths = Array.isArray(result.artifactPaths) ? result.artifactPaths.filter((value) => typeof value === "string") : [];
+  if (paths.length) parts.push("artifacts=" + paths.join(","));
   return "[" + parts.join("; ") + "]";
 }
 
@@ -90,8 +92,9 @@ parentPort.on("message", async (message) => {
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
     const compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
     const value = await compiled.runInContext(context);
-    assertJsonValue(value, "return");
-    parentPort.postMessage({ type: "complete", value });
+    const persistedValue = value === undefined ? null : value;
+    assertJsonValue(persistedValue, "return");
+    parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
     parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error) });
   }
