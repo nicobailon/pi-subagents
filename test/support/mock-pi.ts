@@ -17,6 +17,7 @@ interface MockPiResponse {
 	stdoutBase64Chunks?: string[];
 	steps?: Array<{
 		delay?: number;
+		waitForPath?: string;
 		jsonl?: unknown[];
 		stdoutRaw?: string;
 		stdoutBase64Chunks?: string[];

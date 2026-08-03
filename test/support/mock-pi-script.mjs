@@ -343,13 +343,15 @@ async function main() {
 	if (typeof response.delay === "number" && response.delay > 0) {
 		await new Promise((resolve) => setTimeout(resolve, response.delay));
 	}
-	if (typeof response.waitForPath === "string") {
+	async function waitForReleasePath(waitForPath) {
+		if (typeof waitForPath !== "string") return;
 		const deadline = Date.now() + 30_000;
-		while (!fs.existsSync(response.waitForPath)) {
-			if (Date.now() >= deadline) fail(`Timed out waiting for mock release path: ${response.waitForPath}`);
+		while (!fs.existsSync(waitForPath)) {
+			if (Date.now() >= deadline) fail(`Timed out waiting for mock release path: ${waitForPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 	}
+	await waitForReleasePath(response.waitForPath);
 
 	writeDeclaredFiles(response);
 	writeStructuredOutputCapture(response);
@@ -359,8 +361,9 @@ async function main() {
 		for (const step of response.steps) {
 			if (typeof step?.delay === "number" && step.delay > 0) {
 				await new Promise((resolve) => setTimeout(resolve, step.delay));
-				}
-				if (Array.isArray(step?.jsonl) && step.jsonl.length > 0) {
+			}
+			await waitForReleasePath(step?.waitForPath);
+			if (Array.isArray(step?.jsonl) && step.jsonl.length > 0) {
 					await writeResponseEntries(step.jsonl, jsonMode, args);
 				}
 				await writeRawStdout(step);

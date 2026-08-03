@@ -1225,6 +1225,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("preserves an async clean completion after turn-budget work defers", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-turn-budget-deferred-${Date.now().toString(36)}`;
+		const releasePath = path.join(tempDir, `${id}.release`);
 		mockPi.onCall({
 			steps: [
 				{
@@ -1234,7 +1236,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					],
 				},
 				{
-					delay: 750,
+					waitForPath: releasePath,
 					jsonl: [
 						events.toolResult("bash", "build completed"),
 						events.toolEnd("bash"),
@@ -1243,7 +1245,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				},
 			],
 		});
-		const id = `async-turn-budget-deferred-${Date.now().toString(36)}`;
 		executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Finish active tool work before enforcing the hard limit.",
@@ -1255,7 +1256,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			turnBudget: { maxTurns: 1, graceTurns: 0 },
 		});
 
-		const pending = await waitForDeferredTurnBudget(id);
+		let pending: AsyncStatusPayload;
+		try {
+			pending = await waitForDeferredTurnBudget(id);
+		} finally {
+			fs.writeFileSync(releasePath, "release", "utf-8");
+		}
 		assert.equal(pending.error, undefined);
 		assert.equal(pending.turnBudgetExceeded, undefined);
 		assert.equal(pending.turnBudget?.terminationDeferredAtTurn, 1);
