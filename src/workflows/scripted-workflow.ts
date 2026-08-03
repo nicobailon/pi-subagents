@@ -43,6 +43,8 @@ const runs = Object.freeze({
   },
 });
 
+let contextObjectPrototype;
+
 const capturedConsole = Object.freeze(Object.fromEntries(
   ["log", "info", "warn", "error"].map((level) => [level, (...args) => {
     parentPort.postMessage({ type: "console", level, text: args.map((value) => typeof value === "string" ? value : inspect(value, { depth: 4, breakLength: 120 })).join(" ") });
@@ -65,7 +67,7 @@ function assertJsonValue(value, path = "emit", seen = new Set()) {
     }
   } else {
     const prototype = Object.getPrototypeOf(value);
-    if (prototype !== null && (!prototype.constructor || prototype.constructor.name !== "Object")) throw new Error(path + " must contain only plain JSON objects.");
+    if (prototype !== null && prototype !== Object.prototype && prototype !== contextObjectPrototype) throw new Error(path + " must contain only plain JSON objects.");
     if (Object.getOwnPropertySymbols(value).length > 0) throw new Error(path + " must not contain symbol keys.");
     for (const [key, entry] of Object.entries(value)) assertJsonValue(entry, path + "." + key, seen);
   }
@@ -85,8 +87,10 @@ parentPort.on("message", async (message) => {
   try {
     const sandbox = { runs, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
+    contextObjectPrototype = vm.runInContext("Object.prototype", context);
     const compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
     const value = await compiled.runInContext(context);
+    assertJsonValue(value, "return");
     parentPort.postMessage({ type: "complete", value });
   } catch (error) {
     parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error) });
@@ -161,7 +165,7 @@ export function assertWorkflowJsonValue(value: unknown, path = "value", seen = n
 		}
 	} else {
 		const prototype = Object.getPrototypeOf(value);
-		if (prototype !== null && (typeof prototype.constructor !== "function" || prototype.constructor.name !== "Object")) throw new Error(`${path} must contain only plain JSON objects.`);
+		if (prototype !== null && prototype !== Object.prototype) throw new Error(`${path} must contain only plain JSON objects.`);
 		if (Object.getOwnPropertySymbols(value).length > 0) throw new Error(`${path} must not contain symbol keys.`);
 		for (const [key, entry] of Object.entries(value)) assertWorkflowJsonValue(entry, `${path}.${key}`, seen);
 	}
@@ -249,7 +253,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if ((level === "log" || level === "info" || level === "warn" || level === "error") && typeof message.text === "string") consoleEntries.push({ level, text: message.text });
 				return;
 			}
-			if (message.type === "complete") return finish({ value: message.value });
+			if (message.type === "complete") {
+				try {
+					assertWorkflowJsonValue(message.value, "return");
+				} catch (error) {
+					return finish({ error: new Error(`Workflow return could not be persisted: ${error instanceof Error ? error.message : String(error)}`) });
+				}
+				return finish({ value: message.value });
+			}
 			if (message.type === "error") return finish({ error: new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") });
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
 

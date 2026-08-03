@@ -81,6 +81,7 @@ describe("scripted workflow runtime", () => {
 			`emit(new Map([["a", 1]]));`,
 			`emit(new Set([1]));`,
 			`emit(new (class Value { constructor() { this.ok = true; } })());`,
+			`emit(new (class Object { constructor() { this.ok = true; } })());`,
 			`emit(() => true);`,
 			`emit(Symbol("value"));`,
 			`const value = {}; value.self = value; emit(value);`,
@@ -97,6 +98,40 @@ describe("scripted workflow runtime", () => {
 				(error: unknown) => error instanceof WorkflowScriptError && error.partial.emits.length === 0,
 			);
 		}
+	});
+
+	it("rejects non-JSON-safe workflow return values", async () => {
+		const invalidScripts = [
+			`return new Map([["a", 1]]);`,
+			`return NaN;`,
+			`return 1n;`,
+			`return new (class Object { constructor() { this.ok = true; } })();`,
+			`const value = {}; value.self = value; return value;`,
+			`return undefined;`,
+			`return () => true;`,
+			`return Symbol("value");`,
+		];
+		for (const script of invalidScripts) {
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					timeoutMs: 2_000,
+					async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /return/.test(error.message),
+			);
+		}
+	});
+
+	it("accepts a JSON-safe workflow return value", async () => {
+		const result = await runWorkflowScript({
+			script: `return { ok: true, values: [1, "two", null] };`,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(result.value, { ok: true, values: [1, "two", null] });
 	});
 
 	it("formats persisted JSON values without assuming stringify returns a string", () => {
