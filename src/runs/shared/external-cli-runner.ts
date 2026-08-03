@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { finished } from "node:stream/promises";
 import { trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import type { ExternalProcessStatus } from "../../shared/types.ts";
 
@@ -35,13 +36,14 @@ export function runExternalCli(input: {
 	stopMessage?: string;
 	onProcess?: (process: ExternalProcessStatus) => void;
 }): Promise<ExternalCliRunResult> {
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		const startedAt = Date.now();
 		const stdoutPath = path.join(input.asyncDir, `external-${input.stepIndex}.stdout.log`);
 		const stderrPath = path.join(input.asyncDir, `external-${input.stepIndex}.stderr.log`);
 		fs.mkdirSync(input.asyncDir, { recursive: true });
 		const stdoutStream = fs.createWriteStream(stdoutPath, { flags: "w" });
 		const stderrStream = fs.createWriteStream(stderrPath, { flags: "w" });
+		const streamsFinished = Promise.allSettled([finished(stdoutStream), finished(stderrStream)]);
 		let stdoutTail = Buffer.alloc(0);
 		let stderrTail = Buffer.alloc(0);
 		let timedOut = false;
@@ -92,8 +94,6 @@ export function runExternalCli(input: {
 			if (hardKillTimer) clearTimeout(hardKillTimer);
 			input.registerTimeout?.(undefined);
 			input.registerStop?.(undefined);
-			stdoutStream.end();
-			stderrStream.end();
 			const endedAt = Date.now();
 			const externalProcess: ExternalProcessStatus = {
 				...initialProcess,
@@ -109,7 +109,7 @@ export function runExternalCli(input: {
 				: timedOut
 					? input.timeoutMessage ?? "Subagent timed out."
 					: spawnError?.message ?? (exitCode === 0 ? undefined : stderr || `External CLI exited with code ${exitCode}.`);
-			resolve({
+			const result: ExternalCliRunResult = {
 				output: stdoutTail.toString("utf-8").trim(),
 				exitCode: timedOut || stopped || spawnError ? 1 : exitCode,
 				...(error ? { error } : {}),
@@ -117,6 +117,13 @@ export function runExternalCli(input: {
 				...(stopped ? { stopped: true } : {}),
 				processSignal: signal,
 				externalProcess,
+			};
+			stdoutStream.end();
+			stderrStream.end();
+			void streamsFinished.then((streamResults) => {
+				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
+				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
+				else resolve(result);
 			});
 		});
 	});

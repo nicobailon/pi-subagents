@@ -32,16 +32,27 @@ describe("external CLI runner", () => {
 		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), result.output);
 	});
 
-	it("flushes the full log before returning while retaining a bounded stdout tail", async () => {
+	it("flushes both full logs before returning while retaining a bounded stdout tail", async () => {
 		const dir = tempDir();
-		const output = "x".repeat(70 * 1024) + "TAIL";
+		const stdout = "x".repeat(2 * 1024 * 1024) + "STDOUT_TAIL";
+		const stderr = "y".repeat(2 * 1024 * 1024) + "STDERR_TAIL";
 		const scriptPath = path.join(dir, "large-output.mjs");
-		fs.writeFileSync(scriptPath, "process.stdout.write('x'.repeat(70 * 1024) + 'TAIL')");
+		fs.writeFileSync(scriptPath, `process.stdout.write(${JSON.stringify(stdout)});process.stderr.write(${JSON.stringify(stderr)})`);
 		const result = await runExternalCli({ command: process.execPath, args: [scriptPath], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.output.length, 64 * 1024);
-		assert.match(result.output, /TAIL$/);
-		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), output);
+		assert.match(result.output, /STDOUT_TAIL$/);
+		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), stdout);
+		assert.equal(fs.readFileSync(result.externalProcess.stderrPath, "utf-8"), stderr);
+	});
+
+	it("rejects when a log stream cannot be written", async () => {
+		const dir = tempDir();
+		fs.mkdirSync(path.join(dir, "external-2.stdout.log"));
+		await assert.rejects(
+			runExternalCli({ command: process.execPath, args: ["-e", "process.stdout.write('output')"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 2 }),
+			/EISDIR|illegal operation on a directory/i,
+		);
 	});
 
 	it("returns stderr for a nonzero exit", async () => {
