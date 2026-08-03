@@ -32,6 +32,16 @@ describe("external CLI runner", () => {
 		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), result.output);
 	});
 
+	it("keeps only a bounded stdout tail in memory while retaining the full log", async () => {
+		const dir = tempDir();
+		const output = "x".repeat(70 * 1024) + "TAIL";
+		const result = await runExternalCli({ command: process.execPath, args: ["-e", `process.stdout.write(${JSON.stringify(output)})`], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.output.length, 64 * 1024);
+		assert.match(result.output, /TAIL$/);
+		assert.equal(fs.readFileSync(result.externalProcess.stdoutPath, "utf-8"), output);
+	});
+
 	it("returns stderr for a nonzero exit", async () => {
 		const dir = tempDir();
 		const result = await runExternalCli({ command: process.execPath, args: ["-e", "console.error('specific failure');process.exit(7)"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });

@@ -51,7 +51,7 @@ runner:
 async: true
 ```
 
-External CLI runners support status artifacts, stdout/stderr logs, timeout, and stop. Foreground/clarify, steer/resume, Pi models/tools/extensions, skills, structured output, nested subagents, and fallback models are intentionally unsupported.
+External CLI runners support status artifacts, stdout/stderr logs, timeout, and stop. Full stdout and stderr are written to log files, while the in-memory final stdout response and stderr error are limited to their last 64 KiB. Foreground/clarify, steer/resume/interrupt-as-pause, Pi models/tools/extensions, skills, structured output, nested subagents, and fallback models are intentionally unsupported.
 
 ## What happens
 

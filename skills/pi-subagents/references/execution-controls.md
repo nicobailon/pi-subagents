@@ -28,7 +28,7 @@ Project settings resolve from the nearest parent directory containing `.pi` or `
 
 An agent may set `runner.type: external-cli` with a non-empty `command`, optional string `args`, and `promptDelivery: stdin` (the default). The command runs with `shell: false`, inherits the resolved cwd and environment, and receives the combined agent instructions and task through stdin. It must already be installed; pi-subagents adds no CLI dependency.
 
-External CLI profiles are async-only and one-shot. They support lifecycle artifacts, stdout/stderr logs, timeout, and stop. They do not support foreground/clarify, steer/resume/interrupt-as-pause, Pi models/tools/extensions/skills, tool or turn budgets, structured output, nested subagents, fallbacks, or sessions.
+External CLI profiles are async-only and one-shot. They support lifecycle artifacts, stdout/stderr logs, timeout, and stop. Full stdout and stderr are retained in their log files, while the final stdout response and stderr error kept in memory are each limited to their last 64 KiB. They do not support foreground/clarify, steer/resume/interrupt-as-pause, Pi models/tools/extensions/skills, tool or turn budgets, structured output, nested subagents, fallbacks, or sessions.
 
 ### Single agent
 

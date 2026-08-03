@@ -5,6 +5,7 @@ import { trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import type { ExternalProcessStatus } from "../../shared/types.ts";
 
 const HARD_KILL_DELAY_MS = 2_000;
+const MAX_OUTPUT_TAIL_BYTES = 64 * 1024;
 const MAX_ERROR_TAIL_BYTES = 64 * 1024;
 
 export function buildExternalCliPrompt(systemInstructions: string, task: string): string {
@@ -41,7 +42,7 @@ export function runExternalCli(input: {
 		fs.mkdirSync(input.asyncDir, { recursive: true });
 		const stdoutStream = fs.createWriteStream(stdoutPath, { flags: "w" });
 		const stderrStream = fs.createWriteStream(stderrPath, { flags: "w" });
-		let stdout = "";
+		let stdoutTail = Buffer.alloc(0);
 		let stderrTail = Buffer.alloc(0);
 		let timedOut = false;
 		let stopped = false;
@@ -62,7 +63,8 @@ export function runExternalCli(input: {
 		input.onProcess?.(initialProcess);
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdoutStream.write(chunk);
-			stdout += chunk.toString("utf-8");
+			stdoutTail = Buffer.concat([stdoutTail, chunk]);
+			if (stdoutTail.length > MAX_OUTPUT_TAIL_BYTES) stdoutTail = stdoutTail.subarray(stdoutTail.length - MAX_OUTPUT_TAIL_BYTES);
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			stderrStream.write(chunk);
@@ -108,7 +110,7 @@ export function runExternalCli(input: {
 					? input.timeoutMessage ?? "Subagent timed out."
 					: spawnError?.message ?? (exitCode === 0 ? undefined : stderr || `External CLI exited with code ${exitCode}.`);
 			resolve({
-				output: stdout.trim(),
+				output: stdoutTail.toString("utf-8").trim(),
 				exitCode: timedOut || stopped || spawnError ? 1 : exitCode,
 				...(error ? { error } : {}),
 				...(timedOut ? { timedOut: true } : {}),

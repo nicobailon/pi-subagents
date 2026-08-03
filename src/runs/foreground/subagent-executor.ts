@@ -777,6 +777,14 @@ function interruptAsyncRun(
 			details: { mode: "management", results: [] },
 		};
 	}
+	const activeSteps = status.steps?.filter((step) => step.status === "running") ?? [];
+	if (activeSteps.length > 0 && activeSteps.every((step) => step.runner?.type === "external-cli")) {
+		return {
+			content: [{ type: "text", text: `Interrupt is unsupported for one-shot external CLI async run ${target.asyncId}; use stop instead.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	try {
 		deliverInterruptRequest({ asyncDir: target.asyncDir, pid: status.pid, kill, source: "interrupt-action" });
 		const tracked = state.asyncJobs.get(target.asyncId);
