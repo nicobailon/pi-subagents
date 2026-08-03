@@ -14,13 +14,14 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Writing/review safety: keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers/validators for independent review, then have the parent synthesize and apply fixes as the sole writer unless an isolated worktree was intentionally requested.
 • Artifacts/status essentials: chain outputs live under {chain_dir}; async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, and status via { action: "status", id }. Include output paths and residual risks when reporting results.`;
 
-export const FULL_SUBAGENT_TOOL_DESCRIPTION = `To delegate work, call with { agent, task }, { tasks }, or { chain }; omit action. Use action only for management/control actions listed below.
+export const FULL_SUBAGENT_TOOL_DESCRIPTION = `To delegate work, call with { agent, task }, { tasks }, { workflowScript }, or compatibility { chain }; omit action. Use action only for management/control actions listed below.
 
 EXECUTION (use exactly ONE mode):
 • Before executing, use { action: "list" } to inspect configured agents/chains. Only execute agents listed as executable/non-disabled.
 • SINGLE: { agent, task? } - one task; omit task for self-contained agents
-• CHAIN: { chain: [{agent:"agent-a"}, {checkpoint:"review"}, {parallel:[{agent:"agent-b",count:3}]}] } - sequential pipeline with optional approval checkpoints and parallel fan-out
+• SCRIPTED WORKFLOW: { workflowScript: "const scan = await runs.run('scan', {agent:'agent-a', task:'...'}); return scan.output" } - trusted inline JavaScript for adaptive workflows. Stable keys are required. Available globals are runs.run, runs.all, runs.status, runs.ref/refs, emit, console, and standard JavaScript only. Scripts run foreground with a timeout and cannot access filesystem, shell, arbitrary Pi tools, or host globals.
 • PARALLEL: { tasks: [{agent,task,count?,output?,reads?,progress?}, ...], concurrency?: number, worktree?: true } - concurrent execution (worktree: isolate each task in a git worktree)
+• CHAIN (compatibility): { chain: [{agent:"agent-a"}, {checkpoint:"review"}, {parallel:[{agent:"agent-b",count:3}]}] } - existing static sequential pipelines remain supported; use workflowScript rather than extending the chain DSL for branching, filtering, retries, or dynamic fan-out
 • Optional context: { context: "fresh" | "fork" } (explicit value overrides every child; when omitted, each requested agent uses its own defaultContext, otherwise "fresh"; inspect agent defaults via { action: "list" })
 • Durable mission attachment is automatic for ordinary task launches by default; pass missionId to attach an existing mission, mission:{title,goal?,labels?} to override the auto-created record, mission:false for intentionally ephemeral work, or set config.missions.enabled=false to disable auto-create.
 • Fork thinking: model strings accept a thinking suffix (provider/model:off|minimal|low|medium|high|xhigh|max). Forking over a parent transcript that carries signed Anthropic thinking blocks forces thinking off only when a child's effective primary or fallback model resolves to the Anthropic provider or anthropic-messages API; unresolved models are treated conservatively. The result notes affected children, including on failures. Use fresh context when an Anthropic child needs thinking.
@@ -80,11 +81,11 @@ DIAGNOSTICS:
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;
 
-export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `To delegate work, call with { agent, task }, { tasks }, or { chain }; omit action. Use action only for management/control actions listed below. Use exactly one mode per call.
+export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `To delegate work, call with { agent, task }, { tasks }, { workflowScript }, or compatibility { chain }; omit action. Use action only for management/control actions listed below. Use exactly one mode per call.
 
 EXECUTE:
 • Before execution, call { action: "list" }; run only executable/non-disabled configured agents/chains.
-• SINGLE {agent, task?}; PARALLEL {tasks:[{agent,task,count?,output?,reads?,progress?}], concurrency?, worktree?}; CHAIN {chain:[{agent,task?},{checkpoint:"review"},{parallel:[...]}]}.
+• SINGLE {agent, task?}; PARALLEL {tasks:[{agent,task,count?,output?,reads?,progress?}], concurrency?, worktree?}; SCRIPT {workflowScript:"..."} with stable-key runs.run/runs.all for adaptive foreground workflows; CHAIN remains supported for compatibility/static pipelines.
 • context can be "fresh" or "fork"; omitted uses each agent defaultContext, otherwise fresh. timeoutMs/maxRuntimeMs apply to foreground and async/background runs; foreground defaults to 30 minutes only when neither value nor an agent timeout is provided.
 • Omit acceptance for reviewer/read-only calls. Evidence levels end at verified; use acceptance.review.required for independent writer review. reviewed is an achieved status, never an explicit input.
 • Chain templates may use {task}, {previous}, {chain_dir}, and named outputs. Parallel worktree isolation requires a clean git repo.

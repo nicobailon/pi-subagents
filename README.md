@@ -78,7 +78,7 @@ Run a review loop on this change until reviewers stop finding fixes worth doing,
 Use scout to understand the auth flow, then have planner turn that into an implementation plan.
 ```
 
-Those are ordinary Pi requests. Pi decides whether to call `subagent`, which agent to use, and whether a chain or parallel run makes sense.
+Those are ordinary Pi requests. Pi decides whether to call `subagent`, which agent to use, and whether a static parallel launch or scripted workflow makes sense.
 
 ## Common workflows
 
@@ -954,9 +954,11 @@ To apply the same `extensions` allowlist to every agent that does not declare it
 
 Before the first model turn, the child runtime compares every explicit tool name with Pi's final filtered registry. A missing provider now fails the run with the unavailable names and concrete `subagentOnlyExtensions`/`extensions` guidance instead of letting a direct or chained child silently continue without its requested tools.
 
-## Chain files
+## Chain files (compatibility)
 
-Chains are reusable workflows stored separately from agent files. Use `.chain.md` for simple sequential saved chains. Use `.chain.json` when a chain needs dynamic fanout.
+Existing chains remain supported, but scripted workflows are the advanced path for branching, filtering, retries, and dynamic fanout. Do not extend the chain JSON DSL for new adaptive workflows. Saved scripted workflow discovery and durable replay are follow-up work; this release starts with inline `workflowScript`.
+
+Chains are reusable compatibility workflows stored separately from agent files. Use `.chain.md` for existing simple sequential chains and `.chain.json` for existing dynamic fanout definitions.
 
 | Scope | Path |
 |-------|------|
@@ -1338,7 +1340,23 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
 { tasks: [{ agent: "scout", task: "audit auth", count: 3 }] }
 { tasks: [{ agent: "scout", task: "audit frontend" }, { agent: "reviewer", task: "audit backend" }], context: "fork" }
 
-// Chain
+// Adaptive scripted workflow (foreground)
+{ workflowScript: `
+  const scan = await runs.run("scan", {
+    agent: "scout",
+    task: "Return review targets as structured output",
+    outputSchema: { type: "object" }
+  });
+  const reviews = await runs.all(scan.structuredOutput.items.map((item) => ({
+    key: "review-" + item.id,
+    agent: "reviewer",
+    task: "Review " + item.path
+  })));
+  emit({ reviewed: reviews.length });
+  return { reviewArtifacts: runs.refs(reviews) };
+` }
+
+// Compatibility chain for an existing static pipeline
 { chain: [
   { agent: "scout", task: "Gather context for auth refactor" },
   { agent: "planner" },
@@ -1359,23 +1377,6 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
   ], concurrency: 2, failFast: true },
   { agent: "reviewer", task: "Review {outputs.featureA} and {outputs.featureB}" }
 ]}
-
-// Dynamic fanout from structured output
-{ chain: [
-  {
-    agent: "scout",
-    task: "Return review targets as structured_output: { items: [{ path, reason }] }",
-    as: "targets",
-    outputSchema: { type: "object" }
-  },
-  {
-    expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 12 },
-    parallel: { agent: "reviewer", task: "Review {target.path}. Reason: {target.reason}", outputSchema: { type: "object" } },
-    collect: { as: "reviews" },
-    concurrency: 4
-  },
-  { agent: "worker", task: "Synthesize fixes from {outputs.reviews}" }
-] }
 
 // Strict structured output for reliable handoff data
 { chain: [

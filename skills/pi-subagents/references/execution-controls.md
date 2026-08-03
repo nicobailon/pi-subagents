@@ -90,7 +90,27 @@ subagent({
 
 Avoid duplicate output paths in parallel tasks. Concurrent children should not write to the same file. For large saved outputs, set `outputMode: "file-only"` together with an `output` path. The parent result then contains only a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` instead of the full saved content. Do not use `output: false` for this; `output: false` means no file output. In chains, relative `output` paths are chain-artifact paths under `{chain_dir}`, not project CWD paths; use an absolute `output` path or a persistent `chainDir` when a saved artifact must outlive the temp chain directory. Read-only children return the complete artifact in their final response and the runtime persists it, so missing write tools are not a supervisor blocker. Mutation-capable children still receive direct-write instructions. Failed runs and save errors still return inline details for debugging.
 
-### Chain execution
+### Scripted workflows
+
+Use `workflowScript` for adaptive multi-step work: branching, filtering structured results, dynamic fanout, and conditional fix/review steps. Scripts run in a timed worker with only `runs.run(key, params)`, `runs.all([{ key, ...params }])`, `runs.status(keyOrRunId)`, `runs.ref/refs`, `emit`, and captured `console`. Stable keys are required. Child params follow the ordinary subagent execution path, so agent contracts, budgets, missions, worktrees, artifacts, and status still apply.
+
+```typescript
+subagent({
+  workflowScript: `
+    const scan = await runs.run("scan", { agent: "scout", task: "Return structured targets", outputSchema: { type: "object" } });
+    const reviews = await runs.all(scan.structuredOutput.items.map((item) => ({ key: "review-" + item.id, agent: "reviewer", task: "Review " + item.path })));
+    emit({ reviewed: reviews.length });
+    return runs.refs(reviews);
+  `,
+  timeoutMs: 1_800_000
+})
+```
+
+The worker has no filesystem, shell, edit tools, arbitrary Pi tools, `process`, or `require`. Script errors, child failures, and timeout return the captured milestones, console output, and call trace. Controller durability/crash replay and saved workflow discovery are deferred; inline scripts currently run foreground only.
+
+### Chain execution (compatibility)
+
+Existing static chains continue to work. Prefer `workflowScript` instead of adding adaptive behavior to the chain DSL.
 
 ```typescript
 subagent({

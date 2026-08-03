@@ -429,6 +429,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					0, 0,
 				);
 			}
+			if (args.workflowScript)
+				return new Text(
+					`${theme.fg("toolTitle", theme.bold("subagent "))}workflow script`,
+					0,
+					0,
+				);
 			const isParallel = (args.tasks?.length ?? 0) > 0;
 			const parallelCount = effectiveParallelTaskCount(args.tasks as Array<{ count?: unknown }> | undefined);
 			const asyncLabel = args.async === true && args.clarify !== true ? theme.fg("warning", " [async]") : "";

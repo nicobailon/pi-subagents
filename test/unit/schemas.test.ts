@@ -24,6 +24,11 @@ interface SubagentParamsSchema {
 			minimum?: number;
 			description?: string;
 		};
+		workflowScript?: {
+			type?: string;
+			minLength?: number;
+			description?: string;
+		};
 		timeoutMs?: {
 			minimum?: number;
 			description?: string;
@@ -158,6 +163,14 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(description, /fork/);
 		assert.match(description, /each requested agent/);
 		assert.match(description, /overrides every child/);
+	});
+
+	it("exposes a concise trusted inline workflow script mode", () => {
+		const workflowScript = SubagentParams?.properties?.workflowScript;
+		assert.equal(workflowScript?.type, "string");
+		assert.equal(workflowScript?.minLength, 1);
+		assert.match(String(workflowScript?.description ?? ""), /runs\.run/);
+		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
 	});
 
 	it("includes count and concurrency on top-level parallel mode", () => {
@@ -344,8 +357,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission and inspector management fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 16_500, `expected compact schema under 16.5k chars, got ${serialized.length}`);
+		// Mission, inspector, and inline workflow fields intentionally expanded the public tool surface.
+		assert.ok(serialized.length < 17_000, `expected compact schema under 17k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

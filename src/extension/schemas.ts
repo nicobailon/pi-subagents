@@ -323,6 +323,7 @@ const SubagentParamsSchema = Type.Object({
 		],
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
 	})),
+	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript workflow. Use await runs.run(key, params), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. Runs foreground with no filesystem, shell, Pi tools, or host globals." })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
 	worktree: Type.Optional(Type.Boolean({

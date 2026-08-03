@@ -974,6 +974,18 @@ export interface Details {
 	/** Non-fatal automatic mission persistence failure. */
 	missionWarning?: string;
 	mission?: MissionRecord;
+	workflow?: {
+		trace: Array<{
+			operation: "run" | "status";
+			key: string;
+			state: "started" | "completed" | "failed" | "reused";
+			runId?: string;
+			durationMs?: number;
+			error?: string;
+		}>;
+		emits: unknown[];
+		console: Array<{ level: "log" | "info" | "warn" | "error"; text: string }>;
+	};
 	missions?: {
 		records?: MissionRecord[];
 		globalEntries?: GlobalMissionIndexRecord[];

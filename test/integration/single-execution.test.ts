@@ -377,6 +377,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
 	});
 
+	it("routes workflow script children through ordinary foreground execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "scanned auth" });
+		mockPi.onCall({ output: "reviewed auth" });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"scripted-workflow",
+			{
+				workflowScript: `
+					const scan = await runs.run("scan", { agent: "echo", task: "Scan auth" });
+					const review = await runs.run("review", { agent: "echo", task: "Review: " + scan.output });
+					return review.output;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /reviewed auth/);
+		assert.equal(result.details.results.length, 2);
+		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
+	});
+
 	it("admits a zero run-level tool budget only for marked v2 delegated execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const zeroBudget = { hard: 0, block: "*" as const };
 		const params = { agent: "echo", task: "Answer without tools", toolBudget: zeroBudget };

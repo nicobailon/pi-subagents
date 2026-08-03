@@ -1,8 +1,8 @@
 ---
 name: pi-subagents
 description: |
-  Delegate work to builtin or custom subagents with single-agent, chain,
-  parallel, async, forked-context, and intercom-coordinated workflows. Use
+  Delegate work to builtin or custom subagents with single-agent, parallel,
+  scripted, compatibility-chain, async, forked-context, and coordinated workflows. Use
   for advisory review, implementation handoffs, and multi-step tasks where a
   single agent should stay in control while other agents contribute context,
   planning, or execution.
@@ -12,7 +12,7 @@ description: |
 
 This skill is for the main parent orchestrator only. Do not inject or follow it inside spawned child subagents. The parent session owns delegation, orchestration, review fanout, and final fix-worker launches. Ordinary children should not run their own subagent workflows; the explicit exception is a delegated fanout child whose resolved builtin `tools` includes `subagent`, and that child may use `subagent` only for the fanout work the parent assigned.
 
-Use this skill when the parent orchestrator needs to launch a specialized subagent, compose multiple agents into a workflow, or create/edit agents and chains on demand.
+Use this skill when the parent orchestrator needs to launch a specialized subagent or compose multiple agents into a workflow. Prefer `workflowScript` for adaptive orchestration; chains remain a compatibility input for existing static flows.
 
 ## How to use this router
 
@@ -21,7 +21,7 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 | Task | Read |
 | --- | --- |
 | Decide whether to delegate, choose agents, compare tool versus slash commands, apply prompt techniques, or understand builtin roles | `references/prompting-and-roles.md` |
-| Run single, parallel, chain, async, scheduled, mission-backed, forked, worktree, watchdog, clarify, oracle, or intercom-coordinated workflows | `references/execution-controls.md` |
+| Run single, parallel, scripted, compatibility-chain, async, scheduled, mission-backed, forked, worktree, watchdog, clarify, oracle, or intercom-coordinated workflows | `references/execution-controls.md` |
 | List/create/update/delete/eject/disable agents or chains, edit agent files, use prompt-template integration, or expose extension RPC | `references/management-authoring-rpc.md` |
 | Check safety constraints, best practices, standard workflows, or error handling | `references/constraints-and-recipes.md` |
 
