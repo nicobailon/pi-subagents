@@ -330,7 +330,7 @@ Do work
 });
 
 describe("agent permission frontmatter", () => {
-	it("preserves nested permission YAML blocks through discovery and serialization", () => {
+	it("parses and preserves explicit non-bash permission rules", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-permission-frontmatter-"));
 		tempDirs.push(dir);
 		const agentsDir = path.join(dir, ".pi", "agents");
@@ -340,26 +340,30 @@ name: worker
 description: Worker
 tools: bash,read,write
 permission:
-  "*": ask
   read: allow
-  bash:
-    "*": ask
-    "git *": allow
+  write: ask
+  edit: deny
 ---
 
 Do work
 `, "utf-8");
 
-		const result = discoverAgents(dir, "project");
-		const worker = result.agents.find((agent) => agent.name === "worker");
-		assert.equal(worker?.extraFields?.permission, `"*": ask
-read: allow
-bash:
-  "*": ask
-  "git *": allow`);
+		const worker = discoverAgents(dir, "project").agents.find((agent) => agent.name === "worker");
+		assert.deepEqual(worker?.permissions, { read: "allow", write: "ask", edit: "deny" });
+		assert.equal(worker?.extraFields?.permission, undefined);
+		assert.match(serializeAgent(worker!), /^permissions:\n  read: allow\n  write: ask\n  edit: deny$/m);
+	});
 
-		const serialized = serializeAgent(worker!);
-		assert.match(serialized, /^permission:\n  "\*": ask\n  read: allow\n  bash:\n    "\*": ask\n    "git \*": allow$/m);
+	it("rejects bash permission rules and conflicting aliases", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-permission-invalid-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---\nname: worker\ndescription: Worker\npermission:\n  bash: deny\n---\n`, "utf-8");
+		assert.throws(() => discoverAgents(dir, "project"), /pi-guard/);
+
+		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---\nname: worker\ndescription: Worker\npermission:\n  write: ask\npermissions:\n  edit: deny\n---\n`, "utf-8");
+		assert.throws(() => discoverAgents(dir, "project"), /cannot declare both permission and permissions/);
 	});
 });
 

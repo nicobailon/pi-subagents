@@ -61,6 +61,7 @@ import { finalizeProcessTerminal, readProcessTerminal } from "./process-terminal
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -117,6 +118,7 @@ interface AsyncExecutionContext {
 	currentSessionId: string;
 	/** Parent session id used by permission-system ask forwarding. */
 	parentSessionId?: string;
+	permissions?: PermissionConfig;
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
 	/** Optional model-scope enforcement resolved from subagent settings. */
@@ -729,8 +731,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			agentName: a.name,
 		});
 		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
+		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
+		if (externalRunner && permissionRules) {
+			throw new AsyncStartValidationError(`Agent '${a.name}' uses runner.type='external-cli', which cannot enforce native Pi child permission rules.`);
+		}
 		return {
 			parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+			permissionRules,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
 			agent: s.agent,
 			task,
@@ -1194,6 +1201,7 @@ export function executeAsyncSingle(
 	} = params;
 	const task = params.task ?? "";
 	const externalRunner = agentConfig.runner?.type === "external-cli";
+	const permissionRules = resolvePermissionRules(ctx.permissions, agentConfig.permissions);
 	if (externalRunner) {
 		const unsupported: string[] = [];
 		if (params.modelOverride !== undefined) unsupported.push("model override");
@@ -1203,6 +1211,7 @@ export function executeAsyncSingle(
 		if (params.toolBudget !== undefined || agentConfig.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
 		if (params.context === "fork") unsupported.push("fork context");
 		if ((params.skills?.length ?? 0) > 0) unsupported.push("skills");
+		if (permissionRules) unsupported.push("native Pi child permissions");
 		if (unsupported.length > 0) return formatAsyncStartError("single", `Agent '${agentConfig.name}' uses runner.type='external-cli' and does not support: ${unsupported.join(", ")}.`);
 	}
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId), decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]));
@@ -1379,6 +1388,7 @@ export function executeAsyncSingle(
 				steps: [
 					{
 						parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+						permissionRules,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
 						agent,
 						task: taskWithOutputInstruction,

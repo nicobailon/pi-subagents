@@ -503,78 +503,40 @@ For normal use, you do not need to configure anything. Advanced users can tune t
 
 At this point, you know enough to use the plugin. The rest of this README is reference material for exact command syntax, custom agents, scripted workflows, and configuration.
 
-## Optional pi-permission-system integration
+## Native child tool permissions
 
-[`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system)
-adds a second policy layer — `allow` / `ask` / `deny` — on top of
-pi-subagents' visibility-based tool restrictions.
+Native permissions are opt-in and apply only to Pi child runtimes. With no rules configured, every tool call passes through unchanged. Configure explicit non-bash rules globally in `~/.pi/agent/extensions/subagent/config.json`:
 
-The two compose independently:
-
-| Layer | What it controls | Who provides it |
-|-------|-----------------|-----------------|
-| Visibility | Which tools are registered before the session starts | pi-subagents (`tools:` frontmatter key) |
-| Policy  | Runtime allow/ask/deny decisions on every tool call, bash command, MCP operation | pi-permission-system (`permission:` frontmatter key) |
-
-### Installing
-
-```bash
-pi install npm:@gotgenes/pi-permission-system
+```json
+{
+  "permissions": {
+    "rules": {
+      "read": "allow",
+      "write": "ask",
+      "edit": "deny"
+    }
+  }
+}
 ```
 
-No configuration is required for the integration — it is automatic when both
-extensions are installed. pi-subagents passes the parent session identity
-to child processes via the `PI_SUBAGENT_PARENT_SESSION` environment variable,
-which the permission system uses to forward `ask` prompts from headless
-subagent processes back to the parent session's UI.
-
-### Per-agent permission frontmatter
-
-Agent files can include a `permission:` block alongside the standard `tools:`
-key. The permission system reads it independently:
+Custom agents can override matching global rules with a `permission:` or `permissions:` frontmatter block:
 
 ```yaml
 ---
 name: worker
-tools: bash,read,write,edit
 permission:
-  "*": ask
-  read: allow
-  bash:
-    "*": ask
-    "git *": allow
-    "npm test": allow
+  write: allow
+  edit: ask
 ---
 ```
 
-In this example the subagent extension restricts visibility to four tools,
-and the permission system then applies `ask`/`allow` policy within that
-visible set. Both keys coexist without collision.
+Rules support `allow`, `ask`, and `deny`. Agent rules override matching global rules; omitted and unknown tools default to `allow`. Explicit `allow` removes an inherited restriction. The gate is not registered when the resolved policy has no `ask` or `deny` rules.
 
-### Checking the integration
+An explicit `ask` pauses that exact tool call and routes a bounded, redacted preview through the native supervisor channel. The parent agent's exact `approve` or `deny` reply decides that call; malformed replies and transport failures deny it. Asked requests and decisions are written to a bounded audit JSONL file in the run artifacts. Ordinary direction and clarification through `contact_supervisor` or the optional `pi-intercom` extension remain separate and are never permission-gated.
 
-Run `/subagents-doctor` to check the permission system status.
-If `ask` prompts from children are not reaching the parent UI, verify both
-extensions are installed:
+`bash` is always passed through by pi-subagents. Bash rules are rejected rather than parsed, gated, denied, or audited. Install and configure `pi-guard` when command-level bash policy is needed.
 
-```bash
-pi list
-```
-
-### How it works
-
-At session start, the interactive (root) session records its own identity in
-`PI_SUBAGENT_PARENT_SESSION`. When pi-subagents launches a child, it passes the
-launching session's identity to that child explicitly, falling back to the
-inherited environment variable. When the permission system inside a child
-encounters an `ask` permission, it reads this variable to locate the parent
-session and forwards the confirmation request there.
-
-This resolves an interactive prompt only when the parent it points at is the
-interactive session — i.e. for the direct children of the root session. A
-nested child's parent is itself a headless subagent process with no UI to
-surface the prompt, so `ask` policies are best placed on agents that run as
-direct children of the interactive session.
+External CLI profiles are opaque processes, so native permissions cannot intercept their tools. A launch with effective `ask` or `deny` rules is rejected for an external CLI agent instead of claiming enforcement.
 
 ## Direct commands
 

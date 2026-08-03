@@ -15,6 +15,7 @@ import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CH
 import { CHILD_WATCHDOG_CONFIG_ENV, encodeChildWatchdogConfig, type ChildWatchdogConfig } from "../../watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
+import { encodePermissionRules, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV, type PermissionRules } from "./permissions.ts";
 import { SUBAGENT_CAPABILITY_CEILING_ENV, capabilityCeilingAgentRestrictionSources, decodeSubagentCapabilityCeiling, encodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, isAgentAllowedByCapabilityCeiling, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "./capability-ceiling.ts";
 
 const TASK_ARG_LIMIT = 8000;
@@ -87,6 +88,8 @@ export interface BuildPiArgsInput {
 	};
 	toolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
+	permissionRules?: PermissionRules;
+	permissionAuditPath?: string;
 	childWatchdog?: ChildWatchdogConfig;
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
@@ -411,6 +414,11 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	else env.MCP_DIRECT_TOOLS = "__none__";
 	const encodedCapabilityCeiling = encodeSubagentCapabilityCeiling(toolPlan.capabilityCeiling);
 	if (encodedCapabilityCeiling) env[SUBAGENT_CAPABILITY_CEILING_ENV] = encodedCapabilityCeiling;
+	const encodedPermissionRules = encodePermissionRules(input.permissionRules);
+	if (encodedPermissionRules) {
+		env[PERMISSION_POLICY_ENV] = encodedPermissionRules;
+		env[PERMISSION_AUDIT_PATH_ENV] = input.permissionAuditPath;
+	}
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;

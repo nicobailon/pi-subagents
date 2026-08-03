@@ -20,6 +20,7 @@ export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./
 import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -149,6 +150,7 @@ export interface AgentConfig {
 	maxSubagentDepth?: number;
 	completionGuard?: boolean;
 	toolBudget?: ToolBudgetConfig;
+	permissions?: PermissionRules;
 	memory?: AgentMemoryConfig;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
@@ -1440,7 +1442,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
 	if (runner?.type !== "external-cli") return;
-	const unsupported = ["tools", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget"]
+	const unsupported = ["tools", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
 		.filter((field) => frontmatter[field] !== undefined);
 	if (unsupported.length > 0) {
 		throw new Error(`Agent '${agentName}' uses runner.type='external-cli' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
@@ -1556,6 +1558,13 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		}
 
 		const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+		if (frontmatter.permission !== undefined && frontmatter.permissions !== undefined) {
+			throw new Error(`Agent '${localName}' cannot declare both permission and permissions frontmatter.`);
+		}
+		const permissionSource = frontmatter.permissions ?? frontmatter.permission;
+		const permissions = permissionSource?.trim()
+			? validatePermissionRules(parseYaml(permissionSource), `Agent '${localName}' permissions`)
+			: undefined;
 		let toolBudget: ToolBudgetConfig | undefined;
 		if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
 			const parsed = JSON.parse(frontmatter.toolBudget) as unknown;
@@ -1608,6 +1617,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 					: undefined,
 			completionGuard,
 			toolBudget,
+			permissions,
 			memory: parseMemoryFrontmatter(frontmatter.memory),
 			extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
 		};

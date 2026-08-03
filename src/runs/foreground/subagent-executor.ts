@@ -952,6 +952,7 @@ function appendStepToAsyncChain(input: {
 		currentModel: parentModel,
 		modelScope: discoveredForAppend.modelScope,
 		interactive: input.ctx.hasUI,
+		permissions: input.deps.config.permissions,
 	};
 	const built = buildAsyncRunnerSteps(resolved.id, {
 		chain: wrapChainTasksForFork(chain, contextPolicy),
@@ -1371,6 +1372,7 @@ async function resumeAsyncRun(input: {
 				currentModel: parentModel,
 				modelScope,
 				interactive: input.ctx.hasUI,
+		permissions: input.deps.config.permissions,
 			},
 			availableModels,
 			cwd: effectiveCwd,
@@ -1429,6 +1431,7 @@ async function resumeAsyncRun(input: {
 			currentModel: parentModel,
 			modelScope,
 			interactive: input.ctx.hasUI,
+		permissions: input.deps.config.permissions,
 		},
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput ?? recoveryDescriptor?.maxOutput,
@@ -2226,6 +2229,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		currentModel: parentModel,
 		modelScope: data.modelScope,
 		interactive: ctx.hasUI,
+		permissions: deps.config.permissions,
 	};
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
@@ -2499,6 +2503,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			currentModel: parentModel,
 			modelScope: data.modelScope,
 			interactive: ctx.hasUI,
+		permissions: deps.config.permissions,
 		};
 		const rawAsyncChain = chainResult.requestedAsync.chain;
 		const asyncChain = wrapChainTasksForFork(rawAsyncChain, contextPolicy);
@@ -2620,6 +2625,7 @@ interface ForegroundParallelRunInput {
 	usageBudget?: UsageBudgetConfig;
 	toolBudgets: (ResolvedToolBudget | undefined)[];
 	agentContract?: AgentContract;
+	permissions?: ExtensionConfig["permissions"];
 }
 function buildParallelModeError(message: string): AgentToolResult<Details> {
 	return {
@@ -2832,6 +2838,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			: undefined;
 		let detachedReceipt = false;
 		const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskText, {
+			permissions: input.permissions,
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
 			context: input.contextPolicy.contextForAgent(task.agent),
 			cwd: taskCwd,
@@ -3071,6 +3078,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				currentModel: parentModel,
 				modelScope: data.modelScope,
 				interactive: ctx.hasUI,
+		permissions: deps.config.permissions,
 			};
 			const parallelTasks = tasks.map((t, i) => {
 				const taskText = shouldForkAgent(contextPolicy, t.agent) ? wrapForkTask(taskTexts[i]!) : taskTexts[i]!;
@@ -3193,6 +3201,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 		const results = await runForegroundParallelTasks({
 			tasks,
+			permissions: deps.config.permissions,
 			taskTexts,
 			taskDescriptions,
 			agents,
@@ -3437,6 +3446,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				currentModel: parentModel,
 				modelScope: data.modelScope,
 				interactive: ctx.hasUI,
+		permissions: deps.config.permissions,
 			};
 			return executeAsyncSingle(id, {
 				agent: params.agent!,
@@ -3531,6 +3541,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	let r: Awaited<ReturnType<typeof runSync>> | undefined;
 	try {
 		r = await runSync(ctx.cwd, agents, params.agent!, task, {
+			permissions: deps.config.permissions,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			cwd: effectiveCwd,

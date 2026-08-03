@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added opt-in native Pi-child tool permissions with global and per-agent `allow`/`ask`/`deny` rules, supervisor-routed exact-call approval, and bounded redacted audit records. Unconfigured tools pass through, while bash policy remains with `pi-guard`.
 - Added a source-only, strict TypeScript typecheck command and CI gate.
 - Added trusted inline `workflowScript` orchestration with stable-key child launches through the ordinary executor, timed worker isolation, captured console and emitted milestones, artifact references, status lookup, and a concise call trace.
 - Added opt-in async one-shot `external-cli` agent profiles with stdin prompt delivery, argv-only spawning, lifecycle/status artifacts, stdout/stderr logs, timeout, and stop support.

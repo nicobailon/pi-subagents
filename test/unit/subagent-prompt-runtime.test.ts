@@ -19,6 +19,7 @@ import {
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
@@ -26,6 +27,7 @@ import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
+	registerPermissionGate,
 	registerSteeringInbox,
 	rewriteSubagentPrompt,
 	stripInheritedSkills,
@@ -46,6 +48,7 @@ const envSnapshot = {
 	PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
 	PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS: process.env.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS,
 	PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
+	PI_SUBAGENT_PERMISSION_POLICY: process.env.PI_SUBAGENT_PERMISSION_POLICY,
 	PI_SUBAGENT_REQUIRED_TOOLS: process.env.PI_SUBAGENT_REQUIRED_TOOLS,
 	PI_SUBAGENT_MCP_DIRECT_TOOLS: process.env.PI_SUBAGENT_MCP_DIRECT_TOOLS,
 	PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH: process.env.PI_SUBAGENT_TOOL_DIAGNOSTIC_PATH,
@@ -100,6 +103,8 @@ afterEach(() => {
 	else process.env[RUNTIME_EXTENSION_ACK_PATH_ENV] = envSnapshot.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS;
 	if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
 	else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
+	if (envSnapshot.PI_SUBAGENT_PERMISSION_POLICY === undefined) delete process.env[PERMISSION_POLICY_ENV];
+	else process.env[PERMISSION_POLICY_ENV] = envSnapshot.PI_SUBAGENT_PERMISSION_POLICY;
 	if (envSnapshot.PI_SUBAGENT_REQUIRED_TOOLS === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 	else process.env[REQUIRED_CHILD_TOOLS_ENV] = envSnapshot.PI_SUBAGENT_REQUIRED_TOOLS;
 	if (envSnapshot.PI_SUBAGENT_MCP_DIRECT_TOOLS === undefined) delete process.env[MCP_DIRECT_CHILD_TOOLS_ENV];
@@ -132,6 +137,23 @@ function setSupervisorEnv(): void {
 }
 
 describe("subagent prompt runtime", () => {
+	it("registers no permission hook by default and never gates bash or coordination tools", async () => {
+		const handlers: Array<(event: { toolName?: string; input?: unknown }) => unknown> = [];
+		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }) => unknown) { if (event === "tool_call") handlers.push(handler); } };
+		delete process.env[PERMISSION_POLICY_ENV];
+		registerPermissionGate(pi as never);
+		assert.equal(handlers.length, 0);
+
+		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "deny" });
+		registerPermissionGate(pi as never);
+		assert.equal(handlers.length, 1);
+		assert.equal(await handlers[0]!({ toolName: "bash", input: { command: "rm -rf /" } }), undefined);
+		assert.equal(await handlers[0]!({ toolName: "contact_supervisor", input: {} }), undefined);
+		assert.deepEqual(await handlers[0]!({ toolName: "write", input: {} }), {
+			block: true,
+			reason: "Blocked by pi-subagents permission rule: 'write' is denied.",
+		});
+	});
 	it("collects runtime extension acknowledgements until terminal serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-runtime-ack-"));
 		try {

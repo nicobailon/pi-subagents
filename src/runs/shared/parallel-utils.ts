@@ -3,6 +3,8 @@ export type ResolvedRunnerConfig = import("../../shared/types.ts").AgentRunnerCo
 export interface RunnerSubagentStep {
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
+	/** Resolved opt-in rules for native Pi child tool calls. */
+	permissionRules?: import("./permissions.ts").PermissionRules;
 	agent: string;
 	task: string;
 	runner?: ResolvedRunnerConfig;

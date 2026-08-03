@@ -4,6 +4,7 @@ import type { ArtifactDirPreference, ExtensionConfig } from "../shared/types.ts"
 import { validateMissionStoreConfig } from "../missions/store.ts";
 import { validateAuthorityPolicy } from "../policy/authority.ts";
 import { getAgentDir } from "../shared/utils.ts";
+import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 
@@ -23,6 +24,7 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	}
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
+	validatePermissionConfig(config.permissions);
 	return parsed as ExtensionConfig;
 }
 

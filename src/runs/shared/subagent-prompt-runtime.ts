@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
+import { registerNativeSupervisorClient, requestSupervisorPermission } from "../../intercom/native-supervisor-channel.ts";
+import { decodePermissionRules, permissionDecision, PERMISSION_POLICY_ENV } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
@@ -241,6 +242,21 @@ export function formatSteerMessage(request: SteerRequest): string {
 	].join("\n");
 }
 
+export function registerPermissionGate(pi: ExtensionAPI): void {
+	const rules = decodePermissionRules(process.env[PERMISSION_POLICY_ENV]);
+	if (!rules) return;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) => void;
+	onRuntimeEvent("tool_call", async (event) => {
+		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+		const decision = permissionDecision(rules, toolName);
+		if (decision === "allow") return undefined;
+		if (decision === "deny") return { block: true, reason: `Blocked by pi-subagents permission rule: '${toolName}' is denied.` };
+		const result = await requestSupervisorPermission({ toolName, args: event.input ?? {}, });
+		if (result.approved) return undefined;
+		return { block: true, reason: `Blocked by pi-subagents permission rule: ${result.reason}` };
+	});
+}
+
 function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undefined): void {
 	if (!budget) return;
 	let toolCount = 0;
@@ -377,6 +393,7 @@ export function registerSteeringInbox(
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerRuntimeExtensionAcknowledgements(pi);
 	registerSteeringInbox(pi);
+	registerPermissionGate(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);
 	const waitToolEnabled = resolveWaitToolConfig().enabled;

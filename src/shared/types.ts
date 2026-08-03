@@ -1587,6 +1587,8 @@ export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom
 // ============================================================================
 
 export interface RunSyncOptions {
+	/** Opt-in global permission rules; missing tools remain allowed. */
+	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
 	/** Resolved launch context for this child. */
@@ -1717,6 +1719,8 @@ export interface ExtensionConfig {
 	completionBatch?: CompletionBatchConfig;
 	turnBudget?: TurnBudgetConfig;
 	toolBudget?: ToolBudgetConfig;
+	/** Opt-in native tool permissions. Bash remains outside this policy. */
+	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	usageBudget?: UsageBudgetConfig;
 	parallel?: TopLevelParallelConfig;
 	chain?: ExtensionChainConfig;

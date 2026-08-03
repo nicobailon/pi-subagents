@@ -33,6 +33,8 @@ export const KNOWN_FIELDS = new Set([
 	"maxSubagentDepth",
 	"completionGuard",
 	"toolBudget",
+	"permission",
+	"permissions",
 	"memory",
 	"runner",
 ]);
@@ -124,6 +126,13 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (config.toolBudget || preserve("toolBudget")) {
 		lines.push(`toolBudget: ${config.toolBudget ? JSON.stringify(config.toolBudget) : ""}`);
+	}
+	if (config.permissions || preserve("permission", "permissions")) {
+		const key = preserve("permission") && !preserve("permissions") ? "permission" : "permissions";
+		lines.push(`${key}:`);
+		if (config.permissions) {
+			for (const line of stringifyYaml(config.permissions).trimEnd().split("\n")) lines.push(`  ${line}`);
+		}
 	}
 
 	if (config.memory) {
