@@ -6,6 +6,7 @@ import {
 	createBoundedLineReader,
 	formatProtocolOutputLimit,
 	MAX_CHILD_PENDING_LINE_BYTES,
+	PI_AGGREGATE_EVENT_PROJECTOR,
 	projectChildLifecycle,
 	type ProtocolOutputLimit,
 } from "../../src/runs/shared/child-protocol.ts";
@@ -41,6 +42,52 @@ describe("bounded child protocol reader", () => {
 		assert.equal(MAX_CHILD_PENDING_LINE_BYTES, 16 * 1024 * 1024);
 		assert.equal(lines.length, 1);
 		assert.equal(lines[0]?.length, imageSizedLine.length);
+	});
+
+	it("projects an oversized turn_end aggregate and resumes at the next record", () => {
+		const lines: string[] = [];
+		const reader = createBoundedLineReader({
+			maxPendingLineBytes: 64,
+			oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+			onLine: (line) => lines.push(line),
+			onLimit: () => assert.fail("redundant aggregate must not fail"),
+		});
+		const aggregate = JSON.stringify({ type: "turn_end", toolResults: ["x".repeat(256)] });
+		const settled = JSON.stringify({ type: "agent_settled" });
+		const bytes = Buffer.from(`${aggregate}\n${settled}\n`);
+		for (let offset = 0; offset < bytes.length; offset += 37) reader.push(bytes.subarray(offset, offset + 37));
+		reader.end();
+		assert.deepEqual(lines, ['{"type":"turn_end"}', settled]);
+		assert.equal(reader.exceeded(), false);
+	});
+
+	it("projects oversized agent_end aggregates without losing retry lifecycle metadata", () => {
+		for (const willRetry of [true, false]) {
+			const lines: string[] = [];
+			const reader = createBoundedLineReader({
+				maxPendingLineBytes: 64,
+				oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+				onLine: (line) => lines.push(line),
+				onLimit: () => assert.fail("valid agent_end aggregate must not fail"),
+			});
+			reader.push(`${JSON.stringify({ type: "agent_end", messages: ["x".repeat(256)], willRetry })}\n`);
+			reader.end();
+			assert.deepEqual(lines.map((line) => JSON.parse(line)), [{ type: "agent_end", willRetry }]);
+		}
+	});
+
+	it("fails closed when an oversized agent_end aggregate lacks lifecycle metadata", () => {
+		let failure: ProtocolOutputLimit | undefined;
+		const reader = createBoundedLineReader({
+			maxPendingLineBytes: 64,
+			oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+			onLine: () => assert.fail("malformed aggregate must not emit"),
+			onLimit: (limit) => { failure = limit; },
+		});
+		reader.push(`${JSON.stringify({ type: "agent_end", messages: ["x".repeat(256)] })}\n`);
+		reader.end();
+		assert.equal(reader.exceeded(), true);
+		assert.equal(failure?.code, "protocol_output_limit");
 	});
 
 	it("stops buffering an oversized line and returns bounded diagnostics", () => {

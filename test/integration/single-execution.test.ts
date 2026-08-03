@@ -1923,6 +1923,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(getFinalOutput(result.messages), "你好 from fragmented JSON");
 	});
 
+	it("projects an oversized turn_end aggregate without losing the foreground result", async () => {
+		mockPi.onCall({ jsonl: [
+			events.assistantMessage("result before oversized aggregate"),
+			{ type: "turn_end", message: {}, toolResults: [{ content: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES) }] },
+			{ type: "agent_end", willRetry: false },
+			{ type: "agent_settled" },
+		] });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Read parallel images", { acceptance: false });
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.protocolError, undefined);
+		assert.equal(getFinalOutput(result.messages), "result before oversized aggregate");
+	});
+
 	it("fails with protocol_output_limit when a child emits an oversized stdout line", async () => {
 		mockPi.onCall({ stdoutRaw: "x".repeat(MAX_CHILD_PENDING_LINE_BYTES + 1) });
 		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Emit malformed output", { acceptance: false });

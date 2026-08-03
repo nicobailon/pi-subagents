@@ -819,6 +819,24 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.error ?? "", /终$/);
 	});
 
+	it("background preserves retry lifecycle from an oversized agent_end aggregate", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [
+				events.assistantMessage("retrying oversized async response"),
+				{ type: "agent_end", messages: ["x".repeat(MAX_CHILD_PENDING_LINE_BYTES)], willRetry: true },
+			] },
+			{ delay: 1400, jsonl: [events.assistantMessage("settled after oversized aggregate"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const id = `async-lifecycle-oversized-retry-${Date.now().toString(36)}`;
+		const startedAt = Date.now();
+		launchProtocolTest(id);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.protocolError, undefined);
+		assert.equal(payload.results[0]?.output, "settled after oversized aggregate");
+		assert.ok(Date.now() - startedAt >= 1200, "projected agent_end must cancel the retry drain");
+	});
+
 	it("background cancels final drain while agent_end reports a retry and waits for agent_settled", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ steps: [
 			{ jsonl: [events.assistantMessage("retrying async response"), { type: "agent_end", willRetry: true }] },
