@@ -6,9 +6,8 @@ import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared
 import { diagnoseIntercomBridge, type IntercomBridgeDiagnostic } from "../intercom/intercom-bridge.ts";
 import { discoverAvailableSkills, type SkillSource } from "../agents/skills.ts";
 import {
-	ASYNC_DIR,
+	DIRS,
 	CHAIN_RUNS_DIR,
-	RESULTS_DIR,
 	TEMP_ROOT_DIR,
 	type ExtensionConfig,
 	type SubagentState,
@@ -43,12 +42,14 @@ interface DoctorReportInput {
 	deps?: Partial<DoctorDeps>;
 }
 
-const DEFAULT_PATHS: DoctorPaths = {
-	tempRootDir: TEMP_ROOT_DIR,
-	asyncDir: ASYNC_DIR,
-	resultsDir: RESULTS_DIR,
-	chainRunsDir: CHAIN_RUNS_DIR,
-};
+function defaultPaths(): DoctorPaths {
+	return {
+		tempRootDir: TEMP_ROOT_DIR,
+		asyncDir: DIRS.async,
+		resultsDir: DIRS.results,
+		chainRunsDir: CHAIN_RUNS_DIR,
+	};
+}
 
 const DEFAULT_DEPS: DoctorDeps = {
 	isAsyncAvailable,
@@ -192,7 +193,7 @@ function formatPermissionSystemSection(): string[] {
 }
 
 export function buildDoctorReport(input: DoctorReportInput): string {
-	const paths = input.paths ?? DEFAULT_PATHS;
+	const paths = input.paths ?? defaultPaths();
 	const deps = { ...DEFAULT_DEPS, ...input.deps };
 	const lines = [
 		"Subagents doctor report",

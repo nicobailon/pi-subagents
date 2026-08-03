@@ -10,7 +10,7 @@ import {
 	type SteeringNotice,
 	type SubagentState,
 	POLL_INTERVAL_MS,
-	RESULTS_DIR,
+	DIRS,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
@@ -54,7 +54,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 } {
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
-	const resultsDir = options.resultsDir ?? RESULTS_DIR;
+	const resultsDir = options.resultsDir ?? DIRS.results;
 	const steeringNoticeSeen = new Map<string, number>();
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);

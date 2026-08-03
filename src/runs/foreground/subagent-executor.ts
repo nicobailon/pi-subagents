@@ -123,10 +123,9 @@ import {
 	type UsageBudgetConfig,
 	type SubagentRunMode,
 	type SubagentState,
-	ASYNC_DIR,
+	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
 	DEFAULT_FORK_PREAMBLE,
-	RESULTS_DIR,
 	SUBAGENT_ACTIONS,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
@@ -1080,7 +1079,7 @@ function directNestedAsyncInterrupt(target: ResolvedSubagentRunId & { kind: "nes
 	const run = target.match.run;
 	const asyncDir = resolveNestedAsyncDir(target.match.rootRunId, run);
 	if (!asyncDir) return undefined;
-	const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(RESULTS_DIR, "nested", target.match.rootRunId) }).status;
+	const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(DIRS.results, "nested", target.match.rootRunId) }).status;
 	const pid = typeof status?.pid === "number" && status.pid > 0 ? status.pid : run.pid;
 	if (!status || status.state !== "running" || typeof pid !== "number" || pid <= 0) return undefined;
 	try {
@@ -1096,7 +1095,7 @@ async function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & {
 	const run = input.target.match.run;
 	const asyncDir = resolveNestedAsyncDir(input.target.match.rootRunId, run);
 	if (!asyncDir) return undefined;
-	const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(RESULTS_DIR, "nested", input.target.match.rootRunId) }).status;
+	const status = reconcileAsyncRun(asyncDir, { resultsDir: path.join(DIRS.results, "nested", input.target.match.rootRunId) }).status;
 	if (!status || (status.state !== "running" && status.state !== "queued")) return undefined;
 	const steps = status.steps ?? [];
 	if (input.index !== undefined) {
@@ -1317,8 +1316,8 @@ async function resumeAsyncRun(input: {
 			goal,
 			attachRoot: {
 				runId: target.runId,
-				asyncDir: target.asyncDir ?? path.join(ASYNC_DIR, target.runId),
-				resultPath: resolveAsyncRootResultPath(RESULTS_DIR, target.runId),
+				asyncDir: target.asyncDir ?? path.join(DIRS.async, target.runId),
+				resultPath: resolveAsyncRootResultPath(DIRS.results, target.runId),
 				index: target.index,
 				agent: target.agent,
 				label: `Attached ${target.runId}`,
@@ -3989,7 +3988,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						};
 					}
 					const location = paramsWithResolvedCwd.dir
-						? resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR)
+						? resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results)
 						: resolved?.kind === "async"
 							? resolved.location
 							: undefined;
@@ -4024,7 +4023,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
 				if (paramsWithResolvedCwd.dir) {
 					try {
-						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
+						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
 						return steerAsyncRun({
 							state: deps.state,
@@ -4100,7 +4099,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				let resolved: ResolvedSubagentRunId | undefined;
 				if (paramsWithResolvedCwd.dir) {
 					try {
-						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
+						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
 						return stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);

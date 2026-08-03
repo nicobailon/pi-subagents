@@ -41,7 +41,7 @@ import {
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
-	ASYNC_DIR,
+	DIRS,
 	type Details,
 	type JsonSchemaObject,
 	type SingleResult,
@@ -285,7 +285,7 @@ function scheduledStopTargets(ctx: ExtensionContext, state: SubagentState): Stop
 
 function discoverStopTargets(ctx: ExtensionContext, state: SubagentState): StopSelectorTarget[] {
 	const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
-	const asyncTargets = listAsyncRuns(ASYNC_DIR, {
+	const asyncTargets = listAsyncRuns(DIRS.async, {
 		states: ["queued", "running"],
 		...(sessionId ? { sessionId } : {}),
 	}).map(formatAsyncStopTarget);

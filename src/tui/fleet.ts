@@ -5,7 +5,7 @@ import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-codi
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
-import { RESULTS_DIR, type AsyncJobState, type Details, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
+import { DIRS, type AsyncJobState, type Details, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
@@ -169,7 +169,7 @@ export function collectFleetSnapshot(
 			runs = listAsyncRuns(options.asyncDirRoot, {
 				...(state.currentSessionId ? { sessionId: state.currentSessionId } : {}),
 				limit: options.limit ?? MAX_RECENT_ASYNC_RUNS,
-				resultsDir: options.resultsDir ?? RESULTS_DIR,
+				resultsDir: options.resultsDir ?? DIRS.results,
 				reconcile: false,
 			});
 		} else {

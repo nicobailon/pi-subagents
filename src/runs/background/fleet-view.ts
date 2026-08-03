@@ -4,8 +4,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
-	ASYNC_DIR,
-	RESULTS_DIR,
+	DIRS,
 	type ActivityState,
 	type AsyncJobStep,
 	type AsyncStatus,
@@ -321,10 +320,10 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 
 	let asyncRuns: AsyncRunSummary[];
 	try {
-		asyncRuns = listAsyncRuns(deps.asyncDirRoot ?? ASYNC_DIR, {
+		asyncRuns = listAsyncRuns(deps.asyncDirRoot ?? DIRS.async, {
 			states: ["queued", "running"],
 			sessionId: deps.state?.currentSessionId ?? undefined,
-			resultsDir: deps.resultsDir ?? RESULTS_DIR,
+			resultsDir: deps.resultsDir ?? DIRS.results,
 			kill: deps.kill,
 			now: deps.now,
 		});

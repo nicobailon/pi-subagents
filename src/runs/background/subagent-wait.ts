@@ -48,9 +48,8 @@ import {
 } from "../../api/background-work.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import {
-	ASYNC_DIR,
+	DIRS,
 	INTERCOM_DETACH_REQUEST_EVENT,
-	RESULTS_DIR,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_CONTROL_EVENT,
@@ -253,8 +252,8 @@ function backgroundWorkForSession(deps: SubagentWaitDeps, nowMs: number): Backgr
 
 /** Queued/running runs from this session, including runs that need attention. */
 function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const runs = listAsyncRuns(asyncDirRoot, {
 		states: [...ACTIVE_STATES],
 		sessionId: deps.state.currentSessionId ?? undefined,
@@ -273,8 +272,8 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 
 /** All runs (any state) for this session, for the final summary. */
 function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
-	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
-	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
+	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
+	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const runs = listAsyncRuns(asyncDirRoot, {
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,

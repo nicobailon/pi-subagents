@@ -7,7 +7,7 @@ import { listMissions, missionRecordPath, resolveMissionStoreLocation } from "..
 import type { MissionStoreConfig } from "../../missions/types.ts";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { ASYNC_DIR, RESULTS_DIR, type Details, type SubagentState } from "../../shared/types.ts";
+import { DIRS, type Details, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentRunId } from "../../runs/background/run-id-resolver.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode, type HerdrResult } from "./client.ts";
@@ -122,7 +122,7 @@ function isTrustedAsyncDir(asyncDir: string, deps: InspectorDeps): boolean {
 			try { return fs.realpathSync(job.asyncDir) === realDir; } catch { return false; }
 		});
 		if (registered) return true;
-		const root = deps.asyncDirRoot ?? ASYNC_DIR;
+		const root = deps.asyncDirRoot ?? DIRS.async;
 		if (!fs.existsSync(root) || !pathWithin(root, asyncDir)) return false;
 		return pathWithin(fs.realpathSync(root), realDir);
 	} catch {
@@ -142,7 +142,7 @@ function resolveAsyncTarget(params: InspectorParams, deps: InspectorDeps): { run
 	}
 	if (!requestedId) return { error: "Herdr inspector actions require id or dir." };
 	try {
-		const resolved = resolveSubagentRunId(requestedId, { state: deps.state, asyncDirRoot: deps.asyncDirRoot ?? ASYNC_DIR, resultsDir: deps.resultsDir ?? RESULTS_DIR });
+		const resolved = resolveSubagentRunId(requestedId, { state: deps.state, asyncDirRoot: deps.asyncDirRoot ?? DIRS.async, resultsDir: deps.resultsDir ?? DIRS.results });
 		if (!resolved) return { error: `No subagent run found for '${requestedId}'.` };
 		if (resolved.kind !== "async" || !resolved.location.asyncDir) return { error: `Run '${resolved.id}' is not an inspectable async run with lifecycle artifacts.` };
 		return { runId: resolved.id, asyncDir: resolved.location.asyncDir };
