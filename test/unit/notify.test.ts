@@ -485,6 +485,18 @@ describe("completion formatting helpers", () => {
 		assert.equal(buildCompletionDetails({ id: "x", agent: "w", success: true, summary: "ok", exitCode: 0, processSignal: "SIGTERM", timestamp: 1 }).status, "completed");
 	});
 
+	it("labels workflow completion and preserves its return/emit/trace preview", () => {
+		const details = buildCompletionDetails({
+			id: "workflow-run",
+			agent: "workflow",
+			success: true,
+			summary: "Workflow completed with 1 child run(s). Return: { answer: 42 } Emitted: ready Trace: 2 event(s).",
+			timestamp: 1,
+		});
+		assert.equal(details.agent, "workflow");
+		assert.match(details.resultPreview, /Return: \{ answer: 42 \}.*Emitted: ready.*Trace: 2 event/);
+	});
+
 	it("buildCompletionDetails falls back to the unknown agent label", () => {
 		const details: SubagentNotifyDetails = buildCompletionDetails({ id: "x", agent: null, success: true, summary: "ok", timestamp: 1 });
 		assert.equal(details.agent, "unknown");

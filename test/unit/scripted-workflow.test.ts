@@ -73,6 +73,21 @@ describe("scripted workflow runtime", () => {
 		assert.equal(childAborted, true);
 	});
 
+	it("fails cleanly when an emitted value cannot be persisted", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `emit(1n); return "unreachable";`,
+				timeoutMs: 2_000,
+				onEmit: (emits) => { JSON.stringify(emits); },
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& /Workflow emit could not be persisted/.test(error.message)
+				&& error.partial.emits.length === 0,
+		);
+	});
+
 	it("terminates scripts and aborts an in-flight child at the controller timeout", async () => {
 		let childAborted = false;
 		await assert.rejects(

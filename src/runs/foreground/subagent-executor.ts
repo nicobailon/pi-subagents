@@ -2373,6 +2373,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
 			capabilityCeiling: data.capabilityCeiling,
+			parentWorkflowRunId: params.workflowParentRunId,
+			workflowKey: params.workflowKey,
 		});
 	}
 
@@ -3856,7 +3858,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							timeoutMs: timeout,
 							signal: controller.signal,
 							onTrace: updateTrace,
-							onEmit: (emits) => { status.workflow = { ...(status.workflow ?? { trace: [], console: [] }), emits }; persist(); appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) }); },
+							onEmit: (emits) => {
+								JSON.stringify(emits);
+								status.workflow = { ...(status.workflow ?? { trace: [], console: [] }), emits };
+								persist();
+								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });
+							},
 							launch: async (key, childParams, workflowSignal) => {
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
@@ -3864,9 +3871,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								workflowResults.push(...result.details.results);
 								const child = workflowChildResult(key, result);
 								if (result.details.asyncId) {
-									const childStatusPath = path.join(result.details.asyncDir ?? path.join(DIRS.async, result.details.asyncId), "status.json");
-									const childStatus = readStatus(path.dirname(childStatusPath));
-									if (childStatus) writeAtomicJson(childStatusPath, { ...childStatus, parentWorkflowRunId: workflowRunId, workflowKey: key });
 									const childJob = deps.state.asyncJobs.get(result.details.asyncId);
 									if (childJob) { childJob.parentWorkflowRunId = workflowRunId; childJob.workflowKey = key; }
 								}
@@ -3874,17 +3878,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							},
 							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx)),
 						});
-						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults) };
+						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
+						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
+						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
+						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults) };
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: "complete" });
-						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, mode: "workflow", success: true, state: "complete", summary: `Workflow completed with ${workflow.children.length} child run(s).`, results: workflow.children.map((child) => ({ agent: child.key, output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: ctx.cwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
+						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, results: workflow.children.map((child) => ({ agent: child.key, output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: ctx.cwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
 					} catch (error) {
 						const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
 						const stopped = controller.signal.aborted;
 						status = { ...status, state: stopped ? "stopped" : "failed", stopped: stopped || undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } };
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, error: status.error });
-						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, mode: "workflow", success: false, state: status.state, summary: status.error, error: status.error, stopped: status.stopped, results: partial.children.map((child) => ({ agent: child.key, output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: ctx.cwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
+						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, agent: "workflow", mode: "workflow", success: false, state: status.state, summary: status.error, error: status.error, stopped: status.stopped, results: partial.children.map((child) => ({ agent: child.key, output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: ctx.cwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
 					} finally {
 						deps.state.workflowControllers?.delete(workflowRunId);
 					}

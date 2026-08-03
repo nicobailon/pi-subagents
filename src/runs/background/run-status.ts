@@ -387,6 +387,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
 				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
+				status.mode === "workflow" && status.workflow?.value !== undefined ? `Return: ${JSON.stringify(status.workflow.value).slice(0, 240)}` : undefined,
 				status.mode === "workflow" && status.workflow?.emits.length ? `Latest emit: ${JSON.stringify(status.workflow.emits.at(-1)).slice(0, 240)}` : undefined,
 				`Progress: ${progressLabel}`,
 				status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,

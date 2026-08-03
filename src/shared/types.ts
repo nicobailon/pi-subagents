@@ -976,6 +976,7 @@ export interface Details {
 	missionWarning?: string;
 	mission?: MissionRecord;
 	workflow?: {
+		value?: unknown;
 		trace: Array<{
 			operation: "run" | "status";
 			key: string;

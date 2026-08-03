@@ -174,7 +174,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		worker.on("message", (message: Record<string, unknown>) => {
 			if (message.type === "emit") {
 				emits.push(message.value);
-				options.onEmit?.([...emits]);
+				try {
+					options.onEmit?.([...emits]);
+				} catch (error) {
+					emits.pop();
+					finish({ error: new Error(`Workflow emit could not be persisted: ${error instanceof Error ? error.message : String(error)}`) });
+				}
 				return;
 			}
 			if (message.type === "console") {

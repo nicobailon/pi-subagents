@@ -386,7 +386,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const result = await executor.execute(
 			runId,
-			{ workflowScript: `emit("starting"); await runs.run("work", { agent: "echo", task: "Async work" }); return "done";` },
+			{ workflowScript: `emit("starting"); await runs.run("work", { agent: "echo", task: "Async work" }); return { answer: 42 };` },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -397,17 +397,62 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.asyncId, runId);
 		assert.match(result.content[0]?.text ?? "", /Async workflow/);
 		const statusPath = path.join(result.details.asyncDir!, "status.json");
-		let status: { state?: string; workflow?: { emits?: unknown[]; trace?: Array<{ key?: string; state?: string }> } } = {};
+		let status: { state?: string; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; state?: string }> } } = {};
 		for (let attempt = 0; attempt < 100; attempt++) {
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 			if (status.state === "complete" || status.state === "failed") break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 		assert.equal(status.state, "complete");
+		assert.deepEqual(status.workflow?.value, { answer: 42 });
 		assert.deepEqual(status.workflow?.emits, ["starting"]);
 		assert.ok(status.workflow?.trace?.some((entry) => entry.key === "work" && entry.state === "completed"));
+		const persistedResult = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${runId}.json`), "utf-8")) as { agent?: string; summary?: string; workflow?: { value?: unknown } };
+		assert.equal(persistedResult.agent, "workflow");
+		assert.match(persistedResult.summary ?? "", /Return: \{\n  "answer": 42\n\}/);
+		assert.deepEqual(persistedResult.workflow?.value, { answer: 42 });
 		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
 		fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true });
+	});
+
+	it("persists workflow parent metadata in async child status and result", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "async child done" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const workflowRunId = `scripted-workflow-parent-${Date.now()}`;
+		const started = await executor.execute(
+			workflowRunId,
+			{ workflowScript: `const child = await runs.run("background", { agent: "echo", task: "Async child", async: true }); return child.runId;` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const workflowResultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		let childRunId: string | undefined;
+		for (let attempt = 0; attempt < 150; attempt++) {
+			if (fs.existsSync(workflowResultPath)) {
+				const workflowResult = JSON.parse(fs.readFileSync(workflowResultPath, "utf-8")) as { workflow?: { value?: unknown } };
+				if (typeof workflowResult.workflow?.value === "string") { childRunId = workflowResult.workflow.value; break; }
+			}
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.ok(childRunId);
+		const childDir = path.join(DIRS.async, childRunId);
+		const childStatusPath = path.join(childDir, "status.json");
+		let childStatus: { state?: string; parentWorkflowRunId?: string; workflowKey?: string } = {};
+		for (let attempt = 0; attempt < 200; attempt++) {
+			if (fs.existsSync(childStatusPath)) childStatus = JSON.parse(fs.readFileSync(childStatusPath, "utf-8"));
+			if (["complete", "failed", "stopped"].includes(childStatus.state ?? "")) break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(childStatus.parentWorkflowRunId, workflowRunId);
+		assert.equal(childStatus.workflowKey, "background");
+		const childResult = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${childRunId}.json`), "utf-8")) as { parentWorkflowRunId?: string; workflowKey?: string };
+		assert.equal(childResult.parentWorkflowRunId, workflowRunId);
+		assert.equal(childResult.workflowKey, "background");
+		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(workflowResultPath, { force: true });
+		fs.rmSync(childDir, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.results, `${childRunId}.json`), { force: true });
 	});
 
 	it("stops a live async workflow through its controller", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
