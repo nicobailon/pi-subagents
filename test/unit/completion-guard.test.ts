@@ -193,6 +193,30 @@ test("obvious mutating bash commands count as mutation attempts", () => {
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "patch -p0 < fix.patch" })]), true);
 });
 
+test("git publication commands count as mutation attempts", () => {
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git add src/file.ts" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git commit -m 'fix: finish change'" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git push origin HEAD" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git -C /tmp/project add src/file.ts" })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git diff --check && git add src/file.ts && git commit -m fix && git push" })]), true);
+});
+
+test("read-only and quoted git commands do not count as mutation attempts", () => {
+	for (const command of [
+		"git status --short",
+		"git diff --check",
+		"git log -1 --oneline",
+		"git show --stat HEAD",
+		"git ls-remote origin main",
+		"gh pr view 749",
+		"echo 'git add src/file.ts'",
+		'printf "git commit -m fix"',
+		"echo 'then git push origin HEAD'",
+	]) {
+		assert.equal(hasMutationToolCall([assistantToolCall("bash", { command })]), false, command);
+	}
+});
+
 test("implementation task with mutation attempts does not trigger", () => {
 	const result = evaluateCompletionMutationGuard({
 		agent: "worker",

@@ -96,8 +96,51 @@ function hasUnquotedFileRedirection(command: string): boolean {
 	return false;
 }
 
+function unquotedShellText(command: string): string {
+	let inSingle = false;
+	let inDouble = false;
+	let escaped = false;
+	let result = "";
+	for (const char of command) {
+		if (escaped) {
+			result += inSingle || inDouble ? " " : char;
+			escaped = false;
+			continue;
+		}
+		if (char === "\\" && !inSingle) {
+			escaped = true;
+			result += inDouble ? " " : char;
+			continue;
+		}
+		if (char === "'" && !inDouble) {
+			inSingle = !inSingle;
+			result += " ";
+			continue;
+		}
+		if (char === '"' && !inSingle) {
+			inDouble = !inDouble;
+			result += " ";
+			continue;
+		}
+		result += inSingle || inDouble ? " " : char;
+	}
+	return result;
+}
+
+function hasMutatingGitCommand(command: string): boolean {
+	const unquoted = unquotedShellText(command);
+	for (const segment of unquoted.split(/(?:&&|\|\||[;|()\n])/)) {
+		const trimmed = segment.trim();
+		if (!trimmed || /^(?:echo|printf)\b/.test(trimmed)) continue;
+		if (/^git\s+(?:(?:(?:-C|--git-dir|--work-tree)\s+\S+|(?:--git-dir|--work-tree)=\S+|--[\w-]+)\s+)*(?:add|commit|push)\b/.test(trimmed)) return true;
+	}
+	return false;
+}
+
 export function isMutatingBashCommand(command: string): boolean {
-	return hasUnquotedFileRedirection(command) || MUTATING_BASH_PATTERNS.some((pattern) => pattern.test(command));
+	return hasUnquotedFileRedirection(command)
+		|| hasMutatingGitCommand(command)
+		|| MUTATING_BASH_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 export function isMutatingTool(toolName: string | undefined, args: Record<string, unknown> | undefined): boolean {
