@@ -415,6 +415,60 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true });
 	});
 
+	it("rejects an invalid async workflow usage budget before creating run state", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, asyncJobs);
+		const runId = `scripted-workflow-invalid-budget-${Date.now()}`;
+
+		const result = await executor.execute(
+			runId,
+			{ workflowScript: `return "unreachable";`, usageBudget: { tokens: { hard: 0 } } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /usageBudget\.tokens\.hard must be a positive number/);
+		assert.equal(result.details.asyncId, undefined);
+		assert.equal(asyncJobs.has(runId), false);
+		assert.equal(fs.existsSync(path.join(DIRS.async, runId)), false);
+		assert.equal(fs.existsSync(path.join(DIRS.results, `${runId}.json`)), false);
+	});
+
+	it("rejects async child launches from budgeted async workflows", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const runId = `scripted-workflow-budget-async-child-${Date.now()}`;
+		const started = await executor.execute(
+			runId,
+			{
+				workflowScript: `await runs.run("background", { agent: "echo", task: "Async child", async: true }); return "unreachable";`,
+				usageBudget: { tokens: { hard: 100 } },
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(started.isError, undefined);
+		assert.equal(started.details.asyncId, runId);
+		const resultPath = path.join(DIRS.results, `${runId}.json`);
+		let persisted: { state?: string; summary?: string; results?: Array<{ success?: boolean; output?: string }> } = {};
+		for (let attempt = 0; attempt < 100; attempt++) {
+			if (fs.existsSync(resultPath)) persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+			if (persisted.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(persisted.state, "failed");
+		assert.match(persisted.summary ?? "", /workflow usageBudget does not support async runs\.run launches/);
+		assert.equal(persisted.results?.length, 1);
+		assert.equal(persisted.results?.[0]?.success, false);
+		assert.match(persisted.results?.[0]?.output ?? "", /workflow usageBudget does not support async runs\.run launches/);
+		assert.equal(mockPi.callCount(), 0);
+		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
 	it("persists workflow parent metadata in async child status and result", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "async child done" });
 		const executor = makeExecutor([makeAgent("echo")]);

@@ -3784,6 +3784,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return { content: [{ type: "text", text: "workflowScript does not support clarify UI." }], isError: true, details: { mode: "workflow", results: [] } };
 			}
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
+			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
+			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			if (requestParams.async !== false) {
 				const workflowRunId = _id;
 				const asyncDir = path.join(DIRS.async, workflowRunId);
@@ -3832,7 +3834,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const { workflowScript, async: _workflowAsync, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
-					const workflowUsageBudget = validateUsageBudgetConfig(workflowRequest.usageBudget ?? deps.config.usageBudget, workflowRequest.usageBudget ? "usageBudget" : "config.usageBudget");
 					const { action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, ...workflowChildDefaults } = workflowRequest;
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
 						status.workflow = { ...(status.workflow ?? { emits: [], console: [] }), trace };
@@ -3852,7 +3853,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						appendWorkflowEvent({ type: "subagent.workflow.trace", trace });
 					};
 					try {
-						if (workflowUsageBudget.error) throw new Error(workflowUsageBudget.error);
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
 							timeoutMs: timeout,
@@ -3865,6 +3865,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });
 							},
 							launch: async (key, childParams, workflowSignal) => {
+								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 								const result = await execute(randomUUID(), { ...workflowChildDefaults, ...childParams, workflowParentRunId: workflowRunId, workflowKey: key } as SubagentParamsLike, workflowSignal, undefined, ctx);
@@ -3901,8 +3902,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, asyncDir, results: [] },
 				};
 			}
-			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
-			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, ...workflowChildDefaults } = requestParams;
 			const workflowResults: SingleResult[] = [];
 			try {
