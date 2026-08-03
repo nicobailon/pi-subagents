@@ -75,7 +75,17 @@ function redact(value: unknown, key = "", depth = 0): unknown {
 export function permissionArgsPreview(input: unknown): string {
 	const serialized = JSON.stringify(redact(input));
 	if (!serialized) return "{}";
-	return Buffer.byteLength(serialized, "utf-8") <= MAX_PREVIEW_BYTES ? serialized : `${Buffer.from(serialized).subarray(0, MAX_PREVIEW_BYTES).toString("utf-8")}…`;
+	if (Buffer.byteLength(serialized, "utf-8") <= MAX_PREVIEW_BYTES) return serialized;
+	const maxContentBytes = MAX_PREVIEW_BYTES - Buffer.byteLength("…", "utf-8");
+	let preview = "";
+	let previewBytes = 0;
+	for (const character of serialized) {
+		const characterBytes = Buffer.byteLength(character, "utf-8");
+		if (previewBytes + characterBytes > maxContentBytes) break;
+		preview += character;
+		previewBytes += characterBytes;
+	}
+	return `${preview}…`;
 }
 
 export function appendPermissionAudit(filePath: string | undefined, record: Record<string, unknown>): void {

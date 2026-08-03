@@ -36,6 +36,11 @@ describe("native child permissions", () => {
 		assert.deepEqual(decodePermissionRules(encoded), { write: "ask" });
 		const preview = permissionArgsPreview({ token: "secret-value", content: `Bearer abcdefghijklmnop ${"x".repeat(3000)}` });
 		assert.doesNotMatch(preview, /secret-value|abcdefghijklmnop/);
-		assert.ok(Buffer.byteLength(preview) <= 2051);
+		assert.ok(Buffer.byteLength(preview) <= 2048);
+
+		const multibytePreview = permissionArgsPreview({ content: Array.from({ length: 10 }, () => "😀".repeat(300)) });
+		assert.ok(Buffer.byteLength(multibytePreview, "utf-8") <= 2048);
+		assert.doesNotMatch(multibytePreview, /�/);
+		assert.match(multibytePreview, /…$/);
 	});
 });
