@@ -5,7 +5,7 @@
  * - Sync (default): Streams output, renders markdown, tracks usage
  * - Async: Background execution, emits events when done
  *
- * Modes: single (agent + task), parallel (tasks[]), chain (chain[] with {previous})
+ * Modes: single (agent + task), parallel (tasks[]), workflow (workflowScript), chain (chain[] with {previous})
  * Toggle: async parameter (default: true; set asyncByDefault:false in config.json to opt out)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json

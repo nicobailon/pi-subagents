@@ -229,6 +229,7 @@ export interface ControlEvent {
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
 export type SubagentOutputState = "present" | "absent" | "unknown";
 export type SubagentRunMode = "single" | "parallel" | "chain";
+export type SubagentResultMode = SubagentRunMode | "workflow";
 
 export interface ParallelHandoffPatch {
 	path: string;
@@ -917,7 +918,7 @@ export interface SpawnBudgetSnapshot {
 }
 
 export interface Details {
-	mode: SubagentRunMode | "management";
+	mode: SubagentResultMode | "management";
 	runId?: string;
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";

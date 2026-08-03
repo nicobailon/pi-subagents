@@ -9,7 +9,7 @@ export const MISSION_STATUSES = [
 ] as const;
 
 export type MissionStatus = typeof MISSION_STATUSES[number];
-export type MissionRunMode = "single" | "parallel" | "chain" | "scheduled" | "external";
+export type MissionRunMode = "single" | "parallel" | "chain" | "workflow" | "scheduled" | "external";
 export type MissionArtifactKind = "status" | "output" | "patch" | "manifest" | "review" | "note" | "other";
 export type MissionReceiptKind = "pull_request" | "ci" | "deployment" | "release";
 export type MissionReceiptStatus = "pending" | "ready" | "succeeded" | "failed";

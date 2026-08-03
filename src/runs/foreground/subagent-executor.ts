@@ -1738,6 +1738,7 @@ function validateExecutionChainBindings(params: SubagentParamsLike, dynamicFanou
 }
 
 function getRequestedModeLabel(params: SubagentParamsLike): Details["mode"] {
+	if (params.workflowScript !== undefined) return "workflow";
 	if ((params.chain?.length ?? 0) > 0) return "chain";
 	if ((params.tasks?.length ?? 0) > 0) return "parallel";
 	if (params.agent) return "single";
@@ -3646,7 +3647,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	};
 }
 
-function inferExecutionMode(params: SubagentParamsLike): SubagentRunMode {
+function inferExecutionMode(params: SubagentParamsLike): Details["mode"] {
+	if (params.workflowScript !== undefined) return "workflow";
 	if ((params.chain?.length ?? 0) > 0) return "chain";
 	if ((params.tasks?.length ?? 0) > 0) return "parallel";
 	return "single";
@@ -3749,10 +3751,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (requestParams.workflowScript !== undefined) {
 			const invalidMode = requestParams.action !== undefined || requestParams.agent !== undefined || requestParams.tasks !== undefined || requestParams.chain !== undefined;
 			if (invalidMode) {
-				return { content: [{ type: "text", text: "workflowScript is its own execution mode; do not combine it with action, agent, tasks, or chain." }], isError: true, details: { mode: "chain", results: [] } };
+				return { content: [{ type: "text", text: "workflowScript is its own execution mode; do not combine it with action, agent, tasks, or chain." }], isError: true, details: { mode: "workflow", results: [] } };
 			}
 			if (requestParams.async === true || requestParams.clarify === true) {
-				return { content: [{ type: "text", text: "workflowScript currently runs in the foreground only; detached durability and clarify UI are deferred." }], isError: true, details: { mode: "chain", results: [] } };
+				return { content: [{ type: "text", text: "workflowScript currently runs in the foreground only; detached durability and clarify UI are deferred." }], isError: true, details: { mode: "workflow", results: [] } };
 			}
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
@@ -3781,7 +3783,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				return {
 					content: [{ type: "text", text: sections.join("\n\n") }],
-					details: { mode: "chain", results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: workflow.trace, emits: workflow.emits, console: workflow.console } },
+					details: { mode: "workflow", results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: workflow.trace, emits: workflow.emits, console: workflow.console } },
 				};
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -3794,7 +3796,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return {
 					content: [{ type: "text", text: sections.join("\n\n") }],
 					isError: true,
-					details: { mode: "chain", results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } },
+					details: { mode: "workflow", results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } },
 				};
 			}
 		}

@@ -339,7 +339,7 @@ export function handleMissionAction(
 		const runId = params.runId ?? params.id;
 		if (typeof runId !== "string" || !runId.trim()) throw new Error("mission.attach-run requires runId or id");
 		const rawMode = params.runMode ?? "external";
-		if (!["single", "parallel", "chain", "scheduled", "external"].includes(rawMode)) throw new Error("runMode is invalid");
+		if (!["single", "parallel", "chain", "workflow", "scheduled", "external"].includes(rawMode)) throw new Error("runMode is invalid");
 		const mode = rawMode as MissionRunMode;
 		if (params.dir !== undefined && !params.dir.trim()) throw new Error("dir must be a non-empty string");
 		if (params.runStatus !== undefined && !params.runStatus.trim()) throw new Error("runStatus must be a non-empty string");

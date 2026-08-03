@@ -398,6 +398,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.match(result.content[0]?.text ?? "", /reviewed auth/);
+		assert.equal(result.details.mode, "workflow");
 		assert.equal(result.details.results.length, 2);
 		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
 	});
@@ -422,6 +423,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /Usage budget exhausted/);
+		assert.equal(result.details.mode, "workflow");
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(result.details.usageBudget?.exhausted, true);
 	});

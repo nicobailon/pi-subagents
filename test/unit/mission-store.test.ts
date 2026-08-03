@@ -34,7 +34,10 @@ describe("mission store", () => {
 			const updated = updateMission(test.location, created.id, {
 				status: "active",
 				summary: "Implementation started",
-				addRuns: [{ runId: "run-1", mode: "single", status: "running" }],
+				addRuns: [
+					{ runId: "run-1", mode: "single", status: "running" },
+					{ runId: "workflow-1", mode: "workflow", status: "completed" },
+				],
 				addArtifacts: [{ kind: "status", path: path.join(test.root, "status.json") }],
 				addReceipts: [{ kind: "pull_request", status: "ready", title: "PR 733", url: "https://github.com/example/repo/pull/733" }],
 				addDecisions: [{ title: "Choose release window", options: ["now", "later"] }],
@@ -42,6 +45,7 @@ describe("mission store", () => {
 
 			assert.equal(readMission(test.location, created.id).status, "active");
 			assert.equal(updated.runs[0]?.runId, "run-1");
+			assert.equal(readMission(test.location, created.id).runs[1]?.mode, "workflow");
 			assert.equal(updated.decisions[0]?.status, "open");
 			assert.equal(updated.receipts[0]?.url, "https://github.com/example/repo/pull/733");
 			const receiptUpdated = updateMission(test.location, created.id, {

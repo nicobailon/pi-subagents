@@ -4,7 +4,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import type { Details, SubagentRunMode } from "../shared/types.ts";
 import { validateMissionLaunch } from "./actions.ts";
-import type { MissionArtifact, MissionRecord, MissionRunLink, MissionStatus, MissionStoreConfig, MissionStoreLocation } from "./types.ts";
+import type { MissionArtifact, MissionRecord, MissionRunLink, MissionRunMode, MissionStatus, MissionStoreConfig, MissionStoreLocation } from "./types.ts";
 import { createMission, missionRecordPath, readMission, resolveMissionStoreLocation, updateMission, validateMissionId } from "./store.ts";
 
 export const MISSION_BINDING_FILE = "mission.json";
@@ -78,6 +78,10 @@ export function prepareMissionLaunch(input: {
 
 function toolResultIsError(result: AgentToolResult<Details>): boolean {
 	return "isError" in result && result.isError === true;
+}
+
+function missionRunModeForResult(mode: Details["mode"]): MissionRunMode {
+	return mode === "management" ? "external" : mode;
 }
 
 function runStatusForResult(result: AgentToolResult<Details>): string {
@@ -166,7 +170,7 @@ export function attachMissionToLaunchResult(input: {
 	const startedAt = new Date().toISOString();
 	const run: MissionRunLink = {
 		runId,
-		mode: input.result.details.mode as SubagentRunMode,
+		mode: missionRunModeForResult(input.result.details.mode),
 		status: runStatus,
 		startedAt,
 		...(input.result.details.asyncDir ? { asyncDir: input.result.details.asyncDir } : {}),

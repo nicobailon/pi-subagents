@@ -27,7 +27,7 @@ import {
 } from "./types.ts";
 
 const MISSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const MISSION_RUN_MODES = new Set<MissionRunMode>(["single", "parallel", "chain", "scheduled", "external"]);
+const MISSION_RUN_MODES = new Set<MissionRunMode>(["single", "parallel", "chain", "workflow", "scheduled", "external"]);
 const MISSION_ARTIFACT_KINDS = new Set<MissionArtifactKind>(["status", "output", "patch", "manifest", "review", "note", "other"]);
 const MISSION_RECEIPT_KINDS = new Set<MissionReceiptKind>(["pull_request", "ci", "deployment", "release"]);
 const MISSION_RECEIPT_STATUSES = new Set<MissionReceiptStatus>(["pending", "ready", "succeeded", "failed"]);
