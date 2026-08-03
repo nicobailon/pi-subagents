@@ -3759,7 +3759,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, ...workflowChildDefaults } = requestParams;
 			const workflowResults: SingleResult[] = [];
 			try {
 				const workflow = await runWorkflowScript({

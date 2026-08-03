@@ -49,6 +49,23 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("aborts an unawaited child launch when the script completes", async () => {
+		let childAborted = false;
+		const result = await runWorkflowScript({
+			script: `runs.run("bg", { agent: "worker", task: "fire and forget" }); return "done";`,
+			timeoutMs: 2_000,
+			launch(_key, _params, signal) {
+				return new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
+					childAborted = true;
+					reject(signal.reason);
+				}, { once: true }));
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(result.value, "done");
+		assert.equal(childAborted, true);
+	});
+
 	it("terminates scripts and aborts an in-flight child at the controller timeout", async () => {
 		let childAborted = false;
 		await assert.rejects(

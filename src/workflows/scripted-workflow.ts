@@ -157,7 +157,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			clearTimeout(timer);
 			options.signal?.removeEventListener("abort", onAbort);
 			void worker.terminate();
-			if ("error" in outcome) childController.abort(outcome.error);
+			childController.abort("error" in outcome ? outcome.error : new Error("Workflow script completed; unawaited child launches are aborted."));
 			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial()));
 			else resolve({ value: outcome.value, ...partial() });
 		};
