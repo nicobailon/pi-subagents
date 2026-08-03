@@ -335,13 +335,18 @@ After compaction, restart, or confusing history, recover from durable state firs
 Routing rule:
 - Same project: ordinary mission-backed subagents.
 - Different project, small/bounded task: ordinary subagent with explicit `cwd`.
-- Different project, substantial or long-running work: a project-owning orchestrator session rooted there, with a narrow mission and return contract. Do not model it as ordinary child nesting. Phase 1 does not launch this session automatically, and the Herdr inspector is not this orchestrator.
+- Different project, substantial or long-running work: open a project-owned Herdr pane rooted there, then give that project Pi session a narrow mission/result contract. Do not model it as ordinary child nesting, and do not expect existing headless runs to move into the pane.
+
+Project panes run a separate Pi session from the target directory. Subagents launched inside that pane use that project's config, agents, skills, files, git state, and mission records. The pane binding lives under `<projectRoot>/.pi-subagents/project-panes/herdr.json`.
 
 ```typescript
 subagent({ action: "mission.create", mission: { title: "Ship auth refresh", goal: "Implement and validate refresh handling" } })
 subagent({ agent: "worker", task: "Implement the approved plan", missionId: "<mission-id>" })
 subagent({ agent: "scout", task: "Quickly answer whether this file exists", mission: false })
 subagent({ action: "mission.list", missionScope: "global" })
+subagent({ action: "project.open", cwd: "/path/to/other-repo", message: "Own this mission for the project and report back with receipts." })
+subagent({ action: "project.status", cwd: "/path/to/other-repo" })
+subagent({ action: "project.close", cwd: "/path/to/other-repo" })
 subagent({ action: "mission.close", missionId: "<mission-id>", missionStatus: "completed", summary: "Auth refresh shipped and tests pass." })
 ```
 

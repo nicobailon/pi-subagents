@@ -8,6 +8,7 @@
 - Added a small fixed authority policy for worktree discard, destructive cleanup, spawn-budget grants, schedule creation, stop, and steer actions.
 - Added automatic Herdr status metadata for active async runs, including reload recovery, needs-attention blocking, and a forward-compatible `herdr:busy` sibling event for semantic working state. Thanks to @magoz for #730.
 - Added optional Herdr 0.7.5+ drill-in inspector panes for async runs, with durable pane bindings, lifecycle/transcript/mission dashboards, FleetView opening, and steer/stop controls through the existing file control channel.
+- Added Herdr project panes so an orchestrator can open a project-rooted Pi session for substantial cross-codebase work.
 
 ### Fixed
 - Journaled managed worktree ownership before child execution so abrupt exits retain a manifest-backed cleanup path.

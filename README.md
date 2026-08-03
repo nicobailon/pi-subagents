@@ -368,7 +368,17 @@ subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
 subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
 ```
 
-The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run. Herdr remains optional, ordinary launches stay headless, and missing/older Herdr versions affect only inspector actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run. Herdr remains optional, ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
+
+For substantial work in another codebase, Herdr 0.7.5+ can open a project-owned Pi pane rooted in that repository:
+
+```ts
+subagent({ action: "project.open", cwd: "/path/to/repo", message: "Own the auth refresh mission for this project." })
+subagent({ action: "project.status", cwd: "/path/to/repo" })
+subagent({ action: "project.close", cwd: "/path/to/repo" })
+```
+
+A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority; existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi-subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
 
 You can also ask naturally:
 
@@ -1567,7 +1577,7 @@ subagent({ agent: "worker", task: "Implement the approved plan", mission: { titl
 
 Use `mission.list`, `mission.show`, `mission.update`, `mission.attach-run`, and `mission.close` for management. Use `mission.update` to record decisions, artifacts, labels, summaries, and delivery receipts while work runs; receipts are durable links for pull requests, CI, deployments, or releases, each with `kind`, `status`, `title`, `url`, and optional `description`. They record delivery state only; pi-subagents does not merge, poll CI, or deploy. Use `mission.close` with a terminal status and summary when a mission is done. After compaction or restart, resume from `mission.list`/`mission.show` first: `mission.show` refreshes linked async status where available, then use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions. `mission.list` with `missionScope: "global"` reads the user-local pointer index under the Pi agent directory; project records remain the source of truth, and missing records are reported as stale rather than hiding other projects.
 
-For cross-project work, keep same-project tasks on ordinary subagents. Use an explicit `cwd` for small bounded work in another project. Route substantial or long-running work to a project-owning orchestrator session rooted in that repository, and give it a narrow mission/result contract; Phase 1 records the routing metadata but does not launch that pane/session automatically.
+For cross-project work, keep same-project tasks on ordinary subagents. Use an explicit `cwd` for small bounded work in another project. For substantial or long-running work in another project, open a project-owned Herdr pane with `project.open` and give that project Pi session a narrow mission/result contract. The project pane owns its own subagents; do not model it as ordinary child nesting or expect existing headless runs to move into the pane.
 
 ## Worktree isolation
 

@@ -8,7 +8,9 @@ import { describe, it } from "node:test";
 import { handleHerdrInspectorAction, readHerdrInspectorBinding } from "../../src/inspectors/herdr/actions.ts";
 import { createHerdrClient, detectHerdr, parseHerdrVersion, supportsRawPanes, type HerdrClient } from "../../src/inspectors/herdr/client.ts";
 import { formatInspectorDashboard, submitInspectorControl } from "../../src/inspectors/herdr/inspector-runner.ts";
+import { handleHerdrProjectPaneAction, readHerdrProjectPaneBinding } from "../../src/inspectors/herdr/project-panes.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
+import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
 
 function fakeChild(): EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill(): boolean } {
@@ -172,6 +174,70 @@ describe("Herdr inspector", () => {
 			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "reply decision-1 yes"), /parent Pi session/);
 			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500, allowSteer: false }, "steer bypass"), /Authority policy/);
 			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500, allowStop: false }, "stop"), /Authority policy/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("opens, reports, and closes a project-owned Herdr pane", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-"));
+		const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
+		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
+		try {
+			const projectRoot = fs.realpathSync(root);
+			const calls: string[][] = [];
+			const client: HerdrClient = {
+				run: async <T>(args: string[]) => {
+					calls.push(args);
+					if (args[0] === "--version") return { ok: true, data: "herdr 0.7.5" as T };
+					if (args[0] === "pane" && args[1] === "split") return { ok: true, data: { pane: { pane_id: "w1:p10" } } as T };
+					return { ok: true, data: {} as T };
+				},
+			};
+
+			const opened = await handleHerdrProjectPaneAction("project.open", { cwd: root, message: "Own this project mission." }, {
+				cwd: process.cwd(),
+				client,
+				now: () => new Date("2026-01-01T00:00:00.000Z"),
+			});
+			assert.equal(opened.isError, undefined, text(opened));
+			assert.match(text(opened), /Opened Herdr project pane w1:p10/);
+			const binding = readHerdrProjectPaneBinding(root);
+			assert.equal(binding?.paneId, "w1:p10");
+			assert.equal(binding?.projectRoot, projectRoot);
+			assert.equal(binding?.startupMessage, "Own this project mission.");
+			const splitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
+			assert.deepEqual(splitCall?.slice(0, 7), ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot]);
+			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p10");
+			assert.match(runCall?.[3] ?? "", /pi-bin/);
+			assert.match(runCall?.[3] ?? "", /Own this project mission\./);
+
+			const status = await handleHerdrProjectPaneAction("project.status", { cwd: root }, { cwd: process.cwd(), client });
+			assert.equal(status.isError, undefined, text(status));
+			assert.match(text(status), /project pane w1:p10 is open/);
+
+			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: process.cwd(), client });
+			assert.equal(closed.isError, undefined, text(closed));
+			assert.match(text(closed), /Closed Herdr project pane w1:p10/);
+			assert.equal(readHerdrProjectPaneBinding(root), undefined);
+			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p10"));
+		} finally {
+			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
+			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects project pane targets that are not directories", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-missing-"));
+		try {
+			const missing = path.join(root, "missing");
+			const opened = await handleHerdrProjectPaneAction("project.open", { cwd: missing }, {
+				cwd: root,
+				client: { run: async () => ({ ok: true, data: {} }) },
+			});
+			assert.equal(opened.isError, true);
+			assert.match(text(opened), /unavailable/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

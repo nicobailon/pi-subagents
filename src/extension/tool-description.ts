@@ -55,7 +55,7 @@ MANAGEMENT (use action field, omit agent/task/chain/tasks):
 • { action: "grant-spawn-budget", additional: 10 } - add bounded capacity from the root interactive parent after authority resolution; grants are rejected while children are active and cumulative grants cannot exceed the original configured cap
 • Mission actions: mission.create/list/show/update/attach-run/close. Project records live under .pi-subagents/missions by default; mission.show is the resume entry point, and mission.list with missionScope:"global" reads the user-global pointer index.
 • { action: "worktree.discard", handoffPath: "<parallelHandoff.path>" } - permanently remove preserved managed worktrees and temporary branches after authority resolution.
-• Herdr drill-in (optional, Herdr 0.7.5+): inspector.open/status/close target async lifecycle artifacts; focus is an inspector.open option; ordinary subagents remain headless.
+• Herdr panes (optional, Herdr 0.7.5+): inspector.open/status/close target async lifecycle artifacts; project.open/status/close manage project-rooted Pi panes for cross-project orchestration. focus applies when opening a pane; ordinary subagents remain headless.
 • Use chainName for chain operations; packaged chains also use dotted runtime names
 
 CONTROL:
@@ -92,7 +92,7 @@ EXECUTE:
 • If list shows proactive skill subagent suggestions, use a small fresh-context fanout only when the task is broad enough.
 
 MANAGE / CONTROL:
-• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, mission.create/list/show/update/attach-run/close, worktree.discard, inspector.open/status/close, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
+• Use action without execution fields: list, get, models, create, update, delete, eject, disable, enable, reset, mission.create/list/show/update/attach-run/close, worktree.discard, inspector.open/status/close, project.open/status/close, grant-spawn-budget, doctor, watchdog.status, watchdog.check, watchdog.recommend-model, watchdog.configure.
 • Agent acceptanceRole (read-only or writer) affects inferred acceptance only, never tools. Explicit task intent wins; omission keeps name heuristics. Update with false or an empty string to clear it.
 • Async control actions: status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint. Use stop with an id for current-session top-level async runs. Use status view:"fleet" for active-run overview, view:"transcript" to tail child output, steer for acknowledged top-level live async guidance, and resume for paused/completed/failed revival or a routed nested follow-up. Stopped runs are non-resumable. Steering delivery means Pi accepted the correlated user input, not model compliance; use index for a specific child.
 • Opt-in schedule actions: schedule, schedule-list, schedule-status, schedule-cancel. Schedule only explicit delayed runs the user asked for.
