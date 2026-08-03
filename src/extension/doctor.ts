@@ -42,12 +42,18 @@ interface DoctorReportInput {
 	deps?: Partial<DoctorDeps>;
 }
 
-const DEFAULT_PATHS: DoctorPaths = {
-	tempRootDir: TEMP_ROOT_DIR,
-	asyncDir: DIRS.async,
-	resultsDir: DIRS.results,
-	chainRunsDir: CHAIN_RUNS_DIR,
-};
+// Resolved lazily at report-build time (not at import) so DIRS.* — which may be
+// reassigned to a pid-scoped fallback by registerSubagentExtension before a
+// doctor run — is read fresh. Capturing these once at module load would make the
+// doctor check the original blocked paths and falsely report them as failed.
+function defaultPaths(): DoctorPaths {
+	return {
+		tempRootDir: TEMP_ROOT_DIR,
+		asyncDir: DIRS.async,
+		resultsDir: DIRS.results,
+		chainRunsDir: CHAIN_RUNS_DIR,
+	};
+}
 
 const DEFAULT_DEPS: DoctorDeps = {
 	isAsyncAvailable,
@@ -191,7 +197,7 @@ function formatPermissionSystemSection(): string[] {
 }
 
 export function buildDoctorReport(input: DoctorReportInput): string {
-	const paths = input.paths ?? DEFAULT_PATHS;
+	const paths = input.paths ?? defaultPaths();
 	const deps = { ...DEFAULT_DEPS, ...input.deps };
 	const lines = [
 		"Subagents doctor report",
