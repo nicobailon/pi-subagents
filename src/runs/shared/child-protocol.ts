@@ -100,7 +100,7 @@ export function createBoundedByteTail(maxBytes = MAX_CHILD_STDERR_BYTES): {
 	byteLength(): number;
 } {
 	if (!Number.isInteger(maxBytes) || maxBytes < 1) throw new Error("maxBytes must be a positive integer.");
-	let tail = Buffer.alloc(0);
+	let tail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 	return {
 		push(chunk) {
 			const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;

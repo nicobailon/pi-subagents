@@ -165,7 +165,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		].join("\n"),
 		parameters: SubagentParams,
 		execute(id, params, signal, onUpdate, ctx) {
-			return executor.execute(id, params as SubagentParamsLike, signal, onUpdate, ctx);
+			return executor.execute(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx);
 		},
 	};
 

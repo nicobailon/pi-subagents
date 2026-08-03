@@ -106,20 +106,20 @@ export async function handleHerdrProjectPaneAction(action: HerdrProjectPaneActio
 	if (action === "project.status") {
 		if (!existing) return result(`No Herdr project pane binding exists for ${projectRoot}.`);
 		const live = await paneExists(client, existing.paneId, deps.signal);
-		if (!live.ok) return result(`${formatHerdrError(live.error)}\nBinding: ${bindingPath(projectRoot)}`, true);
+		if (live.ok === false) return result(`${formatHerdrError(live.error)}\nBinding: ${bindingPath(projectRoot)}`, true);
 		return result(`Herdr project pane ${existing.paneId} is open for ${projectRoot}.\nBinding: ${bindingPath(projectRoot)}`);
 	}
 
 	if (action === "project.close") {
 		if (!existing) return result(`No Herdr project pane binding exists for ${projectRoot}.`);
 		const closed = await client.run(["pane", "close", existing.paneId], { timeoutMs: 10_000, signal: deps.signal });
-		if (!closed.ok && closed.error.code !== "NOT_FOUND" && closed.error.code !== "PANE_GONE") return result(formatHerdrError(closed.error), true);
+		if (closed.ok === false && closed.error.code !== "NOT_FOUND" && closed.error.code !== "PANE_GONE") return result(formatHerdrError(closed.error), true);
 		fs.rmSync(bindingPath(projectRoot), { force: true });
 		return result(`Closed Herdr project pane ${existing.paneId} for ${projectRoot}.`);
 	}
 
 	const detected = await detectHerdr(client, deps.signal);
-	if (!detected.ok) return result(formatHerdrError(detected.error), true);
+	if (detected.ok === false) return result(formatHerdrError(detected.error), true);
 	if (existing) {
 		const live = await paneExists(client, existing.paneId, deps.signal);
 		if (live.ok) return result(`Herdr project pane ${existing.paneId} is already open for ${projectRoot}.${params.focus ? " Herdr cannot refocus an arbitrary raw pane id; select it in the Herdr UI." : ""}`);
@@ -127,13 +127,13 @@ export async function handleHerdrProjectPaneAction(action: HerdrProjectPaneActio
 	const splitArgs = ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot];
 	if (params.focus !== false) splitArgs.push("--focus");
 	const split = await client.run(splitArgs, { timeoutMs: 15_000, signal: deps.signal });
-	if (!split.ok) return result(formatHerdrError(split.error), true);
+	if (split.ok === false) return result(formatHerdrError(split.error), true);
 	const paneId = extractPaneId(split.data);
 	if (!paneId) return result("Herdr project pane error (PANE_GONE): pane split returned no pane id.", true);
 	const startupMessage = params.message?.trim();
 	const command = projectPaneCommand(startupMessage);
 	const started = await client.run(["pane", "run", paneId, command], { timeoutMs: 15_000, signal: deps.signal });
-	if (!started.ok) {
+	if (started.ok === false) {
 		await client.run(["pane", "close", paneId], { timeoutMs: 5_000 });
 		return result(formatHerdrError(started.error), true);
 	}

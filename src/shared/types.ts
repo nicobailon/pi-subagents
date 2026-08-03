@@ -75,7 +75,7 @@ export interface ChainCheckpointState {
 
 export interface WorkflowGraphSnapshot {
 	runId: string;
-	mode: "chain" | "parallel" | "single";
+	mode: SubagentRunMode;
 	phases: Array<{ title: string; nodeIds: string[] }>;
 	nodes: WorkflowGraphNode[];
 	currentNodeId?: string;
@@ -380,6 +380,8 @@ interface ProcessTerminalBaseV1 {
 	runId: string;
 	childIndex?: number;
 	runnerProcessInstanceId: string;
+	observedAt?: number;
+	reason?: ProcessTerminalReason;
 	resumeDisposition?: "resumable" | "non-resumable" | "unavailable";
 }
 
@@ -398,7 +400,7 @@ export type ProcessTerminalV1 =
 	});
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
-export type SteeringTargetState = "scheduled" | "routed" | "delivered" | "late" | "failed" | "recovered";
+export type SteeringTargetState = "scheduled" | "pending" | "routed" | "delivered" | "late" | "failed" | "recovered";
 
 export interface SteeringTargetStatus {
 	index: number;
@@ -494,6 +496,7 @@ export interface SteeringRecoveryDescriptor {
 	maxSubagentDepth: number;
 	maxOutput?: MaxOutputConfig;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	share: boolean;
 	sessionDir?: string;
 	artifactsDir?: string;
@@ -602,8 +605,21 @@ export interface ToolCallSummary {
 }
 
 interface ProgressSummary {
+	index?: number;
+	agent?: string;
+	status?: AgentProgress["status"];
+	activityState?: ActivityState;
+	skills?: string[];
+	lastActivityAt?: number;
+	currentTool?: string;
+	currentToolArgs?: string;
+	currentToolStartedAt?: number;
+	recentTools?: Array<{ tool: string; args: string; endMs: number }>;
+	recentOutput?: string[];
 	toolCount: number;
 	tokens: number;
+	model?: string;
+	thinking?: string;
 	durationMs: number;
 }
 
@@ -1200,6 +1216,7 @@ export interface AsyncStatus {
 	runId: string;
 	sessionId?: string;
 	mode: SubagentRunMode;
+	context?: "fresh" | "fork" | "mixed";
 	isNested?: boolean;
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
 	error?: string;
@@ -1298,7 +1315,7 @@ export interface AsyncStatus {
 		agentContract?: AgentContract;
 		launchContractDigest?: string;
 		launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
+		runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 		execution?: ExecutionProjection;
 		review?: ReviewProjection;
 		effects?: EffectsProjection;
@@ -1310,7 +1327,6 @@ export interface AsyncStatus {
 	sessionDir?: string;
 	outputFile?: string;
 	totalTokens?: TokenUsage;
-	usageBudget?: UsageBudgetState;
 	totalCost?: CostSummary;
 	sessionFile?: string;
 	outputs?: ChainOutputMap;

@@ -1347,6 +1347,7 @@ async function runSyncCompletion(
 		assertAgentAllowedByCapabilityCeiling(agent.name, options.capabilityCeiling);
 	} catch (error) {
 		return withRunContext({
+			index: options.index ?? 0,
 			agent: agent.name,
 			task,
 			exitCode: 1,

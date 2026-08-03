@@ -827,7 +827,7 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 			runId: input.runId,
 			...(input.index !== undefined ? { index: input.index } : {}),
 			message: input.message,
-			location: { asyncDir: input.asyncDir, resolvedId: input.runId },
+			location: { asyncDir: input.asyncDir, resolvedId: input.runId } as Parameters<typeof steerAsyncRun>[0]["location"],
 		}), `Failed to steer async run ${input.runId}.`),
 		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),
 		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleHerdrInspectorAction("inspector.open", {

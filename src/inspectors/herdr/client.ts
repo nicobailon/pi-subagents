@@ -121,7 +121,7 @@ export function supportsRawPanes(version: HerdrVersion): boolean {
 
 export async function detectHerdr(client: HerdrClient, signal?: AbortSignal): Promise<HerdrResult<{ version: HerdrVersion; versionText: string }>> {
 	const result = await client.run<string>(["--version"], { timeoutMs: 3_000, signal, textOk: true });
-	if (!result.ok) return result;
+	if (result.ok === false) return result;
 	const versionText = typeof result.data === "string" ? result.data : JSON.stringify(result.data);
 	const version = parseHerdrVersion(versionText);
 	if (!version) return error("VALIDATION_ERROR", `Could not parse the Herdr version from '${versionText}'.`);

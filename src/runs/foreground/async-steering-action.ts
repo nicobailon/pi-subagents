@@ -121,7 +121,7 @@ export async function steerAsyncRun(input: {
 	if (finalResult?.state === "delivered") {
 		return { content: [{ type: "text", text: `Steering delivered for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: finalResult } };
 	}
-	const running = (finalStatus?.steps ?? status.steps).filter((step) => step.status === "running");
+	const running = (finalStatus?.steps ?? status.steps ?? []).filter((step) => step.status === "running");
 	const recoveryAllowed = status.mode === "single" && status.isNested !== true && running.length === 1 && Boolean(finalStatus?.steering) && (input.index === undefined || input.index === 0);
 	if (recoveryAllowed && finalResult?.state !== "scheduled" && input.recover) {
 		const appendSteeringNotice = (state: "failed" | "recovered", message: string): void => {
@@ -194,7 +194,7 @@ export async function steerAsyncRun(input: {
 			const revived = await input.recover(limits);
 			if (revived.isError || !revived.details.asyncId) throw new Error(revived.content[0]?.type === "text" ? revived.content[0].text : "Replacement launch failed; source run remains paused.");
 			const sourceStatus = readStatus(asyncDir);
-			const targetIndex = input.index ?? status.steps.findIndex((step) => step.status === "running");
+			const targetIndex = input.index ?? status.steps?.findIndex((step) => step.status === "running") ?? -1;
 			if (sourceStatus?.state === "paused" && sourceStatus.steering && targetIndex >= 0) {
 				updateSteeringTarget(sourceStatus.steering, requestId, targetIndex, "recovered", Date.now(), { replacementRunId: revived.details.asyncId });
 				const stepSteering = sourceStatus.steps?.[targetIndex]?.steering;
@@ -207,7 +207,7 @@ export async function steerAsyncRun(input: {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			const failedStatus = readStatus(asyncDir);
-			const targetIndex = input.index ?? status.steps.findIndex((step) => step.status === "running");
+			const targetIndex = input.index ?? status.steps?.findIndex((step) => step.status === "running") ?? -1;
 			if (failedStatus && failedStatus.state !== "running" && failedStatus.state !== "queued" && failedStatus.steering && targetIndex >= 0) {
 				updateSteeringTarget(failedStatus.steering, requestId, targetIndex, "failed", Date.now(), { reason });
 				const stepSteering = failedStatus.steps?.[targetIndex]?.steering;

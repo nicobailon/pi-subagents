@@ -132,13 +132,13 @@ function findFamilyMatch(family: StrongWatchdogFamily, availableModels: ModelInf
 function resolveStrongCandidate(ctx: ExtensionContext, family: StrongWatchdogFamily): WatchdogModelRecommendation | undefined {
 	const availableModels = modelRegistryEntries(ctx);
 	const preference = STRONG_WATCHDOG_MODELS[family];
-	const queries = [...preference.queries];
+	const queries: string[] = [...preference.queries];
 	const familyMatch = findFamilyMatch(family, availableModels);
 	if (familyMatch) queries.push(familyMatch);
 	for (const query of queries) {
 		let resolved: ResolvedWatchdogModelInput;
 		try {
-			resolved = resolveWatchdogModelInput(ctx, query);
+			resolved = resolveWatchdogModelInput(ctx, query as Parameters<typeof resolveWatchdogModelInput>[1]);
 		} catch {
 			continue;
 		}

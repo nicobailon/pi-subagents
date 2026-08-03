@@ -1148,7 +1148,7 @@ output: context.md
 outputMode: file-only
 reads: input.md, notes.md
 model: openai/gpt-5.5
-skills: research, audit
+skills: false
 progress: true
 
 Gather context
@@ -1163,7 +1163,7 @@ Gather context
 				outputMode: "file-only",
 				reads: ["input.md", "notes.md"],
 				progress: true,
-				skill: ["research", "audit"],
+				skill: false,
 				model: "openai/gpt-5.5",
 			});
 		});

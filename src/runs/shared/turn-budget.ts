@@ -23,9 +23,10 @@ export function resolveTurnBudgetConfig(
 	return { turnBudget: { maxTurns: budget.maxTurns, graceTurns } };
 }
 
-export function appendTurnBudgetSystemPrompt(systemPrompt: string, budget: ResolvedTurnBudget | undefined): string {
+export function appendTurnBudgetSystemPrompt(systemPrompt: string, budget: { maxTurns: number; graceTurns?: number } | undefined): string {
 	if (!budget) return systemPrompt;
-	const grace = budget.graceTurns === 1 ? "1 additional assistant turn" : `${budget.graceTurns} additional assistant turns`;
+	const graceTurns = budget.graceTurns ?? DEFAULT_TURN_BUDGET_GRACE_TURNS;
+	const grace = graceTurns === 1 ? "1 additional assistant turn" : `${graceTurns} additional assistant turns`;
 	const block = [
 		"## Turn budget",
 		`This child run has a soft budget of ${budget.maxTurns} assistant turn${budget.maxTurns === 1 ? "" : "s"}.`,
@@ -55,8 +56,8 @@ export function formatTurnBudgetOutput(message: string, output: string): string 
 		: message;
 }
 
-export function initialTurnBudgetState(budget: ResolvedTurnBudget): TurnBudgetState {
-	return { ...budget, outcome: "within-budget", turnCount: 0 };
+export function initialTurnBudgetState(budget: { maxTurns: number; graceTurns?: number }): TurnBudgetState {
+	return { maxTurns: budget.maxTurns, graceTurns: budget.graceTurns ?? DEFAULT_TURN_BUDGET_GRACE_TURNS, outcome: "within-budget", turnCount: 0 };
 }
 
 export function turnBudgetState(budget: ResolvedTurnBudget, turnCount: number, exceeded: boolean): TurnBudgetState {

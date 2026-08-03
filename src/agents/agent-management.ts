@@ -46,7 +46,7 @@ interface ManagementParams {
 	action?: string;
 	agent?: string;
 	chainName?: string;
-	agentScope?: string;
+	agentScope?: unknown;
 	config?: unknown;
 }
 
@@ -409,7 +409,8 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 				&& (runner.args === undefined || (Array.isArray(runner.args) && runner.args.every((arg) => typeof arg === "string")))
 				&& (runner.promptDelivery === undefined || runner.promptDelivery === "stdin")
 				&& Object.keys(runner).every((key) => ["type", "command", "args", "promptDelivery"].includes(key))) {
-				target.runner = { type: "external-cli", command: runner.command.trim(), ...(runner.args ? { args: [...runner.args] as string[] } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
+				const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
+				target.runner = { type: "external-cli", command: runner.command.trim(), ...(runnerArgs?.length ? { args: runnerArgs } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
 			} else return "config.runner must be { type: 'pi' } or { type: 'external-cli', command: string, args?: string[], promptDelivery?: 'stdin' }.";
 		} else return "config.runner must be an object, false, or empty string when provided.";
 	}
@@ -928,9 +929,10 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	const warnings: string[] = [];
 	if (params.agent) {
 		const scopeHint = asDisambiguationScope(params.agentScope);
-		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 		if ("content" in targetOrError) return targetOrError;
 		const target = targetOrError;
+		if (target.source !== "user" && target.source !== "project") return result(`Cannot update ${target.source} agent '${target.name}'. Eject it to user or project scope first.`, true);
 		const updated = editableAgentConfig(target);
 		const oldName = target.name;
 		if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
@@ -981,9 +983,10 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		return result([headline, ...warnings].join("\n"));
 	}
 	const scopeHint = asDisambiguationScope(params.agentScope);
-	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
+	if (target.source !== "user" && target.source !== "project") return result(`Cannot update ${target.source} chain '${target.name}'. Eject it to user or project scope first.`, true);
 	const updated: ChainConfig = { ...target, steps: [...target.steps] };
 	const oldName = target.name;
 	if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
@@ -1032,7 +1035,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 	if (params.agent && params.chainName) return result("Specify either 'agent' or 'chainName', not both.", true);
 	const scopeHint = asDisambiguationScope(params.agentScope);
 	if (params.agent) {
-		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 		if ("content" in targetOrError) return targetOrError;
 		const target = targetOrError;
 		fs.unlinkSync(target.filePath);
@@ -1041,7 +1044,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 		if (refs.length) lines.push(`Warning: chains reference deleted agent '${target.name}': ${refs.join(", ")}.`);
 		return result(lines.join("\n"));
 	}
-	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, scopeHint);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
 	fs.unlinkSync(target.filePath);

@@ -534,7 +534,7 @@ export function toSubagentDelegationV2Response(
 			error = "Delegated subagent did not capture the requested structured result.";
 		} else {
 			const inspected = cloneJsonWithinByteLimit(child.structuredOutput, MAX_V2_RESULT_BYTES);
-			if (!inspected.ok) {
+			if (inspected.ok === false) {
 				status = "failed";
 				error = inspected.reason === "too_large"
 					? "Delegated structured result exceeds 1 MiB when encoded."
@@ -545,6 +545,7 @@ export function toSubagentDelegationV2Response(
 		}
 	}
 	const usage = child?.usage;
+	const childLaunchContractDigest = (child as { launchContractDigest?: string } | undefined)?.launchContractDigest;
 	return {
 		version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
 		requestId: request.requestId,
@@ -557,7 +558,7 @@ export function toSubagentDelegationV2Response(
 		...(child?.model ? { model: child.model } : {}),
 		...(child?.thinking ? { thinking: child.thinking } : {}),
 		...(typeof child?.exitCode === "number" ? { exitCode: child.exitCode } : {}),
-		...(child?.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(childLaunchContractDigest ? { launchContractDigest: childLaunchContractDigest } : {}),
 		...(projectedResult ? { result: projectedResult } : {}),
 		...(usage ? {
 			usage: {

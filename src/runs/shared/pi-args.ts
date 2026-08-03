@@ -125,7 +125,11 @@ export interface ResolvePiLaunchToolPlanInput {
 	mcpDirectTools?: string[];
 	cwd?: string;
 	requireReadTool?: boolean;
-	structuredOutput?: boolean;
+	structuredOutput?: boolean | {
+		schema: JsonSchemaObject;
+		schemaPath: string;
+		outputPath: string;
+	};
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	agentName?: string;

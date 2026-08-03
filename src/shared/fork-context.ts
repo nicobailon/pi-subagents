@@ -77,8 +77,9 @@ function isUnsafeAnthropicThinkingBlock(message: BranchSessionEntry["message"], 
 	const isAnthropic = provider === "anthropic" || api === "anthropic-messages" || model.startsWith("anthropic/");
 	if (block.type === "redacted_thinking") return true;
 	if (block.type !== "thinking" || !isAnthropic) return false;
-	const signature = "thinkingSignature" in block ? block.thinkingSignature : "signature" in block ? block.signature : undefined;
-	return block.redacted === true || (typeof signature === "string" && signature.length > 0);
+	const record = block as Record<string, unknown>;
+	const signature = "thinkingSignature" in record ? record.thinkingSignature : "signature" in record ? record.signature : undefined;
+	return record.redacted === true || (typeof signature === "string" && signature.length > 0);
 }
 
 function createEntryId(entries: BranchSessionEntry[]): string {

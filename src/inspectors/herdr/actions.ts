@@ -169,7 +169,7 @@ export async function handleHerdrInspectorAction(action: HerdrInspectorAction, p
 	if (action === "inspector.status") {
 		if (!existing) return result(`No Herdr inspector binding exists for async run ${target.runId}${params.index === undefined ? "" : ` child ${params.index}`}.`);
 		const live = await paneExists(client, existing.paneId, deps.signal);
-		if (!live.ok) return result(`${formatHerdrError(live.error)}\nBinding: ${bindingPath(target.asyncDir, params.index)}\nRun state remains authoritative: ${status.state}.`, true);
+		if (live.ok === false) return result(`${formatHerdrError(live.error)}\nBinding: ${bindingPath(target.asyncDir, params.index)}\nRun state remains authoritative: ${status.state}.`, true);
 		return result(`Herdr inspector ${existing.paneId} is open for async run ${target.runId}.\nRun state: ${status.state}\nBinding: ${bindingPath(target.asyncDir, params.index)}`);
 	}
 
@@ -177,13 +177,13 @@ export async function handleHerdrInspectorAction(action: HerdrInspectorAction, p
 	if (action === "inspector.close") {
 		if (!existing) return result(`No Herdr inspector binding exists for async run ${target.runId}.`);
 		const closed = await client.run(["pane", "close", existing.paneId], { timeoutMs: 10_000, signal: deps.signal });
-		if (!closed.ok && closed.error.code !== "NOT_FOUND" && closed.error.code !== "PANE_GONE") return result(formatHerdrError(closed.error), true);
+		if (closed.ok === false && closed.error.code !== "NOT_FOUND" && closed.error.code !== "PANE_GONE") return result(formatHerdrError(closed.error), true);
 		fs.rmSync(bindingPath(target.asyncDir, params.index), { force: true });
 		return result(`Closed Herdr inspector pane ${existing.paneId} for async run ${target.runId}. The subagent run was not stopped.`);
 	}
 
 	const detected = await detectHerdr(client, deps.signal);
-	if (!detected.ok) return result(formatHerdrError(detected.error), true);
+	if (detected.ok === false) return result(formatHerdrError(detected.error), true);
 	if (existing) {
 		const live = await paneExists(client, existing.paneId, deps.signal);
 		if (live.ok) return result(`Herdr inspector pane ${existing.paneId} is already open for async run ${target.runId}.${params.focus ? " Herdr cannot refocus an arbitrary raw pane id; select it in the Herdr UI." : ""}`);
@@ -191,7 +191,7 @@ export async function handleHerdrInspectorAction(action: HerdrInspectorAction, p
 	const splitArgs = ["pane", "split", "--current", "--direction", "right", "--cwd", status.cwd ?? deps.cwd];
 	if (params.focus !== false) splitArgs.push("--focus");
 	const split = await client.run(splitArgs, { timeoutMs: 15_000, signal: deps.signal });
-	if (!split.ok) return result(formatHerdrError(split.error), true);
+	if (split.ok === false) return result(formatHerdrError(split.error), true);
 	const paneId = extractPaneId(split.data);
 	if (!paneId) return result("Herdr inspector error (PANE_GONE): pane split returned no pane id.", true);
 	const mission = missionForRun(target.asyncDir, deps.cwd, deps.missions, target.runId);
@@ -206,7 +206,7 @@ export async function handleHerdrInspectorAction(action: HerdrInspectorAction, p
 		allowStop: resolveAuthorityDecision({ action: "stopRun", policy: deps.authorityPolicy }) === "auto",
 	});
 	const started = await client.run(["pane", "run", paneId, command], { timeoutMs: 15_000, signal: deps.signal });
-	if (!started.ok) {
+	if (started.ok === false) {
 		await client.run(["pane", "close", paneId], { timeoutMs: 5_000 });
 		return result(formatHerdrError(started.error), true);
 	}

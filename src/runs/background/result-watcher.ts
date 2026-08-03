@@ -234,7 +234,7 @@ export function createResultWatcher(
 					mode,
 					source: "async",
 					children: normalizedChildren,
-					asyncId: data.id,
+					asyncId: data.id ?? undefined,
 					asyncDir: data.asyncDir,
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
 				}));

@@ -38,6 +38,7 @@ import {
 	suppressProgressForReadOnlyTask,
 	taskDisallowsFileUpdates,
 	type ChainStep,
+	type ParallelTaskItem,
 	type ResolvedStepBehavior,
 	type SequentialStep,
 	type StepOverrides,
@@ -168,6 +169,10 @@ export interface SubagentParamsLike {
 	index?: number;
 	view?: "fleet" | "transcript";
 	lines?: number;
+	chainName?: string;
+	config?: unknown;
+	name?: string;
+	type?: string;
 	agent?: string;
 	task?: string;
 	message?: string;
@@ -593,7 +598,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: "single" | "parallel" | "chain"; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId);
@@ -638,6 +643,9 @@ type NestedResumeSourceTarget = {
 	index: number;
 	cwd?: string;
 	sessionFile: string;
+	model?: string;
+	thinking?: AgentConfig["thinking"];
+	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 };
 type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget | NestedResumeSourceTarget;
@@ -843,7 +851,7 @@ function appendStepToAsyncChain(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
-	const acceptanceErrors = validateExecutionAcceptance(input.params);
+	const acceptanceErrors = validateExecutionAcceptance(input.params as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length > 0) {
 		return {
 			content: [{ type: "text", text: `Cannot append step: ${acceptanceErrors.join(" ")}` }],
@@ -1206,7 +1214,7 @@ async function resumeAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
-	const acceptanceErrors = validateExecutionAcceptance(input.params);
+	const acceptanceErrors = validateExecutionAcceptance(input.params as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length > 0) {
 		return {
 			content: [{ type: "text", text: `Cannot resume: ${acceptanceErrors.join(" ")}` }],
@@ -1245,7 +1253,7 @@ async function resumeAsyncRun(input: {
 			];
 			target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
 		} else {
-			if (resolved?.kind === "async") {
+			if (resolved?.kind === "async" && resolved.location.asyncDir) {
 				const unsupported = externalRunnerControlError(resolved.location.asyncDir, "resume");
 				if (unsupported) return unsupported;
 			}
@@ -1394,6 +1402,10 @@ async function resumeAsyncRun(input: {
 		return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.ctx.hasUI) }], details: result.details };
 	}
 
+	const revivalSessionFile = target.sessionFile;
+	if (!revivalSessionFile) {
+		return { content: [{ type: "text", text: `Async child '${target.runId}' has no persisted session file to resume.` }], isError: true, details: { mode: "management", results: [] } };
+	}
 	const runId = randomUUID().slice(0, 8);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir };
@@ -1402,7 +1414,7 @@ async function resumeAsyncRun(input: {
 	const parentModel = input.parentModel;
 	const result = executeAsyncSingle(runId, {
 		agent: target.agent,
-		task: buildRevivedAsyncTask(target, followUp),
+		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], followUp),
 		goal: followUp,
 		agentConfig: recoveryAgentConfig,
 		ctx: {
@@ -1420,11 +1432,11 @@ async function resumeAsyncRun(input: {
 		artifactsDir,
 		artifactConfig,
 		shareEnabled: recoveryDescriptor?.share ?? input.params.share === true,
-		sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
+		sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile ?? revivalSessionFile),
 		...(recoveryDescriptor?.sessionDir ? { sessionDir: recoveryDescriptor.sessionDir } : {}),
-		sessionFile: target.sessionFile,
+		sessionFile: revivalSessionFile,
 		revivalLease: {
-			sessionFile: target.sessionFile,
+			sessionFile: revivalSessionFile,
 			runId,
 			sourceRunId: target.runId,
 			...(input.deps.state.currentSessionId ? { parentSessionId: input.deps.state.currentSessionId } : {}),
@@ -1610,7 +1622,7 @@ function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentCo
 		for (let index = 0; index < params.chain.length; index++) {
 			const step = params.chain[index]!;
 			if (isParallelStep(step)) {
-				const parallel: typeof step.parallel = [];
+				const parallel: ParallelTaskItem[] = [];
 				for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
 					const task = step.parallel[taskIndex]!;
 					const result = resolve(task.agent, `step ${index + 1}, task ${taskIndex + 1}`);
@@ -1660,7 +1672,7 @@ function validateExecutionInput(
 		};
 	}
 
-	const acceptanceErrors = validateExecutionAcceptance(params);
+	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length > 0) {
 		return {
 			content: [{ type: "text", text: acceptanceErrors.join(" ") }],
@@ -1912,7 +1924,7 @@ function expandChainParallelCounts(chain: ChainStep[]): { chain?: ChainStep[]; e
 			expandedChain.push(step);
 			continue;
 		}
-		const expandedParallel = [];
+		const expandedParallel: ParallelTaskItem[] = [];
 		for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
 			const task = step.parallel[taskIndex]!;
 			const rawCount = (task as typeof task & { count?: unknown }).count;
@@ -2409,7 +2421,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	const chainSkills = normalized === false ? [] : (normalized ?? []);
 	const chain = wrapChainTasksForFork(params.chain as ChainStep[], contextPolicy);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
-	const chainCtx = normalizeParentModel(ctx.model) || !data.parentModel ? ctx : { ...ctx, model: data.parentModel };
+	const chainCtx = normalizeParentModel(ctx.model) || !data.parentModel ? ctx : ({ ...ctx, model: data.parentModel } as ExtensionContext);
 	const chainResult = await executeChain({
 		chain,
 		task: params.task,
@@ -3513,7 +3525,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: undefined;
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
-	let r: Awaited<ReturnType<typeof runSync>>;
+	let r: Awaited<ReturnType<typeof runSync>> | undefined;
 	try {
 		r = await runSync(ctx.cwd, agents, params.agent!, task, {
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
@@ -4212,7 +4224,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							return { content: [{ type: "text", text: `Run '${resolved.id}' was not found in the active session.` }], isError: true, details: { mode: "management", results: [] } };
 						}
 						const decidedAt = Date.now();
-						const checkpoint = { ...run.checkpoint, status: decision, ...(decision === "approved" ? { approvedAt: decidedAt } : { rejectedAt: decidedAt }) };
+						const checkpoint: NonNullable<Details["checkpoint"]> = decision === "approved"
+							? { ...run.checkpoint, status: "approved", approvedAt: decidedAt }
+							: { ...run.checkpoint, status: "rejected", rejectedAt: decidedAt };
 						run.checkpoint = checkpoint;
 						run.updatedAt = decidedAt;
 						return {
@@ -4294,8 +4308,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (resolved?.kind === "nested") return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index, signal });
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
-				const unsupported = externalRunnerControlError(resolved.location.asyncDir, "steer");
-				if (unsupported) return unsupported;
+				if (resolved.location.asyncDir) {
+					const unsupported = externalRunnerControlError(resolved.location.asyncDir, "steer");
+					if (unsupported) return unsupported;
+				}
 				return steerAsyncRun({
 					state: deps.state,
 					runId: resolved.id,
@@ -4344,7 +4360,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
-						return stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
+						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
+						return stopResult ?? { content: [{ type: "text", text: `No running or queued async run was found for '${targetRunId ?? paramsWithResolvedCwd.dir}'.` }], isError: true, details: { mode: "management", results: [] } };
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };

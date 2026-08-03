@@ -367,6 +367,8 @@ class SubagentsStopSelector implements Component {
 		}
 	}
 
+	invalidate(): void {}
+
 	render(width: number): string[] {
 		const contentWidth = Math.max(40, Math.min(this.width, width || this.width));
 		const lines = [this.theme.bold("Stop subagent run"), this.theme.fg("dim", "Select a current-session async run to stop, or a scheduled run to cancel."), ""];
@@ -548,21 +550,22 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 				collect: { ...step.collect, ...(collectSchema ? { outputSchema: collectSchema } : {}) },
 			};
 		}
+		if ("checkpoint" in step || !("agent" in step) || typeof step.agent !== "string") return step;
 		const outputSchema = loadSavedOutputSchema(chain, step.agent, (step as { outputSchema?: unknown }).outputSchema);
 		return {
 			agent: step.agent,
-			task: step.task || undefined,
+			...(step.task ? { task: step.task } : {}),
 			...(step.phase ? { phase: step.phase } : {}),
 			...(step.label ? { label: step.label } : {}),
 			...(step.as ? { as: step.as } : {}),
 			...(outputSchema ? { outputSchema } : {}),
-			...((step as { acceptance?: unknown }).acceptance !== undefined ? { acceptance: (step as { acceptance?: unknown }).acceptance } : {}),
-			output: step.output,
-			outputMode: step.outputMode,
-			reads: step.reads,
-			progress: step.progress,
-			skill: step.skill ?? step.skills,
-			model: step.model,
+			...(step.acceptance !== undefined ? { acceptance: step.acceptance } : {}),
+			...(step.output !== undefined ? { output: step.output } : {}),
+			...(step.outputMode ? { outputMode: step.outputMode } : {}),
+			...(step.reads !== undefined ? { reads: step.reads } : {}),
+			...(step.progress !== undefined ? { progress: step.progress } : {}),
+			...((step.skill ?? step.skills) !== undefined ? { skill: step.skill ?? step.skills } : {}),
+			...(step.model ? { model: step.model } : {}),
 		};
 	});
 };
@@ -1083,7 +1086,7 @@ export function buildChainExpressionSteps(
 		const baseCwd = state.baseCwd!; // parseAgentArgs already verified baseCwd is set
 		try {
 			const chain: ChainStep[] = parsed.steps.map((step, i) =>
-				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }),
+				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }) as ChainStep,
 			);
 			return { chain, task: parsed.task };
 		} catch (error) {
@@ -1136,7 +1139,7 @@ export function buildChainExpressionSteps(
 	const baseCwd = state.baseCwd;
 	let chain: ChainStep[];
 	try {
-		chain = expression.steps.map((step) => {
+		chain = expression.steps.map((step): ChainStep => {
 			if (step.kind === "group") {
 				const parallel = step.tasks.map((t) => mapParsedTaskToStepObject(t, undefined, false, { baseCwd, inGroup: true }));
 				return {
@@ -1144,9 +1147,9 @@ export function buildChainExpressionSteps(
 					...(step.config.concurrency !== undefined ? { concurrency: step.config.concurrency } : {}),
 					...(step.config.failFast !== undefined ? { failFast: step.config.failFast } : {}),
 					...(step.config.worktree !== undefined ? { worktree: step.config.worktree } : {}),
-				};
+				} as ChainStep;
 			}
-			return mapParsedTaskToStepObject(step, sharedTask || undefined, false, { baseCwd, inGroup: false });
+			return mapParsedTaskToStepObject(step, sharedTask || undefined, false, { baseCwd, inGroup: false }) as ChainStep;
 		});
 	} catch (error) {
 		notify(error instanceof Error ? error.message : String(error));
@@ -1430,7 +1433,7 @@ export function registerSlashCommands(
 		},
 		handler: async (args, ctx) => {
 			const parsed = parseSingleRequiredArg(args, "Usage: /subagents-load-profile <name>");
-			if (!parsed.ok) {
+			if (parsed.ok === false) {
 				ctx.ui.notify(parsed.message, "error");
 				return;
 			}
@@ -1481,7 +1484,7 @@ export function registerSlashCommands(
 			const force = /(?:^|\s)--force$/.test(trimmed) || /(?:^|\s)force$/.test(trimmed);
 			const withoutForce = trimmed.replace(/(?:^|\s)(?:--force|force)$/, "").trim();
 			const parsed = parseSingleRequiredArg(withoutForce, "Usage: /subagents-refresh-provider-models <provider> [--force]");
-			if (!parsed.ok) {
+			if (parsed.ok === false) {
 				ctx.ui.notify(parsed.message, "error");
 				return;
 			}
@@ -1512,7 +1515,7 @@ export function registerSlashCommands(
 		getArgumentCompletions: makeProviderCompletions(state),
 		handler: async (args, ctx) => {
 			const parsed = parseSingleRequiredArg(args, "Usage: /subagents-generate-profiles <provider>");
-			if (!parsed.ok) {
+			if (parsed.ok === false) {
 				ctx.ui.notify(parsed.message, "error");
 				return;
 			}
@@ -1555,7 +1558,7 @@ export function registerSlashCommands(
 		},
 		handler: async (args, ctx) => {
 			const parsed = parseSingleRequiredArg(args, "Usage: /subagents-check-profile <name>");
-			if (!parsed.ok) {
+			if (parsed.ok === false) {
 				ctx.ui.notify(parsed.message, "error");
 				return;
 			}

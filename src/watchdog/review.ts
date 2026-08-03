@@ -93,6 +93,9 @@ function resolveConfiguredModel(ctx: ExtensionContext, rawModel: string): { mode
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const preferredProvider = typeof ctx.model?.provider === "string" ? ctx.model.provider : undefined;
 	const resolved = resolveModelCandidate(rawModel, availableModels, preferredProvider);
+	if (!resolved) {
+		throw new Error(`Configured watchdog model '${rawModel}' did not match exactly one authenticated available model. Use provider/model or configure credentials for the intended provider.`);
+	}
 	const { baseModel } = splitKnownThinkingSuffix(resolved);
 	const named = splitProviderModel(baseModel);
 	if (!named) {
@@ -109,7 +112,7 @@ function resolveConfiguredModel(ctx: ExtensionContext, rawModel: string): { mode
 
 async function resolveReviewAuth(ctx: ExtensionContext, model: RegistryModel): Promise<WatchdogReviewAuth> {
 	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-	if (!auth.ok) throw new Error(`Watchdog model auth failed for ${fullModelId(model)}: ${auth.error}`);
+	if (auth.ok === false) throw new Error(`Watchdog model auth failed for ${fullModelId(model)}: ${auth.error}`);
 	return {
 		...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
 		...(auth.headers ? { headers: auth.headers } : {}),

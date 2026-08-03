@@ -53,6 +53,7 @@ interface ResolveIntercomBridgeInput {
 	config: ExtensionConfig["intercomBridge"];
 	context: "fresh" | "fork" | undefined;
 	orchestratorTarget?: string;
+	cwd?: string;
 	settingsDir?: string;
 	agentDir?: string;
 }

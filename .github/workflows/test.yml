@@ -20,6 +20,8 @@ jobs:
           node-version: 24
       - name: Install devDependencies
         run: npm ci --ignore-scripts
+      - name: Typecheck
+        run: npm run typecheck
       - name: Unit tests
         run: npm test
       - name: Integration tests

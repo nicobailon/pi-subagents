@@ -629,10 +629,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		?? (isCheckpointStep(firstStep)
 			? undefined
 			: isParallelStep(firstStep)
-				? firstStep.parallel[0]!.task!
+				? firstStep.parallel[0]!.task
 				: isDynamicParallelStep(firstStep)
-					? firstStep.parallel.task!
-					: (firstStep as SequentialStep).task!);
+					? firstStep.parallel.task
+					: (firstStep as SequentialStep).task)
+		?? "";
 	try {
 		validateChainOutputBindings(chainSteps, { maxItems: params.dynamicFanoutMaxItems });
 	} catch (error) {
@@ -942,7 +943,7 @@ ${step.message}` : ""}` }],
 					.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? step.agentContract ?? params.agentContract) && (task?.gateOn ?? step.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
 				if (acceptanceFailures.length > 0) {
 					const acceptanceSummary = acceptanceFailures
-						.map(({ result, originalIndex }) => `- Task ${originalIndex + 1} (${result.agent}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+						.map(({ result, originalIndex }) => `- Task ${originalIndex + 1} (${result.agent}): ${(result.acceptance ? acceptanceFailureMessage(result.acceptance) : undefined) ?? "acceptance rejected"}`)
 						.join("\n");
 					const errorMsg = `Parallel step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
 					const summary = buildChainSummary(chainSteps, results, chainDir, "failed", { index: stepIndex, error: errorMsg });
@@ -1185,7 +1186,7 @@ ${step.message}` : ""}` }],
 				.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? dynamicParallelStep.agentContract ?? params.agentContract) && (task?.gateOn ?? dynamicParallelStep.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
 			if (acceptanceFailures.length > 0) {
 				const acceptanceSummary = acceptanceFailures
-					.map(({ result, originalIndex }) => `- Item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+					.map(({ result, originalIndex }) => `- Item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}): ${(result.acceptance ? acceptanceFailureMessage(result.acceptance) : undefined) ?? "acceptance rejected"}`)
 					.join("\n");
 				const errorMsg = `Dynamic step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: errorMsg };

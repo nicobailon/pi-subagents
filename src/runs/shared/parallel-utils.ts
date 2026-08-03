@@ -89,6 +89,8 @@ export interface DynamicRunnerGroup {
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
 	agentContract?: import("../../shared/types.ts").AgentContract;
 	gateOn?: import("../../shared/types.ts").ChainGateLayer;
+	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
+	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup | RunnerCheckpointStep;

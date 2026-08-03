@@ -1429,10 +1429,11 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 	const supported = new Set(["type", "command", "args", "promptDelivery"]);
 	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`Agent '${agentName}' external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
+	const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
 	return {
 		type: "external-cli",
 		command: runner.command.trim(),
-		...(runner.args ? { args: [...runner.args] as string[] } : {}),
+		...(runnerArgs?.length ? { args: runnerArgs } : {}),
 		...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}),
 	};
 }

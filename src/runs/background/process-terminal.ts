@@ -90,9 +90,9 @@ export function readProcessTerminalCandidate(asyncDir: string): ProcessTerminalC
 			runnerProcessInstanceId: raw.runnerProcessInstanceId,
 			writers,
 			...(expectedWriters ? { expectedWriters } : {}),
-			...(raw.sessionFile ? { sessionFile: raw.sessionFile } : {}),
-			...(raw.revivalLeaseToken ? { revivalLeaseToken: raw.revivalLeaseToken } : {}),
-			...(raw.revivalLeaseReleaseAcknowledged !== undefined ? { revivalLeaseReleaseAcknowledged: raw.revivalLeaseReleaseAcknowledged } : {}),
+			...(typeof raw.sessionFile === "string" && raw.sessionFile ? { sessionFile: raw.sessionFile } : {}),
+			...(typeof raw.revivalLeaseToken === "string" && raw.revivalLeaseToken ? { revivalLeaseToken: raw.revivalLeaseToken } : {}),
+			...(typeof raw.revivalLeaseReleaseAcknowledged === "boolean" ? { revivalLeaseReleaseAcknowledged: raw.revivalLeaseReleaseAcknowledged } : {}),
 		};
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -154,7 +154,7 @@ export function sanitizeProcessTerminal(value: unknown, fallback: { runId?: stri
 	if (value === undefined) return undefined;
 	try {
 		validateProof(value, label, fallback);
-		return value;
+		return value as ProcessTerminalV1;
 	} catch (error) {
 		return unknownProof(fallback.runId ?? label, fallback.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));
 	}
@@ -164,7 +164,7 @@ export function readProcessTerminal(asyncDir: string, fallback?: { runId?: strin
 	try {
 		const raw = JSON.parse(fs.readFileSync(processTerminalPath(asyncDir), "utf-8")) as unknown;
 		validateProof(raw, asyncDir, fallback);
-		return raw;
+		return raw as ProcessTerminalV1;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		return unknownProof(fallback?.runId ?? path.basename(asyncDir), fallback?.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));

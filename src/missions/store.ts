@@ -154,6 +154,10 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	if (!Array.isArray(input.decisions)) throw new Error(`${source}.decisions must be an array`);
 	if (!Array.isArray(input.artifacts)) throw new Error(`${source}.artifacts must be an array`);
 	if (input.receipts !== undefined && !Array.isArray(input.receipts)) throw new Error(`${source}.receipts must be an array`);
+	const runs = input.runs as unknown[];
+	const decisions = input.decisions as unknown[];
+	const artifacts = input.artifacts as unknown[];
+	const receipts = (input.receipts ?? []) as unknown[];
 	return {
 		schemaVersion: 1,
 		id: validateMissionId(input.id, `${source}.id`),
@@ -162,10 +166,10 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 		status: missionStatus(input.status, `${source}.status`),
 		createdAt: timestamp(input.createdAt, `${source}.createdAt`),
 		updatedAt: timestamp(input.updatedAt, `${source}.updatedAt`),
-		runs: input.runs.map((item, index) => parseRunLink(item, `${source}.runs[${index}]`)),
-		decisions: input.decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`)),
-		artifacts: input.artifacts.map((item, index) => parseArtifact(item, `${source}.artifacts[${index}]`)),
-		receipts: (input.receipts ?? []).map((item, index) => parseReceipt(item, `${source}.receipts[${index}]`)),
+		runs: runs.map((item, index) => parseRunLink(item, `${source}.runs[${index}]`)),
+		decisions: decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`)),
+		artifacts: artifacts.map((item, index) => parseArtifact(item, `${source}.artifacts[${index}]`)),
+		receipts: receipts.map((item, index) => parseReceipt(item, `${source}.receipts[${index}]`)),
 		...(optionalString(input.cwd, `${source}.cwd`) ? { cwd: input.cwd as string } : {}),
 		...(optionalString(input.ownerSessionId, `${source}.ownerSessionId`) ? { ownerSessionId: input.ownerSessionId as string } : {}),
 		...(optionalString(input.summary, `${source}.summary`) ? { summary: input.summary as string } : {}),
@@ -195,9 +199,9 @@ export function validateMissionStoreConfig(value: unknown, label = "config.missi
 	const directory = optionalString(input.directory, `${label}.directory`);
 	const globalIndexDir = optionalString(input.globalIndexDir, `${label}.globalIndexDir`);
 	return {
-		...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+		...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
 		...(directory ? { directory } : {}),
-		...(input.globalIndex !== undefined ? { globalIndex: input.globalIndex } : {}),
+		...(typeof input.globalIndex === "boolean" ? { globalIndex: input.globalIndex } : {}),
 		...(globalIndexDir ? { globalIndexDir } : {}),
 		...(input.retainTerminal !== undefined ? { retainTerminal: input.retainTerminal as number } : {}),
 	};

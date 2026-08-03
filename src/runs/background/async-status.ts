@@ -349,6 +349,7 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 			case "stopped": return 2;
 			case "paused": return 2;
 			case "complete": return 3;
+			default: return 4;
 		}
 	};
 	return [...runs].sort((a, b) => {

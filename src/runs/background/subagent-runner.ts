@@ -160,6 +160,7 @@ interface SubagentRunConfig {
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
 	resultMode?: SubagentRunMode;
+	mode?: SubagentRunMode;
 	dynamicFanoutMaxItems?: number;
 	workflowGraph?: WorkflowGraphSnapshot;
 	nestedRoute?: NestedRouteInfo;
@@ -193,8 +194,10 @@ interface StepResult {
 	outputState?: SubagentOutputState;
 	error?: string;
 	protocolError?: ProtocolOutputLimit;
-	success: boolean;
-	exitCode?: number | null;
+	success?: boolean;
+	exitCode: number | null;
+	usage?: Usage;
+	savedOutputPath?: string;
 	skipped?: boolean;
 	interrupted?: boolean;
 	timedOut?: boolean;
@@ -556,7 +559,7 @@ function runPiStreaming(
 				return;
 			}
 
-			appendChildEvent(event);
+			appendChildEvent(event as unknown as Record<string, unknown>);
 			transcriptWriter?.writeChildEvent(event);
 			if (event.type === "agent_settled") agentSettledReceived = true;
 			applyChildLifecycle(projectChildLifecycle(event));
@@ -1036,44 +1039,7 @@ interface SingleStepContext {
 async function runSingleStep(
 	step: SubagentStep,
 	ctx: SingleStepContext,
-): Promise<{
-	agent: string;
-	context?: "fresh" | "fork";
-	agentContract?: import("../../shared/types.ts").AgentContract;
-	launchContractDigest?: string;
-	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
-	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
-	output: string;
-	exitCode: number | null;
-	error?: string;
-	model?: string;
-	attemptedModels?: string[];
-	modelAttempts?: ModelAttempt[];
-	artifactPaths?: ArtifactPaths;
-	transcriptPath?: string;
-	transcriptError?: string;
-	interrupted?: boolean;
-	timedOut?: boolean;
-	stopped?: boolean;
-	turnBudget?: TurnBudgetState;
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
-	toolBudget?: ToolBudgetState;
-	toolBudgetBlocked?: boolean;
-	sessionFile?: string;
-	intercomTarget?: string;
-	completionGuardTriggered?: boolean;
-	effects?: import("../../shared/types.ts").EffectsProjection;
-	execution?: import("../../shared/types.ts").ExecutionProjection;
-	review?: import("../../shared/types.ts").ReviewProjection;
-	structuredOutput?: unknown;
-	structuredOutputPath?: string;
-	structuredOutputSchemaPath?: string;
-	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
-	writerAttemptCount?: number;
-	runner?: ExternalCliRunnerStatus;
-	externalProcess?: ExternalProcessStatus;
-}> {
+): Promise<StepResult & { completionGuardTriggered?: boolean }> {
 	if (step.importAsyncRoot) {
 		let importTimedOut = false;
 		let importStopped = false;
@@ -1336,7 +1302,7 @@ async function runSingleStep(
 				definitionDigest: step.definitionDigest,
 				task: step.launchBindingTask ?? task,
 				...(candidate ? { model: candidate } : {}),
-				modelCandidates: candidates,
+				modelCandidates: candidates as string[],
 				...(resolveEffectiveThinking(candidate, step.thinking) ? { thinking: resolveEffectiveThinking(candidate, step.thinking) } : {}),
 				systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
 				systemPromptMode: step.systemPromptMode,
@@ -3252,9 +3218,11 @@ async function runSubagent(
 					...(thinkingOverride ? {
 						...(model ? { model } : {}),
 						...(thinking ? { thinking } : {}),
-						...(step.parallel.modelCandidates ? { modelCandidates: step.parallel.modelCandidates.map((candidate) => applyThinkingSuffix(candidate, thinkingOverride, true)) } : {}),
+						...(step.parallel.modelCandidates ? { modelCandidates: step.parallel.modelCandidates.flatMap((candidate) => {
+							const resolved = applyThinkingSuffix(candidate, thinkingOverride, true);
+							return resolved ? [resolved] : [];
+						}) } : {}),
 					} : {}),
-					structuredOutput: undefined,
 					structuredOutputSchema: step.parallel.structuredOutputSchema ?? step.parallel.structuredOutput?.schema,
 				};
 			});
@@ -3265,9 +3233,8 @@ async function runSubagent(
 					agent: task.agent,
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
-					phase: task.phase ?? step.phase,
-					label: task.label,
-					outputName: undefined,
+					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),
+					...(task.label ? { label: task.label } : {}),
 					structured: Boolean(task.structuredOutputSchema),
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
 					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
@@ -3275,10 +3242,10 @@ async function runSubagent(
 					status: "pending",
 					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
 					...(transcriptPath ? { transcriptPath } : {}),
-					skills: task.skills,
-					model: task.model,
-					thinking: task.thinking,
-					attemptedModels: task.modelCandidates && task.modelCandidates.length > 0 ? task.modelCandidates : task.model ? [task.model] : undefined,
+					...(task.skills ? { skills: task.skills } : {}),
+					...(task.model ? { model: task.model } : {}),
+					...(task.thinking ? { thinking: task.thinking } : {}),
+					...(task.modelCandidates && task.modelCandidates.length > 0 ? { attemptedModels: task.modelCandidates } : task.model ? { attemptedModels: [task.model] } : {}),
 					recentTools: [],
 					recentOutput: [],
 				};
@@ -3524,7 +3491,7 @@ async function runSubagent(
 				.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? step.agentContract) && task?.gateOn === "acceptance" && result.acceptance?.status === "rejected");
 			if (acceptanceFailures.length > 0) {
 				const message = acceptanceFailures
-					.map(({ result, originalIndex }) => `Dynamic item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}) acceptance rejected: ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+					.map(({ result, originalIndex }) => `Dynamic item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}) acceptance rejected: ${(result.acceptance ? acceptanceFailureMessage(result.acceptance) : undefined) ?? "acceptance rejected"}`)
 					.join("\n");
 				results.push({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection });
 				statusPayload.error = message;
@@ -4012,7 +3979,7 @@ async function runSubagent(
 					.map((result, index) => ({ result, index, task: group.parallel[index] }))
 					.find(({ result, task }) => isAgentContractV1(task?.agentContract) && task?.gateOn === "acceptance" && result.acceptance?.status === "rejected");
 				if (acceptanceGateFailure) {
-					statusPayload.error = acceptanceFailureMessage(acceptanceGateFailure.result.acceptance) ?? "Parallel acceptance gate rejected the step.";
+					statusPayload.error = (acceptanceGateFailure.result.acceptance ? acceptanceFailureMessage(acceptanceGateFailure.result.acceptance) : undefined) ?? "Parallel acceptance gate rejected the step.";
 					writeStatusPayload();
 					break;
 				}

@@ -176,6 +176,6 @@ export function loadRunsForAgent(agent: string): RunEntry[] {
 
 	return lines
 		.map((line) => { try { return JSON.parse(line) as RunEntry; } catch { return undefined; } })
-		.filter((entry): entry is RunEntry => Boolean(entry) && entry.agent === agent)
+		.filter((entry): entry is RunEntry => entry !== undefined && entry.agent === agent)
 		.reverse();
 }

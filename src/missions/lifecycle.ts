@@ -13,8 +13,8 @@ export interface MissionLaunchParams {
 	missionId?: string;
 	mission?: unknown;
 	task?: string;
-	tasks?: Array<{ task: string }>;
-	chain?: Array<{ task?: string }>;
+	tasks?: Array<{ task?: string }>;
+	chain?: Array<{ task?: string; parallel?: Array<{ task?: string }> | { task?: string } }>;
 }
 
 export interface MissionLaunchBinding {
@@ -36,7 +36,7 @@ interface PersistedMissionBinding {
 
 function workflowGoal(params: MissionLaunchParams): string | undefined {
 	return params.task?.trim()
-		|| params.tasks?.find((task) => task.task.trim())?.task.trim()
+		|| params.tasks?.find((task) => task.task?.trim())?.task?.trim()
 		|| params.chain?.find((step) => step.task?.trim())?.task?.trim();
 }
 

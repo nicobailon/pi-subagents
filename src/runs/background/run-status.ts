@@ -19,7 +19,7 @@ import { readMissionBinding } from "../../missions/lifecycle.ts";
 import { formatWorkflowJsonPreview } from "../../workflows/scripted-workflow.ts";
 
 interface RunStatusParams {
-	action?: "status";
+	action?: string;
 	id?: string;
 	runId?: string;
 	dir?: string;

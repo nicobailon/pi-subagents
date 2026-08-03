@@ -179,12 +179,12 @@ class ScheduledRunStore {
 
 function resolveMaxLatenessMs(config: ExtensionConfig): number {
 	const value = config.scheduledRuns?.maxLatenessMs;
-	return Number.isInteger(value) && value >= 0 ? value : DEFAULT_MAX_LATENESS_MS;
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : DEFAULT_MAX_LATENESS_MS;
 }
 
 function resolveMaxPending(config: ExtensionConfig): number {
 	const value = config.scheduledRuns?.maxPending;
-	return Number.isInteger(value) && value >= 1 ? value : DEFAULT_MAX_PENDING;
+	return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : DEFAULT_MAX_PENDING;
 }
 
 function terminalState(state: ScheduledRunState): boolean {
@@ -231,7 +231,7 @@ function sanitizeScheduledParams(params: SubagentParamsLike): { params?: Subagen
 	if (params.context === "fork") return { error: "Scheduled subagent runs require fresh context. Forked parent-session context is not safe at fire time." };
 	if (params.async === false) return { error: "Scheduled subagent runs are always async; omit async or set async: true." };
 	if (params.clarify === true) return { error: "Scheduled subagent runs cannot open clarify UI; omit clarify or set clarify: false." };
-	const acceptanceErrors = validateExecutionAcceptance(params);
+	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0]);
 	if (acceptanceErrors.length > 0) return { error: acceptanceErrors.join(" ") };
 
 	const {

@@ -184,7 +184,7 @@ function resolveModelCommandValue(ctx: ExtensionCommandContext, raw: string): { 
 	const resolved = resolveWatchdogModelInput(ctx as ExtensionContext, value);
 	return {
 		model: resolved.model,
-		thinking: resolved.thinking,
+		thinking: resolved.thinking ?? null,
 		description: `${resolved.model}${resolved.thinking ? `:${resolved.thinking}` : ""}`,
 	};
 }
