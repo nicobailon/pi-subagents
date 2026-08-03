@@ -28,6 +28,7 @@ describe("async permission forwarding session identity", () => {
 				cwd: "/tmp/project",
 				currentSessionId,
 				parentSessionId: "session-abc123",
+				permissions: { rules: { write: "ask" } },
 			},
 			maxSubagentDepth: 1,
 			asyncDir: "/tmp/async-run",
@@ -37,6 +38,7 @@ describe("async permission forwarding session identity", () => {
 		const step = built.steps[0];
 		assert.ok(step && !("parallel" in step));
 		assert.equal(step.parentSessionId, "session-abc123");
+		assert.deepEqual(step.permissionRules, { write: "ask" });
 	});
 
 	it("consumes bounded dynamic fanout indexes before later static forked steps", () => {

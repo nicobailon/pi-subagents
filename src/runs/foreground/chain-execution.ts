@@ -44,6 +44,7 @@ import {
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
+import type { PermissionConfig } from "../shared/permissions.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { recordRun } from "../shared/run-history.ts";
 import {
@@ -531,6 +532,7 @@ interface ChainExecutionParams {
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ToolBudgetConfig;
+	permissions?: PermissionConfig;
 	/** Global cap on simultaneously-running tasks within this chain. Defaults to DEFAULT_GLOBAL_CONCURRENCY_LIMIT. */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
@@ -1355,6 +1357,7 @@ ${step.message}` : ""}` }],
 					dynamicGroupStatuses,
 				});
 				r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
+				permissions: params.permissions,
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 				capabilityCeiling: params.capabilityCeiling,
 				context: params.contextForAgent?.(seqStep.agent),

@@ -25,6 +25,8 @@ import {
 	events,
 } from "../support/helpers.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT } from "../../src/shared/types.ts";
+import { PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
+import { SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV } from "../../src/runs/shared/pi-args.ts";
 
 interface TestSequentialStep {
 	agent: string;
@@ -236,6 +238,23 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(result.details.workflowGraph?.nodes[1]?.kind, "checkpoint");
 		assert.equal(result.details.workflowGraph?.nodes[1]?.status, "paused");
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("applies global permissions to foreground chain children without requiring intercom", async () => {
+		mockPi.onCall({ echoEnv: [PERMISSION_POLICY_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, PERMISSION_AUDIT_PATH_ENV] });
+		const agents = [makeAgent("worker")];
+
+		const result = await executeChain!(makeChainParams(
+			[{ agent: "worker", task: "Work" }],
+			agents,
+			{ permissions: { rules: { write: "ask" } } },
+		));
+
+		assert.equal(result.isError, undefined);
+		const env = JSON.parse(result.details.results[0]?.finalOutput ?? "{}") as Record<string, string | null>;
+		assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
+		assert.match(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] ?? "", /supervisor-channels/);
+		assert.match(env[PERMISSION_AUDIT_PATH_ENV] ?? "", /permission-audit\.jsonl$/);
 	});
 
 	it("runs a 2-step chain", async () => {

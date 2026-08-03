@@ -393,12 +393,14 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	if (input.parentSessionId) {
 		env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
 	}
-	if (input.orchestratorIntercomTarget && input.parentSessionId && input.runId && input.childAgentName) {
+	const encodedPermissionRules = encodePermissionRules(input.permissionRules);
+	if ((input.orchestratorIntercomTarget || encodedPermissionRules) && input.parentSessionId && input.runId && input.childAgentName) {
 		const childIndex = input.childIndex ?? 0;
 		const channelDir = supervisorChannelDir(input.runId, input.childAgentName, childIndex);
 		fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
 		fs.mkdirSync(path.join(channelDir, "replies"), { recursive: true });
 		env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+		if (encodedPermissionRules) env[PERMISSION_AUDIT_PATH_ENV] = input.permissionAuditPath ?? path.join(channelDir, "permission-audit.jsonl");
 	}
 	if (input.runId) {
 		env[SUBAGENT_RUN_ID_ENV] = input.runId;
@@ -414,11 +416,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	else env.MCP_DIRECT_TOOLS = "__none__";
 	const encodedCapabilityCeiling = encodeSubagentCapabilityCeiling(toolPlan.capabilityCeiling);
 	if (encodedCapabilityCeiling) env[SUBAGENT_CAPABILITY_CEILING_ENV] = encodedCapabilityCeiling;
-	const encodedPermissionRules = encodePermissionRules(input.permissionRules);
-	if (encodedPermissionRules) {
-		env[PERMISSION_POLICY_ENV] = encodedPermissionRules;
-		env[PERMISSION_AUDIT_PATH_ENV] = input.permissionAuditPath;
-	}
+	if (encodedPermissionRules) env[PERMISSION_POLICY_ENV] = encodedPermissionRules;
 	if (input.structuredOutput) {
 		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
 		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;

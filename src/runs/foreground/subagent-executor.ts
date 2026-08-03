@@ -2480,6 +2480,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		toolBudget: data.toolBudget,
 		usageBudget: data.usageBudget,
 		configToolBudget: data.configToolBudget,
+		permissions: deps.config.permissions,
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		capabilityCeiling: data.capabilityCeiling,
 	});

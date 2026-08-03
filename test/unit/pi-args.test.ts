@@ -9,6 +9,7 @@ import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts"
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, MCP_DIRECT_CHILD_TOOLS_ENV, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
 import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
+import { PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -560,6 +561,26 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(env[PI_INTERCOM_STABLE_ID_ENV], undefined);
 		assert.equal(env[PI_INTERCOM_SESSION_ID_ENV], undefined);
+	});
+
+	it("creates a permission supervisor channel and audit path without enabling intercom", () => {
+		const { env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: true,
+			inheritSkills: true,
+			parentSessionId: "session-parent-123",
+			runId: "permission-run",
+			childAgentName: "worker",
+			childIndex: 3,
+			permissionRules: { write: "ask" },
+		});
+
+		assert.equal(env.PI_SUBAGENT_ORCHESTRATOR_TARGET, undefined);
+		assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
+		assert.match(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] ?? "", /supervisor-channels/);
+		assert.equal(env[PERMISSION_AUDIT_PATH_ENV], path.join(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV]!, "permission-audit.jsonl"));
 	});
 
 	it("does not create a supervisor channel without an exact parent session id", () => {
