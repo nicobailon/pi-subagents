@@ -93,6 +93,16 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 	for (const job of state.asyncJobs.values()) {
 		if (!isActiveState(job.status)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt ?? Date.now();
+		if (job.mode === "workflow") {
+			entries.push({
+				key: `async:${job.asyncId}`,
+				agent: "workflow",
+				description: job.workflow?.emits?.length ? `latest emit: ${JSON.stringify(job.workflow.emits.at(-1)).slice(0, 120)}` : job.description,
+				startedAt,
+				tokens: job.totalTokens?.total ?? 0,
+			});
+			continue;
+		}
 		const steps: AsyncJobStep[] | undefined = job.steps?.length
 			? job.steps
 			: job.agents?.map((agent, index) => {

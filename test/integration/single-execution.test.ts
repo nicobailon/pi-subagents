@@ -39,7 +39,7 @@ import {
 	type SubagentDelegationV2Response,
 	type SubagentDelegationV2Started,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
@@ -324,6 +324,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		initialSpawnState?: NonNullable<SubagentState["subagentSpawns"]>,
 		allowMutatingManagementActions = true,
 		initialAsyncJobs: SubagentState["asyncJobs"] = new Map(),
+		workflowControllers?: Map<string, AbortController>,
 	) {
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -332,6 +333,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				currentSessionId: initialSpawnState?.sessionId ?? null,
 				...(initialSpawnState ? { subagentSpawns: initialSpawnState } : {}),
 				asyncJobs: initialAsyncJobs,
+				...(workflowControllers ? { workflowControllers } : {}),
 				foregroundControls: new Map(),
 				lastForegroundControlId: null,
 			},
@@ -377,6 +379,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /single alias finished/);
 	});
 
+	it("starts workflow scripts asynchronously by default and persists live status", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "async workflow child" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const runId = `scripted-workflow-async-${Date.now()}`;
+
+		const result = await executor.execute(
+			runId,
+			{ workflowScript: `emit("starting"); await runs.run("work", { agent: "echo", task: "Async work" }); return "done";` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.mode, "workflow");
+		assert.equal(result.details.asyncId, runId);
+		assert.match(result.content[0]?.text ?? "", /Async workflow/);
+		const statusPath = path.join(result.details.asyncDir!, "status.json");
+		let status: { state?: string; workflow?: { emits?: unknown[]; trace?: Array<{ key?: string; state?: string }> } } = {};
+		for (let attempt = 0; attempt < 100; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "complete" || status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "complete");
+		assert.deepEqual(status.workflow?.emits, ["starting"]);
+		assert.ok(status.workflow?.trace?.some((entry) => entry.key === "work" && entry.state === "completed"));
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.results, `${runId}.json`), { force: true });
+	});
+
+	it("stops a live async workflow through its controller", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const controller = new AbortController();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), new Map([["workflow-stop", controller]]));
+		const result = await executor.execute(
+			"stop-call",
+			{ action: "stop", id: "workflow-stop" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined);
+		assert.equal(controller.signal.aborted, true);
+		assert.match(result.content[0]?.text ?? "", /Stop requested for async workflow workflow-stop/);
+	});
+
 	it("routes workflow script children through ordinary foreground execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "scanned auth" });
 		mockPi.onCall({ output: "reviewed auth" });
@@ -385,6 +433,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await executor.execute(
 			"scripted-workflow",
 			{
+				async: false,
 				workflowScript: `
 					const scan = await runs.run("scan", { agent: "echo", task: "Scan auth" });
 					const review = await runs.run("review", { agent: "echo", task: "Review: " + scan.output });
@@ -410,6 +459,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await executor.execute(
 			"scripted-workflow-usage-budget",
 			{
+				async: false,
 				workflowScript: `
 					await runs.run("first", { agent: "echo", task: "First task" });
 					await runs.run("second", { agent: "echo", task: "Second task" });
@@ -1268,7 +1318,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, undefined);
-		assert.deepEqual(result.details?.results?.[0]?.structuredOutput, { ok: true, note: "captured" });
+		const child = result.details?.results?.[0];
+		assert.deepEqual(child?.structuredOutput, { ok: true, note: "captured" });
+		assert.match(child?.finalOutput ?? "", /"ok": true/);
+		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
 	it("rejects structured output capture files that were not produced by the structured_output tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

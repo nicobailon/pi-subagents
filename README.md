@@ -971,7 +971,7 @@ Before the first model turn, the child runtime compares every explicit tool name
 
 ## Chain files (compatibility)
 
-Existing chains remain supported, but scripted workflows are the advanced path for branching, filtering, retries, and dynamic fanout. Do not extend the chain JSON DSL for new adaptive workflows. Saved scripted workflow discovery and durable replay are follow-up work; this release starts with inline `workflowScript`.
+Existing `tasks[]` and chains remain supported compatibility inputs, but scripted workflows are the primary orchestration path for sequence, parallelism, branching, filtering, retries, aggregation, and dynamic fanout. Do not extend the chain JSON DSL for new workflows.
 
 Chains are reusable compatibility workflows stored separately from agent files. Use `.chain.md` for existing simple sequential chains and `.chain.json` for existing dynamic fanout definitions.
 
@@ -1355,7 +1355,7 @@ These are the parameters the LLM passes when it calls the `subagent` tool. Most 
 { tasks: [{ agent: "scout", task: "audit auth", count: 3 }] }
 { tasks: [{ agent: "scout", task: "audit frontend" }, { agent: "reviewer", task: "audit backend" }], context: "fork" }
 
-// Adaptive scripted workflow (foreground)
+// Scripted workflow (async/non-blocking by default; pass async:false for a small foreground run)
 { workflowScript: `
   const scan = await runs.run("scan", {
     agent: "scout",
@@ -1510,7 +1510,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
-| `async` | boolean | false | Background execution. For chains, `clarify: true` explicitly keeps the run foreground for the clarify UI. |
+| `async` | boolean | default-on | Background execution. Scripted workflows always default to background and accept `async:false` as an explicit foreground escape hatch. For compatibility chains, `clarify:true` keeps the run foreground for the clarify UI. |
 | `timeoutMs` / `maxRuntimeMs` | number | 30 min foreground; none async | Optional run-level max runtime in milliseconds. Foreground uses 30 minutes only when neither the call nor selected agent provides a timeout. |
 | `turnBudget` | object | none | Optional assistant-turn budget `{ maxTurns, graceTurns }`. At `maxTurns` the child is warned to wrap up. After the grace window (default 1), termination occurs at the next assistant boundary; a response that starts tool work records `termination-deferred` until a later boundary. Partial output is returned on abort. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, while `"*"` blocks every tool call. Final assistant text is never blocked. |

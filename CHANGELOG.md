@@ -13,9 +13,11 @@
 - Added Herdr project panes so an orchestrator can open a project-rooted Pi session for substantial cross-codebase work.
 
 ### Changed
+- Scripted workflows now start asynchronously by default as first-class status/fleet runs, stream trace and emitted progress, support stop by workflow id, preserve async child parentage, and present single + workflow as the primary public authoring surface while retaining `tasks[]` and `chain[]` compatibility.
 - Scheduled subagent runs are now enabled by default; set `{ "scheduledRuns": { "enabled": false } }` to opt out.
 
 ### Fixed
+- Render structured-output-only children as useful JSON output instead of misleading `(no output)` summaries and empty output artifacts.
 - Journaled managed worktree ownership before child execution so abrupt exits retain a manifest-backed cleanup path.
 - Made automatic mission persistence best-effort without weakening explicit mission requests, bounded terminal mission retention and stale global pointers, exposed auto missions without modifying structured JSON output, added authority-consistent manifest-backed preserved-worktree discard, and clarified the Herdr inspector/schema surface.
 - Recovered valid structured acceptance reports from unterminated explicit `acceptance-report` fences while retaining hard failures for malformed or invalid reports.

@@ -228,8 +228,8 @@ export interface ControlEvent {
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";
 export type SubagentOutputState = "present" | "absent" | "unknown";
-export type SubagentRunMode = "single" | "parallel" | "chain";
-export type SubagentResultMode = SubagentRunMode | "workflow";
+export type SubagentRunMode = "single" | "parallel" | "chain" | "workflow";
+export type SubagentResultMode = SubagentRunMode;
 
 export interface ParallelHandoffPatch {
 	path: string;
@@ -1237,6 +1237,9 @@ export interface AsyncStatus {
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
+	workflow?: Details["workflow"];
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
 	steps?: Array<{
 		agent: string;
 		runner?: ExternalCliRunnerStatus;
@@ -1247,6 +1250,8 @@ export interface AsyncStatus {
 		description?: string;
 		phase?: string;
 		label?: string;
+		workflowKey?: string;
+		parentWorkflowRunId?: string;
 		outputName?: string;
 		structured?: boolean;
 		checkpoint?: ChainCheckpointState;
@@ -1368,6 +1373,9 @@ export interface AsyncJobState {
 	controlEventCursor?: number;
 	nestedRoute?: NestedRouteInfo;
 	nestedChildren?: NestedRunSummary[];
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
+	workflow?: Details["workflow"];
 }
 
 export interface ForegroundResumeChild {
@@ -1517,6 +1525,8 @@ export interface SubagentState {
 		schedule(file: string, delayMs?: number): boolean;
 		clear(): void;
 	};
+	/** Live in-process workflow controllers. Durable status remains on disk after settlement. */
+	workflowControllers?: Map<string, AbortController>;
 }
 
 // ============================================================================

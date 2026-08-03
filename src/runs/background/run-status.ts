@@ -66,6 +66,7 @@ function formatResumeGuidance(runId: string | undefined, children: Array<{ agent
 function stepLineLabel(status: AsyncStatus, index: number): string {
 	const steps = status.steps ?? [];
 	if (status.mode === "parallel") return `Agent ${index + 1}/${steps.length || 1}`;
+	if (status.mode === "workflow") return `Workflow child ${steps[index]?.workflowKey ?? index + 1}`;
 	if (status.mode === "chain") {
 		const chainStepCount = status.chainStepCount ?? (steps.length || 1);
 		const groups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
@@ -385,6 +386,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
+				status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
+				status.mode === "workflow" && status.workflow?.emits.length ? `Latest emit: ${JSON.stringify(status.workflow.emits.at(-1)).slice(0, 240)}` : undefined,
 				`Progress: ${progressLabel}`,
 				status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
 				`Started: ${started}`,

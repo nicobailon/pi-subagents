@@ -129,6 +129,29 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("shows a scripted workflow as one fleet parent instead of unrelated children", () => {
+		const state = stateForTest();
+		state.fleetJobs = new Map([["workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: path.join(os.tmpdir(), "workflow-1"),
+			sessionId: "session-current",
+			status: "running",
+			mode: "workflow",
+			agents: ["scan", "review"],
+			steps: [
+				{ agent: "scan", workflowKey: "scan", status: "completed", index: 0 },
+				{ agent: "review", workflowKey: "review", status: "running", index: 1 },
+			],
+			workflow: { trace: [], emits: ["reviewing"], console: [] },
+			startedAt: 10,
+			updatedAt: 20,
+		}]]);
+
+		const snapshot = collectFleetSnapshot(state);
+		assert.deepEqual(snapshot.items.map((item) => item.key), ["async:workflow-1"]);
+		assert.equal(snapshot.items[0]?.agent, "workflow");
+	});
+
 	it("keeps every active async run ahead of the bounded recent-completion window", () => {
 		const state = stateForTest();
 		for (let index = 0; index < 22; index++) {

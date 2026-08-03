@@ -192,6 +192,16 @@ function buildFleetStatus(
 	for (const job of state.asyncJobs.values()) {
 		if (job.sessionId !== authoritativeSessionId || !activeState(job.status)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt;
+		if (job.mode === "workflow") {
+			addCandidate({
+				internalKey: `async:${job.asyncId}`,
+				agent: "workflow",
+				startedAt,
+				tokens: job.totalTokens,
+				goal: job.workflow?.emits?.length ? `latest emit: ${JSON.stringify(job.workflow.emits.at(-1)).slice(0, 120)}` : job.description,
+			});
+			continue;
+		}
 		const steps: AsyncJobStep[] | undefined = job.steps?.length
 			? job.steps
 			: job.agents?.map((agent, index) => ({

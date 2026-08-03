@@ -34,15 +34,16 @@ describe("registered subagent tool description", () => {
 		for (const builtinName of ["scout", "worker", "planner"]) {
 			assert.doesNotMatch(description, new RegExp(`\\b${builtinName}\\b`));
 		}
-		assert.match(description, /^To delegate work, call with \{ agent, task \}, \{ tasks \}, \{ workflowScript \}, or compatibility \{ chain \}; omit action\./i);
-		assert.match(description, /Use action only for management\/control actions listed below/i);
+		assert.match(description, /^To delegate work, call with \{ agent, task \} for one child or \{ workflowScript \} for composed orchestration/i);
+		assert.match(description, /Compatibility tasks\[\] and chain\[\] inputs remain supported/i);
+		assert.match(description, /Use action only for management\/control actions/i);
 		assert.match(description, /runs\.run/);
 		assert.match(description, /cannot access filesystem, shell, arbitrary Pi tools, or host globals/i);
 		assert.match(description, /use \{ action: "list" \} to inspect configured agents\/chains/i);
 		assert.match(description, /executable\/non-disabled/i);
 		assert.match(description, /proactive skill subagent suggestions/i);
 		assert.doesNotMatch(description, /disabled builtins/i);
-		assert.match(description, /output\?,reads\?,progress\?/i);
+		assert.match(description, /PARALLEL \(compatibility\)/i);
 		assert.match(description, /timeoutMs/i);
 		assert.match(description, /maxRuntimeMs/i);
 		assert.match(description, /foreground and async\/background runs/i);
@@ -92,13 +93,13 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
 
 		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.match(description, /^To delegate work, call with \{ agent, task \}, \{ tasks \}, \{ workflowScript \}, or compatibility \{ chain \}; omit action\./i);
-		assert.match(description, /Use action only for management\/control actions listed below/i);
+		assert.match(description, /^Delegate one child with \{ agent, task \}, or compose work with \{ workflowScript \}/i);
+		assert.match(description, /Compatibility tasks\[\] and chain\[\] remain accepted/i);
+		assert.match(description, /Use action only for management\/control/i);
 		assert.match(description, /stable-key runs\.run\/runs\.all/i);
 		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length * 0.8, "compact mode should be materially shorter than full mode");
 		assert.match(description, /SINGLE/);
-		assert.match(description, /PARALLEL/);
-		assert.match(description, /CHAIN/);
+		assert.match(description, /tasks\[\]\/chain\[\] remain compatibility inputs/i);
 		assert.match(description, /action without execution fields/i);
 		assert.match(description, /subagent_wait/i);
 		assert.match(description, /interactive session.*normally return control/i);

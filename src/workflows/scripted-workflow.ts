@@ -21,9 +21,7 @@ function hostCall(method, args) {
 function formatRef(result) {
   if (!result || typeof result !== "object") throw new Error("runs.ref(result) requires a run result object.");
   const parts = ["run " + (result.key || "unknown")];
-  if (result.runId) parts.push("id=" + result.runId);
-  const paths = Array.isArray(result.artifactPaths) ? result.artifactPaths.filter((value) => typeof value === "string") : [];
-  if (paths.length) parts.push("artifacts=" + paths.join(","));
+  if (result.runId) parts.push("id=" + String(result.runId).slice(0, 12));
   return "[" + parts.join("; ") + "]";
 }
 
@@ -116,6 +114,8 @@ export interface RunWorkflowScriptOptions {
 	signal?: AbortSignal;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
+	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
+	onEmit?: (emits: unknown[]) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -149,6 +149,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	let settled = false;
 
 	const partial = (): Omit<WorkflowScriptResult, "value"> => ({ emits, console: consoleEntries, trace, children: [...children.values()] });
+	const traceChanged = () => options.onTrace?.([...trace]);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
 		const finish = (outcome: { value: unknown } | { error: Error }) => {
@@ -173,6 +174,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		worker.on("message", (message: Record<string, unknown>) => {
 			if (message.type === "emit") {
 				emits.push(message.value);
+				options.onEmit?.([...emits]);
 				return;
 			}
 			if (message.type === "console") {
@@ -197,8 +199,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const known = children.get(keyOrRunId);
 				const target = known?.runId ?? keyOrRunId;
 				trace.push({ operation: "status", key: keyOrRunId, state: "started", ...(known?.runId ? { runId: known.runId } : {}) });
+				traceChanged();
 				respond(options.status(target, childController.signal).then((result) => {
 					trace.push({ operation: "status", key: keyOrRunId, state: result.ok ? "completed" : "failed", ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
+					traceChanged();
 					if (!result.ok) throw new Error(`Status '${keyOrRunId}' failed: ${result.output}`);
 					return result;
 				}));
@@ -221,19 +225,23 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
 				trace.push({ operation: "run", key, state: "reused" });
+				traceChanged();
 				return respond(existing.promise);
 			}
 
 			const startedAt = Date.now();
 			trace.push({ operation: "run", key, state: "started" });
+			traceChanged();
 			const promise = options.launch(key, { ...params, async: params.async ?? false }, childController.signal).then((result) => {
 				children.set(key, result);
 				trace.push({ operation: "run", key, state: result.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
+				traceChanged();
 				if (!result.ok) throw new Error(`Run '${key}' failed: ${result.output}`);
 				return result;
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
 				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, error: text });
+				traceChanged();
 				throw new Error(`Run '${key}' failed: ${text}`);
 			});
 			launches.set(key, { fingerprint, promise });

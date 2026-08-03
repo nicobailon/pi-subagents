@@ -106,7 +106,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 
 function asyncItems(run: AsyncRunSummary, description?: string): FleetItem[] {
 	const updatedAt = run.lastUpdate ?? run.endedAt ?? run.startedAt;
-	if (run.steps.length === 0) {
+	if (run.steps.length === 0 || run.mode === "workflow") {
 		return [{ key: `async:${run.id}`, kind: "async", runId: run.id, agent: run.mode, state: run.state, updatedAt, run, ...(description ? { description } : {}) }];
 	}
 	return run.steps.map((step) => ({

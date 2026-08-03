@@ -3,9 +3,13 @@ import { describe, it } from "node:test";
 import { runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 
 describe("scripted workflow runtime", () => {
-	it("runs keyed children, captures output, and exposes no host capabilities", async () => {
+	it("runs keyed children, streams progress, and exposes no host capabilities", async () => {
 		const launches: Array<{ key: string; params: Record<string, unknown> }> = [];
+		const traceSnapshots: number[] = [];
+		const emitSnapshots: number[] = [];
 		const result = await runWorkflowScript({
+			onTrace: (trace) => traceSnapshots.push(trace.length),
+			onEmit: (emits) => emitSnapshots.push(emits.length),
 			script: `
 				if (typeof process !== "undefined" || typeof require !== "undefined") throw new Error("host globals leaked");
 				const scan = await runs.run("scan", { agent: "scout", task: "find targets" });
@@ -30,8 +34,11 @@ describe("scripted workflow runtime", () => {
 		assert.equal(launches.every(({ params }) => params.async === false), true);
 		assert.deepEqual(result.emits, [{ count: 2 }]);
 		assert.deepEqual(result.console, [{ level: "log", text: "reviewed 2" }]);
-		assert.match(JSON.stringify(result.value), /run review-a; id=run-review-a; artifacts=\/tmp\/review-a\.md/);
+		assert.match(JSON.stringify(result.value), /run review-a; id=run-review-a/);
+		assert.doesNotMatch(JSON.stringify(result.value), /artifacts=/);
 		assert.equal(result.trace.filter((entry) => entry.state === "completed").length, 3);
+		assert.ok(traceSnapshots.length >= 6);
+		assert.deepEqual(emitSnapshots, [1]);
 	});
 
 	it("rejects a duplicate key with incompatible params", async () => {
