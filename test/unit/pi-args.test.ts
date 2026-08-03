@@ -563,8 +563,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[PI_INTERCOM_SESSION_ID_ENV], undefined);
 	});
 
-	it("creates a permission supervisor channel and audit path without enabling intercom", () => {
-		const { env } = buildPiArgs({
+	it("creates a private permission audit path without enabling the supervisor channel", () => {
+		const { env, tempDir } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
@@ -579,8 +579,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(env.PI_SUBAGENT_ORCHESTRATOR_TARGET, undefined);
 		assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
-		assert.match(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] ?? "", /supervisor-channels/);
-		assert.equal(env[PERMISSION_AUDIT_PATH_ENV], path.join(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV]!, "permission-audit.jsonl"));
+		assert.equal(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV], undefined);
+		assert.equal(env[PERMISSION_AUDIT_PATH_ENV], path.join(tempDir!, "permission-audit.jsonl"));
 	});
 
 	it("does not create a supervisor channel without an exact parent session id", () => {

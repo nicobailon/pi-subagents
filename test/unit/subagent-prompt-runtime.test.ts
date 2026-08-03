@@ -137,9 +137,9 @@ function setSupervisorEnv(): void {
 }
 
 describe("subagent prompt runtime", () => {
-	it("registers no permission hook by default and never gates bash or coordination tools", async () => {
-		const handlers: Array<(event: { toolName?: string; input?: unknown }) => unknown> = [];
-		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }) => unknown) { if (event === "tool_call") handlers.push(handler); } };
+	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {
+		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
+		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) { if (event === "tool_call") handlers.push(handler); } };
 		delete process.env[PERMISSION_POLICY_ENV];
 		registerPermissionGate(pi as never);
 		assert.equal(handlers.length, 0);
@@ -153,6 +153,16 @@ describe("subagent prompt runtime", () => {
 			block: true,
 			reason: "Blocked by pi-subagents permission rule: 'write' is denied.",
 		});
+
+		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "ask" });
+		const askHandlers: Array<(event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown> = [];
+		const requests: Array<{ toolName: string; args: unknown }> = [];
+		registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown) { if (event === "tool_call") askHandlers.push(handler); } } as never, async (request) => {
+			requests.push({ toolName: request.toolName, args: request.args });
+			return { approved: true, reason: "approved by watchdog", source: "watchdog" };
+		});
+		assert.equal(await askHandlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }), undefined);
+		assert.deepEqual(requests, [{ toolName: "write", args: { path: "out.txt" } }]);
 	});
 	it("collects runtime extension acknowledgements until terminal serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-runtime-ack-"));

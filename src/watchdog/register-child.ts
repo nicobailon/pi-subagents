@@ -12,7 +12,7 @@ import {
 } from "./child-status.ts";
 import type { ResolvedWatchdogConfig, WatchdogWarningDetails } from "./types.ts";
 
-function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchdogConfig {
+export function childResolvedConfig(config: ChildWatchdogConfig): ResolvedWatchdogConfig {
 	return {
 		...DEFAULT_WATCHDOG_CONFIG,
 		enabled: true,

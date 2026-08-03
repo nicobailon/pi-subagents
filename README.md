@@ -532,7 +532,9 @@ permission:
 
 Rules support `allow`, `ask`, and `deny`. Agent rules override matching global rules; omitted and unknown tools default to `allow`. Explicit `allow` removes an inherited restriction. The gate is not registered when the resolved policy has no `ask` or `deny` rules.
 
-An explicit `ask` pauses that exact tool call and routes a bounded, redacted preview through the native supervisor channel. The parent agent's exact `approve` or `deny` reply decides that call; malformed replies and transport failures deny it. Asked requests and decisions are written to a bounded audit JSONL file in the run artifacts. Ordinary direction and clarification through `contact_supervisor` or the optional `pi-intercom` extension remain separate and are never permission-gated.
+An explicit `ask` pauses that exact tool call and sends a bounded, redacted preview to a one-call permission arbiter owned by the built-in child watchdog. The arbiter uses the configured child-watchdog model and returns only `approve` or `deny`; it does not notify the parent agent. Enable and configure `subagents.watchdog.children` before using `ask` rules. A disabled watchdog, missing model/auth, timeout, malformed response, or runtime error denies the call with a clear error.
+
+Asked requests and decisions are written to bounded audit JSONL, including `decisionSource: "watchdog"` and bounded failure reasons. Ordinary direction and clarification through `contact_supervisor` or the optional `pi-intercom` extension remain separate and are never permission-gated.
 
 `bash` is always passed through by pi-subagents. Bash rules are rejected rather than parsed, gated, denied, or audited. Install and configure `pi-guard` when command-level bash policy is needed.
 

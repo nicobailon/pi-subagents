@@ -9,7 +9,6 @@ import {
 	createNativeSupervisorChannel,
 	ensureSupervisorChannelDir,
 	registerNativeSupervisorClient,
-	requestSupervisorPermission,
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
 import {
@@ -21,7 +20,6 @@ import {
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
-import { PERMISSION_AUDIT_PATH_ENV } from "../../src/runs/shared/permissions.ts";
 
 const createdChannels: string[] = [];
 const savedEnv = {
@@ -106,7 +104,6 @@ function restoreEnv(): void {
 afterEach(() => {
 	restoreEnv();
 	delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
-	delete process.env[PERMISSION_AUDIT_PATH_ENV];
 	for (const channel of createdChannels.splice(0)) fs.rmSync(channel, { recursive: true, force: true });
 });
 
@@ -463,37 +460,6 @@ describe("native supervisor channel", () => {
 		} finally {
 			channel.dispose();
 		}
-	});
-
-	it("approves an explicit permission ask and writes paired redacted audit records", async () => {
-		const runId = `run-${randomUUID()}`;
-		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
-		createdChannels.push(channelDir);
-		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
-		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
-		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
-		process.env[SUBAGENT_RUN_ID_ENV] = runId;
-		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
-		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
-		process.env[PERMISSION_AUDIT_PATH_ENV] = path.join(channelDir, "audit.jsonl");
-
-		const pending = requestSupervisorPermission({ toolName: "write", args: { token: "secret-value", path: "out.txt" } });
-		let requestName: string | undefined;
-		for (let attempt = 0; attempt < 20 && !requestName; attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 10));
-			requestName = fs.readdirSync(path.join(channelDir, "requests"))[0];
-		}
-		assert.ok(requestName);
-		const request = JSON.parse(fs.readFileSync(path.join(channelDir, "requests", requestName), "utf-8")) as { id: string; permission?: { preview?: string } };
-		assert.doesNotMatch(request.permission?.preview ?? "", /secret-value/);
-		fs.writeFileSync(path.join(channelDir, "replies", requestName), JSON.stringify({ type: "subagent.supervisor.reply", requestId: request.id, createdAt: Date.now(), message: "approve" }));
-
-		assert.deepEqual(await pending, { approved: true, reason: "Supervisor approved this exact 'write' call.", requestId: request.id });
-		const audit = fs.readFileSync(process.env[PERMISSION_AUDIT_PATH_ENV]!, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { requestId?: string; preview?: string });
-		assert.equal(audit.length, 2);
-		assert.equal(audit[0]?.requestId, request.id);
-		assert.equal(audit[1]?.requestId, request.id);
-		assert.doesNotMatch(audit[0]?.preview ?? "", /secret-value/);
 	});
 
 	it("removes the request file when a child supervisor ask is cancelled", async () => {

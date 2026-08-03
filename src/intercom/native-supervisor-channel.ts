@@ -12,7 +12,6 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../runs/shared/pi-args.ts";
-import { appendPermissionAudit, PERMISSION_AUDIT_PATH_ENV, permissionArgsPreview } from "../runs/shared/permissions.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
 
@@ -26,8 +25,7 @@ const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 
-type ContactSupervisorReason = "need_decision" | "interview_request" | "progress_update";
-type SupervisorReason = ContactSupervisorReason | "permission_request";
+type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
 
 interface SupervisorRequest {
 	type: "subagent.supervisor.request";
@@ -44,7 +42,6 @@ interface SupervisorRequest {
 	childIndex: number;
 	childTarget?: string;
 	interview?: unknown;
-	permission?: { toolName: string; preview: string; matchedRule: "ask" };
 }
 
 interface PendingSupervisorRequest extends SupervisorRequest {
@@ -60,7 +57,7 @@ interface SupervisorReply {
 }
 
 interface ContactSupervisorParams {
-	reason: ContactSupervisorReason;
+	reason: SupervisorReason;
 	message?: string;
 	interview?: unknown;
 }
@@ -140,7 +137,6 @@ function readChildMetadata(): {
 function reasonHeading(reason: SupervisorReason): string {
 	if (reason === "interview_request") return "Subagent requests a structured supervisor interview.";
 	if (reason === "progress_update") return "Subagent progress update.";
-	if (reason === "permission_request") return "Subagent requests permission for a tool call.";
 	return "Subagent needs a supervisor decision.";
 }
 
@@ -162,7 +158,6 @@ function formatChildMessage(input: {
 	if (input.childTarget) lines.push(`Child intercom target: ${input.childTarget}`);
 	lines.push("");
 	if (input.message?.trim()) lines.push(input.message.trim());
-	if (input.reason === "permission_request") lines.push("", "Reply with exactly `approve` or `deny`. This authorizes only this exact tool call.");
 	if (input.reason === "interview_request") {
 		lines.push(
 			"",
@@ -226,20 +221,19 @@ async function waitForReply(channelDir: string, requestId: string, deadline: num
 	throw new Error("Timed out waiting for supervisor reply.");
 }
 
-async function sendSupervisorRequest(params: ContactSupervisorParams | { reason: "permission_request"; message: string; permission: { toolName: string; preview: string; matchedRule: "ask" }; requestId?: string }, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
+async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 	const metadata = readChildMetadata();
 	if (!metadata) throw new Error("Native supervisor channel is not available for this subagent.");
 	if (params.reason !== "progress_update" && !params.message?.trim() && params.reason !== "interview_request") {
 		throw new Error("message is required for supervisor decisions.");
 	}
 	ensureSupervisorChannelDir(metadata.channelDir);
-	const requestId = "requestId" in params && params.requestId ? params.requestId : randomUUID();
+	const requestId = randomUUID();
 	const expectsReply = params.reason !== "progress_update";
 	const createdAt = Date.now();
 	const replyDeadline = createdAt + askTimeoutMs();
 	const expiresAt = expectsReply ? replyDeadline : undefined;
-	const interview = "interview" in params ? params.interview : undefined;
-	const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview });
+	const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview: params.interview });
 	const request: SupervisorRequest = {
 		type: "subagent.supervisor.request",
 		id: requestId,
@@ -254,8 +248,7 @@ async function sendSupervisorRequest(params: ContactSupervisorParams | { reason:
 		agent: metadata.agent,
 		childIndex: metadata.childIndex,
 		...(metadata.childTarget ? { childTarget: metadata.childTarget } : {}),
-		...(interview !== undefined ? { interview } : {}),
-		...("permission" in params ? { permission: params.permission } : {}),
+		...(params.interview !== undefined ? { interview: params.interview } : {}),
 	};
 	const serialized = JSON.stringify(request, null, "\t");
 	if (Buffer.byteLength(serialized, "utf-8") > MAX_MESSAGE_BYTES) throw new Error("Supervisor request is too large.");
@@ -270,7 +263,7 @@ async function sendSupervisorRequest(params: ContactSupervisorParams | { reason:
 
 	try {
 		const reply = await waitForReply(metadata.channelDir, requestId, replyDeadline, signal);
-		const details: Record<string, unknown> = { requestId, reason: params.reason, reply: reply.message };
+		const details: Record<string, unknown> = { requestId, reason: params.reason };
 		if (params.reason === "interview_request") {
 			const structured = parseStructuredReply(reply.message);
 			if (structured.error) details.structuredReplyParseError = structured.error;
@@ -283,43 +276,6 @@ async function sendSupervisorRequest(params: ContactSupervisorParams | { reason:
 	} catch (error) {
 		removeRequestFile(requestPath(metadata.channelDir, requestId));
 		throw error;
-	}
-}
-
-function parsePermissionDecision(message: string): "approve" | "deny" | undefined {
-	const normalized = message.trim().toLowerCase();
-	if (normalized === "approve" || normalized === "deny") return normalized;
-	try {
-		const parsed = JSON.parse(message) as { decision?: unknown };
-		return parsed.decision === "approve" || parsed.decision === "deny" ? parsed.decision : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-export async function requestSupervisorPermission(input: { toolName: string; args: unknown; signal?: AbortSignal }): Promise<{ approved: boolean; reason: string; requestId?: string }> {
-	const preview = permissionArgsPreview(input.args);
-	const auditPath = readTextEnv(PERMISSION_AUDIT_PATH_ENV);
-	const createdAt = Date.now();
-	const requestId = randomUUID();
-	appendPermissionAudit(auditPath, { type: "permission.request", createdAt, toolName: input.toolName, preview, matchedRule: "ask", requestId });
-	try {
-		const result = await sendSupervisorRequest({
-			reason: "permission_request",
-			message: `Tool: ${input.toolName}\nArguments: ${preview}`,
-			permission: { toolName: input.toolName, preview, matchedRule: "ask" },
-			requestId,
-		}, input.signal);
-		const reply = typeof result.details?.reply === "string" ? result.details.reply : "";
-		const decision = parsePermissionDecision(reply);
-		const approved = decision === "approve";
-		const reason = decision ? `Supervisor ${decision}d this exact '${input.toolName}' call.` : "Supervisor reply was malformed; expected approve or deny.";
-		appendPermissionAudit(auditPath, { type: "permission.decision", createdAt: Date.now(), requestCreatedAt: createdAt, toolName: input.toolName, requestId, decision: decision ?? "malformed", approved });
-		return { approved, reason, requestId };
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		appendPermissionAudit(auditPath, { type: "permission.decision", createdAt: Date.now(), requestCreatedAt: createdAt, toolName: input.toolName, requestId, decision: "transport-error", approved: false, reason: reason.slice(0, 500) });
-		return { approved: false, reason: `Permission request failed closed: ${reason}` };
 	}
 }
 
@@ -370,7 +326,7 @@ function parseRequestFile(file: string, channelDir: string): PendingSupervisorRe
 		const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorRequest>;
 		if (parsed.type !== "subagent.supervisor.request") return undefined;
 		if (typeof parsed.id !== "string" || !parsed.id) return undefined;
-		if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update" && parsed.reason !== "permission_request") return undefined;
+		if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update") return undefined;
 		if (typeof parsed.message !== "string" || !parsed.message) return undefined;
 		if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number") return undefined;
 		return { ...parsed as SupervisorRequest, channelDir, requestFile: file };
@@ -505,7 +461,7 @@ function markForegroundSupervisorAttention(request: SupervisorRequest, state: Su
 	remembered.run.updatedAt = updatedAt;
 	remembered.child.activityState = "needs_attention";
 	remembered.child.lastActivityAt = request.createdAt;
-	remembered.child.currentTool = request.permission ? `permission:${request.permission.toolName}` : "contact_supervisor";
+	remembered.child.currentTool = "contact_supervisor";
 	remembered.child.currentToolStartedAt = request.createdAt;
 	remembered.child.updatedAt = updatedAt;
 }
@@ -518,7 +474,7 @@ function clearForegroundSupervisorAttention(request: SupervisorRequest, pending:
 		&& candidate.childIndex === request.childIndex
 	)) return;
 	const remembered = rememberedForegroundChild(request, state);
-	if (!remembered || remembered.child.status !== "detached" || (remembered.child.currentTool !== "contact_supervisor" && !remembered.child.currentTool?.startsWith("permission:"))) return;
+	if (!remembered || remembered.child.status !== "detached" || remembered.child.currentTool !== "contact_supervisor") return;
 	const updatedAt = Date.now();
 	remembered.run.updatedAt = updatedAt;
 	remembered.child.activityState = undefined;
