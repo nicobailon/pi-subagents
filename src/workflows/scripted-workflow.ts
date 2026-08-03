@@ -230,7 +230,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) return onAbort();
 
-		worker.on("error", (error) => finish({ error: new Error(`Workflow worker failed: ${error.message}`) }));
+		worker.on("error", (error) => finish({ error: new Error(`Workflow worker failed: ${error instanceof Error ? error.message : String(error)}`) }));
 		worker.on("exit", (code) => {
 			if (!settled && code !== 0) finish({ error: new Error(`Workflow worker exited with code ${code}.`) });
 		});

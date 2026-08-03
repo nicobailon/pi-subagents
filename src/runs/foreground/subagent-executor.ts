@@ -89,7 +89,7 @@ import { attachMissionToLaunchResult, prepareMissionLaunch, type MissionLaunchBi
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { assertWorkflowJsonValue, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -101,6 +101,7 @@ import {
 } from "../shared/worktree.ts";
 import {
 	type AgentProgress,
+	type AsyncJobState,
 	type AsyncStatus,
 	type AcceptanceInput,
 	type AgentContract,
@@ -3826,9 +3827,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						job.workflow = status.workflow;
 					}
 				};
-				deps.state.asyncJobs.set(workflowRunId, { asyncId: workflowRunId, asyncDir, cwd: ctx.cwd, status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], startedAt, updatedAt: startedAt, timeoutMs: timeout, deadlineAt: startedAt + timeout, workflow: status.workflow });
+				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, cwd: ctx.cwd, status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], startedAt, updatedAt: startedAt, timeoutMs: timeout, deadlineAt: startedAt + timeout, workflow: status.workflow };
+				deps.state.asyncJobs.set(workflowRunId, workflowJob);
 				deps.state.fleetJobs ??= new Map();
-				deps.state.fleetJobs.set(workflowRunId, deps.state.asyncJobs.get(workflowRunId)!);
+				deps.state.fleetJobs.set(workflowRunId, workflowJob);
 				persist();
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, ...workflowRequest } = requestParams;
@@ -3859,7 +3861,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							signal: controller.signal,
 							onTrace: updateTrace,
 							onEmit: (emits) => {
-								assertWorkflowJsonValue(emits, "workflow emits");
+								// Each emit is validated at the host boundary in runWorkflowScript before onEmit fires.
 								status.workflow = { ...(status.workflow ?? { trace: [], console: [] }), emits };
 								persist();
 								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });
@@ -3882,7 +3884,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
 						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
-						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults) };
+						const workflowUsage = sumResultsUsage(workflowResults);
+						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: "complete" });
 						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, results: workflow.children.map((child) => ({ agent: child.key, output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: ctx.cwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
@@ -4356,9 +4359,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				if (resolved?.kind === "nested") return { content: [{ type: "text", text: "action='stop' supports current-session top-level async runs only." }], isError: true, details: { mode: "management", results: [] } };
 				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='stop' supports async runs only. Use action='interrupt' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
-				const existingStatus = resolved?.kind === "async" ? readStatus(resolved.location.asyncDir ?? "") : undefined;
-				if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
-					return { content: [{ type: "text", text: `Workflow ${resolved.id} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
+				if (resolved?.kind === "async") {
+					const existingStatus = readStatus(resolved.location.asyncDir ?? "");
+					if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
+						return { content: [{ type: "text", text: `Workflow ${resolved.id} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
+					}
 				}
 				const stopResult = stopAsyncRun(
 					deps.state,
