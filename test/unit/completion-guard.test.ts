@@ -200,6 +200,7 @@ test("git publication commands count as mutation attempts", () => {
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git -C /tmp/project add src/file.ts" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: 'git -C "/tmp/project with space" add src/file.ts' })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: 'git -C "$WORKTREE" commit -m fix' })]), true);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git --paginate push" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git diff --check && git add src/file.ts && git commit -m fix && git push" })]), true);
 });
 
@@ -213,7 +214,6 @@ test("read-only and quoted git commands do not count as mutation attempts", () =
 		"git --help add",
 		"git --version add",
 		"git -h commit",
-		"git --paginate push",
 		"gh pr view 749",
 		"echo 'git add src/file.ts'",
 		'printf "git commit -m fix"',

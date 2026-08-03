@@ -130,7 +130,7 @@ function hasMutatingGitCommand(command: string): boolean {
 	for (const segment of unquoted.split(/(?:&&|\|\||[;|()\n])/)) {
 		const trimmed = segment.trim();
 		if (!trimmed || /^(?:echo|printf)\b/.test(trimmed)) continue;
-		if (/^git\s+(?:(?:(?:-C|--git-dir|--work-tree)\s+\S+|(?:--git-dir|--work-tree)=\S+)\s+)*(?:add|commit|push)\b/.test(trimmed)) return true;
+		if (/^git\s+(?:(?:(?:-C|--git-dir|--work-tree)\s+\S+|(?:--git-dir|--work-tree)=\S+|--paginate)\s+)*(?:add|commit|push)\b/.test(trimmed)) return true;
 	}
 	return false;
 }
