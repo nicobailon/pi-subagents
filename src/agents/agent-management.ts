@@ -409,13 +409,15 @@ function parseTools(raw: string): { tools?: string[]; mcpDirectTools?: string[] 
 
 function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): string | undefined {
 	if (hasKey(cfg, "aliases")) {
-		if (cfg.aliases === false || cfg.aliases === "") target.aliases = undefined;
+		if (cfg.aliases === false || cfg.aliases === "") delete target.aliases;
 		else if (typeof cfg.aliases === "string") {
 			const aliases = parseCsv(cfg.aliases).filter((alias) => alias !== target.name);
-			target.aliases = aliases.length ? aliases : undefined;
+			if (aliases.length) target.aliases = aliases;
+			else delete target.aliases;
 		} else if (Array.isArray(cfg.aliases) && cfg.aliases.every((entry) => typeof entry === "string")) {
 			const aliases = [...new Set(cfg.aliases.map((entry) => entry.trim()).filter(Boolean).filter((alias) => alias !== target.name))];
-			target.aliases = aliases.length ? aliases : undefined;
+			if (aliases.length) target.aliases = aliases;
+			else delete target.aliases;
 		} else return "config.aliases must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "systemPrompt")) {
@@ -424,7 +426,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else return "config.systemPrompt must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "runner")) {
-		if (cfg.runner === false || cfg.runner === "") target.runner = undefined;
+		if (cfg.runner === false || cfg.runner === "") delete target.runner;
 		else if (cfg.runner && typeof cfg.runner === "object" && !Array.isArray(cfg.runner)) {
 			const runner = cfg.runner as Record<string, unknown>;
 			if (runner.type === "pi" && Object.keys(runner).every((key) => key === "type")) target.runner = { type: "pi" };
@@ -438,57 +440,77 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		} else return "config.runner must be an object, false, or empty string when provided.";
 	}
 	if (hasKey(cfg, "model")) {
-		if (cfg.model === false || cfg.model === "") target.model = undefined;
-		else if (typeof cfg.model === "string") target.model = cfg.model.trim() || undefined;
-		else return "config.model must be a string or false when provided.";
+		if (cfg.model === false || cfg.model === "") delete target.model;
+		else if (typeof cfg.model === "string") {
+			const model = cfg.model.trim();
+			if (model) target.model = model;
+			else delete target.model;
+		} else return "config.model must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "fallbackModels")) {
-		if (cfg.fallbackModels === false || cfg.fallbackModels === "") target.fallbackModels = undefined;
+		if (cfg.fallbackModels === false || cfg.fallbackModels === "") delete target.fallbackModels;
 		else if (typeof cfg.fallbackModels === "string") {
 			const models = parseCsv(cfg.fallbackModels);
-			target.fallbackModels = models.length ? models : undefined;
+			if (models.length) target.fallbackModels = models;
+			else delete target.fallbackModels;
 		} else if (Array.isArray(cfg.fallbackModels)) {
 			const models = cfg.fallbackModels
 				.filter((value): value is string => typeof value === "string")
 				.map((value) => value.trim())
 				.filter(Boolean);
-			target.fallbackModels = models.length ? [...new Set(models)] : undefined;
+			if (models.length) target.fallbackModels = [...new Set(models)];
+			else delete target.fallbackModels;
 		} else return "config.fallbackModels must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "tools")) {
-		if (cfg.tools === false || cfg.tools === "") { target.tools = undefined; target.mcpDirectTools = undefined; }
-		else if (typeof cfg.tools === "string") { const parsed = parseTools(cfg.tools); target.tools = parsed.tools; target.mcpDirectTools = parsed.mcpDirectTools; }
-		else return "config.tools must be a comma-separated string or false when provided.";
+		if (cfg.tools === false || cfg.tools === "") { delete target.tools; delete target.mcpDirectTools; }
+		else if (typeof cfg.tools === "string") {
+			const parsed = parseTools(cfg.tools);
+			if (parsed.tools) target.tools = parsed.tools;
+			else delete target.tools;
+			if (parsed.mcpDirectTools) target.mcpDirectTools = parsed.mcpDirectTools;
+			else delete target.mcpDirectTools;
+		} else return "config.tools must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skills")) {
-		if (cfg.skills === false || cfg.skills === "") target.skills = undefined;
-		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); target.skills = skills.length ? skills : undefined; }
-		else return "config.skills must be a comma-separated string or false when provided.";
+		if (cfg.skills === false || cfg.skills === "") delete target.skills;
+		else if (typeof cfg.skills === "string") {
+			const skills = parseCsv(cfg.skills);
+			if (skills.length) target.skills = skills;
+			else delete target.skills;
+		} else return "config.skills must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skillPath")) {
-		if (cfg.skillPath === false || cfg.skillPath === "") target.skillPath = undefined;
-		else if (typeof cfg.skillPath === "string") { const skillPath = parseCsv(cfg.skillPath); target.skillPath = skillPath.length ? skillPath : undefined; }
-		else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
+		if (cfg.skillPath === false || cfg.skillPath === "") delete target.skillPath;
+		else if (typeof cfg.skillPath === "string") {
+			const skillPath = parseCsv(cfg.skillPath);
+			if (skillPath.length) target.skillPath = skillPath;
+			else delete target.skillPath;
+		} else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
 			const skillPath = [...new Set(cfg.skillPath.map((entry) => entry.trim()).filter(Boolean))];
-			target.skillPath = skillPath.length ? skillPath : undefined;
+			if (skillPath.length) target.skillPath = skillPath;
+			else delete target.skillPath;
 		} else return "config.skillPath must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "extensions")) {
-		if (cfg.extensions === false) target.extensions = undefined;
+		if (cfg.extensions === false) delete target.extensions;
 		else if (cfg.extensions === "") target.extensions = [];
 		else if (typeof cfg.extensions === "string") target.extensions = parseCsv(cfg.extensions);
 		else return "config.extensions must be a comma-separated string, empty string, or false when provided.";
 	}
 	if (hasKey(cfg, "subagentOnlyExtensions")) {
-		if (cfg.subagentOnlyExtensions === false) target.subagentOnlyExtensions = undefined;
+		if (cfg.subagentOnlyExtensions === false) delete target.subagentOnlyExtensions;
 		else if (cfg.subagentOnlyExtensions === "") target.subagentOnlyExtensions = [];
 		else if (typeof cfg.subagentOnlyExtensions === "string") target.subagentOnlyExtensions = parseCsv(cfg.subagentOnlyExtensions);
 		else return "config.subagentOnlyExtensions must be a comma-separated string, empty string, or false when provided.";
 	}
 	if (hasKey(cfg, "thinking")) {
-		if (cfg.thinking === false || cfg.thinking === "") target.thinking = undefined;
-		else if (typeof cfg.thinking === "string") target.thinking = cfg.thinking.trim() || undefined;
-		else return "config.thinking must be a string or false when provided.";
+		if (cfg.thinking === false || cfg.thinking === "") delete target.thinking;
+		else if (typeof cfg.thinking === "string") {
+			const thinking = cfg.thinking.trim();
+			if (thinking) target.thinking = thinking;
+			else delete target.thinking;
+		} else return "config.thinking must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "systemPromptMode")) {
 		if (cfg.systemPromptMode === "append" || cfg.systemPromptMode === "replace") target.systemPromptMode = cfg.systemPromptMode;
@@ -503,30 +525,31 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.inheritSkills = cfg.inheritSkills;
 	}
 	if (hasKey(cfg, "defaultContext")) {
-		if (cfg.defaultContext === false || cfg.defaultContext === "") target.defaultContext = undefined;
+		if (cfg.defaultContext === false || cfg.defaultContext === "") delete target.defaultContext;
 		else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork") target.defaultContext = cfg.defaultContext;
 		else return "config.defaultContext must be 'fresh', 'fork', or false when provided.";
 	}
 	if (hasKey(cfg, "async")) {
-		if (cfg.async === "") target.defaultAsync = undefined;
+		if (cfg.async === "") delete target.defaultAsync;
 		else if (typeof cfg.async === "boolean") target.defaultAsync = cfg.async;
 		else return "config.async must be a boolean or empty string when provided.";
 	}
 	if (hasKey(cfg, "timeoutMs")) {
-		if (cfg.timeoutMs === false || cfg.timeoutMs === "") target.defaultTimeoutMs = undefined;
+		if (cfg.timeoutMs === false || cfg.timeoutMs === "") delete target.defaultTimeoutMs;
 		else if (typeof cfg.timeoutMs === "number" && Number.isInteger(cfg.timeoutMs) && cfg.timeoutMs > 0) target.defaultTimeoutMs = cfg.timeoutMs;
 		else return "config.timeoutMs must be a positive integer or false when provided.";
 	}
 	if (hasKey(cfg, "turnBudget")) {
-		if (cfg.turnBudget === false || cfg.turnBudget === "") target.defaultTurnBudget = undefined;
+		if (cfg.turnBudget === false || cfg.turnBudget === "") delete target.defaultTurnBudget;
 		else {
 			const resolved = resolveTurnBudgetConfig(cfg.turnBudget, "config.turnBudget");
 			if (resolved.error) return resolved.error;
-			target.defaultTurnBudget = resolved.turnBudget;
+			if (resolved.turnBudget !== undefined) target.defaultTurnBudget = resolved.turnBudget;
+			else delete target.defaultTurnBudget;
 		}
 	}
 	if (hasKey(cfg, "acceptance")) {
-		if (cfg.acceptance === "") target.defaultAcceptance = undefined;
+		if (cfg.acceptance === "") delete target.defaultAcceptance;
 		else {
 			const errors = validateAcceptanceInput(cfg.acceptance, "config.acceptance");
 			if (errors.length > 0) return errors.join(" ");
@@ -534,20 +557,21 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		}
 	}
 	if (hasKey(cfg, "acceptanceRole")) {
-		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") target.acceptanceRole = undefined;
+		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") delete target.acceptanceRole;
 		else if (cfg.acceptanceRole === "read-only" || cfg.acceptanceRole === "writer") target.acceptanceRole = cfg.acceptanceRole;
 		else return "config.acceptanceRole must be 'read-only', 'writer', or false when provided.";
 	}
 	if (hasKey(cfg, "output")) {
-		if (cfg.output === false || cfg.output === "") target.output = undefined;
+		if (cfg.output === false || cfg.output === "") delete target.output;
 		else if (typeof cfg.output === "string") target.output = cfg.output;
 		else return "config.output must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "reads")) {
-		if (cfg.reads === false || cfg.reads === "") target.defaultReads = undefined;
+		if (cfg.reads === false || cfg.reads === "") delete target.defaultReads;
 		else if (typeof cfg.reads === "string") {
 			const reads = parseCsv(cfg.reads);
-			target.defaultReads = reads.length ? reads : undefined;
+			if (reads.length) target.defaultReads = reads;
+			else delete target.defaultReads;
 		} else return "config.reads must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "progress")) {
@@ -555,7 +579,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.defaultProgress = cfg.progress;
 	}
 	if (hasKey(cfg, "maxSubagentDepth")) {
-		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") target.maxSubagentDepth = undefined;
+		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") delete target.maxSubagentDepth;
 		else if (typeof cfg.maxSubagentDepth === "number" && Number.isInteger(cfg.maxSubagentDepth) && cfg.maxSubagentDepth >= 0) {
 			target.maxSubagentDepth = cfg.maxSubagentDepth;
 		} else return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
@@ -565,7 +589,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.completionGuard = cfg.completionGuard;
 	}
 	if (hasKey(cfg, "toolBudget")) {
-		if (cfg.toolBudget === false || cfg.toolBudget === "") target.toolBudget = undefined;
+		if (cfg.toolBudget === false || cfg.toolBudget === "") delete target.toolBudget;
 		else {
 			const validation = validateToolBudgetConfig(cfg.toolBudget, "config.toolBudget");
 			if (validation.error) return validation.error;
