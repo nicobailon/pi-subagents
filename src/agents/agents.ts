@@ -1006,7 +1006,7 @@ function applyBuiltinOverride(
 	if (override.skills !== undefined) { if (override.skills === false) delete next.skills; else next.skills = [...override.skills]; }
 	if (override.tools !== undefined) {
 		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
-		next.tools = tools;
+		if (tools === undefined) delete next.tools; else next.tools = tools;
 		if (mcpDirectTools === undefined) delete next.mcpDirectTools; else next.mcpDirectTools = mcpDirectTools;
 	}
 	if (override.extensions !== undefined) { if (override.extensions === false) delete next.extensions; else next.extensions = [...override.extensions]; }
@@ -1149,7 +1149,7 @@ function applyCustomAgentOverride(
 	if (override.tools !== undefined && !agentHasFrontmatterField(agent, "tools")) {
 		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
 		const target = mutable();
-		target.tools = tools;
+		if (tools === undefined) delete target.tools; else target.tools = tools;
 		if (mcpDirectTools === undefined) delete target.mcpDirectTools; else target.mcpDirectTools = mcpDirectTools;
 		anyFilled = true;
 	}

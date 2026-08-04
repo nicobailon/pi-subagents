@@ -9,7 +9,7 @@ function normalizePackageName(value: string | undefined): string | undefined {
 }
 
 export function parsePackageName(value: unknown, label = "package"): { packageName?: string; error?: string } {
-	if (value === undefined || value === false || value === "") return { packageName: undefined };
+	if (value === undefined || value === false || value === "") return {};
 	if (typeof value !== "string") return { error: `${label} must be a string or false when provided.` };
 	const packageName = normalizePackageName(value);
 	if (!packageName || !IDENTIFIER_PATTERN.test(packageName)) return { error: `${label} is invalid after sanitization.` };

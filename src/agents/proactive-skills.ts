@@ -141,14 +141,17 @@ export function recommendProactiveSkillSubagents(input: {
 
 	return [...counts.entries()]
 		.filter(([skill, sources]) => sources.size >= config.minReferences && (!availableByName || availableByName.has(skill)))
-		.map(([skill, sources]) => ({
-			skill,
-			agent,
-			references: sources.size,
-			sources: [...sources].sort((a, b) => a.localeCompare(b)),
-			description: availableByName?.get(skill)?.description,
-			reason: `referenced by ${sources.size} configured agents/chains`,
-		}))
+		.map(([skill, sources]) => {
+			const description = availableByName?.get(skill)?.description;
+			return {
+				skill,
+				agent,
+				references: sources.size,
+				sources: [...sources].sort((a, b) => a.localeCompare(b)),
+				...(description !== undefined ? { description } : {}),
+				reason: `referenced by ${sources.size} configured agents/chains`,
+			};
+		})
 		.sort((a, b) => b.references - a.references || a.skill.localeCompare(b.skill))
 		.slice(0, config.maxRecommendations);
 }
@@ -184,8 +187,8 @@ export function buildProactiveSkillSubagentRecommendationLines(input: {
 	}
 	return formatProactiveSkillSubagentRecommendations(recommendProactiveSkillSubagents({
 		agents: input.agents,
-		chains: input.chains,
+		...(input.chains !== undefined ? { chains: input.chains } : {}),
 		availableSkills,
-		config: input.config,
+		...(input.config !== undefined ? { config: input.config } : {}),
 	}));
 }

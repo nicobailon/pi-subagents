@@ -410,15 +410,17 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 		const resolvedFile = path.resolve(filePath);
 		if (!fs.existsSync(resolvedFile)) return;
 		const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
+		const description = maybeReadSkillDescription(resolvedFile);
 		const existingIndex = seen.get(resolvedFile);
 		if (existingIndex !== undefined) {
 			const existing = entries[existingIndex];
 			if (existing && (SOURCE_PRIORITY[source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
+				const { description: _description, ...existingWithoutDescription } = existing;
 				entries[existingIndex] = {
-					...existing,
+					...existingWithoutDescription,
 					name,
 					source,
-					description: maybeReadSkillDescription(resolvedFile),
+					...(description !== undefined ? { description } : {}),
 				};
 			}
 			return;
@@ -428,7 +430,7 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 			name,
 			filePath: resolvedFile,
 			source,
-			description: maybeReadSkillDescription(resolvedFile),
+			...(description !== undefined ? { description } : {}),
 			order: order++,
 		});
 	};
@@ -592,7 +594,7 @@ function readSkill(
 			name: skillName,
 			path: skillPath,
 			content,
-			description,
+			...(description !== undefined ? { description } : {}),
 			source,
 		};
 
@@ -733,7 +735,7 @@ export function discoverAvailableSkills(cwd: string): Array<{
 		.map((s) => ({
 			name: s.name,
 			source: s.source,
-			description: s.description,
+			...(s.description !== undefined ? { description: s.description } : {}),
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
 }

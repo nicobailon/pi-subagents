@@ -93,7 +93,8 @@ function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 			}
 			const validation = validateToolBudgetConfig(parsed, `toolBudget for step '${agent}'`);
 			if (validation.error) throw new Error(validation.error);
-			step.toolBudget = parsed as ChainStepConfig["toolBudget"];
+			const toolBudget = parsed as ChainStepConfig["toolBudget"];
+			if (toolBudget !== undefined) step.toolBudget = toolBudget;
 		}
 	}
 
@@ -132,12 +133,12 @@ export function parseChain(content: string, source: AgentSource, filePath: strin
 	return {
 		name: buildRuntimeName(localName, packageName),
 		localName,
-		packageName,
+		...(packageName !== undefined ? { packageName } : {}),
 		description: frontmatter.description,
 		source,
 		filePath,
 		steps,
-		extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+		...(Object.keys(extraFields).length > 0 ? { extraFields } : {}),
 	};
 }
 
@@ -215,12 +216,12 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 	return {
 		name: buildRuntimeName(input.name.trim(), parsedPackage.packageName),
 		localName: input.name.trim(),
-		packageName: parsedPackage.packageName,
+		...(parsedPackage.packageName !== undefined ? { packageName: parsedPackage.packageName } : {}),
 		description: input.description.trim(),
 		source,
 		filePath,
 		steps: input.chain as ChainStepConfig[],
-		extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+		...(Object.keys(extraFields).length > 0 ? { extraFields } : {}),
 	};
 }
 
