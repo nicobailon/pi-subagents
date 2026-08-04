@@ -256,7 +256,8 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 			};
 		})
 		.sort((a, b) => b.mtime - a.mtime);
-	return files.length > 0 ? files[0].path : null;
+	const latest = files[0];
+	return latest ? latest.path : null;
 }
 
 /**
@@ -280,7 +281,7 @@ export function getFinalOutput(messages: Message[]): string {
 	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role !== "assistant") continue;
+		if (!msg || msg.role !== "assistant") continue;
 		const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
 			|| ("stopReason" in msg && msg.stopReason === "error");
 		if (hasAssistantError) continue;
@@ -290,7 +291,7 @@ export function getFinalOutput(messages: Message[]): string {
 			.join("\n");
 		for (let j = msg.content.length - 1; j >= 0; j--) {
 			const part = msg.content[j];
-			if (part.type !== "text" || part.text.trim().length === 0) continue;
+			if (!part || part.type !== "text" || part.text.trim().length === 0) continue;
 			validTextParts.push(part.text);
 			if (/```acceptance[-_]report\s*\n[\s\S]*?```/i.test(part.text)) return messageText;
 			for (const match of part.text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
@@ -481,7 +482,7 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 	let lastAssistantTextIndex = -1;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "assistant") {
+		if (msg?.role === "assistant") {
 			const hasText = Array.isArray(msg.content) && msg.content.some(
 				(c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0,
 			);
@@ -496,7 +497,7 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 
 	for (let i = messages.length - 1; i >= scanStart; i--) {
 		const msg = messages[i];
-		if (msg.role !== "toolResult") continue;
+		if (!msg || msg.role !== "toolResult") continue;
 		const toolName = "toolName" in msg && typeof msg.toolName === "string" ? msg.toolName : undefined;
 		const isError = "isError" in msg && msg.isError === true;
 
@@ -505,9 +506,10 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 		const text = msg.content.find((c) => c.type === "text");
 		const details = text && "text" in text ? text.text : undefined;
 		const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
+		const exitCodeText = exitMatch?.[1];
 		return {
 			hasError: true,
-			exitCode: exitMatch ? parseInt(exitMatch[1], 10) : 1,
+			exitCode: exitCodeText ? parseInt(exitCodeText, 10) : 1,
 			errorType: toolName || "tool",
 			details: details?.slice(0, 200),
 		};

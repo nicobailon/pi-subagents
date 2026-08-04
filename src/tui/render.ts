@@ -1491,6 +1491,7 @@ export function renderSubagentResult(
 
 	if (d.mode === "single" && d.results.length === 1) {
 		const r = d.results[0];
+		if (!r) return renderMultiCompact(d, theme, frame);
 		if (!expanded) return renderSingleCompact(d, r, theme, frame);
 		const isRunning = r.progress?.status === "running";
 		const icon = isRunning
@@ -1657,9 +1658,9 @@ export function renderSubagentResult(
 					const result = d.results[i];
 					const isFailed = result && result.exitCode !== 0 && result.progress?.status !== "running";
 					const isComplete = result && result.exitCode === 0 && result.progress?.status !== "running";
-					const isEmptyWithoutTarget = Boolean(result)
-						&& Boolean(isComplete)
-						&& hasEmptyTextOutputWithoutOutputTarget(result.task, getSingleResultOutput(result));
+					const isEmptyWithoutTarget = result
+						? Boolean(isComplete) && hasEmptyTextOutputWithoutOutputTarget(result.task, getSingleResultOutput(result))
+						: false;
 					const isCurrent = i === (d.currentStepIndex ?? d.results.length);
 					const stepIcon = isFailed
 						? theme.fg("error", "failed")
