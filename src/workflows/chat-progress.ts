@@ -76,7 +76,11 @@ export function resolveWorkflowChatProgress(input: ResolveWorkflowChatProgressIn
 	if (requested.error) return { error: requested.error };
 	const parentIdentity = resolveGitRepositoryIdentity(input.parentCwd);
 	const workflowIdentity = resolveGitRepositoryIdentity(input.workflowCwd);
-	const sameRepo = isSameGitRepositoryIdentity(parentIdentity, workflowIdentity);
+	const sameRepo = !!(
+		parentIdentity
+		&& workflowIdentity
+		&& (parentIdentity.commonDir === workflowIdentity.commonDir || parentIdentity.root === workflowIdentity.root)
+	);
 	const repoLabel = workflowIdentity ? path.basename(workflowIdentity.root) : undefined;
 	const repoRelation = sameRepo ? "same" : "other";
 
