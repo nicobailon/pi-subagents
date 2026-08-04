@@ -151,6 +151,12 @@ Use diagnostics when setup or child startup looks wrong:
 subagent({ action: "doctor" })
 ```
 
+### External terminal work
+
+Use native `subagent` runs for unattended implementation, review, and gate work that needs managed isolation, durable artifacts, and process controls. Use `interactive_shell` for visible terminal work, alternate CLIs, trust prompts, and recovery.
+
+A cooperating terminal runtime can register read-only external records through `pi-subagents/external-runs`. Records include the source, session, state, optional report path, and completion reason. They are observations only: pi-subagents does not start, stop, steer, or otherwise own the foreign process. Run unattended raw terminal agents in an explicit isolated cwd or worktree; do not use a live project checkout as disposable review space.
+
 ### Scheduled subagent runs
 
 Scheduled runs defer a subagent launch until a future time. They are enabled by default; set `{ "scheduledRuns": { "enabled": false } }` in `~/.pi/agent/extensions/subagent/config.json` to disable them. Only schedule explicit delayed runs the user asked for; do not schedule runs speculatively.

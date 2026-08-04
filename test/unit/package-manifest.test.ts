@@ -56,6 +56,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
 		"./background-work": "./src/api/background-work.ts",
+		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
 		"./delegation": "./src/api/delegation.ts",
 		"./preflight": "./src/api/preflight.ts",
@@ -67,6 +68,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
+	const externalRuns = await import("pi-subagents/external-runs");
+	assert.equal(externalRuns.EXTERNAL_RUN_REGISTRY_VERSION, 1);
+	assert.equal(typeof externalRuns.registerExternalRunProvider, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
