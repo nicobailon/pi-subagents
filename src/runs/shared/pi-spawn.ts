@@ -70,6 +70,11 @@ function normalizePath(filePath: string): string {
 	return path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
 }
 
+function isStandalonePiExecutable(execPath: string): boolean {
+	const executableName = execPath.split(/[\\/]/).pop();
+	return /^pi(?:\.exe)?$/i.test(executableName ?? "");
+}
+
 export function resolvePiCliScript(
 	deps: PiSpawnDeps = {},
 ): string | undefined {
@@ -141,10 +146,15 @@ export function getPiSpawnCommand(
 		return { command: piBinary, args };
 	}
 
+	const execPath = deps.execPath ?? process.execPath;
+	if (isStandalonePiExecutable(execPath)) {
+		return { command: execPath, args };
+	}
+
 	const piCliPath = resolvePiCliScript(deps);
 	if (piCliPath) {
 		return {
-			command: deps.execPath ?? process.execPath,
+			command: execPath,
 			args: [piCliPath, ...args],
 		};
 	}

@@ -73,6 +73,32 @@ describe("getPiSpawnCommand", () => {
 		assert.deepEqual(result, { command: "pi", args });
 	});
 
+	for (const [platform, execPath] of [
+		["darwin", "/opt/pi/pi"],
+		["win32", "C:\\Program Files\\Pi\\pi.exe"],
+	] as const) {
+		it(`uses the standalone Pi executable directly on ${platform}`, () => {
+			const packageJsonPath = "/opt/pi-package/package.json";
+			const cliPath = path.resolve(
+				path.dirname(packageJsonPath),
+				"dist/cli.js",
+			);
+			const deps = makeDeps({
+				platform,
+				execPath,
+				argv1: "/missing/host.js",
+				packageJsonPath,
+				packageJsonContent: JSON.stringify({ bin: { pi: "dist/cli.js" } }),
+				existing: [packageJsonPath, cliPath],
+			});
+			const args = ["--mode", "json", "-p", "Task: review diff"];
+			assert.deepEqual(getPiSpawnCommand(args, deps), {
+				command: execPath,
+				args,
+			});
+		});
+	}
+
 	for (const platform of ["darwin", "linux", "win32"] as const) {
 		it(`uses node + argv1 on ${platform} when argv1 belongs to the Pi package`, () => {
 			const tempDir = fs.mkdtempSync(
