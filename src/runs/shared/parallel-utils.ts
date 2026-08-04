@@ -185,8 +185,8 @@ export async function mapConcurrent<T, R>(
 		try {
 			while (next < items.length) {
 				const i = next++;
-				const item = items[i];
-				if (item === undefined) throw new Error(`Missing parallel item at index ${i}`);
+				if (!(i in items)) throw new Error(`Missing parallel item at index ${i}`);
+				const item = items[i] as T;
 				if (globalSemaphore) {
 					await globalSemaphore.acquire();
 					try {
