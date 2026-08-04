@@ -779,8 +779,10 @@ export class ChainClarifyComponent implements Component {
 			const { lines: wrapped, starts } = wrapText(this.editState.buffer, textWidth);
 			const cursorPos = getCursorDisplayPos(this.editState.cursor, starts);
 			const targetLine = Math.max(0, cursorPos.line - this.EDIT_VIEWPORT_HEIGHT);
+			const targetStart = starts[targetLine];
+			if (targetStart === undefined) return;
 			const targetCol = Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0);
-			this.editState = { ...this.editState, cursor: starts[targetLine] + targetCol };
+			this.editState = { ...this.editState, cursor: targetStart + targetCol };
 			this.tui.requestRender();
 			return;
 		}
@@ -789,8 +791,10 @@ export class ChainClarifyComponent implements Component {
 			const { lines: wrapped, starts } = wrapText(this.editState.buffer, textWidth);
 			const cursorPos = getCursorDisplayPos(this.editState.cursor, starts);
 			const targetLine = Math.min(wrapped.length - 1, cursorPos.line + this.EDIT_VIEWPORT_HEIGHT);
+			const targetStart = starts[targetLine];
+			if (targetStart === undefined) return;
 			const targetCol = Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0);
-			this.editState = { ...this.editState, cursor: starts[targetLine] + targetCol };
+			this.editState = { ...this.editState, cursor: targetStart + targetCol };
 			this.tui.requestRender();
 			return;
 		}

@@ -1072,6 +1072,9 @@ export function executeAsyncChain(
 
 	if (spawnResult.pid) {
 		const eventFirstStep = eventChain[0];
+		if (!eventFirstStep) {
+			return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': event chain has no steps`);
+		}
 		const firstAgents = isParallelStep(eventFirstStep)
 			? eventFirstStep.parallel.map((t) => t.agent)
 			: isDynamicParallelStep(eventFirstStep)
