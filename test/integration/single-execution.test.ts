@@ -13,6 +13,7 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -469,13 +470,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
-	it("persists workflow parent metadata in async child status and result", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("persists workflow parent metadata in an async worktree child status and result", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
 		mockPi.onCall({ output: "async child done" });
 		const executor = makeExecutor([makeAgent("echo")]);
 		const workflowRunId = `scripted-workflow-parent-${Date.now()}`;
 		const started = await executor.execute(
 			workflowRunId,
-			{ workflowScript: `const child = await runs.run("background", { agent: "echo", task: "Async child", async: true }); return child.runId;` },
+			{ workflowScript: `const child = await runs.run("background", { agent: "echo", task: "Async child", async: true, worktree: true }); return child.runId;` },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -492,14 +499,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(childRunId);
 		const childDir = path.join(DIRS.async, childRunId);
 		const childStatusPath = path.join(childDir, "status.json");
-		let childStatus: { state?: string; parentWorkflowRunId?: string; workflowKey?: string } = {};
+		let childStatus: { state?: string; mode?: string; parentWorkflowRunId?: string; workflowKey?: string; parallelHandoff?: { path?: string } } = {};
 		for (let attempt = 0; attempt < 200; attempt++) {
 			if (fs.existsSync(childStatusPath)) childStatus = JSON.parse(fs.readFileSync(childStatusPath, "utf-8"));
 			if (["complete", "failed", "stopped"].includes(childStatus.state ?? "")) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
+		assert.equal(childStatus.mode, "parallel");
 		assert.equal(childStatus.parentWorkflowRunId, workflowRunId);
 		assert.equal(childStatus.workflowKey, "background");
+		assert.equal(typeof childStatus.parallelHandoff?.path, "string");
 		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
 		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
@@ -594,6 +603,99 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.mode, "workflow");
 		assert.equal(result.details.results.length, 2);
 		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
+	});
+
+	it("gives parallel workflow children separate managed worktrees and durable handoffs", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({ output: "feature a", writeFiles: [{ path: "feature-a.txt", content: "a\n" }] });
+		mockPi.onCall({ output: "feature b", writeFiles: [{ path: "feature-b.txt", content: "b\n" }] });
+		const executor = makeExecutor([makeAgent("worker")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-worktrees",
+			{
+				async: false,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "feature-a", agent: "worker", task: "Implement A", worktree: true },
+						{ key: "feature-b", agent: "worker", task: "Implement B", worktree: true }
+					]);
+					return children.map(({ key, artifactPaths }) => ({ key, artifactPaths }));
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 2);
+		assert.equal(fs.existsSync(path.join(tempDir, "feature-a.txt")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "feature-b.txt")), false);
+		const output = result.content[0]?.text ?? "";
+		const handoffPaths = [...output.matchAll(/"([^"\n]*\/handoffs\/[^"\n]+\.json)"/g)].map((match) => match[1]!);
+		assert.equal(handoffPaths.length, 2, output);
+		const worktreePaths = new Set<string>();
+		for (const handoffPath of handoffPaths) {
+			const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+				groups: Array<{
+					children: Array<{ patch: { changed: boolean; path: string } }>;
+					cleanup: { state: string; tasks: Array<{ path: string; worktreeRemoved: boolean; branchRemoved: boolean }> };
+				}>;
+			};
+			assert.equal(handoff.groups.length, 1);
+			assert.equal(handoff.groups[0]?.children.length, 1);
+			assert.equal(handoff.groups[0]?.children[0]?.patch.changed, true);
+			assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
+			assert.equal(handoff.groups[0]?.cleanup.state, "complete");
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
+			worktreePaths.add(handoff.groups[0]!.cleanup.tasks[0]!.path);
+		}
+		assert.equal(worktreePaths.size, 2);
+		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), false);
+		assert.match(result.content[0]?.text ?? "", /handoffs/);
+	});
+
+	it("inherits workflow-level worktree isolation and allows a child opt-out", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({ output: "isolated", writeFiles: [{ path: "isolated.txt", content: "isolated\n" }] });
+		mockPi.onCall({ output: "shared", writeFiles: [{ path: "shared.txt", content: "shared\n" }] });
+		const executor = makeExecutor([makeAgent("worker")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-worktree-default",
+			{
+				async: false,
+				worktree: true,
+				workflowScript: `
+					const isolated = await runs.run("isolated", { agent: "worker", task: "Isolated" });
+					const shared = await runs.run("shared", { agent: "worker", task: "Shared", worktree: false });
+					return { isolated: isolated.artifactPaths, shared: shared.artifactPaths };
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(fs.existsSync(path.join(tempDir, "isolated.txt")), false);
+		assert.equal(fs.readFileSync(path.join(tempDir, "shared.txt"), "utf-8"), "shared\n");
+		const output = result.content[0]?.text ?? "";
+		const handoffPaths = [...output.matchAll(/"([^"\n]*\/handoffs\/[^"\n]+\.json)"/g)].map((match) => match[1]!);
+		assert.equal(handoffPaths.length, 1, output);
+		assert.equal(fs.existsSync(handoffPaths[0]!), true);
 	});
 
 	it("applies a workflow usage budget across scripted child launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

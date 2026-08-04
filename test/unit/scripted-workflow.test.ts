@@ -34,10 +34,36 @@ describe("scripted workflow runtime", () => {
 		assert.equal(launches.every(({ params }) => params.async === false), true);
 		assert.deepEqual(result.emits, [{ count: 2 }]);
 		assert.deepEqual(result.console, [{ level: "log", text: "reviewed 2" }]);
-		assert.match(JSON.stringify(result.value), /run review-a; id=run-review-a-complete; artifacts=\/tmp\/review-a\.md/);
+		assert.match(JSON.stringify(result.value), /\[run review-a; id=run-revi\]/);
+		assert.doesNotMatch(JSON.stringify(result.value), /artifacts=/);
 		assert.equal(result.trace.filter((entry) => entry.state === "completed").length, 3);
 		assert.ok(traceSnapshots.length >= 6);
 		assert.deepEqual(emitSnapshots, [1]);
+	});
+
+	it("passes per-child worktree controls through runs.run and runs.all", async () => {
+		const launches: Array<{ key: string; worktree: unknown }> = [];
+		await runWorkflowScript({
+			script: `
+				const one = await runs.run("one", { agent: "worker", task: "one", worktree: true });
+				const rest = await runs.all([
+					{ key: "two", agent: "worker", task: "two", worktree: true },
+					{ key: "three", agent: "reviewer", task: "three", worktree: false }
+				]);
+				return [one.key, ...rest.map((entry) => entry.key)];
+			`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launches.push({ key, worktree: params.worktree });
+				return { key, ok: true, output: key, artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches, [
+			{ key: "one", worktree: true },
+			{ key: "two", worktree: true },
+			{ key: "three", worktree: false },
+		]);
 	});
 
 	it("rejects legacy orchestration params in runs.run", async () => {

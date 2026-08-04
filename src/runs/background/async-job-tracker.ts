@@ -438,6 +438,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			timeoutMs: info.timeoutMs,
 			deadlineAt: info.deadlineAt,
 			turnBudget: info.turnBudget,
+			parentWorkflowRunId: info.parentWorkflowRunId,
+			workflowKey: info.workflowKey,
 			controlEventCursor: 0,
 		});
 		rememberFleetJob(state, state.asyncJobs.get(info.id)!);

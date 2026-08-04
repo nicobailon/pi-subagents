@@ -1175,6 +1175,8 @@ export interface AsyncStartedEvent {
 	turnBudget?: TurnBudgetState;
 	nestedRoute?: NestedRouteInfo;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
 }
 
 export type AgentRunnerConfig =

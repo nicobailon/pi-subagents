@@ -21,9 +21,7 @@ function hostCall(method, args) {
 function formatRef(result) {
   if (!result || typeof result !== "object") throw new Error("runs.ref(result) requires a run result object.");
   const parts = ["run " + (result.key || "unknown")];
-  if (result.runId) parts.push("id=" + result.runId);
-  const paths = Array.isArray(result.artifactPaths) ? result.artifactPaths.filter((value) => typeof value === "string") : [];
-  if (paths.length) parts.push("artifacts=" + paths.join(","));
+  if (result.runId) parts.push("id=" + String(result.runId).slice(0, 8));
   return "[" + parts.join("; ") + "]";
 }
 
@@ -301,8 +299,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (!isRecord(params)) return respond(Promise.reject(new Error(`runs.run('${key}', params) requires a params object.`)));
 			if (params.action !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') accepts execution params only; management action is not allowed.`)));
 			if (params.workflowScript !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') cannot start a nested workflow script.`)));
-			if (params.tasks !== undefined || params.chain !== undefined || params.concurrency !== undefined || params.worktree !== undefined || params.chainDir !== undefined) {
+			if (params.tasks !== undefined || params.chain !== undefined || params.concurrency !== undefined || params.chainDir !== undefined) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') accepts one child via { agent, task }; use runs.all(...) and JavaScript control flow for orchestration.`)));
+			}
+			if (params.worktree !== undefined && typeof params.worktree !== "boolean") {
+				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
 			}
 			const fingerprint = stableJson(params);
 			const existing = launches.get(key);

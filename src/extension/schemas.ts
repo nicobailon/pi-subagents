@@ -306,7 +306,8 @@ const SubagentParamsSchema = Type.Object({
 		],
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
 	})),
-	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript orchestration. Starts asynchronously by default; pass async:false for a small foreground run. Use await runs.run(key, {agent, task}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
+	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript orchestration. Starts asynchronously by default; pass async:false for a small foreground run. Use await runs.run(key, {agent, task, worktree?}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. Set worktree:true at workflow or child level for a separate managed worktree per child; child fields override workflow defaults. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
+	worktree: Type.Optional(Type.Boolean({ description: "Workflow-only default for managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override with worktree:false." })),
 	step: Type.Optional(Type.Unsafe({ ...ChainItem, description: "One chain step for action='append-step' only. Not an execution mode." })),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork"],

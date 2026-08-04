@@ -311,21 +311,24 @@ them share one filesystem view.
 
 ```typescript
 subagent({
-  tasks: [
-    { agent: "worker", task: "Implement feature A" },
-    { agent: "worker", task: "Implement feature B" }
-  ],
-  worktree: true
+  workflowScript: `
+    const results = await runs.all([
+      { key: "feature-a", agent: "worker", task: "Implement feature A", worktree: true },
+      { key: "feature-b", agent: "worker", task: "Implement feature B", worktree: true }
+    ]);
+    return results.map(({ key, artifactPaths }) => ({ key, artifactPaths }));
+  `
 })
 ```
 
-`worktree: true` gives each parallel task its own git worktree branched from
-HEAD. This requires a clean git state and is mainly for intentionally parallel
-write workflows. On completion, use the versioned aggregate handoff at
-`parallelHandoff.path` from foreground details or async status/results instead of scraping the combined
-text. Its versioned manifest records child status and output references, full
+`worktree: true` on a `runs.run` / `runs.all` item gives that child its own git
+worktree branched from HEAD. A top-level workflow `worktree: true` makes this the
+default for every child, and a child can opt out with `worktree: false`. This
+requires a clean git state and is mainly for intentionally parallel write
+workflows. On completion, use each child's versioned handoff path from its
+`artifactPaths` instead of scraping combined text. Each versioned manifest records child status and output references, full
 patch paths and stats, and whether each temporary worktree and branch was
-removed. The manifest is journaled immediately after managed worktree setup, before children run, so abrupt exits retain owned paths and branches for recovery. Dirty or divergent work without a successfully captured patch is preserved with a partial-cleanup warning. Permanently discard recorded preserved work with `subagent({ action: "worktree.discard", handoffPath: "<parallelHandoff.path>" })`; authority defaults to interactive confirmation and refuses headlessly, and partial results print manual Git recovery commands. If you want one writer thread and several advisory agents, prefer a
+removed. The manifest is journaled immediately after managed worktree setup, before children run, so abrupt exits retain owned paths and branches for recovery. Dirty or divergent work without a successfully captured patch is preserved with a partial-cleanup warning. Permanently discard recorded preserved work with `subagent({ action: "worktree.discard", handoffPath: "<child handoff path>" })`; authority defaults to interactive confirmation and refuses headlessly, and partial results print manual Git recovery commands. If you want one writer thread and several advisory agents, prefer a
 single-writer pattern instead.
 
 Git worktrees start from tracked files, so ignored or untracked build state

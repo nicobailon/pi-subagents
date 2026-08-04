@@ -1251,7 +1251,19 @@ For cross-project work, keep same-project tasks on ordinary subagents. Use an ex
 
 ## Worktree isolation
 
-The deleted static parallel API previously offered a top-level `worktree` switch. Scripted workflows launch ordinary single children and do not expose that legacy shortcut. When parallel writers are explicitly required, prepare isolated worktrees outside the subagent call and pass each child a distinct `cwd`; otherwise keep one writer and parallelize read-only work.
+Scripted workflows can give each writing child a separate managed git worktree by setting `worktree: true` on each `runs.run` / `runs.all` item:
+
+```javascript
+const [api, ui] = await runs.all([
+  { key: "api", agent: "worker", task: "Implement the API", worktree: true },
+  { key: "ui", agent: "worker", task: "Implement the UI", worktree: true }
+]);
+return { api: api.artifactPaths, ui: ui.artifactPaths };
+```
+
+Each child uses the existing worktree lifecycle: it branches from clean HEAD, journals ownership before launch, captures a patch and handoff manifest, then removes cleanly captured temporary worktrees and branches. The handoff manifest path remains available in the child's `artifactPaths`; return or emit it when the orchestrator needs to apply or inspect the patches. `runs.ref` stays concise and intentionally omits full paths.
+
+A top-level `{ workflowScript, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 
 ## Configuration
 
