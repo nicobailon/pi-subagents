@@ -24,6 +24,7 @@
 - Scheduled subagent runs are now enabled by default; set `{ "scheduledRuns": { "enabled": false } }` to opt out.
 
 ### Fixed
+- Prepared foreground subagent execution for TypeScript `exactOptionalPropertyTypes` by omitting absent optional fields at status, result, and control boundaries.
 - Project oversized redundant Pi `turn_end` and `agent_end` child events to bounded lifecycle records instead of failing image-heavy runs with `protocol_output_limit`, while preserving `agent_end.willRetry` drain behavior. Thanks to @barto-sh for #743.
 - Count clear `git add`, `git commit`, and `git push` bash calls as implementation mutation attempts so workers that finalize pre-applied changes do not fail the completion guard.
 - Render structured-output-only children as useful JSON output instead of misleading `(no output)` summaries and empty output artifacts.

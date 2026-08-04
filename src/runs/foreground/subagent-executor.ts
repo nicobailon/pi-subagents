@@ -152,6 +152,7 @@ type UndefinedOmitted<T extends object> = {
 	[K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
 };
 
+// These helpers mutate their argument, so keep calls scoped to fresh object literals or shallow copies.
 function omitUndefinedProperties<T extends object>(value: T): UndefinedOmitted<T> {
 	for (const key of Object.keys(value) as Array<keyof T>) {
 		if (value[key] === undefined) delete value[key];
