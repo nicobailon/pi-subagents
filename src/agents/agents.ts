@@ -886,14 +886,23 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
 	const agentOverrides = subagentsObject.agentOverrides;
+	const parsedSettings: SubagentSettings = {
+		overrides: parsed,
+		...(defaultModel !== undefined ? { defaultModel } : {}),
+		...(defaultThinking !== undefined ? { defaultThinking } : {}),
+		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
+		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
+		...(disableThinking !== undefined ? { disableThinking } : {}),
+		...(modelScope !== undefined ? { modelScope } : {}),
+	};
 	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-		return { overrides: parsed, ...(defaultModel !== undefined ? { defaultModel } : {}), ...(defaultThinking !== undefined ? { defaultThinking } : {}), ...(defaultExtensions !== undefined ? { defaultExtensions } : {}), ...(disableBuiltins !== undefined ? { disableBuiltins } : {}), ...(disableThinking !== undefined ? { disableThinking } : {}), ...(modelScope !== undefined ? { modelScope } : {}) };
+		return parsedSettings;
 	}
 	for (const [name, value] of Object.entries(agentOverrides)) {
 		const override = parseBuiltinOverrideEntry(name, value, filePath);
 		if (override) parsed[name] = override;
 	}
-	return { overrides: parsed, ...(defaultModel !== undefined ? { defaultModel } : {}), ...(defaultThinking !== undefined ? { defaultThinking } : {}), ...(defaultExtensions !== undefined ? { defaultExtensions } : {}), ...(disableBuiltins !== undefined ? { disableBuiltins } : {}), ...(disableThinking !== undefined ? { disableThinking } : {}), ...(modelScope !== undefined ? { modelScope } : {}) };
+	return parsedSettings;
 }
 
 function resolveSubagentDefaultModel(
@@ -997,7 +1006,7 @@ function applyBuiltinOverride(
 	if (override.skills !== undefined) { if (override.skills === false) delete next.skills; else next.skills = [...override.skills]; }
 	if (override.tools !== undefined) {
 		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
-		if (tools === undefined) delete next.tools; else next.tools = tools;
+		next.tools = tools;
 		if (mcpDirectTools === undefined) delete next.mcpDirectTools; else next.mcpDirectTools = mcpDirectTools;
 	}
 	if (override.extensions !== undefined) { if (override.extensions === false) delete next.extensions; else next.extensions = [...override.extensions]; }
@@ -1140,7 +1149,7 @@ function applyCustomAgentOverride(
 	if (override.tools !== undefined && !agentHasFrontmatterField(agent, "tools")) {
 		const { tools, mcpDirectTools } = splitToolList(override.tools === false ? [] : override.tools);
 		const target = mutable();
-		if (tools === undefined) delete target.tools; else target.tools = tools;
+		target.tools = tools;
 		if (mcpDirectTools === undefined) delete target.mcpDirectTools; else target.mcpDirectTools = mcpDirectTools;
 		anyFilled = true;
 	}
