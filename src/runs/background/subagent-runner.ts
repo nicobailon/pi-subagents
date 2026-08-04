@@ -383,23 +383,29 @@ function isTerminalAssistantStop(message: Message): boolean {
 	return (message as { stopReason?: string }).stopReason === "stop" && !assistantStartsToolCall(message);
 }
 
-type WithoutUndefined<T extends object> = {
+type UndefinedOmitted<T extends object> = {
 	[K in keyof T]: Exclude<T[K], undefined>;
 };
 
-function withoutUndefined<const T extends object>(value: T): WithoutUndefined<T> {
+function omitUndefinedProperties<const T extends object>(value: T): UndefinedOmitted<T> {
 	for (const key in value) {
 		if (value[key] === undefined) delete value[key];
 	}
-	return value as WithoutUndefined<T>;
+	return value as UndefinedOmitted<T>;
 }
 
 type WithUndefinedOptionals<T extends object> = {
 	[K in keyof T]: {} extends Pick<T, K> ? T[K] | undefined : T[K];
 };
 
-function compactOptional<T extends object>(value: WithUndefinedOptionals<T>): T {
-	for (const key in value) {
+type RequiredKeysAllowingUndefined<T extends object> = {
+	[K in keyof T]-?: {} extends Pick<T, K> ? never : undefined extends T[K] ? K : never;
+}[keyof T];
+
+function compactOptional<T extends object>(
+	value: WithUndefinedOptionals<T> & (RequiredKeysAllowingUndefined<T> extends never ? unknown : never),
+): T {
+	for (const key of Object.keys(value) as Array<keyof T>) {
 		if (value[key] === undefined) delete value[key];
 	}
 	return value as T;
@@ -407,7 +413,7 @@ function compactOptional<T extends object>(value: WithUndefinedOptionals<T>): T 
 
 function setOptionalProperty<T extends object, K extends keyof T>(target: T, key: K, value: T[K]): void {
 	if (value === undefined) delete target[key];
-	else Reflect.set(target, key, value);
+	else target[key] = value;
 }
 
 function resetStepLiveDetail(step: RunnerStatusStep): void {
@@ -872,7 +878,7 @@ function runPiStreaming(
 				turnBudgetExceeded,
 				forcedDrainAfterFinalSuccess,
 			}) ? formatProcessSignalError(signal!) : undefined;
-			resolve(withoutUndefined({
+			resolve(omitUndefinedProperties({
 				stderr,
 				exitCode: timedOut || stopped ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
@@ -917,7 +923,7 @@ function runPiStreaming(
 			const stderr = stderrTail.text();
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve(withoutUndefined({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, outputState: finalOutput.trim() ? "present" : "absent", timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId }));
+			resolve(omitUndefinedProperties({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, outputState: finalOutput.trim() ? "present" : "absent", timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId }));
 		});
 	});
 }
@@ -1085,7 +1091,7 @@ async function runSingleStep(
 				pid = undefined;
 			}
 			try {
-				deliverTimeoutRequest(withoutUndefined({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-timeout" }));
+				deliverTimeoutRequest(omitUndefinedProperties({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-timeout" }));
 			} catch {
 				// The parent runner's own timeout result is authoritative for the attached step.
 			}
@@ -1099,13 +1105,13 @@ async function runSingleStep(
 				pid = undefined;
 			}
 			try {
-				deliverStopRequest(withoutUndefined({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-stop" }));
+				deliverStopRequest(omitUndefinedProperties({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-stop" }));
 			} catch {
 				// The parent runner's own stopped result is authoritative for the attached step.
 			}
 		});
 		try {
-			const imported = await waitForImportedAsyncRoot(step.importAsyncRoot, withoutUndefined({
+			const imported = await waitForImportedAsyncRoot(step.importAsyncRoot, omitUndefinedProperties({
 				shouldAbort: () => importTimedOut || importStopped || ctx.timeoutSignal?.aborted === true || ctx.stopSignal?.aborted === true || ctx.skipAcceptance?.() === true,
 				timeoutMessage: importStopped || ctx.stopSignal?.aborted === true ? ctx.stopMessage : ctx.timeoutMessage,
 			}));
@@ -1117,7 +1123,7 @@ async function runSingleStep(
 			const stopped = importStopped || imported.stopped === true || ctx.stopSignal?.aborted === true;
 			const timedOut = !stopped && (importTimedOut || imported.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true);
 			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
-			return withoutUndefined({
+			return omitUndefinedProperties({
 				agent: imported.agent,
 				output: timedOut || stopped ? message : imported.output,
 				exitCode: timedOut || stopped ? 1 : imported.exitCode,
@@ -1186,7 +1192,7 @@ async function runSingleStep(
 			capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
-		const external = await runExternalCli(withoutUndefined({
+		const external = await runExternalCli(omitUndefinedProperties({
 			command: runner.command,
 			args: runner.args,
 			cwd: step.cwd ?? ctx.cwd,
@@ -1204,7 +1210,7 @@ async function runSingleStep(
 			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot)
 			: { fullOutput: external.output };
 		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
-		const finalizedOutput = finalizeSingleOutput(withoutUndefined({
+		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
 			fullOutput: resolvedOutput.fullOutput,
 			outputPath: step.outputPath,
 			outputMode: step.outputMode,
@@ -1215,13 +1221,13 @@ async function runSingleStep(
 		}));
 		if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
 			if (ctx.artifactConfig?.includeOutput !== false) {
-				fs.writeFileSync(artifactPaths.outputPath, formatOutputArtifactContent(withoutUndefined({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })), "utf-8");
+				fs.writeFileSync(artifactPaths.outputPath, formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })), "utf-8");
 			}
 			if (ctx.artifactConfig?.includeMetadata !== false) {
 				fs.writeFileSync(artifactPaths.metadataPath, JSON.stringify({ runId: ctx.id, agent: step.agent, task, runner, externalProcess: external.externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() }, null, 2), "utf-8");
 			}
 		}
-		return withoutUndefined({
+		return omitUndefinedProperties({
 			agent: step.agent,
 			context: step.context,
 			output: finalizedOutput.displayOutput,
@@ -1263,7 +1269,7 @@ async function runSingleStep(
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
-		ctx.onAttemptStart?.(withoutUndefined({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) }));
+		ctx.onAttemptStart?.(omitUndefinedProperties({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) }));
 		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 		if (effectiveStructuredOutput) {
 			try {
@@ -1281,7 +1287,7 @@ async function runSingleStep(
 				childIndex: ctx.flatIndex,
 			})
 			: undefined;
-		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit } = buildPiArgs(withoutUndefined({
+		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit } = buildPiArgs(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
 			task,
@@ -1323,7 +1329,7 @@ async function runSingleStep(
 			waitToolEnabled: step.waitToolEnabled,
 		}));
 		if (step.definitionDigest) {
-			const toolPlan = resolvePiLaunchToolPlan(withoutUndefined({
+			const toolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,
 				extensions: step.extensions,
 				subagentOnlyExtensions: step.subagentOnlyExtensions,
@@ -1335,7 +1341,7 @@ async function runSingleStep(
 				inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			}));
 			launchResolvedExtensions = projectLaunchResolvedChildExtensions(toolPlan);
-			actualLaunchContractDigest = launchBindingDigest(withoutUndefined({
+			actualLaunchContractDigest = launchBindingDigest(omitUndefinedProperties({
 				definitionDigest: step.definitionDigest,
 				task: step.launchBindingTask ?? task,
 				...(candidate ? { model: candidate } : {}),
@@ -1435,7 +1441,7 @@ async function runSingleStep(
 		}
 		const completionGuardEnabled = isAgentContractV1(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
 		const completionGuard = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
-			? evaluateCompletionMutationGuard(withoutUndefined({
+			? evaluateCompletionMutationGuard(omitUndefinedProperties({
 				agent: step.agent,
 				task: taskForCompletionGuard,
 				messages: run.messages,
@@ -1462,7 +1468,7 @@ async function runSingleStep(
 				: run.error && run.exitCode === 0
 					? 1
 					: run.exitCode;
-		const signalError = run.exitCode !== 0 && isUnexplainedProcessSignal(withoutUndefined({
+		const signalError = run.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 			processSignal: run.processSignal,
 			interrupted: run.interrupted,
 			timedOut: run.timedOut,
@@ -1478,7 +1484,7 @@ async function runSingleStep(
 					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
 					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
 				: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
-		const attempt: ModelAttempt = withoutUndefined({
+		const attempt: ModelAttempt = omitUndefinedProperties({
 			model: candidate ?? run.model ?? step.model ?? "default",
 			success: effectiveExitCode === 0 && !error,
 			exitCode: effectiveExitCode,
@@ -1500,7 +1506,7 @@ async function runSingleStep(
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break modelAttemptsLoop;
 		if (attempt.success || completionGuardTriggered) break modelAttemptsLoop;
 
-		const startupFailure = isRetryableSubagentStartupFailure(withoutUndefined({
+		const startupFailure = isRetryableSubagentStartupFailure(omitUndefinedProperties({
 			exitCode: effectiveExitCode,
 			error,
 			finalOutput: run.finalOutput,
@@ -1580,7 +1586,7 @@ async function runSingleStep(
 		: resolvedOutput.savedPath
 			? "unknown"
 			: finalResult?.outputState ?? "unknown";
-	const finalizedOutput = finalizeSingleOutput(withoutUndefined({
+	const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
 		fullOutput: outputForSummary,
 		outputPath: step.outputPath,
 		outputMode: step.outputMode,
@@ -1591,7 +1597,7 @@ async function runSingleStep(
 	}));
 	outputForSummary = finalizedOutput.displayOutput;
 	const acceptance = step.effectiveAcceptance && !finalResult?.stopped && !finalResult?.turnBudgetExceeded && !ctx.timeoutSignal?.aborted && !ctx.stopSignal?.aborted && !ctx.skipAcceptance?.()
-		? await evaluateAcceptance(withoutUndefined({
+		? await evaluateAcceptance(omitUndefinedProperties({
 			acceptance: step.effectiveAcceptance,
 			output: outputForAcceptance,
 			fileOutput: childWrittenOutput !== undefined && step.outputPath
@@ -1630,7 +1636,7 @@ async function runSingleStep(
 
 	if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
 		if (ctx.artifactConfig?.includeOutput !== false) {
-			fs.writeFileSync(artifactPaths.outputPath, formatOutputArtifactContent(withoutUndefined({
+			fs.writeFileSync(artifactPaths.outputPath, formatOutputArtifactContent(omitUndefinedProperties({
 				output,
 				error: effectiveFinalError,
 				transcriptPath: transcriptWriter ? artifactPaths.transcriptPath : undefined,
@@ -1664,7 +1670,7 @@ async function runSingleStep(
 		}
 	}
 
-	const result: StepResult & { completionGuardTriggered?: boolean } = withoutUndefined({
+	const result: StepResult & { completionGuardTriggered?: boolean } = omitUndefinedProperties({
 		agent: step.agent,
 		context: step.context,
 		...(step.agentContract ? { agentContract: step.agentContract } : {}),
@@ -1781,7 +1787,7 @@ function markParallelGroupSetupFailure(input: {
 		statusStep.endedAt = input.failedAt;
 		statusStep.durationMs = 0;
 		statusStep.exitCode = 1;
-		input.results.push(withoutUndefined({ agent: task.agent, context: task.context, output: input.setupError, success: false, exitCode: 1, sessionFile: task.sessionFile }));
+		input.results.push(omitUndefinedProperties({ agent: task.agent, context: task.context, output: input.setupError, success: false, exitCode: 1, sessionFile: task.sessionFile }));
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
@@ -1949,7 +1955,7 @@ async function runSubagent(
 	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
 		const step = steps[stepIndex]!;
 		if (isCheckpointRunnerStep(step)) {
-			initialStatusSteps.push(withoutUndefined({
+			initialStatusSteps.push(omitUndefinedProperties({
 				agent: `checkpoint:${step.checkpoint}`,
 				phase: step.phase,
 				label: step.label ?? step.checkpoint,
@@ -1965,8 +1971,8 @@ async function runSubagent(
 			parallelGroups.push({ start: flatStepCount, count: step.parallel.length, stepIndex });
 			for (const task of step.parallel) {
 				const taskFlatIndex = flatStepCount;
-				const transcriptPath = resolveAsyncStepTranscriptPath(withoutUndefined({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: taskFlatIndex, flatStepCount: initialFlatStepCount }));
-				initialStatusSteps.push(withoutUndefined({
+				const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: taskFlatIndex, flatStepCount: initialFlatStepCount }));
+				initialStatusSteps.push(omitUndefinedProperties({
 					agent: task.agent,
 					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
@@ -1994,7 +2000,7 @@ async function runSubagent(
 			}
 		} else if (isDynamicRunnerGroup(step)) {
 			parallelGroups.push({ start: flatStepCount, count: 1, stepIndex });
-			initialStatusSteps.push(withoutUndefined({
+			initialStatusSteps.push(omitUndefinedProperties({
 				agent: `expand:${step.parallel.agent}`,
 				...(externalRunnerStatus(step.parallel.runner) ? { runner: externalRunnerStatus(step.parallel.runner) } : {}),
 				...(step.parallel.context ? { context: step.parallel.context } : {}),
@@ -2012,8 +2018,8 @@ async function runSubagent(
 			flatStepCount++;
 		} else {
 			const stepFlatIndex = flatStepCount;
-			const transcriptPath = resolveAsyncStepTranscriptPath(withoutUndefined({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: stepFlatIndex, flatStepCount: initialFlatStepCount }));
-			initialStatusSteps.push(withoutUndefined({
+			const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: stepFlatIndex, flatStepCount: initialFlatStepCount }));
+			initialStatusSteps.push(omitUndefinedProperties({
 				agent: step.agent,
 				...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
 				...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
@@ -2048,7 +2054,7 @@ async function runSubagent(
 			step.processTerminal = { version: 1, state: "pending", runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId };
 		}
 	}
-	const statusPayload: RunnerStatusPayload = withoutUndefined({
+	const statusPayload: RunnerStatusPayload = omitUndefinedProperties({
 		lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 		runId: id,
 		...(config.sessionId ? { sessionId: config.sessionId } : {}),
@@ -2104,12 +2110,12 @@ async function runSubagent(
 	const emitNestedSelfEvent = (type: "subagent.nested.updated" | "subagent.nested.completed"): void => {
 		if (!config.nestedRoute || !config.nestedSelf) return;
 		try {
-			writeNestedEvent(config.nestedRoute, withoutUndefined({
+			writeNestedEvent(config.nestedRoute, omitUndefinedProperties({
 				type,
 				ts: Date.now(),
 				parentRunId: config.nestedSelf.parentRunId,
 				parentStepIndex: config.nestedSelf.parentStepIndex,
-				child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, withoutUndefined({
+				child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, omitUndefinedProperties({
 					id,
 					parentRunId: config.nestedSelf.parentRunId,
 					parentStepIndex: config.nestedSelf.parentStepIndex,
@@ -2232,7 +2238,7 @@ async function runSubagent(
 			const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(config.nestedRoute.rootRunId, run);
 			if (!nestedAsyncDir) continue;
 			try {
-				deliverInterruptRequest(withoutUndefined({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-interrupt" }));
+				deliverInterruptRequest(omitUndefinedProperties({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-interrupt" }));
 			} catch (error) {
 				appendJsonl(eventsPath, JSON.stringify({
 					type: "subagent.nested.interrupt_failed",
@@ -2263,7 +2269,7 @@ async function runSubagent(
 			const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(config.nestedRoute.rootRunId, run);
 			if (!nestedAsyncDir) continue;
 			try {
-				deliverStopRequest(withoutUndefined({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-stop" }));
+				deliverStopRequest(omitUndefinedProperties({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-stop" }));
 			} catch (error) {
 				appendJsonl(eventsPath, JSON.stringify({
 					type: "subagent.nested.stop_failed",
@@ -2294,7 +2300,7 @@ async function runSubagent(
 			const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(config.nestedRoute.rootRunId, run);
 			if (!nestedAsyncDir) continue;
 			try {
-				deliverTimeoutRequest(withoutUndefined({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-timeout" }));
+				deliverTimeoutRequest(omitUndefinedProperties({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-timeout" }));
 			} catch (error) {
 				appendJsonl(eventsPath, JSON.stringify({
 					type: "subagent.nested.timeout_failed",
@@ -2306,14 +2312,14 @@ async function runSubagent(
 			}
 		}
 	};
-	const pausedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => withoutUndefined({
+	const pausedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => omitUndefinedProperties({
 		agent,
 		context,
 		output: "Paused after interrupt. Waiting for explicit next action.",
 		exitCode: 0,
 		interrupted: true,
 	});
-	const timedOutStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => withoutUndefined({
+	const timedOutStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => omitUndefinedProperties({
 		agent,
 		context,
 		output: timeoutMessage ?? "Subagent timed out.",
@@ -2321,7 +2327,7 @@ async function runSubagent(
 		exitCode: 1,
 		timedOut: true,
 	});
-	const stoppedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => withoutUndefined({
+	const stoppedStepResult = (agent: string, context?: "fresh" | "fork"): SingleStepResult => omitUndefinedProperties({
 		agent,
 		context,
 		output: stopMessage,
@@ -2448,7 +2454,7 @@ async function runSubagent(
 		const previous = step.activityState;
 		step.activityState = "active_long_running";
 		statusPayload.activityState = statusPayload.activityState === "needs_attention" ? "needs_attention" : "active_long_running";
-		const event = buildControlEvent(withoutUndefined({
+		const event = buildControlEvent(omitUndefinedProperties({
 			type: "active_long_running",
 			from: previous,
 			to: "active_long_running",
@@ -2483,12 +2489,12 @@ async function runSubagent(
 	};
 	const recordSteeringLifecycle = (request: SteerRequest, targets: Array<{ index: number; state: SteeringTargetState; reason?: string }>): void => {
 		const lifecycle = steeringStatus(statusPayload);
-		recordSteeringRequest(lifecycle, withoutUndefined({ id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets }));
+		recordSteeringRequest(lifecycle, omitUndefinedProperties({ id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets }));
 		for (const target of targets) {
 			const step = statusPayload.steps[target.index];
 			if (!step) continue;
 			step.steering ??= createSteeringStatus();
-			recordSteeringRequest(step.steering, withoutUndefined({ id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets: [target] }));
+			recordSteeringRequest(step.steering, omitUndefinedProperties({ id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets: [target] }));
 		}
 	};
 	const updateSteeringLifecycleTarget = (
@@ -2578,7 +2584,7 @@ async function runSubagent(
 		const late = fs.existsSync(steeringMarkerPath(ack.requestId));
 		const now = Date.now();
 		if (ack.state === "delivered") {
-			updateSteeringLifecycleTarget(ack.requestId, ack.index, late ? "late" : "delivered", now, withoutUndefined({ reason: late ? "acknowledged after recovery commit" : undefined }));
+			updateSteeringLifecycleTarget(ack.requestId, ack.index, late ? "late" : "delivered", now, omitUndefinedProperties({ reason: late ? "acknowledged after recovery commit" : undefined }));
 			emitSteeringEvent("subagent.steer.delivered", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { late, message: ack.message });
 		} else {
 			markSteeringAttention(ack.index);
@@ -2700,7 +2706,7 @@ async function runSubagent(
 			step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
 			step.currentToolStartedAt = now;
 			setOptionalProperty(step, "currentPath", currentPath);
-			pendingToolResults[flatIndex] = withoutUndefined({ tool: event.toolName, path: currentPath, mutates, startedAt: now });
+			pendingToolResults[flatIndex] = omitUndefinedProperties({ tool: event.toolName, path: currentPath, mutates, startedAt: now });
 			statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
 			syncTopLevelCurrentTool();
 			if (controlConfig.enabled && isBlockingSupervisorTool(event.toolName, event.args) && step.activityState !== "needs_attention") {
@@ -2709,7 +2715,7 @@ async function runSubagent(
 				supervisorAttentionSteps.set(flatIndex, previous);
 				currentActivityState = "needs_attention";
 				statusPayload.activityState = "needs_attention";
-				appendControlEvent(buildControlEvent(withoutUndefined({
+				appendControlEvent(buildControlEvent(omitUndefinedProperties({
 					type: "needs_attention",
 					from: previous,
 					to: "needs_attention",
@@ -2759,7 +2765,7 @@ async function runSubagent(
 			appendRecentStepOutput(step, resultText.split("\n").slice(-10));
 			if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
 				const state = mutatingFailureStates[flatIndex]!;
-				recordMutatingFailure(state, withoutUndefined({
+				recordMutatingFailure(state, omitUndefinedProperties({
 					tool: toolSnapshot.tool,
 					path: toolSnapshot.path,
 					error: resultText.split("\n").find((line) => line.trim())?.trim().slice(0, 180) ?? "mutating tool failed",
@@ -2769,7 +2775,7 @@ async function runSubagent(
 					const previous = step.activityState;
 					step.activityState = "needs_attention";
 					statusPayload.activityState = "needs_attention";
-					appendControlEvent(buildControlEvent(withoutUndefined({
+					appendControlEvent(buildControlEvent(omitUndefinedProperties({
 						type: "needs_attention",
 						from: previous,
 						to: "needs_attention",
@@ -2835,7 +2841,7 @@ async function runSubagent(
 				step.lastActivityAt = lastActivityAt;
 				changed = true;
 			}
-			const idleState = deriveActivityState(withoutUndefined({
+			const idleState = deriveActivityState(omitUndefinedProperties({
 				config: controlConfig,
 				startedAt: step.startedAt ?? overallStartTime,
 				lastActivityAt,
@@ -2846,7 +2852,7 @@ async function runSubagent(
 				const previous = step.activityState;
 				step.activityState = "needs_attention";
 				if (previous !== "needs_attention") {
-					appendControlEvent(buildControlEvent(withoutUndefined({
+					appendControlEvent(buildControlEvent(omitUndefinedProperties({
 						from: previous,
 						to: "needs_attention",
 						runId: id,
@@ -3137,7 +3143,7 @@ async function runSubagent(
 			const groupStartFlatIndex = flatIndex;
 			let materialized: ReturnType<typeof materializeDynamicParallelStep>;
 			try {
-				materialized = materializeDynamicParallelStep(step as Parameters<typeof materializeDynamicParallelStep>[0], outputs, stepIndex, withoutUndefined({ maxItems: config.dynamicFanoutMaxItems, allowRunnerFields: true }));
+				materialized = materializeDynamicParallelStep(step as Parameters<typeof materializeDynamicParallelStep>[0], outputs, stepIndex, omitUndefinedProperties({ maxItems: config.dynamicFanoutMaxItems, allowRunnerFields: true }));
 				if (materialized.parallel.length > 1 && step.parallel.outputPath && !step.parallel.namespaceOutputPath) {
 					throw new DynamicFanoutError(`Dynamic chain step ${stepIndex + 1} materialized ${materialized.parallel.length} items that resolve output to the same path: ${step.parallel.outputPath}. Remove the explicit output path or use an inherited relative agent output so each item can be isolated.`);
 				}
@@ -3160,11 +3166,11 @@ async function runSubagent(
 				statusPayload.lastUpdate = now;
 				markDynamicGraphGroup(stepIndex, "failed", message);
 				writeStatusPayload();
-				results.push(withoutUndefined({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 }));
+				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 }));
 				break;
 			}
 
-			const effectiveDynamicGroupAcceptance = resolveEffectiveAcceptance(withoutUndefined({
+			const effectiveDynamicGroupAcceptance = resolveEffectiveAcceptance(omitUndefinedProperties({
 				explicit: step.acceptanceInput,
 				agentName: step.parallel.agent,
 				acceptanceRole: step.acceptanceRole,
@@ -3194,7 +3200,7 @@ async function runSubagent(
 				}
 				previousOutput = "Dynamic fanout produced 0 results.";
 				const groupAcceptance = effectiveDynamicGroupAcceptance.explicit && !timedOut && !stopped
-					? await evaluateAcceptance(withoutUndefined({
+					? await evaluateAcceptance(omitUndefinedProperties({
 						acceptance: effectiveDynamicGroupAcceptance,
 						output: "",
 						report: aggregateAcceptanceReport({
@@ -3227,7 +3233,7 @@ async function runSubagent(
 					markDynamicGraphGroup(stepIndex, groupStopped ? "stopped" : "failed", errorMessage, effectiveGroupAcceptance);
 					statusPayload.lastUpdate = Date.now();
 					writeStatusPayload();
-					results.push(withoutUndefined({ agent: step.parallel.agent, context: step.parallel.context, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance }));
+					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance }));
 					break;
 				}
 				flatIndex++;
@@ -3246,10 +3252,10 @@ async function runSubagent(
 					: step.parallel.outputPath;
 				const taskText = task.task ?? step.parallel.task;
 				const materializedTask = step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText;
-				return withoutUndefined({
+				return omitUndefinedProperties({
 					...step.parallel,
 					task: materializedTask,
-					effectiveAcceptance: resolveEffectiveAcceptance(withoutUndefined({
+					effectiveAcceptance: resolveEffectiveAcceptance(omitUndefinedProperties({
 						explicit: step.parallel.acceptanceInput,
 						agentName: step.parallel.agent,
 						acceptanceRole: step.parallel.acceptanceRole,
@@ -3276,8 +3282,8 @@ async function runSubagent(
 			});
 			const dynamicFlatStepCount = Math.max(statusPayload.steps.length - 1 + dynamicSteps.length, 1);
 			const dynamicStatusSteps: RunnerStatusStep[] = dynamicSteps.map((task, itemIndex) => {
-				const transcriptPath = resolveAsyncStepTranscriptPath(withoutUndefined({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: groupStartFlatIndex + itemIndex, flatStepCount: dynamicFlatStepCount }));
-				return withoutUndefined({
+				const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: groupStartFlatIndex + itemIndex, flatStepCount: dynamicFlatStepCount }));
+				return omitUndefinedProperties({
 					agent: task.agent,
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
@@ -3325,7 +3331,7 @@ async function runSubagent(
 				shiftFlatIndexes(statusPayload.workflowGraph.nodes);
 				const groupNode = statusPayload.workflowGraph.nodes.find((node) => node.id === `step-${stepIndex}`);
 				if (groupNode) {
-					groupNode.children = materialized.items.map((item, itemIndex) => withoutUndefined({
+					groupNode.children = materialized.items.map((item, itemIndex) => omitUndefinedProperties({
 						id: `step-${stepIndex}-item-${item.idKey}`,
 						kind: "agent",
 						agent: step.parallel.agent,
@@ -3360,7 +3366,7 @@ async function runSubagent(
 					usageBudgetExceeded = true;
 					writeStatusPayload();
 					appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0 }));
-					return withoutUndefined({ agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
+					return omitUndefinedProperties({ agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
 				}
 				if (timedOut) return timedOutStepResult(task.agent, task.context);
 				if (stopped) return stoppedStepResult(task.agent, task.context);
@@ -3375,7 +3381,7 @@ async function runSubagent(
 					requiredStatusStep(statusPayload, fi).exitCode = -1;
 					statusPayload.lastUpdate = skippedAt;
 					writeStatusPayload();
-					return withoutUndefined({ agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
+					return omitUndefinedProperties({ agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 				}
 				const taskStartTime = Date.now();
 				statusPayload.currentStep = fi;
@@ -3487,7 +3493,7 @@ async function runSubagent(
 
 			flatIndex += dynamicSteps.length;
 			for (const pr of parallelResults) {
-				results.push(withoutUndefined({
+				results.push(omitUndefinedProperties({
 					agent: pr.agent,
 					context: pr.context,
 					agentContract: pr.agentContract,
@@ -3541,7 +3547,7 @@ async function runSubagent(
 				const message = acceptanceFailures
 					.map(({ result, originalIndex }) => `Dynamic item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}) acceptance rejected: ${(result.acceptance ? acceptanceFailureMessage(result.acceptance) : undefined) ?? "acceptance rejected"}`)
 					.join("\n");
-				results.push(withoutUndefined({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
+				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
 				statusPayload.error = message;
 				markDynamicGraphGroup(stepIndex, "failed", message);
 			}
@@ -3556,7 +3562,7 @@ async function runSubagent(
 					};
 					statusPayload.outputs = outputs;
 					const groupAcceptance = !timedOut && !stopped
-						? await evaluateAcceptance(withoutUndefined({
+						? await evaluateAcceptance(omitUndefinedProperties({
 							acceptance: effectiveDynamicGroupAcceptance,
 							output: "",
 							report: aggregateAcceptanceReport({
@@ -3576,7 +3582,7 @@ async function runSubagent(
 					const groupError = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure;
 					markDynamicGraphGroup(stepIndex, groupError ? groupStopped ? "stopped" : "failed" : "completed", groupError, effectiveGroupAcceptance);
 					if (groupError) {
-						results.push(withoutUndefined({
+						results.push(omitUndefinedProperties({
 							agent: step.parallel.agent,
 							output: groupError,
 							error: groupError,
@@ -3592,13 +3598,13 @@ async function runSubagent(
 					}
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
-					results.push(withoutUndefined({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
+					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
 					statusPayload.error = message;
 					markDynamicGraphGroup(stepIndex, "failed", message);
 				}
 			}
 			previousOutput = aggregateParallelOutputs(
-				parallelResults.map((r, i) => withoutUndefined({
+				parallelResults.map((r, i) => omitUndefinedProperties({
 					agent: r.agent,
 					taskIndex: i,
 					output: r.output,
@@ -3650,10 +3656,10 @@ async function runSubagent(
 					break;
 				}
 				try {
-					worktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, withoutUndefined({
+					worktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, omitUndefinedProperties({
 						agents: group.parallel.map((task) => task.agent),
 						setupHook: config.worktreeSetupHook
-							? withoutUndefined({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
+							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
 						baseDir: config.worktreeBaseDir,
 					}));
@@ -3726,7 +3732,7 @@ async function runSubagent(
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0,
 							}));
-							return withoutUndefined({ agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
+							return omitUndefinedProperties({ agent: task.agent, context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
 						}
 						if (timedOut) return timedOutStepResult(task.agent, task.context);
 						if (stopped) return stoppedStepResult(task.agent, task.context);
@@ -3745,7 +3751,7 @@ async function runSubagent(
 							appendJsonl(eventsPath, JSON.stringify({
 								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: -1, durationMs: 0,
 							}));
-							return withoutUndefined({ agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
+							return omitUndefinedProperties({ agent: task.agent, context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 						}
 
 						const taskStartTime = Date.now();
@@ -3870,7 +3876,7 @@ async function runSubagent(
 							exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskDuration,
 						}));
 						if (singleResult.completionGuardTriggered) {
-							const event = buildControlEvent(withoutUndefined({
+							const event = buildControlEvent(omitUndefinedProperties({
 								from: requiredStatusStep(statusPayload, fi).activityState,
 								to: "needs_attention",
 								runId: id,
@@ -3910,7 +3916,7 @@ async function runSubagent(
 				writeStatusPayload();
 
 				for (const pr of parallelResults) {
-					results.push(withoutUndefined({
+					results.push(omitUndefinedProperties({
 						agent: pr.agent,
 						context: pr.context,
 						agentContract: pr.agentContract,
@@ -3963,7 +3969,7 @@ async function runSubagent(
 				statusPayload.outputs = outputs;
 
 				previousOutput = aggregateParallelOutputs(
-					parallelResults.map((r) => withoutUndefined({
+					parallelResults.map((r) => omitUndefinedProperties({
 						agent: r.agent,
 						output: r.output,
 						exitCode: r.exitCode,
@@ -3989,7 +3995,7 @@ async function runSubagent(
 						diffs: captured.diffs,
 						results: parallelResults.map((result) => ({
 							agent: result.agent,
-							status: result.stopped || (result.exitCode !== 0 && isUnexplainedProcessSignal(withoutUndefined({
+							status: result.stopped || (result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 								processSignal: result.processSignal,
 								interrupted: result.interrupted,
 								timedOut: result.timedOut,
@@ -4099,7 +4105,7 @@ async function runSubagent(
 
 			previousOutput = singleResult.output;
 			const childStopped = singleResult.stopped === true;
-			results.push(withoutUndefined({
+			results.push(omitUndefinedProperties({
 				agent: singleResult.agent,
 				context: singleResult.context,
 				agentContract: singleResult.agentContract,
@@ -4232,7 +4238,7 @@ async function runSubagent(
 				tokens: stepTokens,
 			}));
 			if (singleResult.completionGuardTriggered) {
-				const event = buildControlEvent(withoutUndefined({
+				const event = buildControlEvent(omitUndefinedProperties({
 					from: requiredStatusStep(statusPayload, flatIndex).activityState,
 					to: "needs_attention",
 					runId: id,
@@ -4322,7 +4328,7 @@ async function runSubagent(
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
 	}
-	const signalTerminated = !stopped && !timedOut && !turnBudgetExceeded && !interrupted && results.some((result) => result.exitCode !== 0 && isUnexplainedProcessSignal(withoutUndefined({
+	const signalTerminated = !stopped && !timedOut && !turnBudgetExceeded && !interrupted && results.some((result) => result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 		processSignal: result.processSignal,
 		interrupted: result.interrupted,
 		timedOut: result.timedOut,
@@ -4395,13 +4401,13 @@ async function runSubagent(
 			usageBudget: statusPayload.usageBudget,
 		}),
 	);
-	writeRunLog(logPath, withoutUndefined({
+	writeRunLog(logPath, omitUndefinedProperties({
 		id,
 		mode: statusPayload.mode,
 		cwd,
 		startedAt: overallStartTime,
 		endedAt: runEndedAt,
-		steps: statusPayload.steps.map((step) => withoutUndefined({
+		steps: statusPayload.steps.map((step) => omitUndefinedProperties({
 			agent: step.agent,
 			status: step.status,
 			durationMs: step.durationMs,
@@ -4433,7 +4439,7 @@ async function runSubagent(
 			...(statusPayload.usageBudget ? { usageBudget: statusPayload.usageBudget } : {}),
 			...(statusPayload.checkpoint ? { checkpoint: statusPayload.checkpoint } : {}),
 			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : turnBudgetExceeded ? { error: statusPayload.error ?? "Subagent exceeded turn budget." } : usageBudgetExceeded ? { error: statusPayload.error ?? "Usage budget exhausted." } : {}),
-			results: results.map((r) => withoutUndefined({
+			results: results.map((r) => omitUndefinedProperties({
 				agent: r.agent,
 				context: r.context,
 				output: r.output,
