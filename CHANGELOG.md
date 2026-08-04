@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Enabled TypeScript `noUncheckedIndexedAccess` for production source after narrowing indexed reads at their runtime invariant boundaries. Thanks to @nicobailon for #748.
+- Enabled TypeScript `noUncheckedIndexedAccess` for production source after narrowing indexed reads at their runtime invariant boundaries.
 - Added managed per-child worktree isolation to scripted workflows through `worktree: true` on `runs.run` / `runs.all` items or as a workflow-level default, with child overrides and handoff paths preserved in child artifacts.
 - Added opt-in native Pi-child tool permissions with global and per-agent `allow`/`ask`/`deny` rules, watchdog-owned exact-call decisions, and bounded redacted audit records. Unconfigured tools pass through, while bash policy remains with `pi-guard`.
 - Added a source-only, strict TypeScript typecheck command and CI gate.
@@ -24,7 +24,6 @@
 - Scheduled subagent runs are now enabled by default; set `{ "scheduledRuns": { "enabled": false } }` to opt out.
 
 ### Fixed
-- Prepared foreground subagent execution for TypeScript `exactOptionalPropertyTypes` by omitting absent optional fields at status, result, and control boundaries.
 - Project oversized redundant Pi `turn_end` and `agent_end` child events to bounded lifecycle records instead of failing image-heavy runs with `protocol_output_limit`, while preserving `agent_end.willRetry` drain behavior. Thanks to @barto-sh for #743.
 - Count clear `git add`, `git commit`, and `git push` bash calls as implementation mutation attempts so workers that finalize pre-applied changes do not fail the completion guard.
 - Render structured-output-only children as useful JSON output instead of misleading `(no output)` summaries and empty output artifacts.
