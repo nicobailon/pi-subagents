@@ -572,7 +572,7 @@ Use the profile workflow like this:
 
 ### WorkflowScript replacements
 
-Use stable keys and ordinary JavaScript for sequence and parallelism:
+Use stable keys and ordinary JavaScript for sequence and parallelism. For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card; `chatProgress` can force `off`, `terminal`, `milestones`, or `live-card` when the automatic policy is not what you want.
 
 ```js
 subagent({ workflowScript: `
@@ -1171,6 +1171,7 @@ Agent definitions are not loaded into context by default. Management actions let
 | `clarify` | boolean | false | Show TUI preview/edit flow. Explicit `clarify: true` keeps the run foreground for the clarify UI. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `async` | boolean | default-on | Background execution. Scripted workflows always default to background and accept `async:false` as an explicit foreground escape hatch. `clarify:true` applies only to single-agent execution; workflowScript does not open clarify UI. |
+| `chatProgress` | `auto \| off \| terminal \| milestones \| live-card` | `auto` | WorkflowScript chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; background and other-repo workflows stay compact. Explicit `live-card` requires `async:false` and the same Git repository. |
 | `timeoutMs` / `maxRuntimeMs` | number | 30 min foreground; none async | Optional run-level max runtime in milliseconds. Foreground uses 30 minutes only when neither the call nor selected agent provides a timeout. |
 | `turnBudget` | object | none | Optional assistant-turn budget `{ maxTurns, graceTurns }`. At `maxTurns` the child is warned to wrap up. After the grace window (default 1), termination occurs at the next assistant boundary; a response that starts tool work records `termination-deferred` until a later boundary. Partial output is returned on abort. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, while `"*"` blocks every tool call. Final assistant text is never blocked. |
