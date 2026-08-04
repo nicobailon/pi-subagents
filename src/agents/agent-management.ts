@@ -215,34 +215,54 @@ function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPa
 }
 
 export function editableAgentConfig(agent: AgentConfig): AgentConfig {
+	const { extensions: _extensions, ...withoutExtensions } = agent;
 	const base = agent.override?.base;
+	const {
+		override: _override,
+		model: _model,
+		fallbackModels: _fallbackModels,
+		thinking: _thinking,
+		systemPromptMode: _systemPromptMode,
+		inheritProjectContext: _inheritProjectContext,
+		inheritSkills: _inheritSkills,
+		defaultContext: _defaultContext,
+		acceptanceRole: _acceptanceRole,
+		disabled: _disabled,
+		systemPrompt: _systemPrompt,
+		skills: _skills,
+		skillPath: _skillPath,
+		tools: _tools,
+		mcpDirectTools: _mcpDirectTools,
+		subagentOnlyExtensions: _subagentOnlyExtensions,
+		completionGuard: _completionGuard,
+		...editable
+	} = withoutExtensions;
 	if (!base) {
 		return {
-			...agent,
-			extensions: agent.extensionsFromDefault ? undefined : agent.extensions ? [...agent.extensions] : undefined,
+			...withoutExtensions,
+			...(agent.extensionsFromDefault ? {} : agent.extensions !== undefined ? { extensions: [...agent.extensions] } : {}),
 		};
 	}
 
 	return {
-		...agent,
-		model: base.model,
-		fallbackModels: base.fallbackModels ? [...base.fallbackModels] : undefined,
-		thinking: base.thinking,
+		...editable,
+		...(base.model !== undefined ? { model: base.model } : {}),
+		...(base.fallbackModels !== undefined ? { fallbackModels: [...base.fallbackModels] } : {}),
+		...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
 		systemPromptMode: base.systemPromptMode,
 		inheritProjectContext: base.inheritProjectContext,
 		inheritSkills: base.inheritSkills,
-		defaultContext: base.defaultContext,
-		acceptanceRole: base.acceptanceRole,
-		disabled: base.disabled,
+		...(base.defaultContext !== undefined ? { defaultContext: base.defaultContext } : {}),
+		...(base.acceptanceRole !== undefined ? { acceptanceRole: base.acceptanceRole } : {}),
+		...(base.disabled !== undefined ? { disabled: base.disabled } : {}),
 		systemPrompt: base.systemPrompt,
-		skills: base.skills ? [...base.skills] : undefined,
-		skillPath: base.skillPath ? [...base.skillPath] : undefined,
-		tools: base.tools ? [...base.tools] : undefined,
-		mcpDirectTools: base.mcpDirectTools ? [...base.mcpDirectTools] : undefined,
-		extensions: base.extensions ? [...base.extensions] : undefined,
-		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
-		completionGuard: base.completionGuard,
-		override: undefined,
+		...(base.skills !== undefined ? { skills: [...base.skills] } : {}),
+		...(base.skillPath !== undefined ? { skillPath: [...base.skillPath] } : {}),
+		...(base.tools !== undefined ? { tools: [...base.tools] } : {}),
+		...(base.mcpDirectTools !== undefined ? { mcpDirectTools: [...base.mcpDirectTools] } : {}),
+		...(base.extensions !== undefined ? { extensions: [...base.extensions] } : {}),
+		...(base.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...base.subagentOnlyExtensions] } : {}),
+		...(base.completionGuard !== undefined ? { completionGuard: base.completionGuard } : {}),
 	};
 }
 
@@ -381,7 +401,10 @@ function parseTools(raw: string): { tools?: string[]; mcpDirectTools?: string[] 
 			if (direct) mcpDirectTools.push(direct);
 		} else tools.push(item);
 	}
-	return { tools: tools.length ? tools : undefined, mcpDirectTools: mcpDirectTools.length ? mcpDirectTools : undefined };
+	return {
+		...(tools.length ? { tools } : {}),
+		...(mcpDirectTools.length ? { mcpDirectTools } : {}),
+	};
 }
 
 function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): string | undefined {

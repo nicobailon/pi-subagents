@@ -84,22 +84,22 @@ function liveAvailableModels(ctx: ExtensionContext) {
 
 function buildBuiltinBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 	return {
-		model: agent.model,
-		fallbackModels: agent.fallbackModels ? [...agent.fallbackModels] : undefined,
-		thinking: agent.thinking,
+		...(agent.model !== undefined ? { model: agent.model } : {}),
+		...(agent.fallbackModels !== undefined ? { fallbackModels: [...agent.fallbackModels] } : {}),
+		...(agent.thinking !== undefined ? { thinking: agent.thinking } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
-		defaultContext: agent.defaultContext,
-		acceptanceRole: agent.acceptanceRole,
-		disabled: agent.disabled,
+		...(agent.defaultContext !== undefined ? { defaultContext: agent.defaultContext } : {}),
+		...(agent.acceptanceRole !== undefined ? { acceptanceRole: agent.acceptanceRole } : {}),
+		...(agent.disabled !== undefined ? { disabled: agent.disabled } : {}),
 		systemPrompt: agent.systemPrompt,
-		skills: agent.skills ? [...agent.skills] : undefined,
-		tools: agent.tools ? [...agent.tools] : undefined,
-		mcpDirectTools: agent.mcpDirectTools ? [...agent.mcpDirectTools] : undefined,
-		subagentOnlyExtensions: agent.subagentOnlyExtensions ? [...agent.subagentOnlyExtensions] : undefined,
-		completionGuard: agent.completionGuard,
-		toolBudget: agent.toolBudget,
+		...(agent.skills !== undefined ? { skills: [...agent.skills] } : {}),
+		...(agent.tools !== undefined ? { tools: [...agent.tools] } : {}),
+		...(agent.mcpDirectTools !== undefined ? { mcpDirectTools: [...agent.mcpDirectTools] } : {}),
+		...(agent.subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions: [...agent.subagentOnlyExtensions] } : {}),
+		...(agent.completionGuard !== undefined ? { completionGuard: agent.completionGuard } : {}),
+		...(agent.toolBudget !== undefined ? { toolBudget: agent.toolBudget } : {}),
 	};
 }
 
@@ -290,7 +290,9 @@ async function saveAgentModel(ctx: ExtensionContext, agent: AgentConfig, selecte
 
 	const readOnlyMessage = readOnlyAgentMessage(agent, "model");
 	if (readOnlyMessage) return readOnlyMessage;
-	const updated: AgentConfig = { ...editableAgentConfig(agent), model: selectedModel };
+	const updated = editableAgentConfig(agent);
+	if (selectedModel === undefined) delete updated.model;
+	else updated.model = selectedModel;
 	fs.writeFileSync(updated.filePath, serializeAgent(updated, {
 		preserveFrontmatterFields: preservedAgentFrontmatterFields(agent, { model: selectedModel }),
 	}), "utf-8");
@@ -311,7 +313,9 @@ async function saveAgentThinking(ctx: ExtensionContext, agent: AgentConfig, sele
 
 	const readOnlyMessage = readOnlyAgentMessage(agent, "thinking");
 	if (readOnlyMessage) return readOnlyMessage;
-	const updated: AgentConfig = { ...editableAgentConfig(agent), thinking: selectedThinking };
+	const updated = editableAgentConfig(agent);
+	if (selectedThinking === undefined) delete updated.thinking;
+	else updated.thinking = selectedThinking;
 	fs.writeFileSync(updated.filePath, serializeAgent(updated, {
 		preserveFrontmatterFields: preservedAgentFrontmatterFields(agent, { thinking: selectedThinking }),
 	}), "utf-8");
