@@ -90,6 +90,58 @@ describe("bounded child protocol reader", () => {
 		assert.equal(failure?.code, "protocol_output_limit");
 	});
 
+	it("fails closed for malformed or truncated oversized turn_end aggregates", () => {
+		for (const aggregate of [
+			`{"type":"turn_end","toolResults":["${"x".repeat(256)}"`,
+			`{"type":"turn_end","toolResults":[${"x".repeat(256)}]}`,
+		]) {
+			let failure: ProtocolOutputLimit | undefined;
+			const reader = createBoundedLineReader({
+				maxPendingLineBytes: 64,
+				oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+				onLine: () => assert.fail("invalid turn_end must not emit"),
+				onLimit: (limit) => { failure = limit; },
+			});
+			reader.push(aggregate);
+			reader.end();
+			assert.equal(reader.exceeded(), true);
+			assert.equal(failure?.code, "protocol_output_limit");
+		}
+	});
+
+	it("fails closed when malformed agent_end content carries an apparent willRetry tail", () => {
+		let failure: ProtocolOutputLimit | undefined;
+		const reader = createBoundedLineReader({
+			maxPendingLineBytes: 64,
+			oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+			onLine: () => assert.fail("invalid agent_end must not emit"),
+			onLimit: (limit) => { failure = limit; },
+		});
+		reader.push(`{"type":"agent_end","messages":[${"x".repeat(256)}],"willRetry":true}\n`);
+		reader.end();
+		assert.equal(reader.exceeded(), true);
+		assert.equal(failure?.code, "protocol_output_limit");
+	});
+
+	it("uses only trustworthy top-level lifecycle fields in syntactically valid JSON", () => {
+		for (const aggregate of [
+			JSON.stringify({ type: "agent_end", messages: [{ willRetry: true, data: "x".repeat(256) }] }),
+			`{"type":"agent_end","messages":["${"x".repeat(256)}"],"willRetry":"false"}`,
+			`{"type":"turn_end","toolResults":["${"x".repeat(256)}"],"t\\u0079pe":"other"}`,
+			`{"type":"turn_end","toolResults":["${"x".repeat(256)}",]}`,
+		]) {
+			const reader = createBoundedLineReader({
+				maxPendingLineBytes: 64,
+				oversizedLineProjector: PI_AGGREGATE_EVENT_PROJECTOR,
+				onLine: () => assert.fail("untrustworthy lifecycle metadata must not emit"),
+				onLimit: () => {},
+			});
+			reader.push(`${aggregate}\n`);
+			reader.end();
+			assert.equal(reader.exceeded(), true);
+		}
+	});
+
 	it("stops buffering an oversized line and returns bounded diagnostics", () => {
 		let failure: ProtocolOutputLimit | undefined;
 		const reader = createBoundedLineReader({ maxPendingLineBytes: 8, onLine: () => assert.fail("oversized line must not emit"), onLimit: (limit) => { failure = limit; } });
