@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Enabled TypeScript `noUncheckedIndexedAccess` for production source after narrowing indexed reads at their runtime invariant boundaries. Thanks to @nicobailon for #748.
 - Added managed per-child worktree isolation to scripted workflows through `worktree: true` on `runs.run` / `runs.all` items or as a workflow-level default, with child overrides and handoff paths preserved in child artifacts.
 - Added opt-in native Pi-child tool permissions with global and per-agent `allow`/`ask`/`deny` rules, watchdog-owned exact-call decisions, and bounded redacted audit records. Unconfigured tools pass through, while bash policy remains with `pi-guard`.
 - Added a source-only, strict TypeScript typecheck command and CI gate.
