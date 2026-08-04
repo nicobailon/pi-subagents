@@ -385,7 +385,7 @@ function parseStepList(raw: unknown): { steps?: ChainStepConfig[]; error?: strin
 		if (hasKey(s, "toolBudget")) {
 			const validation = validateToolBudgetConfig(s.toolBudget, `config.steps[${i}].toolBudget`);
 			if (validation.error) return { error: validation.error };
-			step.toolBudget = s.toolBudget as ChainStepConfig["toolBudget"];
+			if (s.toolBudget !== undefined) step.toolBudget = s.toolBudget as ToolBudgetConfig;
 		}
 		steps.push(step);
 	}
@@ -765,7 +765,7 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const proactiveSuggestions = buildProactiveSkillSubagentRecommendationLines({
 		agents,
 		chains,
-		config: ctx.config?.proactiveSkillSubagents,
+		...(ctx.config?.proactiveSkillSubagents !== undefined ? { config: ctx.config.proactiveSkillSubagents } : {}),
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
 	});
 	const lines = [
@@ -935,7 +935,15 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (isChain) {
 		const parsed = parseStepList(cfg.steps);
 		if (parsed.error) return result(parsed.error, true);
-		const chain: ChainConfig = { name: runtimeName, localName: name, packageName: parsedPackage.packageName, description: cfg.description.trim(), source: scope, filePath: targetPath, steps: parsed.steps! };
+		const chain: ChainConfig = {
+			name: runtimeName,
+			localName: name,
+			...(parsedPackage.packageName !== undefined ? { packageName: parsedPackage.packageName } : {}),
+			description: cfg.description.trim(),
+			source: scope,
+			filePath: targetPath,
+			steps: parsed.steps!,
+		};
 		fs.writeFileSync(targetPath, serializeChain(chain), "utf-8");
 		const missing = unknownChainAgents(ctx.cwd, chain.steps);
 		if (missing.length) warnings.push(`Warning: chain steps reference unknown agents: ${missing.join(", ")}.`);
@@ -945,7 +953,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const agent: AgentConfig = {
 		name: runtimeName,
 		localName: name,
-		packageName: parsedPackage.packageName,
+		...(parsedPackage.packageName !== undefined ? { packageName: parsedPackage.packageName } : {}),
 		description: cfg.description.trim(),
 		source: scope,
 		filePath: targetPath,
@@ -999,7 +1007,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		if (applyError) return result(applyError, true);
 		const preserveFrontmatterFields = preservedAgentFrontmatterFields(target, cfg);
 		updated.localName = newLocalName;
-		updated.packageName = newPackageName;
+		if (newPackageName !== undefined) updated.packageName = newPackageName;
+		else delete updated.packageName;
 		updated.name = buildRuntimeName(newLocalName, newPackageName);
 		if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 		if (hasKey(cfg, "model")) {
@@ -1056,7 +1065,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		parsedSteps = parsed.steps!;
 	}
 	updated.localName = newLocalName;
-	updated.packageName = newPackageName;
+	if (newPackageName !== undefined) updated.packageName = newPackageName;
+	else delete updated.packageName;
 	updated.name = buildRuntimeName(newLocalName, newPackageName);
 	if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 	if (parsedSteps) {
