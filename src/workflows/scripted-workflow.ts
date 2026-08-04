@@ -115,6 +115,8 @@ export interface WorkflowScriptTraceEntry {
 	state: "started" | "completed" | "failed" | "reused";
 	runId?: string;
 	durationMs?: number;
+	phase?: string;
+	label?: string;
 	error?: string;
 }
 
@@ -194,6 +196,13 @@ function validateKey(value: unknown): string {
 		throw new Error("runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
 	}
 	return value;
+}
+
+function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label"> {
+	return {
+		...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
+		...(typeof params.label === "string" && params.label.trim() ? { label: params.label.trim() } : {}),
+	};
 }
 
 export async function runWorkflowScript(options: RunWorkflowScriptOptions): Promise<WorkflowScriptResult> {
@@ -309,23 +318,23 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
-				trace.push({ operation: "run", key, state: "reused" });
+				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
 				traceChanged();
 				return respond(existing.promise);
 			}
 
 			const startedAt = Date.now();
-			trace.push({ operation: "run", key, state: "started" });
+			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
 			traceChanged();
 			const promise = options.launch(key, { ...params, async: params.async ?? false }, childController.signal).then((result) => {
 				children.set(key, result);
-				trace.push({ operation: "run", key, state: result.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
+				trace.push({ operation: "run", key, state: result.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
 				traceChanged();
 				if (!result.ok) throw new Error(`Run '${key}' failed: ${result.output}`);
 				return result;
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
-				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, error: text });
+				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), error: text });
 				traceChanged();
 				throw new Error(`Run '${key}' failed: ${text}`);
 			});

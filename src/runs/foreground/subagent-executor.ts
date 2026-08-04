@@ -93,6 +93,7 @@ import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -212,10 +213,12 @@ export interface SubagentParamsLike {
 	message?: string;
 	steeringRecovery?: boolean;
 	workflowScript?: string;
+	chatProgress?: "auto" | "off" | "terminal" | "milestones" | "live-card";
 	step?: ChainStep;
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	suppressRoutineResultIntercom?: boolean;
 	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
@@ -1561,6 +1564,25 @@ function createForegroundControlNotifier(data: Pick<ExecutionContextData, "contr
 	};
 }
 
+export function foregroundResultIntercomStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
+	return resolveSubagentResultStatus(omitUndefinedProperties({
+		exitCode: result.exitCode,
+		...(result.acceptance?.status === "rejected" ? { success: false } : {}),
+		interrupted: result.interrupted,
+		detached: result.detached,
+		processSignal: result.processSignal,
+		timedOut: result.timedOut,
+		stopped: result.stopped,
+		turnBudgetExceeded: result.turnBudgetExceeded,
+	}));
+}
+
+export function shouldSuppressRoutineResultIntercom(input: { suppressRoutineResultIntercom?: boolean; results: SingleResult[] }): boolean {
+	return input.suppressRoutineResultIntercom === true
+		&& input.results.length > 0
+		&& input.results.every((result) => foregroundResultIntercomStatus(result) === "completed");
+}
+
 async function emitForegroundResultIntercom(input: {
 	pi: ExtensionAPI;
 	intercomBridge: IntercomBridgeState;
@@ -1574,15 +1596,7 @@ async function emitForegroundResultIntercom(input: {
 	if (!input.intercomBridge.active || !input.intercomBridge.resultDelivery || !input.intercomBridge.orchestratorTarget) return null;
 	const children = input.results.flatMap((result, index) => result.detached ? [] : [omitUndefinedProperties({
 		agent: result.agent,
-		status: resolveSubagentResultStatus(omitUndefinedProperties({
-			exitCode: result.exitCode,
-			interrupted: result.interrupted,
-			detached: result.detached,
-			processSignal: result.processSignal,
-			timedOut: result.timedOut,
-			stopped: result.stopped,
-			turnBudgetExceeded: result.turnBudgetExceeded,
-		})),
+		status: foregroundResultIntercomStatus(result),
 		outputState: result.outputState ?? "unknown",
 		summary: resultSummaryForIntercom(result),
 		index,
@@ -3341,20 +3355,23 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			};
 		}
 
+		const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results });
 		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
-		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
-			pi: deps.pi,
-			intercomBridge: data.intercomBridge,
-			runId,
-			mode: "parallel",
-			details,
-			...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
-		});
-		if (intercomReceipt) {
-			return {
-				content: [{ type: "text", text: intercomReceipt.text }],
-				details: intercomReceipt.details,
-			};
+		if (!suppressRoutineResultIntercom) {
+			const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
+				pi: deps.pi,
+				intercomBridge: data.intercomBridge,
+				runId,
+				mode: "parallel",
+				details,
+				...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
+			});
+			if (intercomReceipt) {
+				return {
+					content: [{ type: "text", text: intercomReceipt.text }],
+					details: intercomReceipt.details,
+				};
+			}
 		}
 
 		const worktreeSuffix = handoff?.suffix ?? "";
@@ -3698,7 +3715,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}));
 	rememberForegroundRun(deps.state, { runId, mode: "single", cwd: effectiveCwd, sessionId: data.parentSessionId, results: details.results });
 
-	if (!r.detached && !r.interrupted) {
+	const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results: [r] });
+	if (!r.detached && !r.interrupted && !suppressRoutineResultIntercom) {
 		if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
 		const intercomReceipt = await maybeBuildForegroundIntercomReceipt({
 			pi: deps.pi,
@@ -3826,6 +3844,18 @@ function formatWorkflowValue(value: unknown): string {
 	}
 }
 
+function workflowChatProgressUpdate(
+	runId: string,
+	chatProgress: WorkflowChatProgressProjection,
+	workflow: NonNullable<Details["workflow"]>,
+): AgentToolResult<Details> | undefined {
+	if (chatProgress.mode !== "live-card") return undefined;
+	return {
+		content: [{ type: "text", text: "Workflow running." }],
+		details: { mode: "workflow", runId, results: [], workflow, chatProgress },
+	};
+}
+
 function omitExecutionModeActionAlias(params: SubagentParamsLike): SubagentParamsLike {
 	const action = params.action?.toLowerCase();
 	if (action === "single" && (params.agent !== undefined || params.task !== undefined)) {
@@ -3889,6 +3919,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
+			const workflowCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
+			const chatProgressResult = resolveWorkflowChatProgress({ requested: requestParams.chatProgress, parentCwd: ctx.cwd, workflowCwd, background: requestParams.async !== false });
+			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
+			const chatProgress = chatProgressResult.projection!;
 			if (requestParams.async !== false) {
 				const workflowRunId = _id;
 				const asyncDir = path.join(DIRS.async, workflowRunId);
@@ -3940,7 +3974,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				deps.state.fleetJobs.set(workflowRunId, workflowJob);
 				persist();
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
-				const { workflowScript, async: _workflowAsync, ...workflowRequest } = requestParams;
+				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
 					const { action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, ...workflowChildDefaults } = workflowRequest;
@@ -4012,21 +4046,34 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				return {
 					content: [{ type: "text", text: formatAsyncStartedMessage(`Async workflow [${workflowRunId}]`, ctx.hasUI === true) }],
-					details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, asyncDir, results: [] },
+					details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, asyncDir, results: [], chatProgress },
 				};
 			}
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, ...workflowChildDefaults } = requestParams;
 			const workflowResults: SingleResult[] = [];
+			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
+			const sendWorkflowProgress = () => {
+				const update = workflowChatProgressUpdate(_id, chatProgress, liveWorkflow);
+				if (update) onUpdate?.(update);
+			};
 			try {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
 					timeoutMs: timeout,
 					signal,
+					onTrace: (trace) => {
+						liveWorkflow = { ...liveWorkflow, trace };
+						sendWorkflowProgress();
+					},
+					onEmit: (emits) => {
+						liveWorkflow = { ...liveWorkflow, emits };
+						sendWorkflowProgress();
+					},
 					launch: async (key, childParams, workflowSignal) => {
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-						const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, workflowParentRunId: _id, workflowKey: key } as SubagentParamsLike);
+						const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, workflowParentRunId: _id, workflowKey: key, suppressRoutineResultIntercom: chatProgress.mode === "live-card" } as SubagentParamsLike);
 						const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx);
 						workflowResults.push(...result.details.results);
 						return workflowChildResult(key, result);
@@ -4040,7 +4087,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				return {
 					content: [{ type: "text", text: sections.join("\n\n") }],
-					details: compactOptional<Details>({ mode: "workflow", results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: workflow.trace, emits: workflow.emits, console: workflow.console } }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, chatProgress }),
 				};
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -4053,7 +4100,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return {
 					content: [{ type: "text", text: sections.join("\n\n") }],
 					isError: true,
-					details: compactOptional<Details>({ mode: "workflow", results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console }, chatProgress }),
 				};
 			}
 		}

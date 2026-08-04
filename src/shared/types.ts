@@ -998,11 +998,18 @@ export interface Details {
 			key: string;
 			state: "started" | "completed" | "failed" | "reused";
 			runId?: string;
+			phase?: string;
+			label?: string;
 			durationMs?: number;
 			error?: string;
 		}>;
 		emits: unknown[];
 		console: Array<{ level: "log" | "info" | "warn" | "error"; text: string }>;
+	};
+	chatProgress?: {
+		mode: "off" | "terminal" | "milestones" | "live-card";
+		repoRelation: "same" | "other";
+		repoLabel?: string;
 	};
 	missions?: {
 		records?: MissionRecord[];

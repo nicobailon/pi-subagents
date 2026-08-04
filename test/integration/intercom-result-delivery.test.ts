@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -302,6 +303,30 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.match(String(payload.message ?? ""), /2\. b — process completed · output present/);
 		assert.match(result.content[0]?.text ?? "", /Delivered parallel subagent results via intercom\./);
 		assert.equal(result.details?.results?.every((entry) => entry.finalOutput === undefined), true);
+	});
+
+	it("suppresses successful worktree child receipts for live-card workflows", { skip: process.platform === "win32" ? "git worktree cleanup differs on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({ output: "Worktree child output" });
+		const { executor, events } = makeExecutor();
+
+		const result = await executor.execute(
+			"workflow-worktree-live-card",
+			{ workflowScript: "const result = await runs.run('worker', { agent: 'worker', task: 'task', worktree: true }); return result.output;", async: false, chatProgress: "live-card" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? JSON.stringify(result));
+		assert.equal(events.emitted.some((entry) => entry.channel === "subagent:result-intercom"), false);
+		assert.match(result.content[0]?.text ?? "", /Workflow completed/);
+		assert.match(result.content[0]?.text ?? "", /Worktree child output/);
 	});
 
 	it("keeps a queued top-level parallel child controlled after an early outer rejection", async () => {

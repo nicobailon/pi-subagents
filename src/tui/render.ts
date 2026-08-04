@@ -24,6 +24,7 @@ import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
+import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -1349,6 +1350,54 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	return c;
 }
 
+function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number): string {
+	if (row.state === "running") return theme.fg("accent", runningGlyph(frame));
+	if (row.state === "complete") return theme.fg("success", "✓");
+	return theme.fg("error", "✗");
+}
+
+function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): string {
+	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
+	if (row.state === "running") return theme.fg("accent", label);
+	if (row.state === "complete") return theme.fg("success", label);
+	return theme.fg("error", label);
+}
+
+function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue: boolean, isError?: boolean): "running" | "complete" | "failed" {
+	if (isError || rows.some((row) => row.state === "failed")) return "failed";
+	if ((rows.length > 0 && rows.every((row) => row.state === "complete")) || hasTerminalValue) return "complete";
+	return "running";
+}
+
+function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, frame?: number): Component {
+	const workflow = d.workflow;
+	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace) : [];
+	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
+	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : theme.fg("error", "✗");
+	const width = getTermWidth() - 4;
+	const runId = d.runId ? d.runId.slice(0, 12) : "workflow";
+	const repoLabel = d.chatProgress?.repoLabel ?? (d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo");
+	const phase = rows.find((row) => row.state === "running" && row.phase)?.phase ?? [...rows].reverse().find((row) => row.phase)?.phase;
+	const c = new Container();
+	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold("workflow"))} ${runId} ${theme.fg("dim", "·")} ${d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo"} ${theme.fg("dim", "·")} ${state}`, width), 0, 0));
+	c.addChild(new Text(truncLine(theme.fg("dim", `  Repo   ${repoLabel}`), width), 0, 0));
+	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `  Phase  ${phase}`), width), 0, 0));
+	if (rows.length === 0) {
+		c.addChild(new Text(truncLine(theme.fg("dim", "  ◦ waiting for workflow child launches"), width), 0, 0));
+		return c;
+	}
+	for (const row of rows) {
+		const status = workflowRowStateLabel(row, theme);
+		const label = row.label && row.label !== row.key ? ` ${row.label}` : "";
+		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
+		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
+		const error = row.error ? ` ${theme.fg("error", `· ${row.error}`)}` : "";
+		c.addChild(new Text(truncLine(`  ${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
+	}
+	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `  Emits  ${workflow.emits.length}`), width), 0, 0));
+	return c;
+}
+
 function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component {
 	const hasRunning = d.progress?.some((p) => p.status === "running")
 		|| d.results.some((r) => r.progress?.status === "running")
@@ -1466,6 +1515,7 @@ export function renderSubagentResult(
 	frame?: number,
 ): Component {
 	const d = result.details;
+	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) return renderWorkflowChatProgress(d, result, theme, frame);
 	if (!d || !d.results.length) {
 		const t = result.content[0];
 		const text = t?.type === "text" ? t.text : "(no output)";
