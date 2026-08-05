@@ -454,7 +454,7 @@ export class SubagentFleetStatus {
 	}
 
 	private bullet(rosterIndex: number, selectedIndex: number, theme: Theme): string {
-		return rosterIndex === selectedIndex ? theme.fg("accent", "⏺") : theme.fg("dim", "◯");
+		return rosterIndex === selectedIndex ? theme.fg("accent", ">") : " ";
 	}
 
 	private rosterKeys(): string[] {

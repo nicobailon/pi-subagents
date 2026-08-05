@@ -93,7 +93,9 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(widgetFactory);
 			const component = widgetFactory!({ requestRender() {} }, theme);
 			const lines = component.render(80);
-			assert.ok(lines.some((line) => line.includes("⏺ main")));
+			assert.ok(lines.some((line) => line.includes("> main")));
+			assert.ok(lines.some((line) => line.includes("  worker-0")), "unselected agents use blank focus space");
+			assert.ok(lines.every((line) => !/[⏺◯]/u.test(line)), "Fleet selection avoids terminal-ambiguous circle glyphs");
 			assert.ok(lines.some((line) => line.includes("worker-0 (fable-5 · thinking low)")));
 			assert.ok(lines.some((line) => line.includes("11s · ↓ 13.1k tokens")));
 			assert.ok(lines.some((line) => line.includes("↓ 1 more")));
@@ -610,20 +612,20 @@ describe("below-editor subagent FleetView", () => {
 			assert.equal(inputHandler!("k"), undefined, "inactive FleetView should retain printable navigation keys");
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true }, "custom editors should activate FleetView across jiti boundaries");
 			assert.deepEqual(inputHandler!("j"), { consume: true }, "active FleetView should navigate down with j");
-			assert.ok(component.render(100).some((line) => line.includes("⏺ worker")));
+			assert.ok(component.render(100).some((line) => line.includes("> worker")));
 			assert.deepEqual(inputHandler!("k"), { consume: true }, "active FleetView should navigate up with k");
-			assert.ok(component.render(100).some((line) => line.includes("⏺ main")));
+			assert.ok(component.render(100).some((line) => line.includes("> main")));
 
 			tui.focusedComponent = Object.create(Editor.prototype) as Editor;
 			assert.deepEqual(inputHandler!("\x1b[B"), { consume: true });
-			assert.ok(component.render(100).some((line) => line.includes("⏺ worker")));
+			assert.ok(component.render(100).some((line) => line.includes("> worker")));
 			assert.deepEqual(inputHandler!("\r"), { consume: true });
 			await Promise.resolve();
 			assert.deepEqual(opened, ["foreground-active:run-worker:0"]);
 			await new Promise<void>((resolve) => setImmediate(resolve));
 			widgetFactory!(tui, theme);
 			assert.deepEqual(inputHandler!("\x1b"), { consume: true });
-			assert.ok(component.render(100).some((line) => line.includes("⏺ main")));
+			assert.ok(component.render(100).some((line) => line.includes("> main")));
 		} finally {
 			fleet.dispose();
 		}

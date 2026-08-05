@@ -365,6 +365,114 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(unwrap(expanded), /precisefailingtoolsequenceattheend\./);
 	});
 
+	it("uses the same semantic status presentation in compact and expanded single results", () => {
+		const cases = [
+			{
+				name: "running",
+				glyph: "⠋",
+				label: "running",
+				extra: { progress: { index: 0, agent: "reviewer", status: "running", task: "review", recentTools: [], recentOutput: [], toolCount: 0, tokens: 0, durationMs: 0 } },
+			},
+			{ name: "detached", glyph: "■", label: "detached", extra: { detached: true, detachedReason: "continuing externally" } },
+			{ name: "stopped", glyph: "■", label: "stopped", extra: { stopped: true, exitCode: 1 } },
+			{
+				name: "interrupted",
+				glyph: "■",
+				label: "paused",
+				extra: {
+					interrupted: true,
+					exitCode: 1,
+					progress: { index: 0, agent: "reviewer", status: "running", task: "review", recentTools: [], recentOutput: [], toolCount: 1, tokens: 42, durationMs: 1000 },
+				},
+			},
+			{ name: "failed", glyph: "✗", label: "failed", extra: { exitCode: 1, error: "boom" } },
+			{ name: "completed", glyph: "✓", label: "completed", extra: {} },
+		] as const;
+
+		for (const testCase of cases) {
+			const child = {
+				agent: "reviewer",
+				task: "review",
+				exitCode: 0,
+				finalOutput: "review complete",
+				messages: [],
+				usage: emptyUsage,
+				...testCase.extra,
+			};
+			const result = {
+				content: [{ type: "text" as const, text: testCase.name }],
+				details: { mode: "single" as const, results: [child] },
+			};
+			const compact = renderSubagentResult!(result, { expanded: false }, theme).render(120).join("\n");
+			const expanded = renderSubagentResult!(result, { expanded: true }, theme).render(120).join("\n");
+
+			assert.equal(firstGrapheme(compact), testCase.glyph, `${testCase.name} compact glyph`);
+			assert.equal(firstGrapheme(expanded), testCase.glyph, `${testCase.name} expanded glyph`);
+			assert.match(expanded.split("\n")[0] ?? "", new RegExp(`reviewer(?: \\| [^·]+)? · ${testCase.label}$`), `${testCase.name} expanded label`);
+		}
+	});
+
+	it("uses shared semantic status presentation for expanded multi-result rows", () => {
+		const results = [
+			{ agent: "detached-agent", task: "one", exitCode: 0, detached: true, finalOutput: "output", messages: [], usage: emptyUsage },
+			{ agent: "stopped-agent", task: "two", exitCode: 1, stopped: true, finalOutput: "output", messages: [], usage: emptyUsage },
+			{
+				agent: "paused-agent",
+				task: "three",
+				exitCode: 1,
+				interrupted: true,
+				finalOutput: "Interrupted. Waiting for explicit next action.",
+				messages: [],
+				usage: emptyUsage,
+				progress: { index: 2, agent: "paused-agent", status: "running" as const, task: "three", recentTools: [], recentOutput: [], toolCount: 1, tokens: 42, durationMs: 1000 },
+			},
+			{ agent: "failed-agent", task: "four", exitCode: 1, error: "boom", finalOutput: "output", messages: [], usage: emptyUsage },
+			{ agent: "completed-agent", task: "five", exitCode: 0, finalOutput: "output", messages: [], usage: emptyUsage },
+		];
+		const result = {
+			content: [{ type: "text" as const, text: "mixed" }],
+			details: { mode: "parallel" as const, totalSteps: results.length, results },
+		};
+		const compact = renderSubagentResult!(result, { expanded: false }, theme).render(160).join("\n");
+		const expanded = renderSubagentResult!(result, { expanded: true }, theme).render(160).join("\n");
+
+		assert.match(compact, /^■ parallel/);
+		assert.match(compact, /■ Agent 3\/5: paused-agent/);
+		assert.doesNotMatch(compact, /running agent/);
+		assert.match(expanded, /■ Agent 1\/5: detached-agent · detached/);
+		assert.match(expanded, /■ Agent 2\/5: stopped-agent · stopped/);
+		assert.match(expanded, /■ Agent 3\/5: paused-agent[^\n]* · paused/);
+		assert.doesNotMatch(expanded, /running agent/);
+		assert.match(expanded, /✗ Agent 4\/5: failed-agent · failed/);
+		assert.match(expanded, /✓ Agent 5\/5: completed-agent · completed/);
+	});
+
+	it("renders a stale-running interrupted aggregate as paused", () => {
+		const result = {
+			content: [{ type: "text" as const, text: "paused" }],
+			details: {
+				mode: "parallel" as const,
+				totalSteps: 1,
+				results: [{
+					agent: "paused-agent",
+					task: "pause",
+					exitCode: 1,
+					interrupted: true,
+					finalOutput: "Interrupted. Waiting for explicit next action.",
+					messages: [],
+					usage: emptyUsage,
+					progress: { index: 0, agent: "paused-agent", status: "running" as const, task: "pause", recentTools: [], recentOutput: [], toolCount: 1, tokens: 42, durationMs: 1000 },
+				}],
+			},
+		};
+
+		const compact = renderSubagentResult!(result, { expanded: false }, theme).render(160).join("\n");
+		const expanded = renderSubagentResult!(result, { expanded: true }, theme).render(160).join("\n");
+
+		assert.match(compact, /^■ parallel/);
+		assert.match(expanded, /^■ parallel[^\n]* · paused/);
+	});
+
 	it("uses glyph-first compact rendering for completed subagents", () => {
 		const widget = renderSubagentResult!({
 			content: [{ type: "text", text: "done" }],
