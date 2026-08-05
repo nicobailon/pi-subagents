@@ -35,6 +35,8 @@ function writeAsyncRun(root: string, input: {
 	lastUpdate?: number;
 	agents?: string[];
 	contexts?: Array<"fresh" | "fork">;
+	models?: string[];
+	thinking?: string[];
 	output?: string;
 	transcript?: Array<Record<string, unknown>>;
 }): string {
@@ -55,6 +57,8 @@ function writeAsyncRun(root: string, input: {
 		steps: agents.map((agent, index) => ({
 			agent,
 			...(input.contexts?.[index] ? { context: input.contexts[index] } : {}),
+			...(input.models?.[index] ? { model: input.models[index] } : {}),
+			...(input.thinking?.[index] ? { thinking: input.thinking[index] } : {}),
 			status: input.state === "complete" ? "complete" : input.state === "failed" ? "failed" : index === 0 ? "running" : "pending",
 			startedAt: 100,
 			...(index === 0 ? { sessionFile: path.join(asyncDir, `${agent}.jsonl`), ...(transcriptPath ? { transcriptPath } : {}) } : {}),
@@ -170,6 +174,32 @@ describe("native subagent fleet", () => {
 			assert.equal(snapshot.error, undefined);
 			assert.equal(snapshot.items.length, 20);
 			assert.ok(!snapshot.items.some((item) => item.runId === "old-invalid"));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shows async model and thinking metadata in the structured header", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-model-thinking-"));
+		try {
+			writeAsyncRun(root, {
+				id: "model-thinking",
+				state: "running",
+				models: ["openai-codex/gpt-5.5"],
+				thinking: ["high"],
+			});
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				stateForTest(),
+				() => {},
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, markdownTheme },
+			);
+			try {
+				assert.ok(component.render(100).some((line) => line.includes("gpt-5.5 · thinking high")));
+			} finally {
+				component.dispose();
+			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

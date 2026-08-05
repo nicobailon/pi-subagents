@@ -495,6 +495,23 @@ describe("renderSubagentResult fork indicator", () => {
 		}, { expanded: false }, theme).render(160).join("\n");
 		assert.match(multi, /Agent 1\/2: scout \(claude-haiku-4-5 · thinking low\)/);
 		assert.match(multi, /Agent 2\/2: worker \(gpt-5-mini\)/);
+
+		const expanded = renderSubagentResult!({
+			content: [{ type: "text", text: "done" }],
+			details: {
+				mode: "parallel",
+				totalSteps: 1,
+				results: [{
+					agent: "reviewer",
+					task: "review",
+					exitCode: 0,
+					messages: [],
+					usage: emptyUsage,
+					progressSummary: { toolCount: 1, tokens: 42, durationMs: 3_000, model: "openai-codex/gpt-5.5", thinking: "high" },
+				}],
+			},
+		}, { expanded: true }, theme).render(160).join("\n");
+		assert.match(expanded, /reviewer \(gpt-5\.5 · thinking high\)/);
 	});
 
 	it("keeps running compact result output stable when progress is unchanged", async () => {
