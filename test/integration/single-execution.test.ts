@@ -2487,6 +2487,32 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.progress.durationMs > 0, "should track duration");
 	});
 
+	it("streams progress while a foreground child has not emitted output", async () => {
+		const updates: Array<{ text: string; durationMs: number | undefined }> = [];
+		const releasePath = path.join(tempDir, "release-foreground-progress");
+		mockPi.onCall({ output: "Done", waitForPath: releasePath });
+
+		const runPromise = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			onUpdate: (update: { content: Array<{ type: string; text?: string }>; details?: { progress?: ProgressSummary[] } }) => {
+				updates.push({
+					text: update.content[0]?.text ?? "",
+					durationMs: update.details?.progress?.[0]?.durationMs,
+				});
+			},
+		});
+		const deadline = Date.now() + 5_000;
+		while (updates.filter((update) => update.text === "(running...)").length < 2 && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		fs.writeFileSync(releasePath, "release", "utf-8");
+		const result = await runPromise;
+
+		const runningUpdates = updates.filter((update) => update.text === "(running...)");
+		assert.equal(result.exitCode, 0);
+		assert.ok(runningUpdates.length >= 2, "expected an initial update and a heartbeat before child output");
+		assert.ok((runningUpdates.at(-1)?.durationMs ?? 0) > (runningUpdates[0]?.durationMs ?? 0), "expected heartbeat duration to advance");
+	});
+
 	it("tracks live activity updates and exposes artifact paths while running", async () => {
 		const updates: Array<{ details?: { results?: Array<{ artifactPaths?: ArtifactPaths }>; progress?: ProgressSummary[] } }> = [];
 		mockPi.onCall({

@@ -984,14 +984,14 @@ async function runSingleAttempt(
 			}
 		};
 
-		if (controlConfig.enabled) {
+		fireUpdate();
+		if (controlConfig.enabled || options.onUpdate) {
 			activityTimer = setInterval(() => {
-				if (processClosed || lifecycleFinished) return;
-				const now = Date.now();
-				if (updateActivityState(now)) {
-					progress.durationMs = now - startTime;
-					fireUpdate();
+				if (processClosed || lifecycleFinished) {
+					return;
 				}
+				updateActivityState(Date.now());
+				fireUpdate();
 			}, 1000);
 			activityTimer.unref?.();
 		}
