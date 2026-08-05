@@ -1049,6 +1049,11 @@ describe("acceptance gates", () => {
 	it("validates invalid disable and verify shapes", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "none" }), ["acceptance.reason is required when level is none."]);
 		assert.deepEqual(validateAcceptanceInput("none"), ["acceptance level \"none\" requires a reason; use { level: \"none\", reason: \"...\" }."]);
+		assert.deepEqual(validateAcceptanceInput("verified"), ["acceptance level \"verified\" requires object form with at least one verify command."]);
+		for (const input of [{ level: "verified" }, { level: "verified", verify: [] }]) {
+			assert.deepEqual(validateAcceptanceInput(input), ["acceptance.verify must contain at least one command when level is verified."]);
+		}
+		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }] }), []);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "missing-command" }] }), ["acceptance.verify[0].command is required."]);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);
 		assert.deepEqual(validateAcceptanceInput(false), []);

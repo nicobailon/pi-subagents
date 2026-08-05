@@ -3874,6 +3874,7 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 		ok: result.isError !== true,
 		...(result.details.runId || result.details.asyncId ? { runId: result.details.runId ?? result.details.asyncId } : {}),
 		output,
+		...(result.isError === true ? { error: output || "Child run failed." } : {}),
 		...(structured.length === 1 ? { structuredOutput: structured[0] } : structured.length > 1 ? { structuredOutput: structured } : {}),
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,

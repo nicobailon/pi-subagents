@@ -680,8 +680,8 @@ export interface AcceptanceConfig {
 	reason?: string;
 }
 
-/** Bare "none" is not accepted: use { level: "none", reason: "..." }; false remains a deprecated shorthand. */
-export type AcceptanceInput = Exclude<AcceptanceLevel, "none"> | false | AcceptanceConfig;
+/** Bare "none" and "verified" are not accepted; verified policies require object form with runtime commands. */
+export type AcceptanceInput = Exclude<AcceptanceLevel, "none" | "verified"> | false | AcceptanceConfig;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;

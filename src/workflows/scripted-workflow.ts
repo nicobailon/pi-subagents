@@ -9,6 +9,13 @@ const { inspect } = require("node:util");
 
 let nextCallId = 0;
 const pending = new Map();
+const runKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function stableRunJson(value) {
+  if (Array.isArray(value)) return "[" + value.map(stableRunJson).join(",") + "]";
+  if (value && typeof value === "object") return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + stableRunJson(value[key])).join(",") + "}";
+  return JSON.stringify(value) ?? "undefined";
+}
 
 function hostCall(method, args) {
   return new Promise((resolve, reject) => {
@@ -25,15 +32,42 @@ function formatRef(result) {
   return "[" + parts.join("; ") + "]";
 }
 
+const runFingerprints = new Map();
+
+function validateRunCall(key, params, label, fingerprints) {
+  if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error(label + " has an invalid key.");
+  if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error(label + " requires a params object.");
+  if (Object.prototype.hasOwnProperty.call(params, "action") || Object.prototype.hasOwnProperty.call(params, "workflowScript") || Object.prototype.hasOwnProperty.call(params, "tasks") || Object.prototype.hasOwnProperty.call(params, "chain") || Object.prototype.hasOwnProperty.call(params, "concurrency") || Object.prototype.hasOwnProperty.call(params, "chainDir")) {
+    const hint = label === "runs.run" ? "; use runs.all(...) and JavaScript control flow for orchestration." : ".";
+    throw new Error(label + " accepts one child via { agent, task } and execution controls only" + hint);
+  }
+  if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
+  assertJsonValue(params, label + " params");
+  const fingerprint = stableRunJson(params);
+  const existing = fingerprints.get(key);
+  if (existing !== undefined && existing !== fingerprint) throw new Error("Duplicate workflow key '" + key + "' used with incompatible launch params.");
+  fingerprints.set(key, fingerprint);
+}
+
 const runs = Object.freeze({
-  run(key, params) { return hostCall("run", { key, params }); },
+  run(key, params) {
+    validateRunCall(key, params, "runs.run", runFingerprints);
+    return hostCall("run", { key, params });
+  },
   all(items) {
     if (!Array.isArray(items)) throw new Error("runs.all(items) requires an array.");
-    return Promise.all(items.map((item, index) => {
+    const fingerprints = new Map(runFingerprints);
+    const calls = [];
+    for (let index = 0; index < items.length; index++) {
+      if (!Object.prototype.hasOwnProperty.call(items, index)) throw new Error("runs.all items must not contain sparse entries.");
+      const item = items[index];
       if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("runs.all item " + index + " must be an object.");
       const { key, ...params } = item;
-      return hostCall("run", { key, params });
-    }));
+      validateRunCall(key, params, "runs.all item " + index, fingerprints);
+      calls.push({ key, params });
+    }
+    for (const { key, params } of calls) runFingerprints.set(key, stableRunJson(params));
+    return Promise.all(calls.map(({ key, params }) => hostCall("run", { key, params, collectFailure: true })));
   },
   status(keyOrRunId) { return hostCall("status", { keyOrRunId }); },
   ref: formatRef,
@@ -104,6 +138,7 @@ export interface WorkflowScriptChildResult {
 	ok: boolean;
 	runId?: string;
 	output: string;
+	error?: string;
 	structuredOutput?: unknown;
 	artifactPaths: string[];
 	results?: unknown[];
@@ -233,11 +268,15 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const consoleEntries: WorkflowScriptResult["console"] = [];
 	const trace: WorkflowScriptTraceEntry[] = [];
 	const children = new Map<string, WorkflowScriptChildResult>();
+	const childOrder: string[] = [];
 	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult> }>();
 	const childController = new AbortController();
 	let settled = false;
 
-	const partial = (): Omit<WorkflowScriptResult, "value"> => ({ emits, console: consoleEntries, trace, children: [...children.values()] });
+	const partial = (): Omit<WorkflowScriptResult, "value"> => ({ emits, console: consoleEntries, trace, children: childOrder.flatMap((key) => {
+		const child = children.get(key);
+		return child ? [child] : [];
+	}) });
 	const traceChanged = () => options.onTrace?.([...trace]);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
@@ -333,32 +372,42 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (params.worktree !== undefined && typeof params.worktree !== "boolean") {
 				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
 			}
+			const collectFailure = message.args.collectFailure === true;
+			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
+				? promise
+				: promise.then((result) => {
+					if (!result.ok) throw new Error(`Run '${key}' failed: ${result.error ?? result.output}`);
+					return result;
+				});
 			const fingerprint = stableJson(params);
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
 				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
 				traceChanged();
-				return respond(existing.promise);
+				return respond(deliver(existing.promise));
 			}
 
 			const startedAt = Date.now();
+			childOrder.push(key);
 			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
 			traceChanged();
-			const promise = options.launch(key, { ...params, async: params.async ?? false }, childController.signal).then((result) => {
-				children.set(key, result);
-				trace.push({ operation: "run", key, state: result.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
+			const promise = Promise.resolve().then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal)).then((result) => {
+				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
+				children.set(key, normalized);
+				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
-				if (!result.ok) throw new Error(`Run '${key}' failed: ${result.output}`);
-				return result;
+				return normalized;
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
+				const failure: WorkflowScriptChildResult = { key, ok: false, output: text, error: text, artifactPaths: [] };
+				children.set(key, failure);
 				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), error: text });
 				traceChanged();
-				throw new Error(`Run '${key}' failed: ${text}`);
+				return failure;
 			});
 			launches.set(key, { fingerprint, promise });
-			respond(promise);
+			respond(deliver(promise));
 		});
 
 		worker.postMessage({ type: "start", script: options.script });

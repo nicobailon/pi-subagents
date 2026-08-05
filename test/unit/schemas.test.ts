@@ -463,7 +463,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(hasAnyOfType(acceptanceSchema, "boolean"), true);
 		const acceptanceStringBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "string");
 		const acceptanceLevelBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("auto"));
-		assert.deepEqual(acceptanceLevelBranch?.enum, ["auto", "attested", "checked", "verified"], "evidence levels end at verified");
+		assert.deepEqual(acceptanceLevelBranch?.enum, ["auto", "attested", "checked"], "verified requires object form with runtime commands");
 		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
 		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
 		assert.equal(reviewedRecoveryBranch?.deprecated, true);
@@ -498,6 +498,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ action: "not-a-real-action" },
 			{ agent: "worker", task: "Fix", acceptance: "checked" },
 			{ agent: "worker", task: "Fix", acceptance: "reviewed" },
+			{ agent: "worker", task: "Fix", acceptance: { level: "verified", verify: [{ id: "tests", command: "npm test" }] } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
 			{ config: { name: "reviewer", description: "Review things" } },
@@ -511,6 +512,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const invalidValues = [
 			{ skill: 123 },
 			{ agent: "worker", task: "Fix", acceptance: "none" },
+			{ agent: "worker", task: "Fix", acceptance: "verified" },
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },

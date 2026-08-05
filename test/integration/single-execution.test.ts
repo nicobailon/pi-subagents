@@ -602,6 +602,40 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
 	});
 
+	it("lets runs.all siblings settle when one child fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ exitCode: 1, stderr: "first child failed" });
+		mockPi.onCall({ output: "second child completed" });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-settlement",
+			{
+				async: false,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "first", agent: "echo", task: "First task" },
+						{ key: "second", agent: "echo", task: "Second task" }
+					]);
+					return children.map(({ key, ok, error }) => error === undefined ? { key, ok } : { key, ok, error });
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(mockPi.callCount(), 2);
+		const value = result.details.workflow?.value as Array<{ key: string; ok: boolean; error?: string }>;
+		assert.deepEqual(value.map(({ key }) => key), ["first", "second"]);
+		assert.deepEqual(value.map(({ ok }) => ok).sort(), [false, true]);
+		const failed = value.find(({ ok }) => !ok);
+		const succeeded = value.find(({ ok }) => ok);
+		assert.match(failed?.error ?? "", /first child failed/);
+		assert.equal(succeeded?.error, undefined);
+		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state !== "started").map(({ state }) => state).sort(), ["completed", "failed"]);
+	});
+
 	it("gives parallel workflow children separate managed worktrees and durable handoffs", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
@@ -796,6 +830,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /acceptance level "none" requires a reason/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects invalid verified acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const invalidPolicies = [
+			"verified",
+			{ level: "verified" },
+			{ level: "verified", verify: [] },
+		] as const;
+
+		for (const [index, acceptance] of invalidPolicies.entries()) {
+			const result = await executor.execute(
+				`invalid-verified-acceptance-${index}`,
+				{ agent: "echo", task: "Do work", acceptance: acceptance as never },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /(?:verified.*object form|verify.*at least one command)/i);
+		}
 		assert.equal(mockPi.callCount(), 0);
 	});
 

@@ -41,6 +41,156 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(emitSnapshots, [1]);
 	});
 
+	it("waits for every runs.all child and returns ordinary failures in input order", async () => {
+		let delayedFinished = false;
+		let delayedAborted = false;
+		const result = await runWorkflowScript({
+			script: `
+				const children = await runs.all([
+					{ key: "fails-first", agent: "worker", task: "fail" },
+					{ key: "finishes-later", agent: "worker", task: "finish" }
+				]);
+				return children.map(({ key, ok, error, results }) => error === undefined ? { key, ok, results } : { key, ok, error, results });
+			`,
+			timeoutMs: 2_000,
+			launch(key, _params, signal) {
+				if (key === "fails-first") {
+					return Promise.resolve({
+						key,
+						ok: false,
+						output: "acceptance rejected",
+						artifactPaths: [],
+						results: [{ acceptance: { status: "rejected" } }],
+					});
+				}
+				return new Promise((resolve, reject) => {
+					const timer = setTimeout(() => {
+						delayedFinished = true;
+						resolve({ key, ok: true, output: "completed", artifactPaths: [], results: [] });
+					}, 50);
+					signal.addEventListener("abort", () => {
+						delayedAborted = !delayedFinished;
+						clearTimeout(timer);
+						reject(signal.reason);
+					}, { once: true });
+				});
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.equal(delayedFinished, true);
+		assert.equal(delayedAborted, false);
+		assert.deepEqual(result.value, [
+			{ key: "fails-first", ok: false, error: "acceptance rejected", results: [{ acceptance: { status: "rejected" } }] },
+			{ key: "finishes-later", ok: true, results: [] },
+		]);
+		assert.deepEqual(result.trace.filter((entry) => entry.operation === "run" && entry.state !== "started").map(({ key, state }) => ({ key, state })), [
+			{ key: "fails-first", state: "failed" },
+			{ key: "finishes-later", state: "completed" },
+		]);
+	});
+
+	it("returns runs.all launch errors without aborting successful siblings", async () => {
+		const result = await runWorkflowScript({
+			script: `
+				const children = await runs.all([
+					{ key: "cannot-launch", agent: "missing", task: "fail" },
+					{ key: "still-runs", agent: "worker", task: "finish" }
+				]);
+				return children.map(({ key, ok, error }) => error === undefined ? { key, ok } : { key, ok, error });
+			`,
+			timeoutMs: 2_000,
+			launch(key) {
+				if (key === "cannot-launch") throw new Error("agent is unavailable");
+				return new Promise((resolve) => setTimeout(() => resolve({ key, ok: true, output: "completed", artifactPaths: [], results: [] }), 25));
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, [
+			{ key: "cannot-launch", ok: false, error: "agent is unavailable" },
+			{ key: "still-runs", ok: true },
+		]);
+		assert.deepEqual(result.children.map(({ key, ok, error }) => error === undefined ? { key, ok } : { key, ok, error }), [
+			{ key: "cannot-launch", ok: false, error: "agent is unavailable" },
+			{ key: "still-runs", ok: true },
+		]);
+	});
+
+	it("keeps runs.run fail-fast for ordinary child failures", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return await runs.run("fails", { agent: "worker", task: "fail" });`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: false, output: "failed", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /Run 'fails' failed: failed/.test(error.message),
+		);
+	});
+
+	it("validates every runs.all item before launching children", async () => {
+		const malformedScripts = [
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, null]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "bad key", agent: "worker", task: "run" }]);`,
+			`return await runs.all([{ key: "same", agent: "worker", task: "one" }, { key: "same", agent: "worker", task: "two" }]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "nested", workflowScript: "return null" }]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "undefined-action", agent: "worker", task: "run", action: undefined }]);`,
+			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, { key: "uncloneable", agent: "worker", task: () => "run" }]);`,
+			`const items = []; items[1] = { key: "valid", agent: "worker", task: "run" }; return await runs.all(items);`,
+		];
+		for (const script of malformedScripts) {
+			let launches = 0;
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					timeoutMs: 2_000,
+					async launch(key) { launches++; return { key, ok: true, output: "unexpected", artifactPaths: [], results: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /runs\.all|Duplicate workflow key/.test(error.message),
+			);
+			assert.equal(launches, 0, script);
+		}
+	});
+
+	it("rejects a runs.all batch incompatible with an earlier key before dispatching the batch", async () => {
+		const launches: string[] = [];
+		await assert.rejects(
+			runWorkflowScript({
+				script: `
+					await runs.run("same", { agent: "worker", task: "one" });
+					return await runs.all([
+						{ key: "valid", agent: "worker", task: "run" },
+						{ key: "same", agent: "worker", task: "two" }
+					]);
+				`,
+				timeoutMs: 2_000,
+				async launch(key) { launches.push(key); return { key, ok: true, output: "ok", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /Duplicate workflow key 'same'/.test(error.message),
+		);
+		assert.deepEqual(launches, ["same"]);
+	});
+
+	it("reports host-side children in launch order", async () => {
+		const result = await runWorkflowScript({
+			script: `return await runs.all([
+				{ key: "slow", agent: "worker", task: "slow" },
+				{ key: "fast", agent: "worker", task: "fast" }
+			]);`,
+			timeoutMs: 2_000,
+			launch(key) {
+				return new Promise((resolve) => setTimeout(() => resolve({ key, ok: true, output: key, artifactPaths: [], results: [] }), key === "slow" ? 30 : 0));
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual((result.value as Array<{ key: string }>).map(({ key }) => key), ["slow", "fast"]);
+		assert.deepEqual(result.children.map(({ key }) => key), ["slow", "fast"]);
+	});
+
 	it("omits undefined child result fields before a script returns them", async () => {
 		const result = await runWorkflowScript({
 			script: `return await runs.run("artifact-only", { agent: "worker", task: "write output" });`,

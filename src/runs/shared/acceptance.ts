@@ -169,6 +169,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 		if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		else if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
 		else if (input === "none") errors.push(`${pathLabel} level "none" requires a reason; use { level: "none", reason: "..." }.`);
+		else if (input === "verified") errors.push(`${pathLabel} level "verified" requires object form with at least one verify command.`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -232,7 +233,11 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	} else if (value.evidence !== undefined) {
 		errors.push(`${pathLabel}.evidence must be an array. ${ACCEPTANCE_EVIDENCE_HELP}`);
 	}
-	if (value.verify !== undefined && !Array.isArray(value.verify)) errors.push(`${pathLabel}.verify must be an array.`);
+	if (value.level === "verified" && (!Array.isArray(value.verify) || value.verify.length === 0)) {
+		errors.push(`${pathLabel}.verify must contain at least one command when level is verified.`);
+	} else if (value.verify !== undefined && !Array.isArray(value.verify)) {
+		errors.push(`${pathLabel}.verify must be an array.`);
+	}
 	if (Array.isArray(value.verify)) {
 		for (const [index, command] of value.verify.entries()) {
 			if (!command || typeof command !== "object" || Array.isArray(command)) {

@@ -29,6 +29,8 @@
 - Scheduled subagent runs are now enabled by default; set `{ "scheduledRuns": { "enabled": false } }` to opt out.
 
 ### Fixed
+- Reject scalar or commandless verified acceptance before spawning a child; verified policies now require object form with at least one runtime command.
+- Let every `runs.all` child settle and return ordered per-child outcomes instead of aborting siblings when one child fails; `runs.run` remains fail-fast.
 - Preserve successful async completion when project-local artifact or mission files are removed before final bookkeeping by recreating artifact directories and recording missing-mission warnings.
 - Keep active Fleet inspector runs ahead of terminal history, which now sorts by recency instead of failure state so old failures do not look attached to current workflow work. Thanks to @nicobailon for #802.
 - Normalize undefined fields in workflow child results before scripts can return them, preserving artifact-only child output.
