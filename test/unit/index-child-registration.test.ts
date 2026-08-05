@@ -92,6 +92,53 @@ describe("subagent extension child mode", () => {
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
+	it("keeps registered tool errors actionable while successful results stay collapsed", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			let registeredTool;
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			if (!registeredTool) throw new Error("tool not registered");
+
+			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+			const render = (text, isError) => registeredTool.renderResult({
+				content: [{ type: "text", text }],
+				details: { mode: "management", results: [] },
+			}, { expanded: false }, theme, {
+				isError,
+				state: {},
+			}).render(120).join("\n");
+
+			const error = render("Agent configuration is invalid.\nSet tools to an array.\nRetry the subagent call.", true);
+			if (!error.includes("Set tools to an array.")) throw new Error("error remediation was hidden: " + error);
+			if (!error.includes("Retry the subagent call.")) throw new Error("error retry guidance was hidden: " + error);
+			if (error.includes("3 lines")) throw new Error("error was collapsed: " + error);
+
+			const success = render("Managed agents:\n- reviewer\n- writer", false);
+			if (!success.includes("Managed agents: · 3 lines")) throw new Error("success summary was not collapsed: " + success);
+			if (success.includes("- reviewer") || success.includes("- writer")) throw new Error("success details were not collapsed: " + success);
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("does not animate foreground results on a timer", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

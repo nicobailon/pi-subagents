@@ -433,7 +433,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 		renderResult(result, options, theme, context) {
 			clearLegacyResultAnimationTimer(context);
-			return renderSubagentResult(result, options, theme);
+			return renderSubagentResult({ ...result, isError: context.isError }, options, theme);
 		},
 
 	};
