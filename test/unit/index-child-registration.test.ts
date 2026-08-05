@@ -143,7 +143,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("keeps summary inline tool display to one stable row while running, completed, and stopped", () => {
+	it("keeps summary inline tool display to one stable row for every supported state", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-inline-display-config-"));
 		try {
 			const configDir = path.join(agentDir, "extensions", "subagent");
@@ -178,9 +178,19 @@ describe("subagent extension child mode", () => {
 					content: [{ type: "text", text: "cancelled output that must not appear" }],
 					details: { mode: "single", results: [{ ...base, exitCode: 1, stopped: true, error: "Cancelled by user" }] },
 				}, { expanded: true, isPartial: false }, theme, { state: {} }).render(120);
+				const paused = registeredTool.renderResult({
+					content: [{ type: "text", text: "paused output that must not appear" }],
+					details: { mode: "single", results: [{ ...base, exitCode: 1, interrupted: true }] },
+				}, { expanded: true, isPartial: false }, theme, { state: {} }).render(120);
+				const failed = registeredTool.renderResult({
+					content: [{ type: "text", text: "failed output that must not appear" }],
+					details: { mode: "single", results: [{ ...base, exitCode: 1, stopped: false }] },
+				}, { expanded: true, isPartial: false }, theme, { state: {} }).render(120);
 				if (running.length !== 1 || running[0] !== "● delegate · running") throw new Error("unexpected running summary: " + JSON.stringify(running));
 				if (completed.length !== 1 || completed[0] !== "✓ delegate · completed") throw new Error("unexpected completed summary: " + JSON.stringify(completed));
 				if (stopped.length !== 1 || stopped[0] !== "■ delegate · stopped") throw new Error("unexpected stopped summary: " + JSON.stringify(stopped));
+				if (paused.length !== 1 || paused[0] !== "■ delegate · paused") throw new Error("unexpected paused summary: " + JSON.stringify(paused));
+				if (failed.length !== 1 || failed[0] !== "✗ delegate · failed") throw new Error("unexpected failed summary: " + JSON.stringify(failed));
 			`;
 			const env = parentToolEnv();
 			env.PI_CODING_AGENT_DIR = agentDir;

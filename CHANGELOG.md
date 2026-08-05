@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Added opt-in `inlineToolDisplay: "summary"` for a stable one-row inline subagent result while FleetView remains the live progress surface.
+- Added opt-in `inlineToolDisplay: "summary"` for a stable one-row inline subagent result while FleetView remains the live progress surface. Thanks to @ryanbbrown for #805.
 - Added an observational `pi-subagents/external-runs` provider API for visible terminal work, without taking process ownership. Thanks to @nicobailon for #795.
 - Added narrow public entrypoints for extension consumers to access async stop requests, intercom session targeting, launch tool-plan resolution, and fork-task helpers without deep imports. Thanks to @shaneconner for #794.
 - FleetView nested trees now retain and display each leaf's effective model and thinking effort, including completed siblings while the owner remains active. Thanks to @fgpaz for #776.
@@ -30,7 +30,7 @@
 - Scheduled subagent runs are now enabled by default; set `{ "scheduledRuns": { "enabled": false } }` to opt out.
 
 ### Fixed
-- Wake the originating parent session after a hidden successful background completion while preserving explicit `triggerTurn: false` delivery.
+- Wake the originating parent session after a hidden successful background completion while preserving explicit `triggerTurn: false` delivery. Thanks to @ryanbbrown for #805.
 - Preserve successful async completion when project-local artifact or mission files are removed before final bookkeeping by recreating artifact directories and recording missing-mission warnings.
 - Normalize undefined fields in workflow child results before scripts can return them, preserving artifact-only child output.
 - Show current-session async runs in the Fleet inspector even when this Pi process did not start them.
