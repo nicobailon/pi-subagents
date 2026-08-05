@@ -7,6 +7,63 @@ const DEFAULT_MAX_RECORDS = 240;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 64 * 1024;
 const TOOL_PREVIEW_LINES = 7;
+const BINARY_CONTENT_PLACEHOLDER = "[binary content omitted for safe display]";
+
+function isUnsafeDisplayCodePoint(codePoint: number): boolean {
+	const terminalControl = (codePoint <= 0x1f && codePoint !== 0x09 && codePoint !== 0x0a)
+		|| (codePoint >= 0x7f && codePoint <= 0x9f);
+	const bidiControl = codePoint === 0x061c
+		|| codePoint === 0x200e
+		|| codePoint === 0x200f
+		|| (codePoint >= 0x202a && codePoint <= 0x202e)
+		|| (codePoint >= 0x2066 && codePoint <= 0x2069);
+	const privateUse = (codePoint >= 0xe000 && codePoint <= 0xf8ff)
+		|| (codePoint >= 0xf0000 && codePoint <= 0xffffd)
+		|| (codePoint >= 0x100000 && codePoint <= 0x10fffd);
+	const invalidScalar = codePoint >= 0xd800 && codePoint <= 0xdfff;
+	const nonCharacter = (codePoint >= 0xfdd0 && codePoint <= 0xfdef)
+		|| (codePoint & 0xffff) === 0xfffe
+		|| (codePoint & 0xffff) === 0xffff;
+	return terminalControl || bidiControl || privateUse || invalidScalar || nonCharacter;
+}
+
+function looksLikeBinaryContent(text: string): boolean {
+	if (text.includes("\0")) return true;
+	let suspiciousControls = 0;
+	let replacementCharacters = 0;
+	let codePoints = 0;
+	for (const character of text) {
+		codePoints++;
+		const codePoint = character.codePointAt(0) ?? 0;
+		if ((codePoint <= 0x08) || (codePoint >= 0x0e && codePoint <= 0x1f)) suspiciousControls++;
+		if (codePoint === 0xfffd) replacementCharacters++;
+	}
+	if (codePoints === 0) return false;
+	return (suspiciousControls >= 4 && suspiciousControls / codePoints >= 0.1)
+		|| (replacementCharacters >= 3 && replacementCharacters / codePoints >= 0.1);
+}
+
+function safeDisplayText(text: string): string {
+	if (looksLikeBinaryContent(text)) return BINARY_CONTENT_PLACEHOLDER;
+	let safe = "";
+	for (const character of text) {
+		const codePoint = character.codePointAt(0) ?? 0;
+		safe += isUnsafeDisplayCodePoint(codePoint)
+			? `[U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}]`
+			: character;
+	}
+	return safe;
+}
+
+function safeToolArgsPayload(payload: string): string {
+	try {
+		return safeDisplayText(JSON.stringify(JSON.parse(payload), (_key, value: unknown) => (
+			typeof value === "string" ? safeDisplayText(value) : value
+		)));
+	} catch {
+		return safeDisplayText(payload);
+	}
+}
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -142,6 +199,27 @@ function clipMessage(text: string): string {
 	return `${text.slice(0, MAX_MESSAGE_CHARS)}\n\n… message truncated`;
 }
 
+function safeTranscriptEvent(event: FleetTranscriptEvent): FleetTranscriptEvent {
+	if (event.kind === "assistant") {
+		return {
+			...event,
+			text: safeDisplayText(event.text),
+			...(event.model ? { model: safeDisplayText(event.model) } : {}),
+		};
+	}
+	if (event.kind === "user" || event.kind === "notice") {
+		return { ...event, text: safeDisplayText(event.text) };
+	}
+	return {
+		...event,
+		name: safeDisplayText(event.name),
+		...(event.args !== undefined ? { args: safeDisplayText(event.args) } : {}),
+		...(event.argsPayload !== undefined ? { argsPayload: safeToolArgsPayload(event.argsPayload) } : {}),
+		...(event.output !== undefined ? { output: safeDisplayText(event.output) } : {}),
+		...(event.error !== undefined ? { error: safeDisplayText(event.error) } : {}),
+	};
+}
+
 function findTool(
 	events: FleetTranscriptEvent[],
 	toolCallId: string | undefined,
@@ -274,13 +352,13 @@ function parseTranscriptLines(lines: string[], conversationStarted = false): { e
 	for (const event of events) {
 		if (event.kind === "tool") delete (event as MutableToolEvent).resultSeen;
 	}
-	return { events, malformed, explicitTruncation };
+	return { events: events.map(safeTranscriptEvent), malformed, explicitTruncation };
 }
 
 export function readFleetTranscript(filePath: string, options: FleetTranscriptReadOptions): FleetTranscript {
 	const validated = validateTranscriptPath(filePath, options.trustedRoots);
 	if (!validated.resolvedPath) {
-		return { path: filePath, events: [], truncated: false, ...(validated.warning ? { warning: validated.warning } : {}) };
+		return { path: filePath, events: [], truncated: false, ...(validated.warning ? { warning: safeDisplayText(validated.warning) } : {}) };
 	}
 	const maxRecords = Math.max(1, options.maxRecords ?? DEFAULT_MAX_RECORDS);
 	const tail = readTailLines(validated.resolvedPath, Math.max(1024, options.maxBytes ?? DEFAULT_MAX_BYTES));
@@ -295,7 +373,7 @@ export function readFleetTranscript(filePath: string, options: FleetTranscriptRe
 		path: filePath,
 		events: parsed.events,
 		truncated: tail.truncated || tail.lines.length > maxRecords || parsed.explicitTruncation,
-		...(warnings.length ? { warning: warnings.join(" ") } : {}),
+		...(warnings.length ? { warning: safeDisplayText(warnings.join(" ")) } : {}),
 	};
 }
 
@@ -404,12 +482,13 @@ export function renderFleetTranscript(
 	const lines: string[] = [];
 	if (transcript.truncated) lines.push(bounded(theme.fg("dim", "↑ Earlier activity omitted"), width));
 	if (transcript.warning) {
-		for (const line of renderWrapped(transcript.warning, Math.max(1, width - 2))) {
+		for (const line of renderWrapped(safeDisplayText(transcript.warning), Math.max(1, width - 2))) {
 			lines.push(bounded(`${theme.fg("warning", "!")} ${theme.fg("warning", line)}`, width));
 		}
 	}
 
-	for (const event of transcript.events) {
+	for (const rawEvent of transcript.events) {
+		const event = safeTranscriptEvent(rawEvent);
 		if (event.kind === "tool") {
 			if (options.expandedTools && (event.output || event.argsPayload || event.error)) {
 				lines.push(...renderExpandedTool(event, width, theme));

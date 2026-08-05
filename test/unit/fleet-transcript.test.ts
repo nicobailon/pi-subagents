@@ -127,8 +127,87 @@ describe("Fleet inspector structured transcript", () => {
 			}],
 		};
 		const rendered = renderFleetTranscript(transcript, 24, theme as never, markdownTheme, { expandedTools: true });
+		assert.doesNotMatch(rendered.join("\n"), /\u001b/u);
+		assert.ok(rendered.some((line) => line.includes("U+001B")));
 		for (const line of rendered) {
 			assert.ok(visibleWidth(line) <= 24, `line exceeded width: ${JSON.stringify(line)}`);
+		}
+	});
+
+	it("escapes unsafe transcript code points across messages, notices, and tool fields", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-unsafe-transcript-"));
+		try {
+			const unsafe = "escape:\u001b bidi:\u202e private:\ue000 invalid:\ud800";
+			const transcriptPath = writeTranscript(root, [
+				{ recordType: "message", role: "assistant", text: `**safe Markdown**\n${unsafe}` },
+				{ recordType: "message", role: "user", text: `supervisor ${unsafe}` },
+				{ recordType: "stderr", text: `notice ${unsafe}` },
+				{ recordType: "tool_start", toolName: "custom", argsPreview: `preview ${unsafe}`, argsPayload: JSON.stringify({ value: unsafe }) },
+				{ recordType: "message", role: "toolResult", toolName: "custom", text: `output ${unsafe}`, isError: false },
+				{ recordType: "tool_start", toolName: "failing", argsPreview: "failure" },
+				{ recordType: "message", role: "toolResult", toolName: "failing", text: `error ${unsafe}`, isError: true },
+			]);
+
+			const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [root] });
+			const serialized = JSON.stringify(transcript.events);
+			assert.doesNotMatch(serialized, /[\u001b\u202e\ue000\ud800]/u);
+			assert.match(serialized, /U\+001B/);
+			assert.match(serialized, /U\+202E/);
+			assert.match(serialized, /U\+E000/);
+			assert.match(serialized, /U\+D800/);
+
+			const compact = renderFleetTranscript(transcript, 44, theme as never, markdownTheme);
+			assert.ok(compact.some((line) => line.includes("preview escape:[U+001B]")));
+			const rendered = renderFleetTranscript(transcript, 44, theme as never, markdownTheme, { expandedTools: true });
+			assert.ok(rendered.some((line) => line.includes("safe Markdown")));
+			assert.ok(rendered.some((line) => line.includes("output escape:[U+001B]")));
+			assert.ok(rendered.some((line) => line.includes("error escape:[U+001B]")));
+			assert.doesNotMatch(rendered.join("\n"), /[\u001b\u202e\ue000\ud800]/u);
+			for (const line of [...compact, ...rendered]) assert.ok(visibleWidth(line) <= 44, `line exceeded width: ${JSON.stringify(line)}`);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("replaces obvious binary transcript content with a warning placeholder", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-binary-transcript-"));
+		try {
+			const binary = "PNG\u0000\u0001\u0002payload";
+			const transcriptPath = writeTranscript(root, [
+				{ recordType: "message", role: "assistant", text: binary },
+				{ recordType: "tool_start", toolName: "custom", argsPreview: binary, argsPayload: JSON.stringify({ data: binary }) },
+				{ recordType: "message", role: "toolResult", toolName: "custom", text: binary, isError: false },
+			]);
+
+			const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [root] });
+			const serialized = JSON.stringify(transcript.events);
+			assert.doesNotMatch(serialized, /[\u0000-\u0002]/u);
+			assert.match(serialized, /binary content omitted/i);
+
+			const rendered = renderFleetTranscript(transcript, 36, theme as never, markdownTheme, { expandedTools: true });
+			assert.ok(rendered.some((line) => /binary content omitted/i.test(line)));
+			for (const line of rendered) assert.ok(visibleWidth(line) <= 36, `line exceeded width: ${JSON.stringify(line)}`);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves normal Unicode, newlines, tabs, Markdown, code highlighting, and width", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-unicode-transcript-"));
+		try {
+			const text = "## Résumé 世界 👩🏽‍💻\n\n```ts\nconst café = \"☕\";\n```\n\tindented";
+			const transcriptPath = writeTranscript(root, [{ recordType: "message", role: "assistant", text }]);
+			const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [root] });
+			assert.equal(transcript.events[0]?.kind, "assistant");
+			if (transcript.events[0]?.kind === "assistant") assert.equal(transcript.events[0].text, text);
+
+			const rendered = renderFleetTranscript(transcript, 28, theme as never, markdownTheme);
+			assert.ok(rendered.some((line) => line.includes("Résumé 世界")));
+			assert.ok(rendered.some((line) => line.includes("const café")));
+			assert.ok(rendered.some((line) => line.includes("indented")));
+			for (const line of rendered) assert.ok(visibleWidth(line) <= 28, `line exceeded width: ${JSON.stringify(line)}`);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
@@ -272,6 +351,25 @@ describe("Fleet inspector structured transcript", () => {
 			const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [trustedRoot] });
 			assert.deepEqual(transcript.events, []);
 			assert.match(transcript.warning ?? "", /outside trusted roots/);
+		} finally {
+			fs.rmSync(trustedRoot, { recursive: true, force: true });
+			fs.rmSync(outsideRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes read-boundary warnings before other Fleet views consume them", () => {
+		const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-warning-trusted-"));
+		const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-warning-outside-\u001b[31m"));
+		try {
+			const transcriptPath = writeTranscript(outsideRoot, [{ recordType: "message", role: "assistant", text: "secret" }]);
+			const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [trustedRoot] });
+			assert.deepEqual(transcript.events, []);
+			assert.doesNotMatch(transcript.warning ?? "", /\u001b/u);
+			assert.match(transcript.warning ?? "", /U\+001B/);
+
+			const rendered = renderFleetTranscript(transcript, 40, theme as never, markdownTheme);
+			assert.doesNotMatch(rendered.join("\n"), /\u001b/u);
+			for (const line of rendered) assert.ok(visibleWidth(line) <= 40, `line exceeded width: ${JSON.stringify(line)}`);
 		} finally {
 			fs.rmSync(trustedRoot, { recursive: true, force: true });
 			fs.rmSync(outsideRoot, { recursive: true, force: true });
