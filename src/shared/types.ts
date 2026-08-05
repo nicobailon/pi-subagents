@@ -1699,6 +1699,7 @@ export interface ProactiveSkillSubagentsConfig {
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
+export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
 	enabled?: boolean;
@@ -1718,6 +1719,8 @@ export interface ExtensionConfig {
 	asyncWidget?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** Inline chat rendering for the subagent tool. Defaults to rich. */
+	inlineToolDisplay?: InlineToolDisplay;
 	forceTopLevelAsync?: boolean;
 	waitTool?: WaitToolConfig;
 	defaultSessionDir?: string;

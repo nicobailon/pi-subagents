@@ -24,7 +24,7 @@ import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
-import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/render.ts";
+import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary } from "../tui/render.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { SubagentParams } from "./schemas.ts";
@@ -197,6 +197,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const fleetViewEnabled = config.fleetView !== false;
 	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget === true || (!fleetViewEnabled && config.asyncWidget !== false);
+	const summaryInlineToolDisplay = config.inlineToolDisplay === "summary";
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
 
@@ -430,7 +431,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 		renderResult(result, options, theme, context) {
 			clearLegacyResultAnimationTimer(context);
-			return renderSubagentResult(result, options, theme);
+			return summaryInlineToolDisplay
+				? renderSubagentSummary(result, options, theme)
+				: renderSubagentResult(result, options, theme);
 		},
 
 	};

@@ -143,6 +143,53 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("keeps summary inline tool display to one stable row while running, completed, and stopped", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-inline-display-config-"));
+		try {
+			const configDir = path.join(agentDir, "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ inlineToolDisplay: "summary" }), "utf-8");
+
+			const script = String.raw`
+				import registerSubagentExtension from "./index.ts";
+				const events = { on() { return () => {}; }, emit() {} };
+				let registeredTool;
+				const fakePi = new Proxy({
+					events,
+					registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
+					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				registerSubagentExtension(fakePi);
+				if (!registeredTool) throw new Error("tool not registered");
+				const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+				const base = {
+					agent: "delegate", task: "quiet", messages: [],
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+				};
+				const running = registeredTool.renderResult({
+					content: [{ type: "text", text: "partial output that must not appear" }],
+					details: { mode: "single", results: [{ ...base, exitCode: 0, progress: { status: "running", index: 0, agent: "delegate", toolCount: 2, tokens: 300, durationMs: 20_000 } }] },
+				}, { expanded: false, isPartial: true }, theme, { state: {} }).render(120);
+				const completed = registeredTool.renderResult({
+					content: [{ type: "text", text: "completed output that must not appear" }],
+					details: { mode: "single", results: [{ ...base, exitCode: 0 }] },
+				}, { expanded: true, isPartial: false }, theme, { state: {} }).render(120);
+				const stopped = registeredTool.renderResult({
+					content: [{ type: "text", text: "cancelled output that must not appear" }],
+					details: { mode: "single", results: [{ ...base, exitCode: 1, stopped: true, error: "Cancelled by user" }] },
+				}, { expanded: true, isPartial: false }, theme, { state: {} }).render(120);
+				if (running.length !== 1 || running[0] !== "● delegate · running") throw new Error("unexpected running summary: " + JSON.stringify(running));
+				if (completed.length !== 1 || completed[0] !== "✓ delegate · completed") throw new Error("unexpected completed summary: " + JSON.stringify(completed));
+				if (stopped.length !== 1 || stopped[0] !== "■ delegate · stopped") throw new Error("unexpected stopped summary: " + JSON.stringify(stopped));
+			`;
+			const env = parentToolEnv();
+			env.PI_CODING_AGENT_DIR = agentDir;
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers only subagent_wait and honors waitTool disabled config", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
 		try {
