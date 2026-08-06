@@ -780,7 +780,7 @@ export class SubagentFleetComponent implements Component {
 		if (width < 36) return [truncateToWidth("Subagent fleet needs at least 36 columns. Esc closes.", width)];
 		const innerWidth = width - 2;
 		const rows = this.tui.terminal?.rows ?? 32;
-		this.bodyHeight = Math.max(2, Math.min(30, Math.floor(rows * 0.85) - 6));
+		this.bodyHeight = Math.max(2, Math.floor(rows * 0.85) - 6);
 		const rosterWidth = Math.max(22, Math.min(46, Math.floor((innerWidth - 1) * 0.38)));
 		const detailWidth = Math.max(1, innerWidth - rosterWidth - 1);
 		const roster = this.rosterLines(rosterWidth);

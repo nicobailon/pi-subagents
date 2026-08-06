@@ -261,6 +261,21 @@ describe("native subagent fleet", () => {
 		assert.ok(!snapshot.items.some((item) => item.runId === "terminal-0"));
 	});
 
+	it("uses the full 85% terminal-height budget for the inspector", () => {
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 60, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			stateForTest(),
+			() => {},
+			{ refreshMs: 60_000 },
+		);
+		try {
+			assert.equal(component.render(100).length, 51);
+		} finally {
+			component.dispose();
+		}
+	});
+
 	it("renders selectable transcript detail and completed artifact paths within terminal width", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-render-"));
 		try {
