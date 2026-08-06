@@ -304,7 +304,7 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 		assert.equal(component.getEffectiveModel(0), "github-copilot/gpt-5:high");
 	});
 
-	it("labels every shortcut and keeps the clarify overlay within 84 columns", () => {
+	it("labels every shortcut and keeps the clarify overlay within its allocated width", () => {
 		for (const mode of ["single", "parallel", "chain"] as const) {
 			const count = mode === "single" ? 1 : mode === "parallel" ? 2 : 4;
 			const component = new ChainClarifyComponent(
@@ -362,6 +362,23 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 			}
 			for (const line of initialLines) {
 				assert.equal(visibleWidth(line), 84, `${mode} line did not match component width: ${line}`);
+			}
+			for (const width of [0, 1, 2, 3, 74]) {
+				for (const line of component.render(width)) {
+					assert.ok(visibleWidth(line) <= width, `${mode} line exceeded constrained render width: ${visibleWidth(line)} > ${width}`);
+				}
+			}
+
+			if (mode === "single") {
+				component.editingStep = 0;
+				component.enterModelSelector();
+				for (let index = 0; index < 100; index++) component.handleModelSelectorInput("x");
+				for (const width of [0, 1, 2, 3, 74, 84]) {
+					for (const line of component.render(width)) {
+						assert.ok(visibleWidth(line) <= width, `model selector line exceeded component width: ${visibleWidth(line)} > ${width}`);
+					}
+				}
+				component.editingStep = null;
 			}
 
 			component.handleInput("b");

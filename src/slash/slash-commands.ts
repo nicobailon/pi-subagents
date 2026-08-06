@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import { BUILTIN_AGENT_NAMES, discoverAgents } from "../agents/agents.ts";
 import {
 	DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS,
@@ -281,7 +281,7 @@ class SubagentsStopSelector implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const contentWidth = Math.max(40, Math.min(this.width, width || this.width));
+		const contentWidth = Math.max(0, Math.min(this.width, Math.floor(width)));
 		const lines = [this.theme.bold("Stop subagent run"), this.theme.fg("dim", "Select a current-session async run to stop, or a scheduled run to cancel."), ""];
 		const maxRows = 10;
 		const start = Math.max(0, Math.min(this.selected - maxRows + 1, Math.max(0, this.targets.length - maxRows)));
@@ -305,7 +305,7 @@ class SubagentsStopSelector implements Component {
 		} else {
 			lines.push(this.theme.fg("dim", "↑↓/jk select · Enter confirm · Esc cancel"));
 		}
-		return lines;
+		return lines.map((line) => truncateToWidth(line, contentWidth));
 	}
 }
 

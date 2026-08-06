@@ -882,25 +882,22 @@ export class ChainClarifyComponent implements Component {
 		}
 	}
 
-	render(_width: number): string[] {
+	render(width: number): string[] {
+		let lines: string[] = [];
 		if (this.editingStep !== null) {
-			if (this.editMode === "model") {
-				return this.renderModelSelector();
+			if (this.editMode === "model") lines = this.renderModelSelector();
+			else if (this.editMode === "thinking") lines = this.renderThinkingSelector();
+			else if (this.editMode === "skills") lines = this.renderSkillSelector();
+			else lines = this.renderFullEditMode();
+		} else {
+			switch (this.mode) {
+				case 'single': lines = this.renderSingleMode(); break;
+				case 'parallel': lines = this.renderParallelMode(); break;
+				case 'chain': lines = this.renderChainMode(); break;
 			}
-			if (this.editMode === "thinking") {
-				return this.renderThinkingSelector();
-			}
-			if (this.editMode === "skills") {
-				return this.renderSkillSelector();
-			}
-			return this.renderFullEditMode();
 		}
-		// Mode-based navigation rendering
-		switch (this.mode) {
-			case 'single': return this.renderSingleMode();
-			case 'parallel': return this.renderParallelMode();
-			case 'chain': return this.renderChainMode();
-		}
+		const renderWidth = Math.max(0, Math.min(this.width, Math.floor(width)));
+		return lines.map((line) => truncateToWidth(line, renderWidth));
 	}
 
 	/** Render the model selector view */

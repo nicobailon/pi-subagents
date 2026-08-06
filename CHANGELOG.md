@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Prevent Pi from crashing when subagent status widgets and overlays are shown in narrow or resized terminal layouts. Thanks to @alanvardy for the report in #858 and @meatcar for the fix.
+
 ## [0.42.0] - 2026-08-06
 
 ### Added

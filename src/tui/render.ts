@@ -1291,7 +1291,8 @@ function collapsedWidgetLineBudget(rows: number): number {
 }
 
 function paddedWidgetLine(line: string, width: number): string {
-	const text = ` ${line} `;
+	if (width <= 2) return " ".repeat(Math.max(0, width));
+	const text = ` ${truncLine(line, width - 2)} `;
 	return `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`;
 }
 
@@ -1352,7 +1353,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (tui: {
 		widgetRequestRender = requestRender;
 		const container = new Container();
 		container.render = (renderWidth: number): string[] => {
-			const width = getTermWidth();
+			const width = Math.max(0, renderWidth - 2);
 			const frame = widgetAnimationFrame();
 			const lines = expanded
 				? buildWidgetLines(jobs, theme, width, true, frame)
