@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Split the README reference material into focused docs and keep the README as a concise quick-start guide.
+
 ### Fixed
 - Let the Fleet inspector use the full 85% terminal-height budget on tall terminals. Thanks to @xz-dev for #839.
 - Launch Herdr inspector panes through a JavaScript bootstrap instead of asking Node to type-strip TypeScript installed under `node_modules`. Thanks to @williamleong for #837.
