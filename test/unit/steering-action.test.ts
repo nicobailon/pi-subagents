@@ -206,12 +206,19 @@ describe("acknowledged steering action", () => {
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		writeStatus(asyncDir, runningStatus(runId));
 		try {
+			let request: SteerRequest | undefined;
 			const action = steerAsyncRun({
 				state: createState(),
 				runId,
 				message: "correct course",
 				location: { asyncDir },
 				ackTimeoutMs: 25,
+				onRequestQueued: (requestPath) => {
+					request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
+					const routed = runningStatus(runId);
+					projectRequest(routed, request, ["routed"]);
+					writeStatus(asyncDir, routed);
+				},
 				kill: (_pid, signal) => {
 					if (signal === 0) return true;
 					const error = new Error("runner disappeared") as NodeJS.ErrnoException;
@@ -220,11 +227,8 @@ describe("acknowledged steering action", () => {
 				},
 				recover: async () => successResult("replacement"),
 			});
-			const request = await readRequest(asyncDir);
-			const routed = runningStatus(runId);
-			projectRequest(routed, request, ["routed"]);
-			writeStatus(asyncDir, routed);
 			const result = await action;
+			assert.ok(request);
 			assert.equal(result.isError, true);
 			assert.match(result.content[0]!.text, /Failed to commit steering recovery interrupt/);
 			const recoveryDir = path.join(asyncDir, "control", "steer-recovery");
@@ -243,12 +247,14 @@ describe("acknowledged steering action", () => {
 			const action = steerAsyncRun({
 				state: createState(), runId, message: "correct course", location: { asyncDir },
 				ackTimeoutMs: 25, recoveryTimeoutMs: 50, kill: () => true,
+				onRequestQueued: (requestPath) => {
+					const request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
+					const routed = runningStatus(runId);
+					projectRequest(routed, request, ["routed"]);
+					writeStatus(asyncDir, routed);
+				},
 				recover: async () => successResult("replacement"),
 			});
-			const request = await readRequest(asyncDir);
-			const routed = runningStatus(runId);
-			projectRequest(routed, request, ["routed"]);
-			writeStatus(asyncDir, routed);
 			const result = await action;
 			assert.equal(result.isError, true);
 			assert.match(result.content[0]!.text, /claim remains committed to prevent a delayed duplicate/);
