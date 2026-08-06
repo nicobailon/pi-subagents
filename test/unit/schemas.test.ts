@@ -175,6 +175,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
 		assert.match(String(workflowScript?.description ?? ""), /runs\.run/);
+		assert.match(String(workflowScript?.description ?? ""), /sequential and parallel phases dynamically/i);
 		assert.match(String(workflowScript?.description ?? ""), /worktree:true/i);
 		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
 		const chatProgress = SubagentParams?.properties?.chatProgress;

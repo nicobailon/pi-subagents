@@ -762,6 +762,79 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(handoffPaths[0]!), true);
 	});
 
+	it("supports dynamic parallel phases followed by sequential worktree children", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({ output: "api built", writeFiles: [{ path: "api.txt", content: "api\n" }] });
+		mockPi.onCall({ output: "ui built", writeFiles: [{ path: "ui.txt", content: "ui\n" }] });
+		mockPi.onCall({ output: "joined", writeFiles: [{ path: "joined.txt", content: "joined\n" }] });
+		mockPi.onCall({ output: "shared", writeFiles: [{ path: "shared.txt", content: "shared\n" }] });
+		const executor = makeExecutor([makeAgent("worker")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-dynamic-worktree-phases",
+			{
+				async: false,
+				worktree: true,
+				workflowScript: `
+					const targets = ["api", "ui"];
+					const built = await runs.all(targets.map((target) => ({
+						key: "build-" + target,
+						agent: "worker",
+						task: "Build " + target
+					})));
+					const joined = await runs.run("join", { agent: "worker", task: built.map((child) => child.key).join(",") });
+					const shared = await runs.run("shared", { agent: "worker", task: joined.key, worktree: false });
+					return {
+						built: built.map((child) => ({ key: child.key, artifactPaths: child.artifactPaths })),
+						joined: { key: joined.key, artifactPaths: joined.artifactPaths },
+						shared: shared.key
+					};
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(mockPi.callCount(), 4, result.content[0]?.text ?? "workflow produced no output");
+		assert.equal(fs.existsSync(path.join(tempDir, "api.txt")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "ui.txt")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, "joined.txt")), false);
+		assert.equal(fs.readFileSync(path.join(tempDir, "shared.txt"), "utf-8"), "shared\n");
+
+		const output = result.content[0]?.text ?? "";
+		assert.match(output, /build-api/);
+		assert.match(output, /build-ui/);
+		assert.match(output, /join/);
+		assert.match(output, /shared/);
+		const handoffPaths = [...output.matchAll(/"([^"\n]*\/handoffs\/[^"\n]+\.json)"/g)].map((match) => match[1]!);
+		assert.equal(handoffPaths.length, 3, output);
+		const worktreePaths = new Set<string>();
+		for (const handoffPath of handoffPaths) {
+			const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+				groups: Array<{
+					children: Array<{ patch: { changed: boolean; path: string } }>;
+					cleanup: { state: string; tasks: Array<{ path: string; worktreeRemoved: boolean; branchRemoved: boolean }> };
+				}>;
+			};
+			assert.equal(handoff.groups.length, 1);
+			assert.equal(handoff.groups[0]?.children[0]?.patch.changed, true);
+			assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
+			assert.equal(handoff.groups[0]?.cleanup.state, "complete");
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
+			worktreePaths.add(handoff.groups[0]!.cleanup.tasks[0]!.path);
+		}
+		assert.equal(worktreePaths.size, 3);
+		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), false);
+	});
+
 	it("applies a workflow usage budget across scripted child launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first result" });
 		const executor = makeExecutor([makeAgent("echo")]);

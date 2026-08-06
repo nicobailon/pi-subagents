@@ -255,6 +255,42 @@ describe("scripted workflow runtime", () => {
 		]);
 	});
 
+	it("composes dynamic sequential and parallel phases with per-child controls", async () => {
+		const launches: Array<{ key: string; agent: unknown; task: unknown; worktree: unknown }> = [];
+		const result = await runWorkflowScript({
+			script: `
+				const plan = await runs.run("plan", { agent: "planner", task: "plan", worktree: true });
+				const targets = ["api", "ui"];
+				const built = await runs.all(targets.map((target) => ({
+					key: "build-" + target,
+					agent: "worker",
+					task: plan.output + ":" + target,
+					worktree: true
+				})));
+				const review = await runs.run("review", {
+					agent: "reviewer",
+					task: built.map((child) => child.key).join(","),
+					worktree: false
+				});
+				return { plan: plan.key, built: built.map((child) => child.key), review: review.key };
+			`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launches.push({ key, agent: params.agent, task: params.task, worktree: params.worktree });
+				return { key, ok: true, output: key, artifactPaths: [], results: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, { plan: "plan", built: ["build-api", "build-ui"], review: "review" });
+		assert.deepEqual(launches, [
+			{ key: "plan", agent: "planner", task: "plan", worktree: true },
+			{ key: "build-api", agent: "worker", task: "plan:api", worktree: true },
+			{ key: "build-ui", agent: "worker", task: "plan:ui", worktree: true },
+			{ key: "review", agent: "reviewer", task: "build-api,build-ui", worktree: false },
+		]);
+	});
+
 	it("rejects legacy orchestration params in runs.run", async () => {
 		let launches = 0;
 		await assert.rejects(
