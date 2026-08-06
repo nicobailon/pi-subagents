@@ -1631,6 +1631,7 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	mode: SubagentRunMode;
 	details: Details;
 	nestedChildren?: NestedRunSummary[];
+	preserveDetailsOutputs?: boolean;
 }): Promise<{ text: string; details: Details } | null> {
 	const payload = await emitForegroundResultIntercom({
 		pi: input.pi,
@@ -1645,7 +1646,7 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 	if (!payload) return null;
 	return {
 		text: formatSubagentResultReceipt({ mode: input.mode, runId: input.runId, payload }),
-		details: stripDetailsOutputsForIntercomReceipt(input.details),
+		details: input.preserveDetailsOutputs ? input.details : stripDetailsOutputsForIntercomReceipt(input.details),
 	};
 }
 
@@ -3450,6 +3451,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				runId,
 				mode: "parallel",
 				details,
+				...(params.workflowParentRunId !== undefined ? { preserveDetailsOutputs: true } : {}),
 				...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
 			});
 			if (intercomReceipt) {
@@ -3810,6 +3812,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			runId,
 			mode: "single",
 			details,
+			...(params.workflowParentRunId !== undefined ? { preserveDetailsOutputs: true } : {}),
 			...(foregroundControl?.nestedChildren?.length ? { nestedChildren: foregroundControl.nestedChildren } : {}),
 		});
 		if (intercomReceipt) {
@@ -3866,7 +3869,10 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 }
 
 function workflowChildResult(key: string, result: AgentToolResult<Details>): WorkflowScriptChildResult {
-	const output = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
+	const receiptOutput = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
+	const output = result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
+		? result.details.results[0].finalOutput
+		: receiptOutput;
 	const artifactPaths = new Set<string>();
 	if (result.details.asyncDir) artifactPaths.add(result.details.asyncDir);
 	if (result.details.parallelHandoff?.path) artifactPaths.add(result.details.parallelHandoff.path);
@@ -3881,7 +3887,7 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 		ok: result.isError !== true,
 		...(result.details.runId || result.details.asyncId ? { runId: result.details.runId ?? result.details.asyncId } : {}),
 		output,
-		...(result.isError === true ? { error: output || "Child run failed." } : {}),
+		...(result.isError === true ? { error: receiptOutput || output || "Child run failed." } : {}),
 		...(structured.length === 1 ? { structuredOutput: structured[0] } : structured.length > 1 ? { structuredOutput: structured } : {}),
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,

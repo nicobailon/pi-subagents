@@ -231,6 +231,23 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.match(String(payload.message ?? ""), /Full child output from worker/);
 	});
 
+	it("keeps child output available to workflow runs after grouped delivery", async () => {
+		mockPi.onCall({ output: "Workflow child output" });
+		const { executor, events } = makeExecutor({ resultDelivery: true });
+
+		const result = await executor.execute(
+			"workflow-intercom-output",
+			{ workflowScript: "const result = await runs.run('worker', { agent: 'worker', task: 'task' }); return result.output;", async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(events.emitted.filter((entry) => entry.channel === "subagent:result-intercom").length, 1);
+		assert.match(result.content[0]?.text ?? "", /Workflow child output/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Delivered single subagent result via intercom\./);
+	});
+
 	it("falls back to legacy foreground output when the bridge is inactive", async () => {
 		mockPi.onCall({ output: "Legacy foreground output" });
 		const { executor, events } = makeExecutor({ bridgeMode: "off" });
