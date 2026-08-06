@@ -1,0 +1,20 @@
+/**
+ * Tool wrappers for extension-registered tools.
+ *
+ * These wrappers only adapt tool execution so extension tools receive the runner context.
+ * Tool call and tool result interception is handled by AgentSession via agent-core hooks.
+ */
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ExtensionRunner } from "./runner.ts";
+import type { RegisteredTool } from "./types.ts";
+/**
+ * Wrap a RegisteredTool into an AgentTool.
+ * Uses the runner's createContext() for consistent context across tools and event handlers.
+ */
+export declare function wrapRegisteredTool(registeredTool: RegisteredTool, runner: ExtensionRunner): AgentTool;
+/**
+ * Wrap all registered tools into AgentTools.
+ * Uses the runner's createContext() for consistent context across tools and event handlers.
+ */
+export declare function wrapRegisteredTools(registeredTools: RegisteredTool[], runner: ExtensionRunner): AgentTool[];
+//# sourceMappingURL=wrapper.d.ts.map

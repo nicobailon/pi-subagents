@@ -18,9 +18,9 @@ import * as path from "node:path";
 import { tryImport } from "../support/helpers.ts";
 import type { RealSessionRun } from "../support/real-session-runner.ts";
 
-const piCodingAgent = await tryImport<unknown>("@earendil-works/pi-coding-agent");
+const piCodingAgent = await tryImport<{ __piSubagentsTestShim?: boolean }>("@earendil-works/pi-coding-agent");
 const piAi = await tryImport<unknown>("@earendil-works/pi-ai");
-const available = Boolean(piCodingAgent && piAi);
+const available = Boolean(piCodingAgent && !piCodingAgent.__piSubagentsTestShim && piAi);
 
 const CHILD_MARKER = "CHILD_REAL_SESSION_OK";
 // Env vars the runner must clear so a parent that was itself spawned as a

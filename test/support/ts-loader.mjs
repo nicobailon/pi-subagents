@@ -6,11 +6,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const renderPiCodingAgentShim = `
-export function getMarkdownTheme() { return {}; }
-export function keyText(keybinding) { return keybinding === "app.tools.expand" ? "configured-expand-key" : ""; }
-`;
-
 const renderPiTuiShim = `
 function wrapText(text, width) {
   if (!width || width <= 0) return [text];
@@ -82,9 +77,6 @@ function asDataModule(source) {
 
 export function resolve(specifier, context, nextResolve) {
   if (context.parentURL?.endsWith("/render.ts")) {
-    if (specifier === "@earendil-works/pi-coding-agent") {
-      return { url: asDataModule(renderPiCodingAgentShim), shortCircuit: true };
-    }
     if (specifier === "@earendil-works/pi-tui") {
       return { url: asDataModule(renderPiTuiShim), shortCircuit: true };
     }

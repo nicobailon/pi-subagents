@@ -5,10 +5,4 @@ declare module "@earendil-works/pi-agent-core" {
 	}
 }
 
-declare module "@earendil-works/pi-coding-agent" {
-	interface ExtensionUIContext {
-		requestRender?: () => void;
-	}
-}
-
 export {};
