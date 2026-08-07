@@ -644,6 +644,30 @@ describe("subagent prompt runtime", () => {
 		);
 	});
 
+	it("sanitizes non-portable tool ids in forked child context", () => {
+		const assistant = {
+			role: "assistant",
+			content: [
+				{ type: "toolCall", id: "call_read|fc_123", name: "read", input: { path: "README.md" } },
+				{ type: "toolCall", id: "call_bash-ok", name: "bash", input: { command: "pwd" } },
+			],
+		};
+		const readResult = { role: "toolResult", toolName: "read", toolCallId: "call_read|fc_123", content: "file contents" };
+		const bashResult = { role: "toolResult", toolName: "bash", toolCallId: "call_bash-ok", content: "cwd" };
+
+		assert.deepEqual(stripParentOnlySubagentMessages([assistant, readResult, bashResult]), [
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "tool_Y2FsbF9yZWFkfGZjXzEyMw", name: "read", input: { path: "README.md" } },
+					{ type: "toolCall", id: "call_bash-ok", name: "bash", input: { command: "pwd" } },
+				],
+			},
+			{ role: "toolResult", toolName: "read", toolCallId: "tool_Y2FsbF9yZWFkfGZjXzEyMw", content: "file contents" },
+			bashResult,
+		]);
+	});
+
 	it("preserves live nested subagent calls and results in fanout child context", () => {
 		const user = { role: "user", content: "Task" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };

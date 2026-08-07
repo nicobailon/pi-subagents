@@ -205,6 +205,32 @@ function isSubagentToolCallBlock(block: unknown): boolean {
 	return b?.type === "toolCall" && b.name === "subagent";
 }
 
+const PORTABLE_TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+function portableToolId(id: string): string {
+	if (PORTABLE_TOOL_ID_PATTERN.test(id)) return id;
+	return `tool_${Buffer.from(id).toString("base64url") || "empty"}`;
+}
+
+function sanitizeToolHistoryMessage(message: unknown): unknown {
+	const m = message as { role?: string; content?: unknown; toolCallId?: unknown };
+	if (m?.role === "toolResult" && typeof m.toolCallId === "string") {
+		const toolCallId = portableToolId(m.toolCallId);
+		return toolCallId === m.toolCallId ? message : { ...m, toolCallId };
+	}
+	if (m?.role !== "assistant" || !Array.isArray(m.content)) return message;
+	let changed = false;
+	const content = m.content.map((block) => {
+		const b = block as { type?: string; id?: unknown };
+		if (b?.type !== "toolCall" || typeof b.id !== "string") return block;
+		const id = portableToolId(b.id);
+		if (id === b.id) return block;
+		changed = true;
+		return { ...b, id };
+	});
+	return changed ? { ...m, content } : message;
+}
+
 function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undefined {
 	const m = message as { role?: string; content?: unknown };
 	if (m?.role !== "assistant" || !Array.isArray(m.content)) return message;
@@ -228,8 +254,9 @@ export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] 
 			changed = true;
 			continue;
 		}
-		if (stripped !== message) changed = true;
-		filtered.push(stripped);
+		const sanitized = sanitizeToolHistoryMessage(stripped);
+		if (stripped !== message || sanitized !== stripped) changed = true;
+		filtered.push(sanitized);
 	}
 	return changed ? filtered : messages;
 }

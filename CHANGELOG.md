@@ -7,6 +7,8 @@
 - Require workflowScript-only persisted schedule targets. Removed legacy agent-target restore conversion.
 
 ### Fixed
+- Sanitize inherited child tool history ids so forked subagent context stays provider-portable.
+- Prevent async workflow result finalization from reading stale extension contexts after session replacement or reload.
 - Create default missions for static parallel-only chain launches, reject invalid explicit mission ids, and reject legacy `parallel` workflow child params.
 - Keep very narrow TUI result wrapping within its width budget and simplify Fleet nested status row construction.
 - Prevent path-resolution tests from modifying or deleting the user's real `~/.agents` directory. Thanks to @meatcar for the report and fix in #865.
