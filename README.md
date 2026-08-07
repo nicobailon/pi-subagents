@@ -58,14 +58,12 @@ The extension ships with agents you can use immediately:
 |-------|--------------------------|
 | `scout` | Fast local codebase recon: relevant files, entry points, data flow, risks. |
 | `researcher` | Web/docs research with sources and a concise research brief. |
-| `planner` | A concrete implementation plan from existing context. Reads and plans, does not edit. |
 | `worker` | Implementation work. Edits files, validates, escalates unapproved decisions instead of guessing. |
 | `reviewer` | Code review and small fixes against the task/plan, tests, edge cases, and simplicity. |
-| `context-builder` | A setup pass before planning: gathers code context and writes handoff material. |
 | `oracle` | A second opinion before acting. Challenges assumptions without editing. |
 | `delegate` | A lightweight general delegate that behaves close to the parent session. |
 
-Rule of thumb: `scout` before you understand the code, `researcher` before you trust external facts, `planner` before a bigger change, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
+Rule of thumb: `scout` before you understand the code, `researcher` before you trust external facts, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
 
 ## Common workflows
 
@@ -85,7 +83,7 @@ Rule of thumb: `scout` before you understand the code, `researcher` before you t
 | See running work | "Show active async runs." or "Show the subagent fleet." |
 | Check setup | "Check whether subagents are configured correctly." |
 
-For implementation work, the recommended loop is `clarify → planner → worker → fresh reviewers → worker`. Packaged prompt shortcuts like `/parallel-review` and `/review-loop` make these patterns repeatable — see [Workflows](https://github.com/nicobailon/pi-subagents/blob/main/docs/workflows.md).
+For implementation work, the recommended loop is `clarify → scout → worker → fresh reviewers → worker`. Packaged prompt shortcuts like `/parallel-review` and `/review-loop` make these patterns repeatable — see [Workflows](https://github.com/nicobailon/pi-subagents/blob/main/docs/workflows.md).
 
 ## Where running work shows up
 

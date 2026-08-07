@@ -125,8 +125,7 @@ copying a full builtin file.
 ## Prompt Template Integration
 
 The package includes prompt shortcuts for common workflows: `/parallel-review`,
-`/review-loop`, `/parallel-research`, `/parallel-context-build`,
-`/parallel-handoff-plan`, `/gather-context-and-clarify`, and
+`/review-loop`, `/parallel-research`, `/gather-context-and-clarify`, and
 `/parallel-cleanup`. Use them when the user wants repeatable review,
 review/fix loops, research, context handoff, implementation handoff,
 clarification, or cleanup-review patterns. `/parallel-review autofix` and

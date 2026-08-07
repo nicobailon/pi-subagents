@@ -7,10 +7,10 @@ How to compose subagents: the recommended pattern, packaged prompt shortcuts, sc
 Use orchestration as parent-agent guidance, not as a runtime workflow mode. For implementation work, the recommended loop is:
 
 ```text
-clarify → planner → worker → fresh reviewers → worker
+clarify → scout → worker → fresh reviewers → worker
 ```
 
-Packaged `planner`, `worker`, `oracle`, and `advisor` default to forked context when a launch omits `context`; pass `context: "fresh"` when you intentionally want a fresh child run.
+Packaged `worker`, `oracle`, and `advisor` default to forked context when a launch omits `context`; pass `context: "fresh"` when you intentionally want a fresh child run.
 
 Child-safety boundaries are enforced at runtime:
 
@@ -28,8 +28,6 @@ The package includes reusable prompt templates for common workflows. You do not 
 | `/parallel-review` | Launch fresh-context reviewers with distinct angles, then synthesize what to fix. |
 | `/review-loop` | Run parent-controlled worker, reviewer, and fix-worker cycles until clean or capped. |
 | `/parallel-research` | Combine `researcher` and `scout` for external evidence, local code context, and practical tradeoffs. |
-| `/parallel-context-build` | Run `context-builder` agents in parallel to produce planning handoff context and meta-prompts. |
-| `/parallel-handoff-plan` | Combine external research and `context-builder` passes into an implementation handoff plan and meta-prompt. |
 | `/gather-context-and-clarify` | Scout/research first, then ask the user the clarification questions that matter. |
 | `/parallel-cleanup` | Run review-only cleanup passes after implementation. |
 

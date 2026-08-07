@@ -10,7 +10,7 @@ Live progress shows compact detail for single, chain, and parallel modes: curren
 
 Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
 
-Sequential chains show a flow line like `done scout → running planner`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
+Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
 
 ## Background runs
 

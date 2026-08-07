@@ -95,7 +95,7 @@ function inferLevel(input: {
 		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(task);
 	const taskMayWrite = readOnlyTask ? false : taskMayMutate(input.task ?? "") || intent.kind === "implementation" || rolePatchTask;
 	const readOnlyAgent = input.acceptanceRole === "read-only"
-		|| (input.acceptanceRole === undefined && /\b(?:reviewer|oracle|scout|context-builder|researcher|analyst)\b/.test(agent));
+		|| (input.acceptanceRole === undefined && /\b(?:reviewer|oracle|scout|researcher|analyst)\b/.test(agent));
 	const writeTask = taskMayWrite
 		|| (input.acceptanceRole === "writer" && !readOnlyTask)
 		|| (input.acceptanceRole === undefined && /\bworker\b/.test(agent) && !readOnlyTask);

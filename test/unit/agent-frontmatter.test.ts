@@ -404,17 +404,19 @@ Do work
 		assert.equal(worker?.defaultContext, "fork");
 	});
 
-	it("loads packaged planner, worker, and oracle with fork defaultContext and advisor alias", () => {
+	it("loads packaged worker and oracle with fork defaultContext and advisor alias", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-context-"));
 		tempDirs.push(dir);
 		const agents = discoverAgentsAll(dir).builtin;
 
-		for (const name of ["planner", "worker", "oracle"]) {
+		for (const name of ["worker", "oracle"]) {
 			const agent = agents.find((candidate) => candidate.name === name);
 			assert.equal(agent?.defaultContext, "fork", `${name} should default to fork context`);
 		}
 		const oracle = agents.find((candidate) => candidate.name === "oracle");
 		assert.deepEqual(oracle?.aliases, ["advisor"]);
+		assert.equal(agents.some((candidate) => candidate.name === "planner"), false);
+		assert.equal(agents.some((candidate) => candidate.name === "context-builder"), false);
 	});
 });
 
@@ -1351,29 +1353,6 @@ Do work
 			for (const agent of builtins) {
 				assert.ok(agent.tools && agent.tools.length > 0, `${agent.name} should have explicit tools frontmatter`);
 			}
-		} finally {
-			if (previousHome === undefined) delete process.env.HOME;
-			else process.env.HOME = previousHome;
-			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-			else process.env.USERPROFILE = previousUserProfile;
-		}
-	});
-
-	it("keeps the bundled planner read-only for repository tools", () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-planner-tools-"));
-		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-planner-home-"));
-		tempDirs.push(dir);
-		tempDirs.push(homeDir);
-		const previousHome = process.env.HOME;
-		const previousUserProfile = process.env.USERPROFILE;
-
-		try {
-			process.env.HOME = homeDir;
-			process.env.USERPROFILE = homeDir;
-			const planner = discoverAgentsAll(dir).builtin.find((agent) => agent.name === "planner");
-			assert.ok(planner, "planner builtin should be discovered");
-			assert.deepEqual(planner.tools, ["read", "grep", "find", "ls", "intercom"]);
-			assert.equal(planner.acceptanceRole, "read-only");
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
 			else process.env.HOME = previousHome;

@@ -11,7 +11,7 @@ Parent extensions may register a session-scoped, out-of-band ceiling through `pi
 - **Complex work orchestration**: use Fable mode as the default parent-agent loop for complex work. Complex means the task has multiple moving parts, unclear acceptance, cross-cutting code, meaningful user-visible impact, expensive or irreversible validation, broad review surface, or the user asks for orchestration. Lightweight one-off delegation can stay lightweight.
 - **Advisory review**: use fresh-context `reviewer` agents for adversarial code review, or fork to `oracle` when inherited decisions and drift matter
 - **Implementation handoff**: have `oracle` advise, then `worker` implement only after an approved direction
-- **Recon and planning**: use `scout` or `context-builder`, then `planner`
+- **Recon and planning**: use `scout`, then write a plan when needed
 - **Parallel exploration**: run multiple non-conflicting tasks concurrently
 - **Regular skill specialists**: when discovery shows proactive skill subagent suggestions and the current work is broad enough, launch a small fresh-context fanout that asks one subagent per relevant regularly used skill to apply that skill's perspective to the task
 - **Long-running work**: launch async/background runs and inspect them later. For mutation-capable work, bound the delivery slice and elapsed runtime, then request checkpoints after active tool work returns. Reserve hard turn and tool-call caps for explicitly read-only children.
@@ -42,8 +42,6 @@ Packaged prompt shortcuts are also available for repeatable workflows. Treat the
 - `/parallel-review` — fresh-context reviewers with distinct review angles, then synthesis
 - `/review-loop` — parent-orchestrated worker, fresh-reviewer, and fix-worker cycles until clean or capped
 - `/parallel-research` — combine `researcher` and `scout` for external evidence plus local code context
-- `/parallel-context-build` — parallel `context-builder` passes that produce planning handoff context and meta-prompts
-- `/parallel-handoff-plan` — external-reference research plus local `context-builder` passes, followed by a synthesis handoff plan and implementation-ready meta-prompt
 - `/gather-context-and-clarify` — scout/research first, then ask the user clarifying questions with `interview`
 - `/parallel-cleanup` — two fresh-context reviewers (deslop + verbosity passes) for an adversarial cleanup review of the current diff
 
@@ -91,37 +89,7 @@ As a conservative orchestration policy, do not pass `turnBudget` or a hard `tool
 
 Use this when the question needs both external evidence and local implications. Combine `researcher` for official docs, specs, ecosystem behavior, recent changes, benchmarks, and primary sources with `scout` for repository files, patterns, constraints, tests, and likely integration points. Give each child a distinct angle: external evidence, local code context, and practical tradeoffs. Ask for source links or file ranges, confidence level, gaps, and decision implications. Do not ask these children to edit unless implementation was explicitly requested.
 
-### Parallel context-build technique
 
-Use this before planning or implementation when a stronger handoff is needed. Use `workflowScript` with `runs.all` to launch distinct `context-builder` lanes, each with an explicit output path. Give every task a distinct output path such as `context-build/request-and-scope.md`, `context-build/codebase-and-patterns.md`, and `context-build/validation-and-risks.md`. Choose two or three builders: request/scope, codebase/patterns, and validation/risks. Each builder must read every relevant file needed to understand its slice, follow imports/callers/tests/docs/config, conduct tool-available web research when needed, and include a compact `meta-prompt` section. The parent synthesizes the outputs into important context, recommended next meta-prompt, open questions, assumptions, and artifact paths.
-
-Example shape:
-
-```typescript
-subagent({ workflowScript: `
-  const results = await runs.all([
-    { key: "lane-a", agent: "reviewer", task: "Inspect lane A" },
-    { key: "lane-b", agent: "reviewer", task: "Inspect lane B" }
-  ]);
-  return results.map(result => result.output);
-` })
-```
-
-### Parallel handoff-plan technique
-
-Use this when the user needs a solution brief or implementation-ready handoff from an external reference plus local code context, such as “study this library behavior, inspect our codebase, then produce a worker prompt.” Run a chain with a first parallel group and a second synthesis `context-builder` step. The first group usually includes `researcher` for external projects/docs/prompt guidance and `context-builder` for local code context; add a second `context-builder` for implementation strategy only when the scope is large enough to benefit. Use distinct output paths under `handoff/`, then have the synthesis `context-builder` read those outputs and write `handoff/final-handoff-plan.md` with the recommended approach, likely files, constraints, non-goals, validation, risks, unresolved questions, and final compact implementation-ready meta-prompt.
-
-Example shape:
-
-```typescript
-subagent({ workflowScript: `
-  const results = await runs.all([
-    { key: "lane-a", agent: "reviewer", task: "Inspect lane A" },
-    { key: "lane-b", agent: "reviewer", task: "Inspect lane B" }
-  ]);
-  return results.map(result => result.output);
-` })
-```
 
 ### Gather-context-and-clarify technique
 
@@ -135,11 +103,11 @@ Use this after implementation when the user wants cleanup review or when a final
 
 Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep the active worktree safe with a three-stage chain:
 
-1. A parallel read-only planning fanout, one planner/reviewer per issue cluster. Each child inspects the real diff and returns exact files, line refs, proposed fixes, and focused validation. They must not edit.
-2. One writer worker. It receives the planner summaries through `{previous}`, the parent’s accepted scope, stop rules, and verification contract. It is the only child allowed to edit the active worktree.
+1. A parallel read-only planning fanout, one reviewer per issue cluster. Each child inspects the real diff and returns exact files, line refs, proposed fixes, and focused validation. They must not edit.
+2. One writer worker. It receives the reviewer summaries through `{previous}`, the parent’s accepted scope, stop rules, and verification contract. It is the only child allowed to edit the active worktree.
 3. A parallel read-only validation fanout. Validators inspect the worker diff from fresh context with distinct angles, report pass/fail, remaining blockers, and missing verification.
 
-Prefer `async: true`, `context: "fresh"` for planners/validators, `outputMode: "file-only"` for large summaries, and per-stage output names that will not collide. Add `phase` and `label` to make async status readable, and use `as` plus `{outputs.name}` when a later step needs a specific earlier result instead of the whole `{previous}` blob. Use this pattern instead of launching several writer workers into a dirty worktree. Include non-blocking suggestions in the writer prompt only when they are small, safe, and do not expand product scope; otherwise record them as deferred.
+Prefer `async: true`, `context: "fresh"` for reviewers/validators, `outputMode: "file-only"` for large summaries, and per-stage output names that will not collide. Add `phase` and `label` to make async status readable, and use `as` plus `{outputs.name}` when a later step needs a specific earlier result instead of the whole `{previous}` blob. Use this pattern instead of launching several writer workers into a dirty worktree. Include non-blocking suggestions in the writer prompt only when they are small, safe, and do not expand product scope; otherwise record them as deferred.
 
 When one child returns a structured target list, use ordinary JavaScript to validate/filter it and map bounded entries into `runs.all`; do not use the removed chain fanout DSL.
 
@@ -172,10 +140,8 @@ and user/project agents override builtins with the same name.
 | Agent | Purpose | Model | Typical output / role |
 |-------|---------|-------|------------------------|
 | `scout` | Fast codebase recon | inherits default | Writes `context.md` handoff material |
-| `planner` | Creates implementation plans | inherits default | Writes `plan.md` |
 | `worker` | Implementation and approved oracle handoffs | inherits default | Single-writer implementation with decision escalation |
 | `reviewer` | Review specialist | inherits default | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
-| `context-builder` | Requirements/codebase handoff builder | inherits default | Writes structured context files |
 | `researcher` | Web research brief generator | inherits default | Writes `research.md` |
 | `delegate` | Lightweight generic delegate | inherits default | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | inherits default | Advisory review, intercom coordination |
@@ -261,7 +227,7 @@ When several providers are available, route agents by task shape instead of one 
 
 1. **Fast workhorse** — cheapest capable model at low thinking for recon, lookups, and mechanical edits (for example on `scout`).
 2. **Standard well-scoped** — mid-tier model at medium thinking for most delegations: routine multi-file edits, focused reviews, straightforward implementation (for example on `worker`, `reviewer`, `delegate`).
-3. **Deep but bounded** — top reasoning model at high thinking only for hard tasks that arrive with explicit goals and completion criteria; these models loop on vague goals (for example on `planner` and oracle-style agents).
+3. **Deep but bounded** — top reasoning model at high thinking only for hard tasks that arrive with explicit goals and completion criteria; these models loop on vague goals (for example on oracle-style agents).
 4. **Taste and intent** — a model that reads human intent well for ambiguous work: UX/design judgment, product tradeoffs, planning from vague requirements, writing quality.
 
 Routing rule: use tiers 1–3 when the task is well-scoped; use tier 4 when scoping or judging is the task itself. Give tier-4 agents cross-provider `fallbackModels` so subscription usage limits degrade gracefully; fallback triggers automatically on rate-limit and overload errors. Note that forked context over an Anthropic parent transcript with signed thinking blocks forces the child's thinking off, so intent-tier agents work best with fresh context.

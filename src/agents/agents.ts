@@ -37,10 +37,8 @@ export interface AgentMemoryConfig {
 
 export const BUILTIN_AGENT_NAMES = [
 	"advisor",
-	"context-builder",
 	"delegate",
 	"oracle",
-	"planner",
 	"researcher",
 	"reviewer",
 	"scout",

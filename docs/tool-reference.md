@@ -11,7 +11,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 // Sequential workflow
 { workflowScript: `
   const scan = await runs.run("scan", { agent: "scout", task: "Analyze auth" });
-  return (await runs.run("plan", { agent: "planner", task: "Plan from: " + scan.output })).output;
+  return (await runs.run("implement", { agent: "worker", task: "Implement from: " + scan.output })).output;
 ` }
 
 // Parallel workflow
@@ -32,7 +32,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | `action` | string | - | Agent, mission (`mission.create/list/show/update/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or existing durable chain config for management create/update. |
-| `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, `oracle`, and `advisor` default to `fork`. |
+| `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `worker`, `oracle`, and `advisor` default to `fork`. |
 | `missionId` | string | - | Attach a workflow launch to an existing project mission. |
 | `mission` | object/false | - | Create-and-attach shortcut: `{ title, goal?, labels? }`; pass `false` for an intentionally ephemeral launch with no mission record or workflow `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
