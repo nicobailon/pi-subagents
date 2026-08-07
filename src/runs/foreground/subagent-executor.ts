@@ -3951,19 +3951,23 @@ export function prepareWorkflowLaunchParams(
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
 	} as SubagentParamsLike;
 	const normalizedGate = normalizeGateParams(launchParams);
-	if (normalizedGate.error || !normalizedGate.params) throw new Error(normalizedGate.error ?? "Invalid gate.");
+	if (!normalizedGate.ok) throw new Error(normalizedGate.error);
 	return prepareWorkflowChildParams(normalizedGate.params);
 }
 
-function normalizeGateParams(params: SubagentParamsLike): { params?: SubagentParamsLike; error?: string } {
+type GateParamsNormalizationResult =
+	| { ok: true; params: SubagentParamsLike }
+	| { ok: false; error: string };
+
+function normalizeGateParams(params: SubagentParamsLike): GateParamsNormalizationResult {
 	if (params.gate !== undefined && params.action === "resume") {
-		return { error: "gate is not supported with action='resume'; resume uses the retained child contract." };
+		return { ok: false, error: "gate is not supported with action='resume'; resume uses the retained child contract." };
 	}
 	const normalized = normalizeGateAcceptance(params.gate, params.acceptance);
-	if (normalized.error) return { error: normalized.error };
-	if (params.gate === undefined) return { params };
+	if (!normalized.ok) return { ok: false, error: normalized.error };
+	if (params.gate === undefined) return { ok: true, params };
 	const { gate: _gate, ...rest } = params;
-	return { params: { ...rest, ...(normalized.acceptance !== undefined ? { acceptance: normalized.acceptance } : {}) } };
+	return { ok: true, params: { ...rest, ...(normalized.acceptance !== undefined ? { acceptance: normalized.acceptance } : {}) } };
 }
 
 function prepareWorkflowChildParams(params: SubagentParamsLike): SubagentParamsLike {
@@ -4106,7 +4110,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.foregroundControls ??= new Map();
 		deps.state.lastForegroundControlId ??= null;
 		const normalizedGate = normalizeGateParams(params);
-		if (normalizedGate.error || !normalizedGate.params) return buildRequestedModeError(params, normalizedGate.error ?? "Invalid gate.");
+		if (!normalizedGate.ok) return buildRequestedModeError(params, normalizedGate.error);
 		const requestParams = normalizedGate.params;
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {

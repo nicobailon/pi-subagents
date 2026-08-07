@@ -1060,10 +1060,15 @@ describe("acceptance gates", () => {
 
 	it("normalizes one gate command and rejects acceptance combinations", () => {
 		assert.deepEqual(normalizeGateAcceptance(" npm run check ", undefined), {
+			ok: true,
 			acceptance: { level: "verified", verify: [{ id: "gate", command: "npm run check" }] },
 		});
-		assert.match(normalizeGateAcceptance("", undefined).error ?? "", /non-empty command string/);
-		assert.match(normalizeGateAcceptance("npm test", "checked").error ?? "", /cannot be combined with acceptance/);
+		const emptyGate = normalizeGateAcceptance("", undefined);
+		assert.equal(emptyGate.ok, false);
+		assert.match(emptyGate.error, /non-empty command string/);
+		const conflictingGate = normalizeGateAcceptance("npm test", "checked");
+		assert.equal(conflictingGate.ok, false);
+		assert.match(conflictingGate.error, /cannot be combined with acceptance/);
 	});
 
 	it("keeps explicit acceptance.verify arrays as existing verified acceptance", async () => {

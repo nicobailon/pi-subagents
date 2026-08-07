@@ -17,6 +17,7 @@
 - Require workflowScript-only persisted schedule targets. Removed legacy agent-target restore conversion.
 
 ### Fixed
+- Represent gate normalization with explicit success and failure results, removing ambiguous internal states without changing gate behavior.
 - Preserve live composite child tool-call ids for APIs that normalize them, preventing context rewriting from breaking the next tool-loop turn.
 - Sanitize inherited child tool history ids so forked subagent context stays provider-portable.
 - Prevent async workflow result finalization from reading stale extension contexts after session replacement or reload.

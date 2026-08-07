@@ -153,11 +153,15 @@ export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): Ac
 	return { ...input };
 }
 
-export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): { acceptance?: AcceptanceInput; error?: string } {
-	if (gate === undefined) return { acceptance };
-	if (typeof gate !== "string" || !gate.trim()) return { error: "gate must be a non-empty command string." };
-	if (acceptance !== undefined) return { error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
-	return { acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+type GateAcceptanceNormalizationResult =
+	| { ok: true; acceptance?: AcceptanceInput }
+	| { ok: false; error: string };
+
+export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): GateAcceptanceNormalizationResult {
+	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
+	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
+	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
+	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
 }
 
 function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
