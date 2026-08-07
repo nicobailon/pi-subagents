@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added `scheduledRuns.storeRoot` for durable schedules outside project repositories. Thanks to @ProCleiton for #891 and the prior #890 implementation.
+
 ## [0.43.0] - 2026-08-07
 
 ### Added

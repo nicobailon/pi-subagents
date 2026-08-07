@@ -50,7 +50,7 @@ import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_M
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
-import { loadConfig, resolveAsyncByDefault } from "./config.ts";
+import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { syncMissionFromAsyncCompletion } from "../missions/lifecycle.ts";
@@ -383,8 +383,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let goalTurnId = 0;
+	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
 	const scheduledRunManager = createScheduledRunManager({
 		config,
+		storeRoot: scheduledStoreRoot,
 		launch: (params, ctx, signal) => {
 			if (!executorScheduled) {
 				return Promise.resolve({

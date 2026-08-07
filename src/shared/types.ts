@@ -1736,6 +1736,8 @@ export type InlineToolDisplay = "rich" | "summary";
 export interface ScheduledRunsConfig {
 	enabled?: boolean;
 	maxPending?: number;
+	/** Absolute or `~/` root for per-project durable schedules. */
+	storeRoot?: string;
 }
 
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";
