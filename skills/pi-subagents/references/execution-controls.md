@@ -68,7 +68,11 @@ subagent({
 })
 ```
 
-Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `runs.ref/refs`, `emit`, captured `console`, and standard JavaScript. Stable keys are required. Child launches follow ordinary single-agent execution controls. Give each child a distinct decision and output path when reports must outlive the workflow, then consume the aggregate workflow result before opening individual reports.
+Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `runs.ref/refs`, `emit`, captured `console`, and standard JavaScript. Mission-attached workflows also get `await state.get(key)` and `await state.set(key, value)` for durable JSON state shared across workflows on the same mission; `mission: false` workflows have no `state` global. Stable keys are required. Child launches follow ordinary single-agent execution controls. Give each child a distinct decision and output path when reports must outlive the workflow, then consume the aggregate workflow result before opening individual reports.
+
+For one host-run verification command, pass `gate: "npm test"` on a `runs.run`/`runs.all` item (or at the top level as a workflow default). It is shorthand for verified acceptance with that single command: the runtime executes it on the host, records the result as evidence, and memoizes it per tracked workspace state and effective environment. `gate` cannot be combined with `acceptance`; use explicit `acceptance.verify` for multiple commands or custom criteria.
+
+Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids, and a later workflow continues one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items.
 
 ### Async/background
 
@@ -272,7 +276,7 @@ Missions are the durable orchestration layer. Use this noun map:
 - **Run** — one actual subagent execution.
 - **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
 
-Ordinary launches with a task create a mission by default, so substantial delegated work has a persisted goal, status, run links, decisions, artifacts, and delivery receipts that survive compaction or a new parent chat. Automatic persistence failures leave the run intact and set `details.missionWarning`; explicit `missionId` or `mission` remains strict before launch. Human receipts end with a mission id/status line, while structured JSON text remains untouched and `details.missionId` is authoritative. Pass `missionId` to attach an existing mission, use `mission: { title, goal?, labels? }` to control the auto-created record, pass `mission: false` for intentionally ephemeral work, or set `missions.enabled: false` to opt out globally.
+Ordinary launches with a task create a mission by default, so substantial delegated work has a persisted objective, status, run links, decisions, artifacts, and delivery receipts that survive compaction or a new parent chat. Automatic persistence failures leave the run intact and set `details.missionWarning`; explicit `missionId` or `mission` remains strict before launch. Human receipts end with a mission id/status line, while structured JSON text remains untouched and `details.missionId` is authoritative. Pass `missionId` to attach an existing mission, use `mission: { title, objective?, goal?, budget?, labels? }` to control the auto-created record, pass `mission: false` for intentionally ephemeral work, or set `missions.enabled: false` to opt out globally. `objective` is the intent string; `goal: true` requires `budget.tokens` and turns the open mission into a continuation driver that sends one needs-attention notice after idle parent turns until the budget is exhausted, the goal is paused with `mission.update` `{ goal: { paused: true } }`, or the mission closes.
 
 Use `mission.update` while work runs to record decisions, artifacts, labels, summaries, or delivery receipts. A receipt records a pull request, CI, deployment, or release link with a concise status; it does not authorize or automate merge, CI polling, or deployment. Record open product, architecture, or safety decisions there and escalate them upward; do not let a child decide silently. Use `mission.attach-run` only for runs launched outside the normal mission-backed path, and use `mission.close` with a terminal status and concise summary when the mission is done.
 
@@ -287,7 +291,7 @@ Routing rule:
 Project panes run a separate Pi session from the target directory. Subagents launched inside that pane use that project's config, agents, skills, files, git state, and mission records. The pane binding lives under `<projectRoot>/.pi-subagents/project-panes/herdr.json`. For ordinary headless delegation to another repo, prefer explicit `cwd` first; reserve project panes for visible or persistent project ownership.
 
 ```typescript
-subagent({ action: "mission.create", mission: { title: "Ship auth refresh", goal: "Implement and validate refresh handling" } })
+subagent({ action: "mission.create", mission: { title: "Ship auth refresh", objective: "Implement and validate refresh handling" } })
 subagent({ workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved plan" })`, missionId: "<mission-id>" })
 subagent({ workflowScript: `return runs.run("main", { agent: "scout", task: "Quickly answer whether this file exists" })`, mission: false })
 subagent({ action: "mission.list", missionScope: "global" })

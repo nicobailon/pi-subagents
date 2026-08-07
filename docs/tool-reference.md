@@ -29,7 +29,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `agent` | string | - | Agent target for management actions. Workflow child agents are set inside `runs.run` or `runs.all`. |
-| `action` | string | - | Agent, mission (`mission.create/list/show/update/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
+| `action` | string | - | Agent management (including `children.list` and `refine`/`refine.show`/`refine.rollback`), mission (`mission.create/list/show/update/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or existing durable chain config for management create/update. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `worker`, `oracle`, and `advisor` default to `fork`. |
@@ -53,6 +53,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
 | `acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
+| `gate` | string | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. Also valid on individual `runs.run`/`runs.all` items. Cannot be combined with `acceptance`, and is rejected with retained `resume`. |
 
 ### Budget guidance for writers
 
@@ -75,6 +76,16 @@ Use `outputMode: "file-only"` when a saved output may be large and the parent on
 In workflowScript, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
 
 Mission-attached workflows can use `await state.get(key)` and `await state.set(key, value)` to share durable JSON values across later workflows attached with the same `missionId`. Missing keys return `undefined`. The complete state file has a strict 256 KiB limit.
+
+### Retained children
+
+Completed workflow children from the current parent session stay addressable as retained children. `{ action: "children.list" }` lists up to the last 10 with their run ids. A later workflow continues one by passing `resume` instead of `agent`:
+
+```js
+{ workflowScript: `return runs.run("continue", { resume: "<retained-run-id>", task: "Apply the follow-up feedback" })` }
+```
+
+`resume` and `agent` are mutually exclusive. The revived child keeps its stored agent, model, and tool contract. `gate` is rejected on retained resume items because resume uses the retained child contract.
 
 ## Management actions
 
@@ -144,6 +155,10 @@ Rules:
 - To clear optional string fields, including `package`, set them to `false` or `""`.
 
 `eject`, `disable`, `enable`, and `reset` are described in [agents.md](agents.md#overriding-builtins).
+
+### Refinement overlays
+
+`refine`, `refine.show`, and `refine.rollback` manage project-local refinement overlays for one agent. `/subagents-refine <agent>` is the slash equivalent of `refine`. See [agents.md](agents.md#refinement-overlays) for behavior and storage.
 
 ## Status and control actions
 
@@ -228,6 +243,16 @@ Every run resolves an effective acceptance policy. Callers may omit `acceptance`
   }
 }
 ```
+
+### One-command gates
+
+When one host-run command is the entire verification contract, use the `gate` shorthand instead of a full `acceptance` object:
+
+```js
+{ workflowScript: `return runs.run("impl", { agent: "worker", task: "Implement the fix", gate: "npm test" })` }
+```
+
+`gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as evidence. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` cannot be combined with `acceptance` and is rejected on retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
 
 ### Levels and inference
 

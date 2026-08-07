@@ -11,6 +11,7 @@
 - Added a session-scoped `children.list` roster for the last 10 completed retained workflow children and let `workflowScript` resume one through `runs.run` without changing its stored agent, model, or tool contract.
 
 ### Changed
+- Documented the one-command `gate` shorthand, retained `children.list`/`resume` flow, and refinement overlays in the tool reference and agents docs, and refreshed the packaged `pi-subagents` skill for the current mission `objective` shape, workflow `state`, and child-protocol limits.
 - Removed the bundled `planner` and `context-builder` roles and their stale context-handoff prompt templates.
 - Made `workflowScript` the only public subagent execution surface, including one-child and scheduled runs. Scripts now use ordinary JavaScript statement-body semantics and require an explicit `return` for useful results.
 - Require workflowScript-only persisted schedule targets. Removed legacy agent-target restore conversion.
