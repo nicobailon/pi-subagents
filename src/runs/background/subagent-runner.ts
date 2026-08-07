@@ -69,7 +69,7 @@ import {
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
-import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.ts";
+import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
@@ -503,6 +503,8 @@ interface RunPiStreamingResult {
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	observedMutationAttempt?: boolean;
+	structuredOutputToolInvoked?: boolean;
+	structuredOutputMessageStartIndex?: number;
 	watchdog?: ChildWatchdogStateSnapshot;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	processInstanceId: string;
@@ -568,6 +570,8 @@ function runPiStreaming(
 		let turnBudgetMessage: string | undefined;
 		let turnBudget: TurnBudgetState | undefined;
 		let observedMutationAttempt = false;
+		let structuredOutputToolInvoked = false;
+		let structuredOutputMessageStartIndex: number | undefined;
 		let toolCount = 0;
 		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
@@ -658,6 +662,10 @@ function runPiStreaming(
 
 			if (event.type === "tool_execution_start" && event.toolName) {
 				toolCount += 1;
+				if (event.toolName === "structured_output") {
+					structuredOutputToolInvoked = true;
+					structuredOutputMessageStartIndex = messages.length;
+				}
 				observedMutationAttempt = observedMutationAttempt || isMutatingTool(event.toolName, event.args);
 				const toolArgs = extractToolArgsPreview(event.args ?? {});
 				writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
@@ -923,6 +931,8 @@ function runPiStreaming(
 				turnBudgetExceeded,
 				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined,
 				observedMutationAttempt,
+				structuredOutputToolInvoked,
+				structuredOutputMessageStartIndex,
 				watchdog: childWatchdogState,
 				processInstanceId,
 				processCloseObservedAt,
@@ -949,7 +959,7 @@ function runPiStreaming(
 			const stderr = stderrTail.text();
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve(omitUndefinedProperties({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, outputState: finalOutput.trim() ? "present" : "absent", timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId }));
+			resolve(omitUndefinedProperties({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, outputState: finalOutput.trim() ? "present" : "absent", timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, structuredOutputToolInvoked, structuredOutputMessageStartIndex, watchdog: childWatchdogState, processInstanceId }));
 		});
 	});
 }
@@ -1444,31 +1454,42 @@ async function runSingleStep(
 		const runtimeAcknowledgedExtensions = readRuntimeAcknowledgedExtensions(runtimeAcknowledgedExtensionsPath);
 		cleanupTempDir(tempDir);
 
-		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError ? detectSubagentError(run.messages) : null;
-		const missingStructuredOutput = effectiveStructuredOutput
-			? !fs.existsSync(effectiveStructuredOutput.outputPath)
-			: false;
+		let structuredOutput: unknown;
+		let structuredError: string | undefined;
+		let validatedStructuredOutput = false;
+		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError) {
+			if (!run.structuredOutputToolInvoked) {
+				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
+			} else {
+				const structured = await readStructuredOutput({
+					schema: effectiveStructuredOutput.schema,
+					schemaPath: effectiveStructuredOutput.schemaPath,
+					outputPath: effectiveStructuredOutput.outputPath,
+				});
+				if (structured.error) structuredError = structured.error;
+				else {
+					structuredOutput = structured.value;
+					validatedStructuredOutput = true;
+				}
+			}
+		}
+		const errorMessages = validatedStructuredOutput
+			? run.messages.slice(run.structuredOutputMessageStartIndex ?? run.messages.length)
+			: run.messages;
+		const hiddenError = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError
+			? detectSubagentError(errorMessages)
+			: null;
 		const emptyOutputError = run.exitCode === 0
 			&& !run.error
 			&& !toolAvailabilityError
+			&& !structuredError
 			&& !run.finalOutput.trim()
-			&& (!effectiveStructuredOutput || missingStructuredOutput)
+			&& !validatedStructuredOutput
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;
-		let structuredOutput: unknown;
-		let structuredError: string | undefined;
-		if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !emptyOutputError) {
-			const structured = await readStructuredOutput({
-				schema: effectiveStructuredOutput.schema,
-				schemaPath: effectiveStructuredOutput.schemaPath,
-				outputPath: effectiveStructuredOutput.outputPath,
-			});
-			if (structured.error) structuredError = structured.error;
-			else structuredOutput = structured.value;
-		}
 		const completionGuardEnabled = isAgentContractV1(step.agentContract) ? step.completionGuard === true : step.completionGuard !== false;
-		const completionGuard = run.exitCode === 0 && !run.error && !toolAvailabilityError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
+		const completionGuard = run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !hiddenError?.hasError && !emptyOutputError && completionGuardEnabled
 			? evaluateCompletionMutationGuard(omitUndefinedProperties({
 				agent: step.agent,
 				task: taskForCompletionGuard,

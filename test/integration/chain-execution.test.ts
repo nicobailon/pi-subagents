@@ -1089,6 +1089,14 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.match(missing.details.results[0]?.error ?? "", /Missing structured_output call/);
 
 		mockPi.reset();
+		mockPi.onCall({ output: "prose only" });
+		const missingImplementation = await executeChain(
+			makeChainParams([{ agent: "worker", task: "Implement the fix and return structured data", outputSchema: schema }], agents),
+		);
+		assert.equal(missingImplementation.isError, true);
+		assert.match(missingImplementation.details.results[0]?.error ?? "", /Missing structured_output call/);
+
+		mockPi.reset();
 		mockPi.onCall({ output: "invalid", structuredOutput: { ok: "yes" } });
 		const invalid = await executeChain(
 			makeChainParams([{ agent: "worker", task: "Return structured", outputSchema: schema, phase: "Validate", label: "Structured worker", as: "result" }], agents),
@@ -1098,6 +1106,28 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(invalid.details.workflowGraph?.nodes[0]?.status, "failed");
 		assert.equal(invalid.details.workflowGraph?.nodes[0]?.outputName, "result");
 		assert.match(invalid.details.workflowGraph?.nodes[0]?.error ?? "", /Structured output validation failed/);
+	});
+
+	it("accepts recovered tool errors before valid structured output", async () => {
+		mockPi.onCall({
+			jsonl: [{
+				type: "tool_result_end",
+				message: { role: "toolResult", toolName: "read", isError: true, content: [{ type: "text", text: "EISDIR" }] },
+			}],
+			structuredOutput: { ok: true },
+		});
+		const agents = [makeAgent("worker")];
+
+		const result = await executeChain(
+			makeChainParams([{
+				agent: "worker",
+				task: "Recover and return structured data",
+				outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			}], agents),
+		);
+
+		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.deepEqual(result.details.results[0]?.structuredOutput, { ok: true });
 	});
 
 	it("substitutes {task} in templates", async () => {

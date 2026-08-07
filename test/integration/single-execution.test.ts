@@ -1861,6 +1861,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
+	it("accepts recovered tool errors before valid structured output but rejects later errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const recoveredError = { type: "tool_result_end", message: { role: "toolResult", toolName: "read", isError: true, content: [{ type: "text", text: "EISDIR" }] } };
+		const structuredEvents = [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+			{ type: "tool_execution_end", toolName: "structured_output" },
+		];
+		mockPi.onCall({
+			stdoutRaw: [recoveredError, ...structuredEvents].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const executor = makeExecutor([makeAgent("echo")]);
+		const params = { agent: "echo", task: "Return structured data", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, acceptance: false } as const;
+
+		const recovered = await executor.execute("single-schema-recovered-error", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.equal(recovered.isError, undefined);
+		assert.deepEqual(recovered.details?.results?.[0]?.structuredOutput, { ok: true });
+
+		mockPi.reset();
+		mockPi.onCall({
+			stdoutRaw: [...structuredEvents, recoveredError].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: { ok: true },
+		});
+		const terminal = await executor.execute("single-schema-terminal-error", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.equal(terminal.isError, true);
+		assert.match(terminal.details?.results?.[0]?.error ?? "", /read failed/);
+	});
+
 	it("rejects structured output capture files that were not produced by the structured_output tool", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "spoofed", structuredOutputCapture: { ok: true } });
 		const executor = makeExecutor([makeAgent("echo")]);
