@@ -22,6 +22,7 @@
 - Require workflowScript-only persisted schedule targets. Removed legacy agent-target restore conversion.
 
 ### Fixed
+- Use portable internal ids for async workflow directories and preserve host tool-call ids as correlation metadata. Thanks to @DrunkenDonkey80 for #889.
 - Represent gate normalization with explicit success and failure results, removing ambiguous internal states without changing gate behavior.
 - Preserve live composite child tool-call ids for APIs that normalize them, preventing context rewriting from breaking the next tool-loop turn.
 - Sanitize inherited child tool history ids so forked subagent context stays provider-portable.

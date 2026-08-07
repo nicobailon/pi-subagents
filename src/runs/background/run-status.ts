@@ -382,6 +382,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const workflowEmitPreview = status.workflow?.emits.length ? formatWorkflowJsonPreview(status.workflow.emits.at(-1), 240) : undefined;
 			const lines = [
 				`Run: ${status.runId}`,
+				status.toolCallId ? `Tool call: ${status.toolCallId}` : undefined,
 				missionId ? `Mission: ${missionId}` : undefined,
 				`State: ${status.state}`,
 				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
@@ -454,7 +455,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	if (resultPath) {
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -479,7 +480,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				? "stopped"
 				: data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
-			const lines = [`Run: ${runId}`, `State: ${status}`, `Result: ${resultPath}`];
+			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));

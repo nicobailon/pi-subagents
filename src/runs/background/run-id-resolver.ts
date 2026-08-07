@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DIRS, type SubagentState } from "../../shared/types.ts";
+import { readStatus } from "../../shared/utils.ts";
 import { findAsyncRunPrefixMatches, type AsyncRunLocation } from "./async-resume.ts";
 import { assertSafeNestedId, findNestedRunMatchesById, type NestedRoute, type NestedRunMatch, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 
@@ -25,6 +26,70 @@ function exactAsyncLocation(id: string, asyncDirRoot: string, resultsDir: string
 		resultPath: fs.existsSync(resultPath) ? resultPath : null,
 		resolvedId: id,
 	};
+}
+
+type AsyncRunMatch = { id: string; location: AsyncRunLocation };
+
+type WorkflowResultIdentity = {
+	id?: string;
+	runId?: string;
+	toolCallId?: string;
+};
+
+function readWorkflowResultIdentity(resultPath: string): WorkflowResultIdentity | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown;
+	} catch {
+		return undefined;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+	const record = parsed as Record<string, unknown>;
+	return {
+		...(typeof record.id === "string" ? { id: record.id } : {}),
+		...(typeof record.runId === "string" ? { runId: record.runId } : {}),
+		...(typeof record.toolCallId === "string" ? { toolCallId: record.toolCallId } : {}),
+	};
+}
+
+function directoryEntries(root: string): string[] {
+	try {
+		return fs.readdirSync(root);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+}
+
+function resultPathFor(resultsDir: string, runId: string): string | null {
+	const resultPath = path.join(resultsDir, `${runId}.json`);
+	return fs.existsSync(resultPath) ? resultPath : null;
+}
+
+function toolCallIdMatches(value: string | undefined, query: string, options: { prefix?: boolean }): boolean {
+	if (value === undefined) return false;
+	return options.prefix === true ? value.startsWith(query) : value === query;
+}
+
+function toolCallIdAsyncLocations(toolCallId: string, asyncDirRoot: string, resultsDir: string, options: { prefix?: boolean } = {}): AsyncRunMatch[] {
+	const byId = new Map<string, AsyncRunLocation>();
+	for (const entry of directoryEntries(asyncDirRoot)) {
+		const asyncDir = path.join(asyncDirRoot, entry);
+		const status = readStatus(asyncDir);
+		if (!status || !toolCallIdMatches(status.toolCallId, toolCallId, options)) continue;
+		const runId = status.runId || entry;
+		byId.set(runId, { asyncDir, resultPath: resultPathFor(resultsDir, runId), resolvedId: runId });
+	}
+	for (const entry of directoryEntries(resultsDir)) {
+		if (!entry.endsWith(".json")) continue;
+		const resultPath = path.join(resultsDir, entry);
+		const identity = readWorkflowResultIdentity(resultPath);
+		if (!identity || !toolCallIdMatches(identity.toolCallId, toolCallId, options)) continue;
+		const runId = identity.runId ?? identity.id ?? entry.slice(0, -".json".length);
+		const asyncDir = path.join(asyncDirRoot, runId);
+		byId.set(runId, { asyncDir: fs.existsSync(asyncDir) ? asyncDir : null, resultPath, resolvedId: runId });
+	}
+	return [...byId.entries()].map(([id, location]) => ({ id, location }));
 }
 
 function foregroundIds(state: SubagentState | undefined): string[] {
@@ -73,6 +138,9 @@ export function resolveSubagentRunId(id: string, deps: ResolveSubagentRunIdDeps 
 	if (hasExactForegroundId(deps.state, id)) return { kind: "foreground", id };
 	const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
 	if (exactAsync) return { kind: "async", id, location: exactAsync };
+	const exactToolCallIdMatches = toolCallIdAsyncLocations(id, asyncDirRoot, resultsDir);
+	if (exactToolCallIdMatches.length > 1) throw new Error(`Subagent tool-call id '${id}' is ambiguous across async runs. Use the returned asyncId instead.`);
+	if (exactToolCallIdMatches[0]) return { kind: "async", id: exactToolCallIdMatches[0].id, location: exactToolCallIdMatches[0].location };
 	const exactNested = findNestedRunMatchesById(id, nestedScope ? { scope: nestedScope } : {});
 	if (exactNested.length > 1) throw new Error(`Nested run id '${id}' is ambiguous across authorized registries. Provide the full id after stale registries are cleaned up.`);
 	if (exactNested[0]) return { kind: "nested", id, match: exactNested[0] };
@@ -82,6 +150,9 @@ export function resolveSubagentRunId(id: string, deps: ResolveSubagentRunIdDeps 
 		matches.push({ kind: "foreground", id: foregroundId });
 	}
 	for (const match of asyncPrefixMatches(id, asyncDirRoot, resultsDir)) {
+		matches.push({ kind: "async", id: match.id, location: match.location });
+	}
+	for (const match of toolCallIdAsyncLocations(id, asyncDirRoot, resultsDir, { prefix: true })) {
 		matches.push({ kind: "async", id: match.id, location: match.location });
 	}
 	for (const match of findNestedRunMatchesById(id, nestedScope ? { prefix: true, scope: nestedScope } : { prefix: true })) {

@@ -65,6 +65,7 @@ interface AsyncRunStepSummary {
 export interface AsyncRunSummary {
 	id: string;
 	asyncDir: string;
+	toolCallId?: string;
 	sessionId?: string;
 	state: "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected";
 	error?: string;
@@ -288,6 +289,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 	return {
 		id: status.runId || path.basename(asyncDir),
 		asyncDir,
+		...(status.toolCallId ? { toolCallId: status.toolCallId } : {}),
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
 		state: status.state,
 		...(status.error ? { error: status.error } : {}),

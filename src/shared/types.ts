@@ -950,6 +950,8 @@ export interface SpawnBudgetSnapshot {
 export interface Details {
 	mode: SubagentResultMode | "management";
 	runId?: string;
+	/** Host tool-call id retained when it differs from the internal run id. */
+	toolCallId?: string;
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
@@ -1246,6 +1248,8 @@ export interface ExternalProcessStatus {
 export interface AsyncStatus {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
+	/** Host tool-call id retained when it differs from the internal run id. */
+	toolCallId?: string;
 	sessionId?: string;
 	mode: SubagentRunMode;
 	context?: "fresh" | "fork" | "mixed";
