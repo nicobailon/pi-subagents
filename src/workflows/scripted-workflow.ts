@@ -42,6 +42,9 @@ function validateRunCall(key, params, label, fingerprints) {
     throw new Error(label + " accepts one child via { agent, task } and execution controls only" + hint);
   }
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
+  if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
+  if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");
+  if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
   if (params.resume !== undefined && (typeof params.resume !== "string" || !params.resume.trim())) throw new Error(label + " resume must be a non-empty retained run id.");
   if (params.resume !== undefined && params.agent !== undefined) throw new Error(label + " resume and agent are mutually exclusive.");
   if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) throw new Error(label + " resume requires a non-empty task follow-up.");
@@ -437,6 +440,15 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			if (params.worktree !== undefined && typeof params.worktree !== "boolean") {
 				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
+			}
+			if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate must be a non-empty command string.`)));
+			}
+			if (params.gate !== undefined && params.acceptance !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate cannot be combined with acceptance; use one gate command or acceptance.verify.`)));
+			}
+			if (params.gate !== undefined && params.resume !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') gate is not supported with retained resume.`)));
 			}
 			if (params.resume !== undefined && (typeof params.resume !== "string" || !params.resume.trim())) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') resume must be a non-empty retained run id.`)));

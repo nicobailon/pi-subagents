@@ -1635,6 +1635,8 @@ async function runSingleStep(
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
 			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
 			reportOptional: isAgentContractV1(step.agentContract),
+			artifactsDir: ctx.artifactsDir,
+			runId: ctx.id,
 		}))
 		: undefined;
 	const stoppedAfterAcceptance = finalResult?.stopped === true || ctx.stopSignal?.aborted === true;

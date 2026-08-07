@@ -314,7 +314,7 @@ const SubagentParamsSchema = Type.Object({
 		],
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
 	})),
-	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body. Starts asynchronously by default; pass async:false for a small foreground run. Use explicit return for a useful result. Use await runs.run(key, {agent, task, worktree?}) or runs.run(key, {resume, task}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. Mission-attached workflows also have async state.get(key) and state.set(key, JSONValue) for durable mission state. Use ordinary JavaScript loops, branches, awaits, and arrays to mix sequential and parallel phases dynamically. Set worktree:true at workflow or child level for a separate managed worktree per child; child fields override workflow defaults. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
+	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body. Starts async by default; pass async:false for a small foreground run. Use explicit return for output. Use await runs.run(key, {agent, task, worktree?, gate?}) or runs.run(key, {resume, task}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. Mission workflows also have async state.get(key) and state.set(key, JSONValue). Use ordinary JavaScript loops, branches, awaits, and arrays to mix sequential and parallel phases dynamically. Set worktree:true at workflow or child level for a separate managed worktree; child fields override workflow defaults. gate is one host-run command and cannot be combined with acceptance. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
 	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "live-card"], description: "WorkflowScript chat progress projection. auto shows a live in-chat card only for watched foreground workflows in the same Git repository; it is off otherwise." })),
 	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override a workflow default with worktree:false." })),
 	step: Type.Optional(Type.Unsafe({ ...ChainItem, description: "One chain step for action='append-step' only. Not an execution mode." })),
@@ -351,6 +351,7 @@ const SubagentParamsSchema = Type.Object({
 	outputSchema: Type.Optional(JsonSchemaObject),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
+	gate: Type.Optional(Type.String({ minLength: 1, description: "Host gate command. Cannot be combined with acceptance." })),
 });
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);

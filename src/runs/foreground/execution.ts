@@ -1701,6 +1701,8 @@ async function runSyncCompletion(
 					: undefined,
 				cwd: options.cwd ?? runtimeCwd,
 				reportOptional: isAgentContractV1(options.agentContract),
+				artifactsDir: options.artifactsDir,
+				runId: options.runId,
 			});
 		}
 	} catch (error) {

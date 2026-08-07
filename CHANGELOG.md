@@ -6,6 +6,7 @@
 - Added explicit project-local subagent refinement overlays through `/subagents-refine <agent>` and `refine`, `refine.show`, and `refine.rollback` actions.
 - Added opt-in goal missions that send one needs-attention continuation notice after idle parent turns, account linked-run token usage against a mission budget, pause or stop through `mission.update`, and name retained children when resume is the next ready action.
 - Added `steer`, `follow_up`, and `auto` delivery modes with delivered/queued receipts, bounded FIFO follow-ups, retained-child revival briefs, RPC parity, and Fleet mode selection.
+- Added one-command `gate` verification for direct and scripted workflow children, with host evidence and tracked-workspace memoization.
 - Added mission-scoped durable JSON state to `workflowScript` through `state.get(key)` and `state.set(key, value)`.
 - Added a session-scoped `children.list` roster for the last 10 completed retained workflow children and let `workflowScript` resume one through `runs.run` without changing its stored agent, model, or tool contract.
 

@@ -52,7 +52,7 @@ import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsy
 import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -260,6 +260,7 @@ export interface SubagentParamsLike {
 	agentScope?: unknown;
 	chainDir?: string;
 	acceptance?: AcceptanceInput;
+	gate?: string;
 	agentContract?: AgentContract;
 	schedule?: string;
 	scheduleName?: string;
@@ -3923,6 +3924,9 @@ export function prepareWorkflowLaunchParams(
 	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean } = {},
 ): SubagentParamsLike {
 	if (typeof childParams.resume === "string") {
+		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
+			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
+		}
 		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
 		const turnBudget = childParams.turnBudget ?? workflowDefaults.turnBudget;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
@@ -3938,14 +3942,28 @@ export function prepareWorkflowLaunchParams(
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
 		};
 	}
-	return prepareWorkflowChildParams({
+	const launchParams = {
 		...workflowDefaults,
 		...childParams,
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
-	} as SubagentParamsLike);
+	} as SubagentParamsLike;
+	const normalizedGate = normalizeGateParams(launchParams);
+	if (normalizedGate.error || !normalizedGate.params) throw new Error(normalizedGate.error ?? "Invalid gate.");
+	return prepareWorkflowChildParams(normalizedGate.params);
+}
+
+function normalizeGateParams(params: SubagentParamsLike): { params?: SubagentParamsLike; error?: string } {
+	if (params.gate !== undefined && params.action === "resume") {
+		return { error: "gate is not supported with action='resume'; resume uses the retained child contract." };
+	}
+	const normalized = normalizeGateAcceptance(params.gate, params.acceptance);
+	if (normalized.error) return { error: normalized.error };
+	if (params.gate === undefined) return { params };
+	const { gate: _gate, ...rest } = params;
+	return { params: { ...rest, ...(normalized.acceptance !== undefined ? { acceptance: normalized.acceptance } : {}) } };
 }
 
 function prepareWorkflowChildParams(params: SubagentParamsLike): SubagentParamsLike {
@@ -4087,7 +4105,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
 		deps.state.lastForegroundControlId ??= null;
-		const requestParams = params;
+		const normalizedGate = normalizeGateParams(params);
+		if (normalizedGate.error || !normalizedGate.params) return buildRequestedModeError(params, normalizedGate.error ?? "Invalid gate.");
+		const requestParams = normalizedGate.params;
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
 			const parentCwd = ctx.cwd;

@@ -185,6 +185,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const worktree = SubagentParams?.properties?.worktree;
 		assert.equal(worktree?.type, "boolean");
 		assert.match(String(worktree?.description ?? ""), /each workflow child/i);
+		const gate = SubagentParams?.properties?.gate;
+		assert.equal(gate?.type, "string");
+		assert.equal(gate?.minLength, 1);
+		assert.match(String(gate?.description ?? ""), /cannot be combined with acceptance/i);
 		const properties = SubagentParams?.properties as Record<string, unknown> | undefined;
 		assert.equal(properties?.task, undefined, "task should only exist inside workflowScript children");
 		assert.equal(properties?.clarify, undefined, "clarify should not be model-facing");

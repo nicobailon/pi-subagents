@@ -742,6 +742,19 @@ export interface AcceptanceVerifyResult {
 	stdout?: string;
 	stderr?: string;
 	durationMs: number;
+	artifactPath?: string;
+	cacheKey?: string;
+	memoized?: boolean;
+	envKeys?: string[];
+	envHash?: string;
+	workspaceState?: {
+		kind: "git-tracked";
+		repoRoot: string;
+		cwdRelative: string;
+		head: string;
+		diffHash: string;
+	};
+	artifactError?: string;
 }
 
 export interface AcceptanceReviewResult {

@@ -736,6 +736,88 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state !== "started").map(({ state }) => state).sort(), ["completed", "failed"]);
 	});
 
+	it("runs a direct child gate as host-verified acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerFile = "direct-gate.txt";
+		const markerPath = path.join(tempDir, markerFile);
+		mockPi.onCall({ output: [
+			"done",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+				changedFiles: ["src/file.ts"],
+				testsAddedOrUpdated: ["test/file.test.ts"],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				validationOutput: ["tests passed"],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n") });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"direct-gate",
+			{ async: false, agent: "echo", task: "Validate the result without edits", gate: `${process.execPath} -e "require('node:fs').writeFileSync('${markerFile}','verified')"` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "direct gate failed");
+		assert.equal(fs.readFileSync(markerPath, "utf-8"), "verified");
+		assert.equal(result.details.results[0]?.acceptance?.status, "verified");
+		assert.equal(result.details.results[0]?.acceptance?.verifyRuns[0]?.id, "gate");
+	});
+
+	it("lets runs.all siblings settle when one verified gate fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptedReport = [
+			"done",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+				changedFiles: ["src/file.ts"],
+				testsAddedOrUpdated: ["test/file.test.ts"],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				validationOutput: ["tests passed"],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({ output: acceptedReport });
+		mockPi.onCall({ output: acceptedReport });
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-gates",
+			{
+				async: false,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "fails-gate", agent: "echo", task: "First task", gate: ${JSON.stringify(`${process.execPath} -e "process.exit(7)"`)} },
+						{ key: "passes-gate", agent: "echo", task: "Second task", gate: ${JSON.stringify(`${process.execPath} -e "process.exit(0)"`)} }
+					]);
+					return children.map(({ key, ok }) => ({ key, ok }));
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(mockPi.callCount(), 2);
+		assert.deepEqual(result.details.workflow?.value, [
+			{ key: "fails-gate", ok: false },
+			{ key: "passes-gate", ok: true },
+		]);
+		const [failed, passed] = result.details.results;
+		assert.equal(failed?.acceptance?.status, "rejected");
+		assert.equal(failed?.acceptance?.verifyRuns[0]?.status, "failed");
+		assert.equal(passed?.acceptance?.status, "verified");
+		assert.equal(passed?.acceptance?.verifyRuns[0]?.status, "passed");
+	});
+
 	it("gives parallel workflow children separate managed worktrees and durable handoffs", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });

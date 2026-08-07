@@ -187,6 +187,35 @@ describe("scripted workflow runtime", () => {
 		]);
 	});
 
+	it("accepts one gate command and rejects gate with acceptance", async () => {
+		const launches: Record<string, unknown>[] = [];
+		await runWorkflowScript({
+			script: `return runs.run("gated", { agent: "worker", gate: "npm test" });`,
+			async launch(key, params) { launches.push(params); return { key, ok: true, output: "done", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(launches[0]?.gate, "npm test");
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("invalid", { agent: "worker", gate: "npm test", acceptance: "checked" });`,
+				async launch(key) { return { key, ok: true, output: "done", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /gate cannot be combined with acceptance/.test(error.message),
+		);
+	});
+
+	it("rejects retained resume with gate", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("resume", { resume: "retained-run", task: "Continue", gate: "npm test" });`,
+				async launch(key) { return { key, ok: true, output: "done", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /gate is not supported with retained resume/.test(error.message),
+		);
+	});
+
 	it("keeps runs.run fail-fast for ordinary child failures", async () => {
 		await assert.rejects(
 			runWorkflowScript({

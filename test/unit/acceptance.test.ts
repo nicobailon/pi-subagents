@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,6 +10,7 @@ import {
 	aggregateAcceptanceReport,
 	evaluateAcceptance,
 	formatAcceptancePrompt,
+	normalizeGateAcceptance,
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
@@ -43,6 +45,16 @@ function report(overrides: Record<string, unknown> = {}, fence = "acceptance-rep
 function tempRepo(): string {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-acceptance-"));
 	fs.writeFileSync(path.join(dir, "file.txt"), "hello\n", "utf-8");
+	return dir;
+}
+
+function tempGitRepo(): string {
+	const dir = tempRepo();
+	execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+	execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
+	execFileSync("git", ["config", "user.name", "Test User"], { cwd: dir });
+	execFileSync("git", ["add", "file.txt"], { cwd: dir });
+	execFileSync("git", ["commit", "-m", "base"], { cwd: dir, stdio: "ignore" });
 	return dir;
 }
 
@@ -1046,6 +1058,92 @@ describe("acceptance gates", () => {
 		assert.equal(resolved.level, "checked");
 	});
 
+	it("normalizes one gate command and rejects acceptance combinations", () => {
+		assert.deepEqual(normalizeGateAcceptance(" npm run check ", undefined), {
+			acceptance: { level: "verified", verify: [{ id: "gate", command: "npm run check" }] },
+		});
+		assert.match(normalizeGateAcceptance("", undefined).error ?? "", /non-empty command string/);
+		assert.match(normalizeGateAcceptance("npm test", "checked").error ?? "", /cannot be combined with acceptance/);
+	});
+
+	it("keeps explicit acceptance.verify arrays as existing verified acceptance", async () => {
+		const cwd = tempGitRepo();
+		const artifactsDir = path.join(cwd, ".artifacts");
+		try {
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "run explicit verification",
+				explicit: { level: "verified", verify: [
+					{ id: "one", command: `${process.execPath} -e "require('node:fs').writeFileSync('one.txt','ok')"` },
+					{ id: "two", command: `${process.execPath} -e "require('node:fs').writeFileSync('two.txt','ok')"` },
+				] },
+				agentContract: { version: 1 },
+			});
+			const ledger = await evaluateAcceptance({ acceptance, output: "done", cwd, reportOptional: true, artifactsDir, runId: "multi-verify" });
+			assert.equal(ledger.status, "verified");
+			assert.deepEqual(ledger.verifyRuns.map((run) => [run.id, run.status]), [["one", "passed"], ["two", "passed"]]);
+			assert.equal(fs.readFileSync(path.join(cwd, "one.txt"), "utf-8"), "ok");
+			assert.equal(fs.readFileSync(path.join(cwd, "two.txt"), "utf-8"), "ok");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("memoizes host verification by tracked Git state, including failures", async () => {
+		const cwd = tempGitRepo();
+		const artifactsDir = path.join(cwd, ".artifacts");
+		const previousInheritedSecret = process.env.GATE_INHERITED_SECRET;
+		process.env.GATE_INHERITED_SECRET = "host-secret-not-persisted";
+		try {
+			const passing = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "run gate",
+				explicit: { level: "verified", verify: [{ id: "gate", command: `${process.execPath} -e "process.stdout.write(process.env.GATE_SECRET+':'+process.env.GATE_INHERITED_SECRET);require('node:fs').appendFileSync('count.txt','x')"`, env: { GATE_SECRET: "not-persisted" } }] },
+				agentContract: { version: 1 },
+			});
+			const evaluate = () => evaluateAcceptance({ acceptance: passing, output: "done", cwd, reportOptional: true, artifactsDir, runId: "memo-run" });
+			const first = await evaluate();
+			const same = await evaluate();
+			fs.writeFileSync(path.join(cwd, "untracked.txt"), "ignored\n", "utf-8");
+			const untracked = await evaluate();
+			process.env.GATE_INHERITED_SECRET = "host-secret-changed";
+			const inheritedChanged = await evaluate();
+			fs.writeFileSync(path.join(cwd, "file.txt"), "tracked change\n", "utf-8");
+			const tracked = await evaluate();
+			assert.equal(fs.readFileSync(path.join(cwd, "count.txt"), "utf-8"), "xxx");
+			assert.equal(first.verifyRuns[0]?.memoized, false);
+			assert.equal(first.verifyRuns[0]?.stdout, "[REDACTED]:[REDACTED]");
+			assert.equal(same.verifyRuns[0]?.memoized, true);
+			assert.equal(untracked.verifyRuns[0]?.memoized, true);
+			assert.equal(inheritedChanged.verifyRuns[0]?.memoized, false);
+			assert.equal(inheritedChanged.verifyRuns[0]?.stdout, "[REDACTED]:[REDACTED]");
+			assert.equal(tracked.verifyRuns[0]?.memoized, false);
+			const artifact = fs.readFileSync(first.verifyRuns[0]!.artifactPath!, "utf-8");
+			assert.doesNotMatch(artifact, /not-persisted/);
+			assert.doesNotMatch(artifact, /host-secret-not-persisted/);
+			assert.doesNotMatch(artifact, /host-secret-changed/);
+			assert.match(artifact, /GATE_SECRET/);
+
+			const failing = resolveEffectiveAcceptance({
+				agentName: "worker",
+				task: "run gate",
+				explicit: { level: "verified", verify: [{ id: "gate", command: `${process.execPath} -e "require('node:fs').appendFileSync('fail-count.txt','x');process.exit(7)"` }] },
+				agentContract: { version: 1 },
+			});
+			const failOnce = await evaluateAcceptance({ acceptance: failing, output: "done", cwd, reportOptional: true, artifactsDir, runId: "failure-run" });
+			const failCached = await evaluateAcceptance({ acceptance: failing, output: "done", cwd, reportOptional: true, artifactsDir, runId: "failure-run" });
+			assert.equal(failOnce.status, "rejected");
+			assert.equal(failCached.status, "rejected");
+			assert.equal(failCached.verifyRuns[0]?.memoized, true);
+			assert.equal(failCached.verifyRuns[0]?.exitCode, 7);
+			assert.equal(fs.readFileSync(path.join(cwd, "fail-count.txt"), "utf-8"), "x");
+		} finally {
+			if (previousInheritedSecret === undefined) delete process.env.GATE_INHERITED_SECRET;
+			else process.env.GATE_INHERITED_SECRET = previousInheritedSecret;
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("validates invalid disable and verify shapes", () => {
 		assert.deepEqual(validateAcceptanceInput({ level: "none" }), ["acceptance.reason is required when level is none."]);
 		assert.deepEqual(validateAcceptanceInput("none"), ["acceptance level \"none\" requires a reason; use { level: \"none\", reason: \"...\" }."]);
@@ -1054,6 +1152,7 @@ describe("acceptance gates", () => {
 			assert.match(validateAcceptanceInput(input).join("\n"), /at least one runtime command when level is verified.*Use level "checked" or provide a non-empty acceptance\.verify array/);
 		}
 		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }] }), []);
+		assert.deepEqual(validateAcceptanceInput({ level: "verified", verify: [{ id: "tests", command: "npm test" }, { id: "lint", command: "npm run lint" }] }), []);
 		assert.deepEqual(validateAcceptanceInput({ level: "checked" }), []);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "missing-command" }] }), ["acceptance.verify[0].command is required."]);
 		assert.deepEqual(validateAcceptanceInput({ verify: [{ id: "fractional", command: "npm test", timeoutMs: 1.5 }] }), ["acceptance.verify[0].timeoutMs must be an integer >= 1."]);
