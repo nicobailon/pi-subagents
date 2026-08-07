@@ -292,6 +292,63 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
+	it("queues follow-ups and acknowledges delivery at the next turn boundary", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-follow-up-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: Array<{ content: string; deliverAs?: string }> = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+			} as never);
+			handlers.get("session_start")?.({});
+			handlers.get("agent_start")?.({});
+			handlers.get("turn_start")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "follow", ts: 1, message: "Check docs.", mode: "follow_up" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[0]?.deliverAs, "followUp");
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: sent[0]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "queued");
+			handlers.get("turn_end")?.({});
+			handlers.get("turn_start")?.({});
+			const delivered = consumeSteerAcks(dir)[0];
+			assert.equal(delivered?.state, "delivered");
+			assert.equal(delivered?.deliveryStatus, "delivered");
+
+			writeSteerRequestToDir(inbox, { type: "steer", id: "auto-mid", ts: 2, message: "Mid-turn auto.", mode: "auto" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[1]?.deliverAs, "followUp");
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: sent[1]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "queued");
+			handlers.get("turn_end")?.({});
+			handlers.get("turn_start")?.({});
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "delivered");
+
+			handlers.get("turn_end")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "auto-idle", ts: 3, message: "Between-turn auto.", mode: "auto" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[2]?.deliverAs, "steer");
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "steer", text: sent[2]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.deliveryStatus, "delivered");
+
+			writeSteerRequestToDir(inbox, { type: "steer", id: "undelivered", ts: 4, message: "Never reached.", mode: "follow_up" });
+			handlers.get("message_start")?.({});
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: sent[3]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "queued");
+			handlers.get("session_shutdown")?.({});
+			const failed = consumeSteerAcks(dir)[0];
+			assert.equal(failed?.state, "failed");
+			assert.match(failed?.message ?? "", /ended before queued follow-up/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("does not acknowledge sendUserMessage until the correlated Pi input event arrives", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-ack-runtime-"));
 		try {

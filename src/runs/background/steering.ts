@@ -47,7 +47,7 @@ export function recordSteeringRequest(
 
 function incrementStateCount(status: SteeringStatus, state: SteeringTargetState): void {
 	if (state === "scheduled") status.scheduled++;
-	else if (state === "routed") status.pending++;
+	else if (state === "routed" || state === "queued") status.pending++;
 	else if (state === "delivered" || state === "late") status.delivered++;
 	else if (state === "failed") status.failed++;
 	else if (state === "recovered") status.recovered++;
@@ -81,7 +81,7 @@ export function updateSteeringTarget(
 		if (fields.replacementRunId) target.replacementRunId = fields.replacementRunId;
 		return target;
 	}
-	if (target.state === "routed" && state !== "routed") status.pending = Math.max(0, status.pending - 1);
+	if ((target.state === "routed" || target.state === "queued") && state !== "routed" && state !== "queued") status.pending = Math.max(0, status.pending - 1);
 	target.state = state;
 	if (state === "routed") target.routedAt = now;
 	if (state === "delivered") {
@@ -123,16 +123,18 @@ export function actionResultFromSteeringStatus(status: SteeringStatus, sourceRun
 	else if (states.length > 0 && states.every((candidate) => candidate === "failed" || candidate === "late")) state = "failed";
 	else if (states.some((candidate) => candidate === "failed" || candidate === "late") && states.some((candidate) => candidate !== "failed" && candidate !== "late")) state = "partial";
 	const effectiveReplacementRunId = replacementRunId ?? request.targets.find((target) => target.replacementRunId)?.replacementRunId;
-	return { requestId, state, sourceRunId, ...(effectiveReplacementRunId ? { replacementRunId: effectiveReplacementRunId } : {}), targets };
+	const deliveryStatus = states.length > 0 && states.every((candidate) => candidate === "delivered" || candidate === "recovered") ? "delivered" as const : "queued" as const;
+	return { requestId, state, deliveryStatus, sourceRunId, ...(effectiveReplacementRunId ? { replacementRunId: effectiveReplacementRunId } : {}), targets };
 }
 
 export function steeringActionIsTerminal(result: SteerActionResult | undefined): boolean {
-	return result?.state === "delivered" || result?.state === "scheduled" || result?.state === "partial" || result?.state === "recovered" || result?.state === "failed";
+	return (result?.targets.length ?? 0) > 0 && result?.targets.every((target) => target.state === "queued" || target.state === "delivered") === true
+		|| result?.state === "delivered" || result?.state === "scheduled" || result?.state === "partial" || result?.state === "recovered" || result?.state === "failed";
 }
 
 export function terminalSteeringNoticeState(status: SteeringStatus, requestId: string): "failed" | "partial" | undefined {
 	const request = status.recent.find((candidate) => candidate.id === requestId);
-	if (!request || request.targets.some((target) => target.state === "routed" || target.state === "scheduled")) return undefined;
+	if (!request || request.targets.some((target) => target.state === "routed" || target.state === "queued" || target.state === "scheduled")) return undefined;
 	const hasSuccess = request.targets.some((target) => target.state === "delivered" || target.state === "recovered");
 	const hasFailure = request.targets.some((target) => target.state === "failed" || target.state === "late");
 	if (hasSuccess && hasFailure) return "partial";

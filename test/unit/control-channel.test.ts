@@ -13,6 +13,9 @@ import {
 	deliverInterruptRequest,
 	enqueueStepSteer,
 	interruptRequestPath,
+	MAX_STEER_QUEUE_SIZE,
+	queueRevivalBrief,
+	readRevivalBriefs,
 	requestAsyncInterrupt,
 	requestAsyncSteer,
 	requestAsyncStop,
@@ -108,13 +111,13 @@ describe("control channel: request file", () => {
 	it("writes and consumes ordered steer requests", () => {
 		const asyncDir = tmpAsyncDir("pi-control-steer-");
 		try {
-			requestAsyncSteer(asyncDir, { message: "  later guidance  ", targetIndex: 1, id: "b", ts: 200, source: "test" });
+			requestAsyncSteer(asyncDir, { message: "  later guidance  ", mode: "follow_up", targetIndex: 1, id: "b", ts: 200, source: "test" });
 			requestAsyncSteer(asyncDir, { message: "first guidance", targetIndexes: [0, 2], id: "a", ts: 100 });
 			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 2);
 
 			assert.deepEqual(consumeSteerRequests(asyncDir), [
 				{ type: "steer", id: "a", ts: 100, message: "first guidance", targetIndexes: [0, 2] },
-				{ type: "steer", id: "b", ts: 200, message: "later guidance", targetIndex: 1, source: "test" },
+				{ type: "steer", id: "b", ts: 200, message: "later guidance", mode: "follow_up", targetIndex: 1, source: "test" },
 			]);
 			assert.deepEqual(consumeSteerRequests(asyncDir), []);
 		} finally {
@@ -210,6 +213,19 @@ describe("control channel: request file", () => {
 		}
 	});
 
+	it("bounds retained revival briefs and keeps them FIFO", () => {
+		const asyncDir = tmpAsyncDir("pi-control-revival-brief-");
+		try {
+			for (let index = 0; index < MAX_STEER_QUEUE_SIZE; index++) {
+				queueRevivalBrief(asyncDir, { type: "steer", id: `brief-${index}`, ts: index + 1, message: `brief ${index}`, mode: "follow_up" });
+			}
+			assert.deepEqual(readRevivalBriefs(asyncDir).map(({ request }) => request.id), Array.from({ length: MAX_STEER_QUEUE_SIZE }, (_, index) => `brief-${index}`));
+			assert.throws(() => queueRevivalBrief(asyncDir, { type: "steer", id: "full", ts: 99, message: "too much", mode: "follow_up" }), /queue is full/);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
 	it("rejects empty steer messages and invalid target indexes", () => {
 		const asyncDir = tmpAsyncDir("pi-control-steer-invalid-");
 		try {
@@ -232,11 +248,22 @@ describe("control channel: request file", () => {
 		try {
 			const capabilityPath = writeSteerCapability(asyncDir, { index: 0, pid: 42, readyAt: 100, supported: true });
 			assert.equal(capabilityPath, steerCapabilityPath(asyncDir, 0));
-			writeSteerAck(asyncDir, { requestId: "../request", index: 0, ts: 101, state: "delivered", message: "accepted" });
+			writeSteerAck(asyncDir, { requestId: "../request", index: 0, ts: 101, state: "queued", deliveryStatus: "queued", message: "accepted" });
 			assert.equal(path.dirname(steerAckPathFromDir(steerAcksDir(asyncDir, 0), "../request")), steerAcksDir(asyncDir, 0));
 			assert.deepEqual(consumeSteerCapabilities(asyncDir), [{ type: "steer-capability", protocolVersion: 1, index: 0, pid: 42, readyAt: 100, supported: true }]);
-			assert.deepEqual(consumeSteerAcks(asyncDir), [{ type: "steer-ack", protocolVersion: 1, requestId: "../request", index: 0, ts: 101, state: "delivered", message: "accepted" }]);
+			assert.deepEqual(consumeSteerAcks(asyncDir), [{ type: "steer-ack", protocolVersion: 1, requestId: "../request", index: 0, ts: 101, state: "queued", deliveryStatus: "queued", message: "accepted" }]);
 			assert.deepEqual(consumeSteerAcks(asyncDir), []);
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("preserves queued and delivered receipts for the same request", () => {
+		const asyncDir = tmpAsyncDir("pi-control-steer-ack-order-");
+		try {
+			writeSteerAck(asyncDir, { requestId: "follow", index: 0, ts: 101, state: "queued", deliveryStatus: "queued", message: "queued" });
+			writeSteerAck(asyncDir, { requestId: "follow", index: 0, ts: 102, state: "delivered", deliveryStatus: "delivered", message: "delivered" });
+			assert.deepEqual(consumeSteerAcks(asyncDir).map((ack) => ack.state), ["queued", "delivered"]);
 		} finally {
 			cleanup(asyncDir);
 		}

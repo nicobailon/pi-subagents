@@ -45,7 +45,7 @@ Keys:
 - `x`/`Ctrl+O` — toggle tool details
 - `r` — refresh
 - `Esc` — close
-- `s` — send an acknowledged steer message to a selected live async child
+- `s` — compose an acknowledged message to a selected live async child; Tab cycles `steer`, `follow_up`, and `auto`
 - `D` — stop a selected child's top-level async run after confirmation
 - `H` — open the selected active async child in a Herdr inspector pane (Herdr 0.7.5+)
 
@@ -70,7 +70,7 @@ Async runs write machine-readable lifecycle artifacts for observability and work
 ```
 
 - `status.json` powers the widget and `subagent({ action: "status" })` output.
-- `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata, including correlated `subagent.steer.requested`, `scheduled`, `routed`, `delivered`, `failed`, and `recovered` events plus failure/partial/recovery notices.
+- `events.jsonl` contains wrapper events plus child Pi JSON events annotated with run and step metadata, including correlated `subagent.steer.requested`, `scheduled`, `routed`, `queued`, `delivered`, `failed`, and `recovered` events plus failure/partial/recovery notices.
 - `output-<n>.log` is a live human-readable tail.
 - Fallback information is persisted so background runs are debuggable after completion.
 

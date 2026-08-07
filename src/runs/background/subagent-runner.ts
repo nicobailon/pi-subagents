@@ -2611,7 +2611,10 @@ async function runSubagent(
 		const now = Date.now();
 		if (ack.state === "delivered") {
 			updateSteeringLifecycleTarget(ack.requestId, ack.index, late ? "late" : "delivered", now, omitUndefinedProperties({ reason: late ? "acknowledged after recovery commit" : undefined }));
-			emitSteeringEvent("subagent.steer.delivered", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { late, message: ack.message });
+			emitSteeringEvent("subagent.steer.delivered", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { late, deliveryStatus: "delivered", message: ack.message });
+		} else if (ack.state === "queued") {
+			updateSteeringLifecycleTarget(ack.requestId, ack.index, "queued", now);
+			emitSteeringEvent("subagent.steer.queued", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { deliveryStatus: "queued", message: ack.message });
 		} else {
 			markSteeringAttention(ack.index);
 			updateSteeringLifecycleTarget(ack.requestId, ack.index, "failed", now, { reason: ack.message });
@@ -4370,11 +4373,12 @@ async function runSubagent(
 	for (const request of steeringLifecycle.recent) {
 		let changed = false;
 		for (const target of request.targets) {
-			if (target.state !== "scheduled" && target.state !== "routed") continue;
+			if (target.state !== "scheduled" && target.state !== "routed" && target.state !== "queued") continue;
 			changed = true;
-			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason: "child terminated before steering delivery" });
+			const reason = target.state === "queued" ? "run ended before queued follow-up delivery" : "child terminated before steering delivery";
+			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason });
 			markSteeringAttention(target.index);
-			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: request.id, ts: request.requestedAt, message: "child terminated before steering delivery" }, target.index, { reason: "child terminated before steering delivery" });
+			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: request.id, ts: request.requestedAt, message: reason }, target.index, { reason });
 		}
 		if (changed) emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: child terminated before delivery.`);
 	}

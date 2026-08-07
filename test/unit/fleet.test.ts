@@ -716,7 +716,7 @@ describe("native subagent fleet", () => {
 		try {
 			const asyncDir = writeAsyncRun(root, { id: "async-steer", agents: ["worker", "reviewer"] });
 			const state = stateForTest();
-			const calls: Array<{ runId: string; asyncDir: string; index?: number; message: string }> = [];
+			const calls: Array<{ runId: string; asyncDir: string; index?: number; message: string; mode: string }> = [];
 			const component = new SubagentFleetComponent(
 				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
 				theme as never,
@@ -740,11 +740,13 @@ describe("native subagent fleet", () => {
 			);
 			try {
 				component.handleInput("s");
-				assert.ok(component.render(100).some((line) => line.includes("Steer message:")));
+				assert.ok(component.render(100).some((line) => line.includes("Steer message (steer):")));
+				component.handleInput("\t");
+				assert.ok(component.render(100).some((line) => line.includes("Steer message (follow_up):")));
 				for (const char of "please continue") component.handleInput(char);
 				component.handleInput("\r");
 				await new Promise((resolve) => setImmediate(resolve));
-				assert.deepEqual(calls, [{ runId: "async-steer", asyncDir, index: 0, message: "please continue" }]);
+				assert.deepEqual(calls, [{ runId: "async-steer", asyncDir, index: 0, message: "please continue", mode: "follow_up" }]);
 				assert.ok(component.render(100).some((line) => line.includes("Steering queued.")));
 			} finally {
 				component.dispose();

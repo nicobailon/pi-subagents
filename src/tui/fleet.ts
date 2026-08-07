@@ -10,6 +10,7 @@ import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { steerAsyncRun } from "../runs/foreground/async-steering-action.ts";
+import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
@@ -45,7 +46,7 @@ export interface FleetActionResult {
 }
 
 export interface FleetActionHandlers {
-	steer(input: { runId: string; asyncDir: string; index?: number; message: string }): Promise<FleetActionResult>;
+	steer(input: { runId: string; asyncDir: string; index?: number; message: string; mode: SteerDeliveryMode }): Promise<FleetActionResult>;
 	stop(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult> | FleetActionResult;
 	inspect?(input: { runId: string; asyncDir: string; index?: number }): Promise<FleetActionResult>;
 }
@@ -484,6 +485,7 @@ export class SubagentFleetComponent implements Component {
 	private expandedTools = false;
 	private actionNotice: FleetActionResult | undefined;
 	private steerDraft: string | undefined;
+	private steerMode: SteerDeliveryMode = "steer";
 	private stopConfirming = false;
 	private actionBusy = false;
 	private transcriptCache: FleetTranscriptCache | undefined;
@@ -538,6 +540,7 @@ export class SubagentFleetComponent implements Component {
 
 	private resetActionInput(): void {
 		this.steerDraft = undefined;
+		this.steerMode = "steer";
 		this.stopConfirming = false;
 	}
 
@@ -553,8 +556,8 @@ export class SubagentFleetComponent implements Component {
 		const lines: string[] = [];
 		if (this.actionBusy) lines.push(this.theme.fg("accent", "Action pending..."));
 		if (this.steerDraft !== undefined) {
-			lines.push(this.theme.fg("accent", `Steer message: ${this.steerDraft}${this.theme.fg("dim", "▌")}`));
-			lines.push(this.theme.fg("dim", "Enter sends · Esc cancels · Backspace edits"));
+			lines.push(this.theme.fg("accent", `Steer message (${this.steerMode}): ${this.steerDraft}${this.theme.fg("dim", "▌")}`));
+			lines.push(this.theme.fg("dim", "Enter sends · Tab changes mode · Esc cancels · Backspace edits"));
 		} else if (this.stopConfirming) {
 			const selected = this.snapshot.items[this.selected];
 			lines.push(this.theme.fg("warning", `Confirm stop for async run ${selected?.runId ?? "selected run"}?`));
@@ -618,7 +621,13 @@ export class SubagentFleetComponent implements Component {
 					this.setActionNotice({ text: "reason" in target ? target.reason : "Fleet controls are unavailable in this context.", isError: true });
 					return;
 				}
-				this.runAction(() => this.options.actions!.steer({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}), message }));
+				this.runAction(() => this.options.actions!.steer({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}), message, mode: this.steerMode }));
+				return;
+			}
+			if (matchesKey(data, "tab") || data === "\t") {
+				const modes: SteerDeliveryMode[] = ["steer", "follow_up", "auto"];
+				this.steerMode = modes[(modes.indexOf(this.steerMode) + 1) % modes.length]!;
+				this.tui.requestRender();
 				return;
 			}
 			if (matchesKey(data, "backspace") || data === "\x7f") {
@@ -836,11 +845,12 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 	state.fleetInspectorOpen = true;
 	if (typeof ctx.ui.setWidget === "function") ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
 	const actions = options.actions ?? {
-		steer: async (input: { runId: string; asyncDir: string; index?: number; message: string }) => firstToolResultText(await steerAsyncRun({
+		steer: async (input: { runId: string; asyncDir: string; index?: number; message: string; mode: SteerDeliveryMode }) => firstToolResultText(await steerAsyncRun({
 			state,
 			runId: input.runId,
 			...(input.index !== undefined ? { index: input.index } : {}),
 			message: input.message,
+			mode: input.mode,
 			location: { asyncDir: input.asyncDir, resolvedId: input.runId } as Parameters<typeof steerAsyncRun>[0]["location"],
 		}), `Failed to steer async run ${input.runId}.`),
 		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),

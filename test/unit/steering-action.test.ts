@@ -138,6 +138,34 @@ describe("acknowledged steering action", () => {
 		}
 	});
 
+	it("queues follow-up as the next revival brief for a completed retained child", async () => {
+		const runId = `steer-retained-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(asyncDir, "child.jsonl");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		writeStatus(asyncDir, {
+			...runningStatus(runId),
+			state: "complete",
+			parentWorkflowRunId: "workflow",
+			endedAt: Date.now(),
+			sessionFile,
+			steps: [{ agent: "worker-0", status: "complete", sessionFile }],
+		});
+		try {
+			const result = await steerAsyncRun({ state: createState(), runId, message: "Review the docs", mode: "follow_up", location: { asyncDir } });
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details.steering?.deliveryStatus, "queued");
+			assert.match(result.content[0]!.text, /next resume/);
+			const queueDir = path.join(asyncDir, "control", "revival-briefs");
+			const queued = JSON.parse(fs.readFileSync(path.join(queueDir, fs.readdirSync(queueDir)[0]!), "utf-8")) as SteerRequest;
+			assert.equal(queued.message, "Review the docs");
+			assert.equal(queued.mode, "follow_up");
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
 	it("does not commit recovery when the caller aborts the acknowledgment wait", async () => {
 		const runId = `steer-abort-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);

@@ -438,10 +438,12 @@ function steerParams(params: unknown): SubagentParamsLike {
 		throw new SubagentRpcError("invalid_params", "RPC steer requires a non-empty message.");
 	const target = normalizeTargetParams(input, "steer");
 	if (!target.id && !target.runId && !target.dir) throw new SubagentRpcError("invalid_params", "RPC steer requires id, runId, or dir.");
+	if (input.mode !== undefined && input.mode !== "steer" && input.mode !== "follow_up" && input.mode !== "auto") throw new SubagentRpcError("invalid_params", "RPC steer mode must be steer, follow_up, or auto.");
 	return {
 		action: "steer",
 		...target,
 		message: input.message.trim(),
+		...(typeof input.mode === "string" ? { mode: input.mode as "steer" | "follow_up" | "auto" } : {}),
 		steeringRecovery: false,
 	};
 }

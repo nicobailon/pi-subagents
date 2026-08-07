@@ -400,7 +400,7 @@ export type ProcessTerminalV1 =
 	});
 
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
-export type SteeringTargetState = "scheduled" | "pending" | "routed" | "delivered" | "late" | "failed" | "recovered";
+export type SteeringTargetState = "scheduled" | "pending" | "routed" | "queued" | "delivered" | "late" | "failed" | "recovered";
 
 export interface SteeringTargetStatus {
 	index: number;
@@ -446,6 +446,7 @@ export interface SteerActionTarget {
 export interface SteerActionResult {
 	requestId: string;
 	state: SteeringActionState;
+	deliveryStatus: "delivered" | "queued";
 	sourceRunId: string;
 	replacementRunId?: string;
 	targets: SteerActionTarget[];

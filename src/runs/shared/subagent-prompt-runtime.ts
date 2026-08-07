@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
-import { consumeSteerRequestsFromDir, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
+import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
@@ -270,7 +270,7 @@ export function stripParentOnlySubagentMessages(messages: unknown[], options: { 
 
 export function formatSteerMessage(request: SteerRequest): string {
 	return [
-		"Mid-run steering from the parent orchestrator:",
+		request.mode === "follow_up" ? "Queued follow-up from the parent orchestrator:" : "Mid-run steering from the parent orchestrator:",
 		"",
 		request.message,
 		"",
@@ -333,22 +333,26 @@ export function registerSteeringInbox(
 	if (!steerInbox) return;
 	const capabilityPath = process.env[SUBAGENT_STEER_CAPABILITY_ENV]?.trim();
 	const ackDir = process.env[SUBAGENT_STEER_ACK_DIR_ENV]?.trim();
-	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
+	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options?: { deliverAs: "steer" | "followUp" }) => unknown }).sendUserMessage;
 	const childIndex = Number(process.env[SUBAGENT_CHILD_INDEX_ENV]);
-	const pending = new Map<string, string[]>();
+	const pending = new Map<string, Array<{ request: SteerRequest; deliveryStatus: SteerDeliveryStatus }>>();
+	const queued: Array<{ request: SteerRequest; ready: boolean }> = [];
 	let disposed = false;
+	let agentRunning = false;
+	let inTurn = false;
 	let flushing = false;
 	let started = false;
 	let canSteer = typeof sendUserMessage === "function";
 	let watcher: fs.FSWatcher | undefined;
 	let interval: NodeJS.Timeout | undefined;
-	const acknowledge = (request: SteerRequest, state: "delivered" | "failed", message: string): void => {
+	const acknowledge = (request: SteerRequest, state: "delivered" | "queued" | "failed", message: string, deliveryStatus?: SteerDeliveryStatus): void => {
 		if (!ackDir || !Number.isInteger(childIndex) || childIndex < 0) return;
 		writeSteerAckAt(steerAckPathFromDir(ackDir, request.id), {
 			requestId: request.id,
 			index: childIndex,
 			ts: Date.now(),
 			state,
+			...(deliveryStatus ? { deliveryStatus } : {}),
 			message,
 		});
 	};
@@ -367,15 +371,22 @@ export function registerSteeringInbox(
 					acknowledge(request, "failed", "Child Pi session does not support sendUserMessage steering.");
 					continue;
 				}
+				const requestedMode = request.mode ?? "steer";
+				const delivery = requestedMode === "follow_up" || (requestedMode === "auto" && inTurn) ? "followUp" as const : "steer" as const;
+				const pendingFollowUps = [...pending.values()].reduce((count, entries) => count + entries.filter((entry) => entry.deliveryStatus === "queued").length, 0);
+				if (delivery === "followUp" && queued.length + pendingFollowUps >= MAX_STEER_QUEUE_SIZE) {
+					acknowledge(request, "failed", `Follow-up queue is full (${MAX_STEER_QUEUE_SIZE} messages).`);
+					continue;
+				}
 				const formatted = formatSteerMessage(request);
-				const ids = pending.get(formatted) ?? [];
-				ids.push(request.id);
-				pending.set(formatted, ids);
+				const entries = pending.get(formatted) ?? [];
+				entries.push({ request, deliveryStatus: delivery === "followUp" ? "queued" : "delivered" });
+				pending.set(formatted, entries);
 				try {
-					sendUserMessage(formatted, { deliverAs: "steer" });
+					sendUserMessage(formatted, requestedMode === "auto" && !agentRunning ? undefined : { deliverAs: delivery });
 				} catch (error) {
-					ids.pop();
-					if (ids.length === 0) pending.delete(formatted);
+					entries.pop();
+					if (entries.length === 0) pending.delete(formatted);
 					acknowledge(request, "failed", error instanceof Error ? error.message : String(error));
 					for (const retry of requests.slice(index + 1)) writeSteerRequestToDir(steerInbox, retry);
 					break;
@@ -388,14 +399,19 @@ export function registerSteeringInbox(
 	const onInput = (event: unknown): undefined => {
 		if (disposed || !event || typeof event !== "object") return undefined;
 		const input = event as { source?: unknown; streamingBehavior?: unknown; text?: unknown; content?: unknown };
-		if (input.source !== "extension" || input.streamingBehavior !== "steer") return undefined;
+		if (input.source !== "extension") return undefined;
 		const text = typeof input.text === "string" ? input.text : typeof input.content === "string" ? input.content : undefined;
 		if (!text) return undefined;
-		const ids = pending.get(text);
-		const requestId = ids?.shift();
-		if (!requestId) return undefined;
-		if (ids?.length === 0) pending.delete(text);
-		acknowledge({ type: "steer", id: requestId, ts: Date.now(), message: text }, "delivered", "Pi accepted the correlated steering input.");
+		const entries = pending.get(text);
+		const entry = entries?.shift();
+		if (!entry) return undefined;
+		if (entries?.length === 0) pending.delete(text);
+		if (entry.deliveryStatus === "queued") {
+			queued.push({ request: entry.request, ready: !inTurn });
+			acknowledge(entry.request, "queued", "Pi queued the correlated follow-up input.", "queued");
+		} else {
+			acknowledge(entry.request, "delivered", "Pi accepted the correlated steering input.", "delivered");
+		}
 		return undefined;
 	};
 	const start = (): void => {
@@ -426,10 +442,27 @@ export function registerSteeringInbox(
 	// Register input before the watcher so an accepted extension input cannot race request dispatch.
 	onRuntimeEvent("input", onInput);
 	onRuntimeEvent("session_start", () => start());
-	for (const eventName of ["message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_end", "turn_end"] as const) {
+	onRuntimeEvent("agent_start", () => { agentRunning = true; return activate(); });
+	onRuntimeEvent("agent_end", () => { agentRunning = false; inTurn = false; return activate(); });
+	onRuntimeEvent("turn_start", () => {
+		inTurn = true;
+		const next = queued.findIndex((entry) => entry.ready);
+		if (next >= 0) {
+			const [entry] = queued.splice(next, 1);
+			if (entry) acknowledge(entry.request, "delivered", "Pi delivered the queued follow-up at a turn boundary.", "delivered");
+		}
+		return activate();
+	});
+	onRuntimeEvent("turn_end", () => {
+		inTurn = false;
+		for (const entry of queued) entry.ready = true;
+		return activate();
+	});
+	for (const eventName of ["message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_end"] as const) {
 		onRuntimeEvent(eventName, activate);
 	}
 	onRuntimeEvent("session_shutdown", () => {
+		for (const entry of queued) acknowledge(entry.request, "failed", "Run ended before queued follow-up delivery.", "queued");
 		disposed = true;
 		try { watcher?.close(); } catch {}
 		if (interval) clearInterval(interval);

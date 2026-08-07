@@ -406,6 +406,7 @@ describe("subagent extension RPC bridge", () => {
 			id: "abc123",
 			index: 0,
 			message: " Focus on the failing test. ",
+			mode: "follow_up",
 		});
 
 		assert.equal(reply.success, true);
@@ -414,6 +415,7 @@ describe("subagent extension RPC bridge", () => {
 			id: "abc123",
 			index: 0,
 			message: "Focus on the failing test.",
+			mode: "follow_up",
 			steeringRecovery: false,
 		});
 		assert.equal((reply as { data: { text?: string } }).data.text, "Steering delivered.");

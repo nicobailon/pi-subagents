@@ -160,7 +160,8 @@ subagent({ action: "resume", id: "<run-id>", message: "follow-up question after 
 subagent({ action: "resume", id: "<run-id>", index: 1, message: "follow-up for child 2" })
 subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a nested child" })
 subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
-subagent({ action: "steer", id: "<run-id>", index: 1, message: "guidance for child 2" })
+subagent({ action: "steer", id: "<run-id>", mode: "follow_up", message: "check this after the current turn" })
+subagent({ action: "steer", id: "<run-id>", index: 1, mode: "auto", message: "guidance for child 2" })
 subagent({ action: "append-step", id: "<run-id>", step: { agent: "worker", task: "Continue from {previous}" } })
 subagent({ action: "approve-checkpoint", id: "<run-id>" })
 subagent({ action: "reject-checkpoint", id: "<run-id>" })
@@ -199,7 +200,9 @@ subagent({ action: "doctor" })
 
 ### steer
 
-`steer` waits up to three seconds for a correlated child-Pi input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. Delivery means Pi accepted the user message, not model compliance. A pending indexed child returns `scheduled`.
+`steer` waits up to three seconds for a correlated child-Pi input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. The receipt also has `deliveryStatus: "delivered" | "queued"`. Delivery means Pi accepted the user message, not model compliance. A pending indexed child returns `scheduled`.
+
+The optional `mode` is `steer` by default and keeps the current interrupt behavior. `follow_up` waits for the next turn boundary. `auto` queues during an active turn and delivers immediately between turns. The bounded FIFO holds 20 messages and returns a clear error when full. Terminal details report queued messages that the run did not deliver. A `follow_up` sent to a completed retained workflow child becomes the first brief for its next `resume`.
 
 Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; durable multi-child and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery.
 
