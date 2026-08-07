@@ -7,7 +7,7 @@ import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
-import { readNestedControlRequests, resolveNestedRouteFromEnv, writeNestedControlResult } from "../runs/shared/nested-events.ts";
+import { readNestedControlRequests, resolveNestedRouteFromEnv, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { SubagentParams } from "./schemas.ts";
@@ -50,25 +50,42 @@ function createChildSafeState(): SubagentState {
 	};
 }
 
-function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState): NodeJS.Timeout | undefined {
-	let route;
+function resolveNestedControlRoute(): NestedRoute | undefined {
 	try {
-		route = resolveNestedRouteFromEnv();
+		return resolveNestedRouteFromEnv();
 	} catch {
 		return undefined;
 	}
-	if (!route) return undefined;
-	const seen = new Set<string>();
-	const inFlight = new Set<string>();
-	const pendingResults = new Map<string, Parameters<typeof writeNestedControlResult>[1]>();
+}
+
+function nestedControlRouteKey(route: NestedRoute): string {
+	return route.controlInbox;
+}
+
+interface NestedControlInboxState {
+	seen: Set<string>;
+	inFlight: Set<string>;
+	pendingResults: Map<string, Parameters<typeof writeNestedControlResult>[1]>;
+}
+
+interface NestedControlListenerEntry {
+	cleanup: () => void;
+	state: NestedControlInboxState;
+}
+
+function createNestedControlInboxState(): NestedControlInboxState {
+	return { seen: new Set(), inFlight: new Set(), pendingResults: new Map() };
+}
+
+function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState, route: NestedRoute, inboxState: NestedControlInboxState): () => void {
 	const timer = setInterval(() => {
 		try {
 			for (const request of readNestedControlRequests(route)) {
-				if (seen.has(request.requestId) || inFlight.has(request.requestId)) continue;
-				inFlight.add(request.requestId);
+				if (inboxState.seen.has(request.requestId) || inboxState.inFlight.has(request.requestId)) continue;
+				inboxState.inFlight.add(request.requestId);
 				void (async () => {
 					try {
-						let result = pendingResults.get(request.requestId);
+						let result = inboxState.pendingResults.get(request.requestId);
 						if (!result) {
 							let ok = false;
 							let message = "Control request failed.";
@@ -107,15 +124,15 @@ function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState)
 						try {
 							writeNestedControlResult(route, result);
 						} catch (error) {
-							pendingResults.set(request.requestId, result);
+							inboxState.pendingResults.set(request.requestId, result);
 							console.error(`Failed to write nested control result for request '${request.requestId}' targeting '${request.targetRunId}' via inbox '${route.controlInbox}'; keeping request for retry:`, error);
 							return;
 						}
-						pendingResults.delete(request.requestId);
-						seen.add(request.requestId);
+						inboxState.pendingResults.delete(request.requestId);
+						inboxState.seen.add(request.requestId);
 						try { fs.unlinkSync(request.filePath); } catch {}
 					} finally {
-						inFlight.delete(request.requestId);
+						inboxState.inFlight.delete(request.requestId);
 					}
 				})();
 			}
@@ -124,7 +141,7 @@ function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState)
 		}
 	}, 200);
 	timer.unref?.();
-	return timer;
+	return () => clearInterval(timer);
 }
 
 export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): void {
@@ -169,5 +186,16 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 	};
 
 	pi.registerTool(tool);
-	startNestedControlInboxListener(pi, state);
+	const route = resolveNestedControlRoute();
+	if (!route) return;
+	const listenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
+	const listenerCleanups = globalStore[listenerCleanupKey] instanceof Map
+		? globalStore[listenerCleanupKey] as Map<string, NestedControlListenerEntry>
+		: new Map<string, NestedControlListenerEntry>();
+	globalStore[listenerCleanupKey] = listenerCleanups;
+	const routeKey = nestedControlRouteKey(route);
+	const previous = listenerCleanups.get(routeKey);
+	previous?.cleanup();
+	const inboxState = previous?.state ?? createNestedControlInboxState();
+	listenerCleanups.set(routeKey, { state: inboxState, cleanup: startNestedControlInboxListener(pi, state, route, inboxState) });
 }
