@@ -7,6 +7,7 @@ const MAX_TASK_SUMMARY_LENGTH = 120;
 
 export interface RetainedChild {
 	runId: string;
+	parentRunId?: string;
 	agent: string;
 	taskSummary: string;
 	completedAt: number;
@@ -41,6 +42,7 @@ export function listRetainedChildren(asyncDirRoot: string, sessionId: string): R
 			if (completedAt === undefined) return [];
 			return [{
 				runId: run.id,
+				...(run.parentWorkflowRunId ? { parentRunId: run.parentWorkflowRunId } : {}),
 				agent: step.agent,
 				taskSummary: boundedTaskSummary(step.description),
 				completedAt,

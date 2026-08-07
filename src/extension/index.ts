@@ -52,7 +52,10 @@ import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capabili
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { buildSubagentToolDescription } from "./tool-description.ts";
+import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { syncMissionFromAsyncCompletion } from "../missions/lifecycle.ts";
+import { resolveMissionStoreLocation } from "../missions/store.ts";
+import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
 	type Details,
 	type SubagentState,
@@ -379,6 +382,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}, { placement: fleetViewPlacement })
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
+	let goalTurnId = 0;
 	const scheduledRunManager = createScheduledRunManager({
 		config,
 		launch: (params, ctx, signal) => {
@@ -577,8 +581,24 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager);
 
 	pi.on("agent_end", async (_event, ctx) => {
-		if (ctx.hasUI) return;
-		await drainOutstandingWork({ state, events: pi.events });
+		if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events });
+		const ownerSessionId = state.currentSessionId;
+		if (!ownerSessionId) return;
+		goalTurnId += 1;
+		try {
+			const location = resolveMissionStoreLocation({ projectRoot: state.baseCwd, ...(config.missions ? { config: config.missions } : {}) });
+			const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionId);
+			for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
+				handleSubagentControlNotice({
+					pi,
+					state,
+					visibleControlNotices: new Set(),
+					details: { source: "goal", event: notice.event, noticeText: notice.message },
+				});
+			}
+		} catch (error) {
+			console.error("Failed to evaluate goal missions:", error);
+		}
 	});
 
 	registerSlashCommands(pi, state);
@@ -674,6 +694,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const resetSessionState = (ctx: ExtensionContext, recovering: boolean) => {
 		state.baseCwd = ctx.cwd;
+		goalTurnId = 0;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
 		state.subagentSpawns = {

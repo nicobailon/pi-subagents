@@ -11,7 +11,7 @@ Missions are durable wrappers around runs. The noun map:
 - **Run** — one actual subagent execution.
 - **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
 
-Ordinary task launches create a mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking goals, run ids, lifecycle status, decisions, artifact paths, and delivery receipts.
+Ordinary task launches create a mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts.
 
 Behavior:
 
@@ -24,7 +24,7 @@ Behavior:
 ```ts
 const created = subagent({
   action: "mission.create",
-  mission: { title: "Ship auth refresh", goal: "Implement and validate token refresh" }
+  mission: { title: "Ship auth refresh", objective: "Implement and validate token refresh" }
 })
 subagent({
   workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved auth refresh plan" })`,
@@ -37,6 +37,28 @@ subagent({
   mission: { title: "Ship auth refresh" }
 })
 ```
+
+### Goal missions
+
+Set `goal: true` with a token budget to make an open mission an active continuation driver:
+
+```ts
+subagent({
+  action: "mission.create",
+  mission: {
+    title: "Ship auth refresh",
+    objective: "Implement and validate token refresh",
+    goal: true,
+    budget: { tokens: 400000 }
+  }
+})
+```
+
+After each parent turn, an idle goal mission sends one needs-attention notice with its title, remaining token budget, and next ready action. The action comes from `state.nextReadyAction`, `state.nextAction`, a state item with `status: "ready"`, an open decision, or linked-run state. When the latest linked workflow has a completed retained child, the notice names that child as the `resume` target. The extension never launches or replans goal work by itself.
+
+Linked-run token totals are stored on each run and folded into mission `usage`. An active linked run suppresses notices. Reaching the token budget changes the goal status to `budget-exhausted` and stops notices without closing the mission or reporting success.
+
+Pause and resume notices with `mission.update` and `{ goal: { paused: true } }` or `{ goal: { paused: false } }`. Set `{ goal: false }` to disable goal mode. `mission.close` also ends the loop.
 
 ### Managing missions
 

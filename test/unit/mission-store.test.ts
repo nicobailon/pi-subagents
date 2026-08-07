@@ -29,7 +29,7 @@ describe("mission store", () => {
 		try {
 			const created = createMission(test.location, {
 				title: "Ship durable missions",
-				goal: "Make delegated work resumable",
+				objective: "Make delegated work resumable",
 				labels: ["phase-1"],
 			});
 			const updated = updateMission(test.location, created.id, {
@@ -66,7 +66,7 @@ describe("mission store", () => {
 	it("persists bounded workflow state and reads its file once per workflow", () => {
 		const test = fixture();
 		try {
-			const mission = createMission(test.location, { title: "Stateful mission", goal: "Keep workflow state" });
+			const mission = createMission(test.location, { title: "Stateful mission", objective: "Keep workflow state" });
 			const state = createMissionWorkflowState(test.location, mission.id);
 			assert.equal(state.get("missing"), undefined);
 			fs.mkdirSync(path.dirname(state.path), { recursive: true });
@@ -90,15 +90,21 @@ describe("mission store", () => {
 		}
 	});
 
-	it("loads older records that do not have receipts", () => {
+	it("loads older records that do not have receipts or objective", () => {
 		const test = fixture();
 		try {
-			const created = createMission(test.location, { title: "Older record", goal: "Stay readable" });
+			const created = createMission(test.location, { title: "Older record", objective: "Stay readable" });
 			const recordPath = path.join(test.location.missionDir, `${created.id}.json`);
 			const raw = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
 			delete raw.receipts;
+			delete raw.objective;
+			raw.goal = "Stay readable";
 			fs.writeFileSync(recordPath, JSON.stringify(raw), "utf-8");
-			assert.deepEqual(readMission(test.location, created.id).receipts, []);
+
+			const mission = readMission(test.location, created.id);
+			assert.equal(mission.objective, "Stay readable");
+			assert.equal(mission.goal, undefined);
+			assert.deepEqual(mission.receipts, []);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
@@ -107,8 +113,8 @@ describe("mission store", () => {
 	it("skips corrupt records, removes missing pointers, and preserves parse-error pointers", () => {
 		const test = fixture();
 		try {
-			const missing = createMission(test.location, { title: "Missing record", goal: "Heal its pointer" });
-			const corrupt = createMission(test.location, { title: "Corrupt record", goal: "Keep evidence" });
+			const missing = createMission(test.location, { title: "Missing record", objective: "Heal its pointer" });
+			const corrupt = createMission(test.location, { title: "Corrupt record", objective: "Keep evidence" });
 			fs.writeFileSync(path.join(test.location.missionDir, "broken.json"), "{not json", "utf-8");
 			assert.equal(listMissions(test.location).warnings.length, 1);
 
@@ -128,10 +134,10 @@ describe("mission store", () => {
 		const test = fixture();
 		const location = { ...test.location, retainTerminal: 1 };
 		try {
-			const oldest = createMission(location, { title: "Old terminal", goal: "Prune me" }, new Date("2026-01-01T00:00:00Z"));
-			const newest = createMission(location, { title: "New terminal", goal: "Keep me" }, new Date("2026-01-02T00:00:00Z"));
-			const active = createMission(location, { title: "Active", goal: "Never prune", status: "active" }, new Date("2026-01-03T00:00:00Z"));
-			const planned = createMission(location, { title: "Planned", goal: "Never prune", status: "planned" }, new Date("2026-01-04T00:00:00Z"));
+			const oldest = createMission(location, { title: "Old terminal", objective: "Prune me" }, new Date("2026-01-01T00:00:00Z"));
+			const newest = createMission(location, { title: "New terminal", objective: "Keep me" }, new Date("2026-01-02T00:00:00Z"));
+			const active = createMission(location, { title: "Active", objective: "Never prune", status: "active" }, new Date("2026-01-03T00:00:00Z"));
+			const planned = createMission(location, { title: "Planned", objective: "Never prune", status: "planned" }, new Date("2026-01-04T00:00:00Z"));
 			updateMission(location, oldest.id, { status: "completed" }, new Date("2026-01-05T00:00:00Z"));
 			updateMission(location, newest.id, { status: "failed" }, new Date("2026-01-06T00:00:00Z"));
 
@@ -149,7 +155,7 @@ describe("mission store", () => {
 		const test = fixture();
 		try {
 			const ctx = { cwd: test.projectRoot, agentDir: test.agentDir, currentSessionId: "session-1" };
-			const created = handleMissionAction("mission.create", { mission: { title: "Unreadable status", goal: "Keep mission readable" } }, ctx);
+			const created = handleMissionAction("mission.create", { mission: { title: "Unreadable status", objective: "Keep mission readable" } }, ctx);
 			const missionId = created.details?.missionId;
 			assert.ok(missionId);
 			const asyncDir = path.join(test.root, "async-run");
@@ -171,7 +177,7 @@ describe("mission store", () => {
 		const test = fixture();
 		try {
 			const ctx = { cwd: test.projectRoot, agentDir: test.agentDir, currentSessionId: "session-1" };
-			const created = handleMissionAction("mission.create", { mission: { title: "Action mission", goal: "Exercise actions" } }, ctx);
+			const created = handleMissionAction("mission.create", { mission: { title: "Action mission", objective: "Exercise actions" } }, ctx);
 			const missionId = created.details?.missionId;
 			assert.ok(missionId);
 			const asyncDir = path.join(test.root, "async-run");

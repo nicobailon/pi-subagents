@@ -13,6 +13,19 @@ export type MissionRunMode = "single" | "parallel" | "chain" | "workflow" | "sch
 export type MissionArtifactKind = "status" | "output" | "patch" | "manifest" | "review" | "note" | "other";
 export type MissionReceiptKind = "pull_request" | "ci" | "deployment" | "release";
 export type MissionReceiptStatus = "pending" | "ready" | "succeeded" | "failed";
+export type MissionGoalStatus = "active" | "paused" | "budget-exhausted";
+
+export interface MissionGoal {
+	status: MissionGoalStatus;
+}
+
+export interface MissionTokenBudget {
+	tokens: number;
+}
+
+export interface MissionTokenUsage {
+	tokens: number;
+}
 
 export interface MissionRunLink {
 	runId: string;
@@ -23,6 +36,7 @@ export interface MissionRunLink {
 	status?: string;
 	startedAt?: string;
 	completedAt?: string;
+	usage?: MissionTokenUsage;
 }
 
 export interface MissionDecision {
@@ -56,7 +70,10 @@ export interface MissionRecord {
 	schemaVersion: 1;
 	id: string;
 	title: string;
-	goal: string;
+	objective: string;
+	goal?: MissionGoal;
+	budget?: MissionTokenBudget;
+	usage?: MissionTokenUsage;
 	status: MissionStatus;
 	createdAt: string;
 	updatedAt: string;
@@ -115,7 +132,9 @@ export interface GlobalMissionListResult {
 
 export interface MissionCreateInput {
 	title: string;
-	goal: string;
+	objective: string;
+	goal?: boolean;
+	budget?: MissionTokenBudget;
 	status?: MissionStatus;
 	labels?: string[];
 	ownerSessionId?: string;
@@ -123,7 +142,10 @@ export interface MissionCreateInput {
 
 export interface MissionUpdateInput {
 	title?: string;
-	goal?: string;
+	objective?: string;
+	goal?: MissionGoal | false;
+	budget?: MissionTokenBudget;
+	usage?: MissionTokenUsage;
 	status?: MissionStatus;
 	summary?: string;
 	labels?: string[];

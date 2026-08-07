@@ -12,6 +12,7 @@ import {
 	type MissionArtifactKind,
 	type MissionCreateInput,
 	type MissionDecision,
+	type MissionGoal,
 	type MissionIndexEntry,
 	type MissionListResult,
 	type MissionReceipt,
@@ -23,6 +24,8 @@ import {
 	type MissionStatus,
 	type MissionStoreConfig,
 	type MissionStoreLocation,
+	type MissionTokenBudget,
+	type MissionTokenUsage,
 	type MissionUpdateInput,
 } from "./types.ts";
 
@@ -63,6 +66,37 @@ function missionStatus(value: unknown, label: string): MissionStatus {
 	return value as MissionStatus;
 }
 
+function positiveTokenCount(value: unknown, label: string): number {
+	if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`${label} must be a positive integer`);
+	return value as number;
+}
+
+function nonNegativeTokenCount(value: unknown, label: string): number {
+	if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label} must be a non-negative integer`);
+	return value as number;
+}
+
+function parseStoredGoal(value: unknown, label: string): { goal?: MissionGoal; legacyObjective?: string } {
+	if (typeof value === "string") return { legacyObjective: requiredString(value, label).trim() };
+	return { goal: parseGoal(value, label) };
+}
+
+function parseGoal(value: unknown, label: string): MissionGoal {
+	const input = asObject(value, label);
+	if (input.status !== "active" && input.status !== "paused" && input.status !== "budget-exhausted") throw new Error(`${label}.status is invalid`);
+	return { status: input.status };
+}
+
+function parseBudget(value: unknown, label: string): MissionTokenBudget {
+	const input = asObject(value, label);
+	return { tokens: positiveTokenCount(input.tokens, `${label}.tokens`) };
+}
+
+function parseUsage(value: unknown, label: string): MissionTokenUsage {
+	const input = asObject(value, label);
+	return { tokens: nonNegativeTokenCount(input.tokens, `${label}.tokens`) };
+}
+
 function stringArray(value: unknown, label: string): string[] {
 	if (!Array.isArray(value)) throw new Error(`${label} must be an array of non-empty strings`);
 	const result = value.map((item, index) => requiredString(item, `${label}[${index}]`).trim());
@@ -94,6 +128,7 @@ function parseRunLink(value: unknown, label: string): MissionRunLink {
 		...(optionalString(input.status, `${label}.status`) ? { status: input.status as string } : {}),
 		...(input.startedAt !== undefined ? { startedAt: timestamp(input.startedAt, `${label}.startedAt`) } : {}),
 		...(input.completedAt !== undefined ? { completedAt: timestamp(input.completedAt, `${label}.completedAt`) } : {}),
+		...(input.usage !== undefined ? { usage: parseUsage(input.usage, `${label}.usage`) } : {}),
 	};
 }
 
@@ -158,11 +193,20 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	const decisions = input.decisions as unknown[];
 	const artifacts = input.artifacts as unknown[];
 	const receipts = (input.receipts ?? []) as unknown[];
+	const parsedGoal = input.goal !== undefined ? parseStoredGoal(input.goal, `${source}.goal`) : {};
+	const budget = input.budget !== undefined ? parseBudget(input.budget, `${source}.budget`) : undefined;
+	const usage = input.usage !== undefined ? parseUsage(input.usage, `${source}.usage`) : undefined;
+	const objective = optionalString(input.objective, `${source}.objective`)?.trim() ?? parsedGoal.legacyObjective;
+	if (!objective) throw new Error(`${source}.objective must be a non-empty string`);
+	if (parsedGoal.goal && !budget) throw new Error(`${source}.budget is required for a goal mission`);
 	return {
 		schemaVersion: 1,
 		id: validateMissionId(input.id, `${source}.id`),
 		title: requiredString(input.title, `${source}.title`),
-		goal: requiredString(input.goal, `${source}.goal`),
+		objective,
+		...(parsedGoal.goal ? { goal: parsedGoal.goal } : {}),
+		...(budget ? { budget } : {}),
+		...(usage ? { usage } : {}),
 		status: missionStatus(input.status, `${source}.status`),
 		createdAt: timestamp(input.createdAt, `${source}.createdAt`),
 		updatedAt: timestamp(input.updatedAt, `${source}.updatedAt`),
@@ -293,7 +337,10 @@ export function createMission(location: MissionStoreLocation, input: MissionCrea
 		schemaVersion: 1,
 		id: randomUUID(),
 		title: requiredString(input.title, "mission.title").trim(),
-		goal: requiredString(input.goal, "mission.goal").trim(),
+		objective: requiredString(input.objective, "mission.objective").trim(),
+		...(input.goal === true ? { goal: { status: "active" as const } } : {}),
+		...(input.budget ? { budget: parseBudget(input.budget, "mission.budget") } : {}),
+		...(input.goal === true ? { usage: { tokens: 0 } } : {}),
 		status: input.status ?? "planned",
 		createdAt,
 		updatedAt: createdAt,
@@ -305,6 +352,7 @@ export function createMission(location: MissionStoreLocation, input: MissionCrea
 		...(input.ownerSessionId ? { ownerSessionId: requiredString(input.ownerSessionId, "mission.ownerSessionId") } : {}),
 		...(input.labels ? { labels: stringArray(input.labels, "mission.labels") } : {}),
 	};
+	if (input.goal === true && !input.budget) throw new Error("mission.budget is required when mission.goal is true");
 	const created = writeMission(location, record);
 	pruneTerminalMissions(location, retainTerminal);
 	return created;
@@ -391,6 +439,19 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 			...(decision.recommendation ? { recommendation: requiredString(decision.recommendation, "mission.update.addDecisions[].recommendation") } : {}),
 		})),
 	];
+	const budget = update.budget !== undefined ? parseBudget(update.budget, "mission.update.budget") : current.budget;
+	const usage = update.usage !== undefined
+		? parseUsage(update.usage, "mission.update.usage")
+		: { tokens: runs.reduce((total, run) => total + (run.usage?.tokens ?? 0), 0) };
+	let goal = update.goal === false ? undefined : update.goal !== undefined ? parseGoal(update.goal, "mission.update.goal") : current.goal;
+	if (goal && !budget) throw new Error("mission.update.budget is required when enabling a goal mission");
+	if (goal && budget) {
+		goal = usage.tokens >= budget.tokens
+			? { status: "budget-exhausted" }
+			: goal.status === "budget-exhausted"
+				? { status: "active" }
+				: goal;
+	}
 	const next: MissionRecord = {
 		...current,
 		updatedAt: createdAt,
@@ -399,12 +460,15 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 		receipts,
 		decisions,
 		...(update.title !== undefined ? { title: requiredString(update.title, "mission.update.title").trim() } : {}),
-		...(update.goal !== undefined ? { goal: requiredString(update.goal, "mission.update.goal").trim() } : {}),
+		...(update.objective !== undefined ? { objective: requiredString(update.objective, "mission.update.objective").trim() } : {}),
+		...(budget ? { budget } : {}),
+		...(goal ? { goal, usage } : {}),
 		...(update.status !== undefined ? { status: missionStatus(update.status, "mission.update.status") } : {}),
 		...(update.summary !== undefined ? { summary: requiredString(update.summary, "mission.update.summary") } : {}),
 		...(update.labels !== undefined ? { labels: stringArray(update.labels, "mission.update.labels") } : {}),
 		...(update.acceptance !== undefined ? { acceptance: update.acceptance } : {}),
 	};
+	if (!goal) delete next.goal;
 	const updated = writeMission(location, next);
 	if (TERMINAL_MISSION_STATUSES.has(updated.status)) pruneTerminalMissions(location, retainTerminal);
 	return updated;

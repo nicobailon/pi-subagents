@@ -62,6 +62,21 @@ describe("subagent control notice delivery", () => {
 		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
 	});
 
+	it("delivers goal notices without starting a new turn", () => {
+		const state = makeState();
+		const recorder = makeRecorder();
+
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state,
+			visibleControlNotices: new Set(),
+			details: { source: "goal", event: needsAttentionEvent(), noticeText: "Goal is ready." },
+		});
+
+		assert.equal(recorder.sent.length, 1);
+		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: false });
+	});
+
 	it("does not queue a foreground notice that Pi could flush after completion", () => {
 		const state = makeState();
 		state.foregroundControls.set("run-1", {

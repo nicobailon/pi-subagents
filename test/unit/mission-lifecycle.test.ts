@@ -30,7 +30,7 @@ describe("mission launch lifecycle", () => {
 			});
 			assert.ok(binding);
 			const mission = readMission(binding.location, binding.missionId);
-			assert.equal(mission.goal, "Map the auth flow");
+			assert.equal(mission.objective, "Map the auth flow");
 			assert.equal(mission.status, "active");
 			const result = attachMissionToLaunchResult({
 				binding,
@@ -58,7 +58,7 @@ describe("mission launch lifecycle", () => {
 				config: test.missionConfig,
 			});
 			assert.ok(parallelOnly);
-			assert.equal(readMission(parallelOnly.location, parallelOnly.missionId).goal, "Review parallel work");
+			assert.equal(readMission(parallelOnly.location, parallelOnly.missionId).objective, "Review parallel work");
 
 			assert.throws(() => prepareMissionLaunch({
 				params: { missionId: "" },
@@ -85,6 +85,7 @@ describe("mission launch lifecycle", () => {
 				config: { ...test.missionConfig, enabled: false },
 			});
 			assert.ok(explicit);
+			assert.equal(readMission(explicit.location, explicit.missionId).objective, "Tiny one-off");
 
 			const summaryAlias = prepareMissionLaunch({
 				params: { mission: { summary: "Review active backlog", labels: ["review"] }, task: "Review the current diff" },
@@ -94,6 +95,7 @@ describe("mission launch lifecycle", () => {
 			assert.ok(summaryAlias);
 			assert.deepEqual(readMission(summaryAlias.location, summaryAlias.missionId).labels, ["review"]);
 			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).title, "Review active backlog");
+			assert.equal(readMission(summaryAlias.location, summaryAlias.missionId).objective, "Review the current diff");
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
@@ -103,7 +105,7 @@ describe("mission launch lifecycle", () => {
 		const test = projectFixture();
 		try {
 			const binding = prepareMissionLaunch({
-				params: { mission: { title: "Implement feature", goal: "Ship it", labels: ["phase-1"] }, task: "Do the work" },
+				params: { mission: { title: "Implement feature", objective: "Ship it", labels: ["phase-1"] }, task: "Do the work" },
 				projectRoot: test.projectRoot,
 				config: test.missionConfig,
 				ownerSessionId: "session-1",

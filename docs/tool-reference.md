@@ -34,7 +34,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | `config` | object/string | - | Agent or existing durable chain config for management create/update. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `worker`, `oracle`, and `advisor` default to `fork`. |
 | `missionId` | string | - | Attach a workflow launch to an existing project mission. |
-| `mission` | object/false | - | Create-and-attach shortcut: `{ title, goal?, labels? }`; pass `false` for an intentionally ephemeral launch with no mission record or workflow `state` global. Explicit mission persistence failures are strict. |
+| `mission` | object/false | - | Create-and-attach shortcut: `{ title, objective?, goal?, budget?, labels? }`; `goal: true` requires `budget.tokens` and enables continuation notices. Pass `false` for an intentionally ephemeral launch with no mission record or workflow `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
 | `focus` | boolean | true | Focus the newly split pane for `action: "inspector.open"`; not a standalone action. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |

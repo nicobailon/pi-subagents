@@ -14,6 +14,7 @@ import {
 	type MissionStatus,
 	type MissionStoreConfig,
 	type MissionStoreLocation,
+	type MissionTokenBudget,
 	type MissionUpdateInput,
 } from "./types.ts";
 import { missionStatePath } from "./workflow-state.ts";
@@ -41,13 +42,17 @@ export type MissionAction = typeof MISSION_ACTIONS[number];
 
 export interface MissionLaunchInput {
 	title: string;
-	goal?: string;
+	objective?: string;
+	goal?: true;
+	budget?: MissionTokenBudget;
 	labels?: string[];
 }
 
 export interface MissionUpdateToolInput {
 	title?: string;
-	goal?: string;
+	objective?: string;
+	goal?: boolean | { paused: boolean };
+	budget?: MissionTokenBudget;
 	status?: MissionStatus;
 	summary?: string;
 	labels?: string[];
@@ -102,18 +107,26 @@ export function validateMissionLaunch(value: unknown): MissionLaunchInput {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("mission must be an object");
 	const input = value as Record<string, unknown>;
 	for (const key of Object.keys(input)) {
-		if (key !== "title" && key !== "summary" && key !== "goal" && key !== "labels") throw new Error(`mission.${key} is unknown`);
+		if (key !== "title" && key !== "summary" && key !== "objective" && key !== "goal" && key !== "budget" && key !== "labels") throw new Error(`mission.${key} is unknown`);
 	}
 	if (input.title !== undefined && input.summary !== undefined) throw new Error("mission.title and mission.summary cannot both be set");
 	const title = input.title ?? input.summary;
 	if (typeof title !== "string" || !title.trim()) throw new Error("mission.title or mission.summary must be a non-empty string");
-	if (input.goal !== undefined && (typeof input.goal !== "string" || !input.goal.trim())) throw new Error("mission.goal must be a non-empty string");
+	if (input.objective !== undefined && (typeof input.objective !== "string" || !input.objective.trim())) throw new Error("mission.objective must be a non-empty string");
+	if (input.goal !== undefined && input.goal !== true) throw new Error("mission.goal must be true when supplied");
+	const budget = input.budget;
+	if (budget !== undefined && (!budget || typeof budget !== "object" || Array.isArray(budget) || !Number.isSafeInteger((budget as { tokens?: unknown }).tokens) || ((budget as { tokens: number }).tokens < 1))) {
+		throw new Error("mission.budget.tokens must be a positive integer");
+	}
+	if (input.goal === true && budget === undefined) throw new Error("mission.budget is required when mission.goal is true");
 	if (input.labels !== undefined && (!Array.isArray(input.labels) || input.labels.some((label) => typeof label !== "string" || !label.trim()))) {
 		throw new Error("mission.labels must contain only non-empty strings");
 	}
 	return {
 		title: title.trim(),
-		...(input.goal !== undefined ? { goal: input.goal.trim() } : {}),
+		...(typeof input.objective === "string" ? { objective: input.objective.trim() } : {}),
+		...(input.goal === true ? { goal: true as const } : {}),
+		...(budget !== undefined ? { budget: { tokens: (budget as { tokens: number }).tokens } } : {}),
 		...(input.labels !== undefined ? { labels: input.labels.map((label) => label.trim()) } : {}),
 	};
 }
@@ -164,14 +177,29 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("missionUpdate must be an object");
 	const input = value as Record<string, unknown>;
 	for (const key of Object.keys(input)) {
-		if (!["title", "goal", "status", "summary", "labels", "artifacts", "receipts", "decisions"].includes(key)) throw new Error(`missionUpdate.${key} is unknown`);
+		if (!["title", "objective", "goal", "budget", "status", "summary", "labels", "artifacts", "receipts", "decisions"].includes(key)) throw new Error(`missionUpdate.${key} is unknown`);
 	}
 	const update: MissionUpdateInput = {};
-	for (const field of ["title", "goal", "summary"] as const) {
+	for (const field of ["title", "objective", "summary"] as const) {
 		const candidate = input[field];
 		if (candidate === undefined) continue;
 		if (typeof candidate !== "string" || !candidate.trim()) throw new Error(`missionUpdate.${field} must be a non-empty string`);
 		update[field] = candidate.trim();
+	}
+	if (input.goal !== undefined) {
+		if (typeof input.goal === "boolean") update.goal = input.goal ? { status: "active" } : false;
+		else {
+			if (!input.goal || typeof input.goal !== "object" || Array.isArray(input.goal) || typeof (input.goal as { paused?: unknown }).paused !== "boolean" || Object.keys(input.goal).some((key) => key !== "paused")) {
+				throw new Error("missionUpdate.goal must be boolean or { paused: boolean }");
+			}
+			update.goal = { status: (input.goal as { paused: boolean }).paused ? "paused" : "active" };
+		}
+	}
+	if (input.budget !== undefined) {
+		if (!input.budget || typeof input.budget !== "object" || Array.isArray(input.budget) || !Number.isSafeInteger((input.budget as { tokens?: unknown }).tokens) || (input.budget as { tokens: number }).tokens < 1) {
+			throw new Error("missionUpdate.budget.tokens must be a positive integer");
+		}
+		update.budget = { tokens: (input.budget as { tokens: number }).tokens };
 	}
 	if (input.status !== undefined) update.status = validateStatus(input.status, "missionUpdate.status");
 	if (input.labels !== undefined) {
@@ -237,7 +265,11 @@ function refreshLinkedRunStatus(location: MissionStoreLocation, record: MissionR
 	if (updates.length === 0) return { record, warnings };
 	const merged = record.runs.map((run) => updates.find((update) => update.runId === run.runId && update.childIndex === run.childIndex) ?? run);
 	const states = merged.map((run) => run.status);
-	const status: MissionStatus = states.some((state) => state === "queued" || state === "running" || state === "active")
+	const status: MissionStatus = record.status === "completed" || record.status === "failed" || record.status === "cancelled"
+		? record.status
+		: record.goal && !states.some((state) => state === "queued" || state === "running" || state === "active")
+		? "active"
+		: states.some((state) => state === "queued" || state === "running" || state === "active")
 		? "active"
 		: states.some((state) => state === "paused")
 			? "waiting"
@@ -256,9 +288,10 @@ function formatMission(record: MissionRecord): string {
 		`Mission: ${record.id}`,
 		`Title: ${record.title}`,
 		`Status: ${record.status}`,
-		`Goal: ${record.goal}`,
+		`Objective: ${record.objective}`,
 		`Updated: ${record.updatedAt}`,
 	];
+	if (record.goal && record.budget) lines.push(`Goal mode: ${record.goal.status}`, `Budget: ${record.usage?.tokens ?? 0}/${record.budget.tokens} tokens`);
 	if (record.summary) lines.push(`Summary: ${record.summary}`);
 	if (record.labels?.length) lines.push(`Labels: ${record.labels.join(", ")}`);
 	if (record.runs.length) {
@@ -294,7 +327,9 @@ export function handleMissionAction(
 		const mission = validateMissionLaunch(params.mission);
 		const record = createMission(location, {
 			title: mission.title,
-			goal: mission.goal ?? mission.title,
+			objective: mission.objective ?? mission.title,
+			...(mission.goal === true ? { goal: true as const } : {}),
+			...(mission.budget ? { budget: mission.budget } : {}),
 			status: params.missionStatus ? validateStatus(params.missionStatus, "missionStatus") : "planned",
 			...(mission.labels ? { labels: mission.labels } : {}),
 			...(ctx.currentSessionId ? { ownerSessionId: ctx.currentSessionId } : {}),
