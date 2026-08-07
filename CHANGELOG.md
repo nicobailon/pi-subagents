@@ -5,6 +5,9 @@
 ### Added
 - Added `scheduledRuns.storeRoot` for durable schedules outside project repositories. Thanks to @ProCleiton for #891 and the prior #890 implementation.
 
+### Changed
+- Clarified native supervisor messaging and optional external intercom result delivery in the docs and packaged skill.
+
 ### Fixed
 - Accept schema-valid structured output after a child recovers from an earlier tool error. Thanks to @white-hat for the report in #888.
 
