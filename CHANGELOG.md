@@ -4,6 +4,7 @@
 
 ### Added
 - Added mission-scoped durable JSON state to `workflowScript` through `state.get(key)` and `state.set(key, value)`.
+- Added a session-scoped `children.list` roster for the last 10 completed retained workflow children and let `workflowScript` resume one through `runs.run` without changing its stored agent, model, or tool contract.
 
 ### Changed
 - Removed the bundled `planner` and `context-builder` roles and their stale context-handoff prompt templates.

@@ -24,6 +24,7 @@ describe("public subagent execution normalization", () => {
 			{ parallel: [{ agent: "worker" }] },
 			{ concurrency: 2 },
 			{ clarify: true, workflowScript: "return 1" },
+			{ resume: "retained-run", workflowScript: "return 1" },
 			{},
 			{ workflowScript: " " },
 			{ action: "status", workflowScript: "return 1" },

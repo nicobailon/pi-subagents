@@ -301,6 +301,31 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("passes retained resume items and rejects agent overrides", async () => {
+		let launchParams: Record<string, unknown> | undefined;
+		const resumed = await runWorkflowScript({
+			script: `return runs.run("continue", { resume: "retained-run", task: "Apply the follow-up" });`,
+			timeoutMs: 2_000,
+			async launch(key, params) {
+				launchParams = params;
+				return { key, ok: true, runId: "revived-run", output: "continued", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launchParams, { resume: "retained-run", task: "Apply the follow-up", async: false });
+		assert.equal((resumed.value as { runId?: string }).runId, "revived-run");
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("invalid", { resume: "retained-run", agent: "worker", task: "Override" });`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /resume and agent are mutually exclusive/.test(error.message),
+		);
+	});
+
 	it("passes per-child worktree controls through runs.run and runs.all", async () => {
 		const launches: Array<{ key: string; worktree: unknown }> = [];
 		await runWorkflowScript({

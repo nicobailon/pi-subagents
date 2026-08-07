@@ -9,6 +9,7 @@ export interface PublicSubagentExecutionParams {
 	concurrency?: unknown;
 	chainDir?: unknown;
 	workflowScript?: unknown;
+	resume?: unknown;
 	clarify?: unknown;
 }
 
@@ -30,6 +31,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
 	if (params.clarify !== undefined) {
 		return { ok: false, error: "Public workflowScript execution does not support clarify UI.", mode: "workflow" };
+	}
+	if (params.resume !== undefined) {
+		return { ok: false, error: "Top-level resume execution is not available. Put resume on a workflowScript runs.run/runs.all item.", mode: "workflow" };
 	}
 	const hasLegacyOrchestration = params.tasks !== undefined || params.chain !== undefined || params.parallel !== undefined || params.concurrency !== undefined || params.chainDir !== undefined;
 	if (hasLegacyOrchestration) {

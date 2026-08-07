@@ -25,6 +25,7 @@ import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
+import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { recordRun } from "../shared/run-history.ts";
@@ -211,6 +212,8 @@ export interface SubagentParamsLike {
 	type?: string;
 	agent?: string;
 	task?: string;
+	/** Retained async child run id. Valid only on workflow runs.run items. */
+	resume?: string;
 	message?: string;
 	steeringRecovery?: boolean;
 	workflowScript?: string;
@@ -1514,6 +1517,8 @@ async function resumeAsyncRun(input: {
 		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, recoveryDescriptor?.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
+		parentWorkflowRunId: input.params.workflowParentRunId,
+		workflowKey: input.params.workflowKey,
 	}));
 	if (result.isError) return result;
 
@@ -3896,6 +3901,39 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 	};
 }
 
+export function prepareWorkflowLaunchParams(
+	workflowDefaults: SubagentParamsLike,
+	childParams: Record<string, unknown>,
+	parentWorkflowRunId: string,
+	workflowKey: string,
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean } = {},
+): SubagentParamsLike {
+	if (typeof childParams.resume === "string") {
+		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
+		const turnBudget = childParams.turnBudget ?? workflowDefaults.turnBudget;
+		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
+		return {
+			action: "resume",
+			id: childParams.resume.trim(),
+			message: typeof childParams.task === "string" ? childParams.task.trim() : "",
+			workflowParentRunId: parentWorkflowRunId,
+			workflowKey,
+			...(options.missionDetached ? { mission: false } : {}),
+			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
+			...(turnBudget !== undefined ? { turnBudget: turnBudget as TurnBudgetConfig } : {}),
+			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
+		};
+	}
+	return prepareWorkflowChildParams({
+		...workflowDefaults,
+		...childParams,
+		...(options.missionDetached ? { mission: false } : {}),
+		workflowParentRunId: parentWorkflowRunId,
+		workflowKey,
+		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
+	} as SubagentParamsLike);
+}
+
 function prepareWorkflowChildParams(params: SubagentParamsLike): SubagentParamsLike {
 	if (params.worktree !== true || !params.agent) return params;
 	const {
@@ -4125,7 +4163,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
-					const { action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
+					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
 						status.workflow = { ...(status.workflow ?? { emits: [], console: [] }), trace };
 						for (const entry of trace.filter((candidate) => candidate.operation === "run")) {
@@ -4162,7 +4200,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-								const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, ...((missionBinding || requestParams.mission === false) ? { mission: false } : {}), workflowParentRunId: workflowRunId, workflowKey: key } as SubagentParamsLike);
+								const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: missionBinding !== undefined || requestParams.mission === false });
 								const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 								workflowResults.push(...result.details.results);
 								const child = workflowChildResult(key, result);
@@ -4198,7 +4236,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, asyncDir, results: [], chatProgress },
 				});
 			}
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const sendWorkflowProgress = () => {
@@ -4223,7 +4261,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-						const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, ...((missionBinding || requestParams.mission === false) ? { mission: false } : {}), workflowParentRunId: _id, workflowKey: key, suppressRoutineResultIntercom: chatProgress.mode === "live-card" } as SubagentParamsLike);
+						const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: missionBinding !== undefined || requestParams.mission === false, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
 						const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 						workflowResults.push(...result.details.results);
 						return workflowChildResult(key, result);
@@ -4425,6 +4463,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					content: [{ type: "text", text: granted.error ?? `Spawn budget grant applied: +${additional}. ${formatSpawnBudget(granted.snapshot)}` }],
 					...(granted.error ? { isError: true } : {}),
 					details: { mode: "management", results: [], spawnBudget: granted.snapshot },
+				};
+			}
+			if (action === "children.list") {
+				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+				const children = listRetainedChildren(DIRS.async, deps.state.currentSessionId);
+				return {
+					content: [{ type: "text", text: formatRetainedChildren(children) }],
+					details: { mode: "management", results: [] },
 				};
 			}
 			if (action === "doctor") {
