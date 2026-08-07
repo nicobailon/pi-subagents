@@ -698,6 +698,19 @@ export function registerSlashCommands(
 		},
 	});
 
+	pi.registerCommand("subagents-refine", {
+		description: "Generate a bounded project-local refinement overlay for one subagent",
+		getArgumentCompletions: makeAgentCompletions(state),
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/).filter(Boolean);
+			if (parts.length !== 1) {
+				ctx.ui.notify("Usage: /subagents-refine <agent>", "error");
+				return;
+			}
+			await runSlashSubagent(pi, ctx, { action: "refine", agent: parts[0] });
+		},
+	});
+
 	pi.registerCommand("subagents-fleet", {
 		description: "Open the live subagent fleet inspector",
 		handler: async (_args, ctx) => showFleet(ctx),

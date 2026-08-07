@@ -19,6 +19,7 @@ import {
 } from "./foreground-control.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
+import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
 import { runSync } from "./execution.ts";
@@ -147,7 +148,7 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 
 type UndefinedOmitted<T extends object> = {
 	[K in keyof T as undefined extends T[K] ? never : K]: T[K];
@@ -4392,6 +4393,29 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					};
 				}
 				return handleWatchdogToolAction(action, paramsWithResolvedCwd, ctx, deps.watchdog);
+			}
+			if (action === "refine" || action === "refine.show" || action === "refine.rollback") {
+				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+					return {
+						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
+						isError: true,
+						details: { mode: "management", results: [] },
+					};
+				}
+				return handleRefinementAction(action, paramsWithResolvedCwd, {
+					cwd: requestCwd,
+					state: deps.state,
+					signal,
+					launchProposalChild: (task, outputSchema, proposalSignal) => execute(randomUUID(), {
+						agent: "reviewer",
+						task,
+						context: "fresh",
+						async: false,
+						artifacts: false,
+						outputSchema,
+						toolBudget: { hard: 1, block: ["write", "edit", "bash"] },
+					}, proposalSignal, undefined, ctx, true),
+				});
 			}
 			if (action === "grant-spawn-budget") {
 				if (deps.allowMutatingManagementActions === false || !ctx.hasUI) {
