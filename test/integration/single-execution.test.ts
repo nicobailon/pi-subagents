@@ -401,7 +401,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("starts workflow scripts asynchronously by default and persists live status", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "async workflow child" });
-		const executor = makeExecutor([makeAgent("echo")]);
+		const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
 		const runId = `scripted-workflow-async-${Date.now()}`;
 
 		const result = await executor.execute(
@@ -626,6 +626,47 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.mode, "workflow");
 		assert.equal(result.details.results.length, 2);
 		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
+	});
+
+	it("shares durable workflow state across a mission and omits it for mission:false", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
+		const first = await executor.execute(
+			"mission-state-first",
+			{
+				async: false,
+				mission: { title: "Stateful workflow" },
+				workflowScript: `await state.set("review.stage", { count: 1 }); return await state.get("review.stage");`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(first.isError, undefined, first.content[0]?.text ?? "first workflow failed");
+		assert.ok(first.details.missionId);
+		assert.deepEqual(first.details.workflow?.value, { count: 1 });
+		const statePath = path.join(tempDir, ".pi-subagents", "missions", first.details.missionId, "state.json");
+		assert.equal(fs.existsSync(statePath), true);
+
+		const second = await executor.execute(
+			"mission-state-second",
+			{ async: false, missionId: first.details.missionId, workflowScript: `return await state.get("review.stage");` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(second.isError, undefined, second.content[0]?.text ?? "second workflow failed");
+		assert.deepEqual(second.details.workflow?.value, { count: 1 });
+
+		const ephemeral = await executor.execute(
+			"mission-state-off",
+			{ async: false, mission: false, workflowScript: `return typeof state;` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(ephemeral.isError, undefined, ephemeral.content[0]?.text ?? "ephemeral workflow failed");
+		assert.equal(ephemeral.details.workflow?.value, "undefined");
+		assert.equal(ephemeral.details.missionId, undefined);
 	});
 
 	it("runs a direct single child in a managed worktree", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {

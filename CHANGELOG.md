@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Added mission-scoped durable JSON state to `workflowScript` through `state.get(key)` and `state.set(key, value)`.
+
 ### Changed
 - Made `workflowScript` the only public subagent execution surface, including one-child and scheduled runs. Scripts now use ordinary JavaScript statement-body semantics and require an explicit `return` for useful results.
 - Require workflowScript-only persisted schedule targets. Removed legacy agent-target restore conversion.

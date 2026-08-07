@@ -12,6 +12,7 @@ import {
 	resolveMissionStoreLocation,
 	updateMission,
 } from "../../src/missions/store.ts";
+import { createMissionWorkflowState, MISSION_STATE_MAX_BYTES, missionStatePath } from "../../src/missions/workflow-state.ts";
 
 function fixture() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missions-"));
@@ -57,6 +58,33 @@ describe("mission store", () => {
 			const global = listGlobalMissions(test.location.globalIndexDir);
 			assert.equal(global.entries[0]?.missionId, created.id);
 			assert.equal(global.entries[0]?.stale, false);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("persists bounded workflow state and reads its file once per workflow", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Stateful mission", goal: "Keep workflow state" });
+			const state = createMissionWorkflowState(test.location, mission.id);
+			assert.equal(state.get("missing"), undefined);
+			fs.mkdirSync(path.dirname(state.path), { recursive: true });
+			fs.writeFileSync(state.path, JSON.stringify({ external: true }), "utf-8");
+			assert.equal(state.get("external"), undefined);
+
+			const nextWorkflow = createMissionWorkflowState(test.location, mission.id);
+			assert.equal(nextWorkflow.get("external"), true);
+			nextWorkflow.set("review.stage", { count: 2 });
+			nextWorkflow.set("approved", false);
+			assert.deepEqual(JSON.parse(fs.readFileSync(missionStatePath(test.location, mission.id), "utf-8")), {
+				external: true,
+				"review.stage": { count: 2 },
+				approved: false,
+			});
+			assert.throws(() => nextWorkflow.set("bad key", true), /state key must be 1-128 characters/);
+			assert.throws(() => nextWorkflow.set("too-large", "x".repeat(MISSION_STATE_MAX_BYTES)), /256 KiB limit/);
+			assert.equal(nextWorkflow.get("too-large"), undefined);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
@@ -153,6 +181,7 @@ describe("mission store", () => {
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ state: "complete" }), "utf-8");
 			const shown = handleMissionAction("mission.show", { missionId }, ctx);
 			assert.equal(shown.details?.mission?.status, "completed");
+			assert.match(shown.content[0]?.type === "text" ? shown.content[0].text : "", new RegExp(`State: .*${missionId}[/\\\\]state\\.json`));
 			assert.equal(shown.details?.mission?.runs[0]?.status, "complete");
 			const receipt = handleMissionAction("mission.update", {
 				missionId,

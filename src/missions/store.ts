@@ -279,6 +279,7 @@ function pruneTerminalMissions(location: MissionStoreLocation, maxTerminal: numb
 	for (const record of terminal.slice(maxTerminal)) {
 		try {
 			fs.rmSync(missionRecordPath(location, record.id), { force: true });
+			fs.rmSync(path.join(location.missionDir, record.id), { recursive: true, force: true });
 			if (location.writeGlobalIndex) fs.rmSync(indexPath(location, record), { force: true });
 		} catch {
 			// Retention is best-effort and must never block a launch.

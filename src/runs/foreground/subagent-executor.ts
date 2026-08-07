@@ -89,6 +89,7 @@ import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
@@ -4045,6 +4046,32 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const chatProgressResult = resolveWorkflowChatProgress({ requested: requestParams.chatProgress, parentCwd, workflowCwd, background: requestParams.async !== false });
 			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
 			const chatProgress = chatProgressResult.projection!;
+			const explicitMission = requestParams.missionId !== undefined || requestParams.mission !== undefined;
+			let missionBinding: MissionLaunchBinding | undefined;
+			let missionWarning: string | undefined;
+			try {
+				missionBinding = prepareMissionLaunch({
+					params: requestParams,
+					projectRoot: workflowCwd,
+					...(deps.config.missions ? { config: deps.config.missions } : {}),
+					ownerSessionId: resolveCurrentSessionId(ctx.sessionManager),
+				});
+			} catch (error) {
+				if (explicitMission) return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "workflow", results: [] } };
+				missionWarning = `Mission tracking unavailable: ${error instanceof Error ? error.message : String(error)}`;
+			}
+			const workflowState = missionBinding ? createMissionWorkflowState(missionBinding.location, missionBinding.missionId) : undefined;
+			const attachWorkflowMission = (result: AgentToolResult<Details>): AgentToolResult<Details> => {
+				if (!missionBinding) return missionWarning ? { ...result, details: { ...result.details, missionWarning } } : result;
+				try {
+					return attachMissionToLaunchResult({ binding: missionBinding, result });
+				} catch (error) {
+					const warning = `Mission tracking unavailable after launch: ${error instanceof Error ? error.message : String(error)}`;
+					return explicitMission
+						? { ...result, isError: true, content: [...result.content, { type: "text", text: warning }], details: { ...result.details, missionWarning: warning } }
+						: { ...result, details: { ...result.details, missionWarning: warning } };
+				}
+			};
 			if (requestParams.async !== false) {
 				const workflowRunId = _id;
 				const asyncDir = path.join(DIRS.async, workflowRunId);
@@ -4098,7 +4125,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
-					const { action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, ...workflowChildDefaults } = workflowRequest;
+					const { action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
 						status.workflow = { ...(status.workflow ?? { emits: [], console: [] }), trace };
 						for (const entry of trace.filter((candidate) => candidate.operation === "run")) {
@@ -4123,6 +4150,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							script: workflowScript,
 							timeoutMs: timeout,
 							signal: controller.signal,
+							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							onEmit: (emits) => {
 								// Each emit is validated at the host boundary in runWorkflowScript before onEmit fires.
@@ -4134,7 +4162,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-								const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, workflowParentRunId: workflowRunId, workflowKey: key } as SubagentParamsLike);
+								const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, ...((missionBinding || requestParams.mission === false) ? { mission: false } : {}), workflowParentRunId: workflowRunId, workflowKey: key } as SubagentParamsLike);
 								const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 								workflowResults.push(...result.details.results);
 								const child = workflowChildResult(key, result);
@@ -4165,12 +4193,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						deps.state.workflowControllers?.delete(workflowRunId);
 					}
 				});
-				return {
+				return attachWorkflowMission({
 					content: [{ type: "text", text: formatAsyncStartedMessage(`Async workflow [${workflowRunId}]`, ctx.hasUI === true) }],
 					details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, asyncDir, results: [], chatProgress },
-				};
+				});
 			}
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const sendWorkflowProgress = () => {
@@ -4182,6 +4210,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					script: requestParams.workflowScript,
 					timeoutMs: timeout,
 					signal,
+					...(workflowState ? { state: workflowState } : {}),
 					onTrace: (trace) => {
 						liveWorkflow = { ...liveWorkflow, trace };
 						sendWorkflowProgress();
@@ -4194,7 +4223,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-						const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, workflowParentRunId: _id, workflowKey: key, suppressRoutineResultIntercom: chatProgress.mode === "live-card" } as SubagentParamsLike);
+						const childRequest = prepareWorkflowChildParams({ ...workflowChildDefaults, ...childParams, ...((missionBinding || requestParams.mission === false) ? { mission: false } : {}), workflowParentRunId: _id, workflowKey: key, suppressRoutineResultIntercom: chatProgress.mode === "live-card" } as SubagentParamsLike);
 						const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 						workflowResults.push(...result.details.results);
 						return workflowChildResult(key, result);
@@ -4206,10 +4235,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (workflow.emits.length > 0) sections.push(`Emitted:\n${workflow.emits.map(formatWorkflowValue).join("\n")}`);
 				if (workflow.console.length > 0) sections.push(`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
-				return {
+				return attachWorkflowMission({
 					content: [{ type: "text", text: sections.join("\n\n") }],
 					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, chatProgress }),
-				};
+				});
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
 				const text = error instanceof Error ? error.message : String(error);
@@ -4218,11 +4247,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (partial.emits.length > 0) sections.push(`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`);
 				if (partial.console.length > 0) sections.push(`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
-				return {
+				return attachWorkflowMission({
 					content: [{ type: "text", text: sections.join("\n\n") }],
 					isError: true,
 					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console }, chatProgress }),
-				};
+				});
 			}
 		}
 		const directParams = prepareWorkflowChildParams(requestParams);

@@ -36,6 +36,43 @@ describe("scripted workflow runtime", () => {
 		assert.equal(result.value, "done");
 	});
 
+	it("exposes validated state only when a mission state adapter is present", async () => {
+		const values = new Map<string, unknown>();
+		const withState = await runWorkflowScript({
+			script: `
+				if (typeof state !== "object") throw new Error("state missing");
+				await state.set("review.stage", { count: 2 });
+				return await state.get("review.stage");
+			`,
+			state: {
+				get: (key) => values.get(key),
+				set: (key, value) => { values.set(key, value); },
+			},
+			async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(withState.value, { count: 2 });
+
+		const withoutState = await runWorkflowScript({
+			script: `return typeof state;`,
+			async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(withoutState.value, "undefined");
+
+		for (const script of [`return state.get("bad key");`, `return state.set("valid", undefined);`]) {
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					state: { get: () => undefined, set: () => undefined },
+					async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /state/.test(error.message),
+			);
+		}
+	});
+
 	it("runs keyed children, streams progress, and exposes no host capabilities", async () => {
 		const launches: Array<{ key: string; params: Record<string, unknown> }> = [];
 		const traceSnapshots: number[] = [];

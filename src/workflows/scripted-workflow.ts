@@ -77,6 +77,20 @@ const runs = Object.freeze({
   },
 });
 
+function validateStateKey(key) {
+  if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error("state key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
+  return key;
+}
+
+const state = Object.freeze({
+  get(key) { return hostCall("state.get", { key: validateStateKey(key) }); },
+  set(key, value) {
+    const validKey = validateStateKey(key);
+    assertJsonValue(value, "state.set('" + validKey + "') value");
+    return hostCall("state.set", { key: validKey, value });
+  },
+});
+
 let contextObjectPrototype;
 
 const capturedConsole = Object.freeze(Object.fromEntries(
@@ -120,6 +134,7 @@ parentPort.on("message", async (message) => {
   if (message.type !== "start") return;
   try {
     const sandbox = { runs, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    if (message.stateEnabled) sandbox.state = state;
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
     const compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
@@ -179,6 +194,10 @@ export interface RunWorkflowScriptOptions {
 	signal?: AbortSignal;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
+	state?: {
+		get: (key: string) => unknown | Promise<unknown>;
+		set: (key: string, value: unknown) => void | Promise<void>;
+	};
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
 	onEmit?: (emits: unknown[]) => void;
 }
@@ -269,9 +288,9 @@ function stableJson(value: unknown): string {
 	return JSON.stringify(value) ?? "undefined";
 }
 
-function validateKey(value: unknown): string {
+function validateKey(value: unknown, owner = "runs.run"): string {
 	if (typeof value !== "string" || !KEY_PATTERN.test(value)) {
-		throw new Error("runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
+		throw new Error(`${owner} key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.`);
 	}
 	return value;
 }
@@ -358,12 +377,30 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (message.type === "error") return finish({ error: new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") });
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
 
-			const respond = (promise: Promise<WorkflowScriptChildResult>) => {
+			const respond = (promise: Promise<unknown>) => {
 				void promise.then(
 					(value) => worker.postMessage({ type: "response", callId: message.callId, ok: true, value: omitUndefinedWorkflowValues(value) }),
 					(error: unknown) => worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error) }),
 				);
 			};
+
+			if (message.method === "state.get" || message.method === "state.set") {
+				if (!options.state) return respond(Promise.reject(new Error("Workflow state is unavailable without a mission.")));
+				let key: string;
+				try {
+					key = validateKey(message.args.key, "state");
+				} catch (error) {
+					return respond(Promise.reject(error));
+				}
+				if (message.method === "state.get") return respond(Promise.resolve().then(() => options.state!.get(key)));
+				const value = message.args.value;
+				try {
+					assertWorkflowJsonValue(value, `state.set('${key}') value`);
+				} catch (error) {
+					return respond(Promise.reject(error));
+				}
+				return respond(Promise.resolve().then(() => options.state!.set(key, value)));
+			}
 
 			if (message.method === "status") {
 				const keyOrRunId = message.args.keyOrRunId;
@@ -436,6 +473,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			respond(deliver(promise));
 		});
 
-		worker.postMessage({ type: "start", script: options.script });
+		worker.postMessage({ type: "start", script: options.script, stateEnabled: options.state !== undefined });
 	});
 }

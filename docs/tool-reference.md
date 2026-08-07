@@ -34,7 +34,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | `config` | object/string | - | Agent or existing durable chain config for management create/update. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `planner`, `worker`, `oracle`, and `advisor` default to `fork`. |
 | `missionId` | string | - | Attach a workflow launch to an existing project mission. |
-| `mission` | object/false | - | Create-and-attach shortcut: `{ title, goal?, labels? }`; pass `false` for an intentionally ephemeral launch with no mission record. Explicit mission persistence failures are strict. |
+| `mission` | object/false | - | Create-and-attach shortcut: `{ title, goal?, labels? }`; pass `false` for an intentionally ephemeral launch with no mission record or workflow `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
 | `focus` | boolean | true | Focus the newly split pane for `action: "inspector.open"`; not a standalone action. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
@@ -73,6 +73,8 @@ In workflow runs that omit `context`, each `runs.run` child follows its own `def
 Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging.
 
 In workflowScript, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
+
+Mission-attached workflows can use `await state.get(key)` and `await state.set(key, value)` to share durable JSON values across later workflows attached with the same `missionId`. Missing keys return `undefined`. The complete state file has a strict 256 KiB limit.
 
 ## Management actions
 

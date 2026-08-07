@@ -16,6 +16,7 @@ import {
 	type MissionStoreLocation,
 	type MissionUpdateInput,
 } from "./types.ts";
+import { missionStatePath } from "./workflow-state.ts";
 import {
 	createMission,
 	listGlobalMissions,
@@ -321,7 +322,7 @@ export function handleMissionAction(
 	}
 	if (action === "mission.show") {
 		const refreshed = refreshLinkedRunStatus(location, readMission(location, requireMissionId(params)));
-		const lines = [formatMission(refreshed.record)];
+		const lines = [formatMission(refreshed.record), `State: ${missionStatePath(location, refreshed.record.id)}`];
 		if (refreshed.warnings.length) lines.push("", ...refreshed.warnings.map((warning) => `Warning: ${warning}`));
 		return textResult(lines.join("\n"), {
 			mode: "management",

@@ -19,6 +19,7 @@ Behavior:
 - Human receipts end with `Mission: <id> (<status>)`, while JSON/structured output text stays unchanged and `details.missionId` is authoritative.
 - Pass `mission: false` for an intentionally ephemeral launch that should not leave a durable mission record.
 - Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.
+- A mission-attached `workflowScript` can use `await state.get(key)` and `await state.set(key, value)` for durable JSON state. Missing keys return `undefined`. Keys use the same format as `runs.run` keys. Each set atomically replaces `<cwd>/.pi-subagents/missions/<mission-id>/state.json`, and the complete file cannot exceed 256 KiB. The file is read once on first access in each workflow. A `mission:false` workflow has no `state` global.
 
 ```ts
 const created = subagent({
