@@ -206,6 +206,12 @@ function isSubagentToolCallBlock(block: unknown): boolean {
 }
 
 const PORTABLE_TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const COMPOSITE_TOOL_ID_APIS = new Set([
+	"azure-openai-responses",
+	"openai-codex-responses",
+	"openai-completions",
+	"openai-responses",
+]);
 
 function portableToolId(id: string): string {
 	if (PORTABLE_TOOL_ID_PATTERN.test(id)) return id;
@@ -240,8 +246,9 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] {
+export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean } = {}): unknown[] {
 	const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
+	const sanitizeToolIds = options.sanitizeToolIds ?? true;
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
@@ -254,7 +261,7 @@ export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] 
 			changed = true;
 			continue;
 		}
-		const sanitized = sanitizeToolHistoryMessage(stripped);
+		const sanitized = sanitizeToolIds ? sanitizeToolHistoryMessage(stripped) : stripped;
 		if (stripped !== message || sanitized !== stripped) changed = true;
 		filtered.push(sanitized);
 	}
@@ -464,8 +471,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		nativeSupervisorFallbackRegistered = true;
 		registerNativeSupervisorClient(pi);
 	};
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
-	onRuntimeEvent("session_start", (_event: unknown, ctx: unknown) => {
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: ExtensionContext) => unknown) => void;
+	onRuntimeEvent("session_start", (_event: unknown, ctx?: ExtensionContext) => {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
 		registerNativeSupervisorClientOnce();
@@ -511,9 +518,11 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		});
 	}
 
-	onRuntimeEvent("context", (event: unknown) => {
+	onRuntimeEvent("context", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
-		const messages = stripParentOnlySubagentMessages(event.messages);
+		const messages = stripParentOnlySubagentMessages(event.messages, {
+			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
+		});
 		if (messages === event.messages) return undefined;
 		return { messages };
 	});

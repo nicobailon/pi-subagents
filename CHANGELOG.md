@@ -7,6 +7,7 @@
 - Require workflowScript-only persisted schedule targets. Removed legacy agent-target restore conversion.
 
 ### Fixed
+- Preserve live composite child tool-call ids for APIs that normalize them, preventing context rewriting from breaking the next tool-loop turn.
 - Sanitize inherited child tool history ids so forked subagent context stays provider-portable.
 - Prevent async workflow result finalization from reading stale extension contexts after session replacement or reload.
 - Create default missions for static parallel-only chain launches, reject invalid explicit mission ids, and reject legacy `parallel` workflow child params.

@@ -963,13 +963,31 @@ describe("subagent prompt runtime", () => {
 		});
 	});
 
-	it("does not rewrite child context when no parent-only artifacts are present", () => {
-		let contextHandler: ((event: { messages: unknown[] }) => { messages: unknown[] } | undefined) | undefined;
+	it("preserves composite tool ids for APIs that normalize them", () => {
+		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
 		registerSubagentPromptRuntime({
-			on(event: string, handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined) {
+			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
 				if (event === "context") contextHandler = handler;
 			},
-		} as { on(event: string, handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined): void });
+		} as { on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined): void });
+
+		const toolCallId = "call_7XJjvAJfk07117JO8LgBCZjY|fc_0e92b09b28010bac016a756e9e79cc8197b01825a5dc3d9eaa";
+		const messages = [
+			{ role: "user", content: "Task" },
+			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
+			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
+		];
+
+		assert.equal(contextHandler?.({ messages }, { model: { api: "openai-codex-responses" } }), undefined);
+	});
+
+	it("does not rewrite child context when no parent-only artifacts are present", () => {
+		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
+				if (event === "context") contextHandler = handler;
+			},
+		} as { on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined): void });
 
 		const messages = [
 			{ role: "user", content: "Task" },
@@ -977,6 +995,6 @@ describe("subagent prompt runtime", () => {
 			{ role: "assistant", content: [{ type: "toolCall", name: "read", input: { path: "README.md" } }] },
 		];
 
-		assert.equal(contextHandler?.({ messages }), undefined);
+		assert.equal(contextHandler?.({ messages }, {}), undefined);
 	});
 });
