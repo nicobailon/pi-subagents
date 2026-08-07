@@ -116,6 +116,14 @@ A user may explicitly call `subagent({ action: "grant-spawn-budget", additional:
 
 Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
 
+Set `storeRoot` to keep the durable schedule store **outside** project repositories, e.g. `~/.local/share/pi-subagents/schedules`. Each project's schedules are kept under its own `<storeRoot>/<sha256(cwd)>.slice(0,20)/<id>/` directory, so multiple projects never collide. The value must be an absolute path or start with `~/` (expanded via `os.homedir()`); relative, project-relative paths are rejected because a global store must not move with a transient worktree.
+
+```json
+{ "scheduledRuns": { "storeRoot": "~/.local/share/pi-subagents/schedules" } }
+```
+
+When omitted, behavior is identical to previous versions (per-project `.<cwd>/.pi-subagents/schedules`).
+
 ## `parallel`
 
 ```json

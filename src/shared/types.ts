@@ -1736,6 +1736,16 @@ export type InlineToolDisplay = "rich" | "summary";
 export interface ScheduledRunsConfig {
 	enabled?: boolean;
 	maxPending?: number;
+	/**
+	 * Optional root directory for the durable schedule store. When set, schedules
+	 * are persisted under `<storeRoot>/<sha256(cwd).slice(0,20)>` instead of the
+	 * default `<cwd>/.pi-subagents/schedules`, keeping runtime state out of project
+	 * repositories. Supports `~` (expanded via os.homedir). Must be an absolute
+	 * path or `~`-prefixed — a project-relative root is rejected because a global
+	 * store must not vary per transient worktree. When omitted, behavior is
+	 * identical to previous versions.
+	 */
+	storeRoot?: string;
 }
 
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";

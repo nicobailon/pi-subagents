@@ -261,6 +261,15 @@ describe("project schedule management", () => {
 		assert.equal(fs.existsSync(path.join(outside, "schedule.json")), false);
 	});
 
+	it("persists schedules under an external store root instead of the project cwd", async () => {
+		const h = harness();
+		await h.manager.handleToolCall({ action: "schedule.create", id: "external", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		const externalRoot = scheduledRunStorePath(path.resolve(h.ctx.cwd), undefined, path.join(h.root, "stores"));
+		// The schedule record lives under the external store root, not <cwd>/.pi-subagents.
+		assert.equal(fs.existsSync(path.join(externalRoot, "external", "schedule.json")), true);
+		assert.equal(fs.existsSync(path.join(path.resolve(h.ctx.cwd), ".pi-subagents", "schedules", "external")), false);
+	});
+
 	it("rejects a default project schedule root that escapes through .pi-subagents", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-root-link-"));
 		roots.push(root);

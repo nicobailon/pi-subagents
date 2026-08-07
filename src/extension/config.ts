@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ArtifactDirPreference, ExtensionConfig } from "../shared/types.ts";
 import { validateMissionStoreConfig } from "../missions/store.ts";
@@ -7,6 +8,27 @@ import { getAgentDir } from "../shared/utils.ts";
 import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
+
+/**
+ * Expands a configured schedule store root. Accepts an absolute path or a
+ * `~`-prefixed path (expanded via os.homedir). Rejects project-relative paths:
+ * a global schedule store must not move with a transient worktree.
+ */
+export function resolveScheduledStoreRoot(value: string): string {
+	const expanded = value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
+	const normalized = path.isAbsolute(expanded) ? path.normalize(expanded) : null;
+	if (!normalized) throw new Error(`config.scheduledRuns.storeRoot must be an absolute path or "~/...", got ${JSON.stringify(value)}`);
+	return normalized;
+}
+
+function validateScheduledRunsConfig(value: unknown): void {
+	if (value === undefined) return;
+	const config = value as Record<string, unknown>;
+	const storeRoot = config.storeRoot;
+	if (storeRoot === undefined) return;
+	if (typeof storeRoot !== "string" || storeRoot.trim() === "") throw new Error("config.scheduledRuns.storeRoot must be a non-empty string");
+	resolveScheduledStoreRoot(storeRoot);
+}
 
 export function getConfigPath(): string {
 	return path.join(getAgentDir(), "extensions", "subagent", "config.json");
@@ -25,6 +47,7 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);
+	validateScheduledRunsConfig(config.scheduledRuns);
 	return parsed as ExtensionConfig;
 }
 
