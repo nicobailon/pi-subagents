@@ -7,6 +7,7 @@
 
 ### Changed
 - Clarified native supervisor messaging and optional external intercom result delivery in the docs and packaged skill.
+- Point interactive async-launch guidance to `subagent_wait({ id, nonBlocking: true })` when an explicit wake is needed without blocking the current turn.
 
 ### Fixed
 - Preserve `workflowScript` worktree children that detach for supervisor coordination instead of cleaning a live managed worktree. Thanks to @astarktc for #896.

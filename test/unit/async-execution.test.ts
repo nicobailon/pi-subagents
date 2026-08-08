@@ -29,11 +29,13 @@ describe("async runner execution", () => {
 		const interactive = formatAsyncStartedMessage("Async: worker [interactive]", true);
 		assert.match(interactive, /interactive session[\s\S]*return control/i);
 		assert.match(interactive, /do not call subagent_wait\(\) merely to wait/i);
+		assert.match(interactive, /nonBlocking: true/);
 		assert.doesNotMatch(interactive, /auto-drains current-session background work/i);
 
 		const headless = formatAsyncStartedMessage("Async: worker [headless]", false);
 		assert.match(headless, /non-interactive run.*auto-drains current-session background work at agent_end/i);
 		assert.match(headless, /call subagent_wait\(\).*results before it ends/i);
+		assert.doesNotMatch(headless, /nonBlocking: true/);
 		assert.doesNotMatch(headless, /By default, return control to the user/i);
 	});
 
