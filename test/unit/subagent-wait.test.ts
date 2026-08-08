@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
+import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: string, extra: object = {}): void {
@@ -183,6 +184,86 @@ describe("subagent_wait tool", () => {
 			}));
 			assert.equal(result.isError, true);
 			assert.match(textOf(result), /1 failed/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces terminal completion payloads from the result file in details.completions", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-file-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					writeStatus(asyncRoot, "run-a", "complete", { sessionId: "sess-1" });
+					fs.writeFileSync(path.join(resultsDir, "run-a.json"), JSON.stringify({
+						id: "run-a",
+						runId: "run-a",
+						sessionId: "sess-1",
+						agent: "workflow",
+						mode: "workflow",
+						state: "complete",
+						success: true,
+						results: [{
+							agent: "reviewer",
+							success: true,
+							outputState: "present",
+							output: "full output text stays out of details",
+							artifactPaths: {
+								outputPath: "/tmp/a1b2c3d4_reviewer_0_output.md",
+								metadataPath: "/tmp/a1b2c3d4_reviewer_0_meta.json",
+							},
+						}],
+					}), "utf-8");
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			const completions = result.details.completions;
+			assert.equal(completions?.length, 1);
+			assert.equal(completions![0]!.runId, "run-a");
+			assert.equal(completions![0]!.mode, "workflow");
+			assert.equal(completions![0]!.success, true);
+			const child = completions![0]!.results?.[0];
+			assert.equal(child?.agent, "reviewer");
+			assert.equal(child?.artifactPaths?.metadataPath, "/tmp/a1b2c3d4_reviewer_0_meta.json");
+			assert.equal("output" in (child ?? {}), false);
+			// The result file is the watcher's to consume; the wait must not delete it.
+			assert.equal(fs.existsSync(path.join(resultsDir, "run-a.json")), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces completions from the watcher record when the result file is already consumed", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-record-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-b", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					writeStatus(asyncRoot, "run-b", "complete", { sessionId: "sess-1" });
+					// Simulates the watcher: payload recorded, file consumed and deleted.
+					recordWaitCompletion(state, "run-b", {
+						agent: "worker",
+						mode: "single",
+						state: "complete",
+						success: true,
+						results: [{ agent: "worker", success: true, outputState: "present" }],
+					}, Date.now(), 60_000);
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			const completions = result.details.completions;
+			assert.equal(completions?.length, 1);
+			assert.equal(completions![0]!.runId, "run-b");
+			assert.equal(completions![0]!.results?.[0]?.agent, "worker");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

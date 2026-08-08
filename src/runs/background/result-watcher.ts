@@ -20,6 +20,7 @@ import {
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
+import { recordWaitCompletion } from "./wait-completions.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
@@ -155,6 +156,10 @@ export function createResultWatcher(
 			}
 			const epoch = deliveryEpoch;
 			if (!ownsSession(data.sessionId, epoch)) return;
+			// Recorded before dedupe and before the unlink below: the result file is
+			// the only durable carrier of the per-run payload, and subagent_wait
+			// surfaces this record in details once the file is gone.
+			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs);
 			const hasExplicitNestedChildren = data.nestedChildren !== undefined;
 			let nestedChildren = compactNestedResultChildren(sanitizeNestedResultChildren(data.nestedChildren, resultPath, "nestedChildren"));
 			if (!nestedChildren?.length && !hasExplicitNestedChildren) {

@@ -947,6 +947,29 @@ export interface SpawnBudgetSnapshot {
 	grantHistory: SpawnBudgetGrant[];
 }
 
+/** Slim per-child projection of a terminal result payload, safe to surface in tool_result details. */
+export interface WaitCompletionChild {
+	agent?: string;
+	success?: boolean;
+	outputState?: SubagentOutputState;
+	error?: string;
+	model?: string;
+	artifactPaths?: Partial<ArtifactPaths>;
+}
+
+/**
+ * Terminal completion observed for a run a subagent_wait call covered. Carries run
+ * identity and the artifact trail; output text stays in the tool result content.
+ */
+export interface WaitCompletion {
+	runId: string;
+	agent?: string;
+	mode?: string;
+	state?: string;
+	success?: boolean;
+	results?: WaitCompletionChild[];
+}
+
 export interface Details {
 	mode: SubagentResultMode | "management";
 	runId?: string;
@@ -955,6 +978,13 @@ export interface Details {
 	/** Run-level context summary. "mixed" when children resolved to different modes. */
 	context?: "fresh" | "fork" | "mixed";
 	results: SingleResult[];
+	/**
+	 * Terminal completion payloads for runs this subagent_wait call observed
+	 * finishing. Async completions travel as result files that are consumed and
+	 * deleted after text delivery, so without this field their run and artifact
+	 * identity never reaches tool_result details.
+	 */
+	completions?: WaitCompletion[];
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
 	asyncId?: string;
@@ -1582,6 +1612,8 @@ export interface SubagentState {
 	lastUiContext: ExtensionContext | null;
 	poller: NodeJS.Timeout | null;
 	completionSeen: Map<string, number>;
+	/** Terminal result payloads observed by the result watcher, keyed by run id and pruned by the completion TTL. */
+	completedResults?: Map<string, { seenAt: number; completion: WaitCompletion }>;
 	watcher: FSWatcher | null;
 	watcherRestartTimer: ReturnType<typeof setTimeout> | null;
 	resultFileCoalescer: {

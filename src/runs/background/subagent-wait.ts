@@ -58,8 +58,10 @@ import {
 	type Details,
 	type ForegroundResumeRun,
 	type SubagentState,
+	type WaitCompletion,
 } from "../../shared/types.ts";
 import { formatDuration, shortenPath } from "../../shared/formatters.ts";
+import { collectWaitCompletions } from "./wait-completions.ts";
 export { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
 /** States that mean a run is still in flight (not yet resolved). */
@@ -303,11 +305,15 @@ function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 
 	return parts.join(", ");
 }
 
-function result(text: string, isError = false): AgentToolResult<Details> {
+function result(text: string, isError = false, completions?: WaitCompletion[]): AgentToolResult<Details> {
 	return {
 		content: [{ type: "text", text }],
 		...(isError ? { isError: true } : {}),
-		details: { mode: "management", results: [] },
+		details: {
+			mode: "management",
+			results: [],
+			...(completions && completions.length > 0 ? { completions } : {}),
+		},
 	};
 }
 
@@ -597,6 +603,7 @@ export async function waitForSubagents(
 	let terminalSummary: string;
 	let finishedAsyncCount: number;
 	let failedAsyncCount: number;
+	let completions: WaitCompletion[] | undefined;
 	const activeProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const providerFinishedCount = [...initialProviderIds].filter((id) => !activeProviderIds.has(id)).length;
 	try {
@@ -605,6 +612,7 @@ export async function waitForSubagents(
 		finishedAsyncCount = terminal.length;
 		failedAsyncCount = terminal.filter((run) => run.state === "failed").length;
 		terminalSummary = summarizeTerminalRuns(terminal, providerFinishedCount);
+		completions = collectWaitCompletions(terminal, deps.state, deps.resultsDir ?? DIRS.results);
 	} catch (error) {
 		return result(error instanceof Error ? error.message : String(error), true);
 	}
@@ -631,6 +639,7 @@ export async function waitForSubagents(
 		return result(
 			`Waited ${elapsed} for ${scope}; ${status}.${outcome}${attentionNote} Completion/control events have been observed; inspect status if a notification is not visible yet.`,
 			deps.failOnFailedRuns === true && failedAsyncCount > 0,
+			completions,
 		);
 	}
 
@@ -647,5 +656,6 @@ export async function waitForSubagents(
 	return result(
 		`Waited ${elapsed}; ${progress}.${outcome}${attentionNote}${remainder} Relevant completion/control events have been observed; inspect status if a notification is not visible yet.`,
 		deps.failOnFailedRuns === true && failedAsyncCount > 0,
+		completions,
 	);
 }

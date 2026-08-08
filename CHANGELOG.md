@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Surface terminal completion payloads in `subagent_wait` tool-result details (`details.completions`): run identity, per-child agent/success, and artifact paths. Async completions previously reached the parent only as text — the result file is consumed and deleted after delivery — so extensions and automation had no structured way to learn which runs finished or where their artifacts live.
+
 ### Changed
 - Clarified mission-use policy in the packaged `pi-subagents` skill.
 
