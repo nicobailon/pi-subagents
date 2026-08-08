@@ -9,6 +9,7 @@
 - Clarified native supervisor messaging and optional external intercom result delivery in the docs and packaged skill.
 
 ### Fixed
+- Preserve `workflowScript` worktree children that detach for supervisor coordination instead of cleaning a live managed worktree. Thanks to @astarktc for #896.
 - Accept schema-valid structured output after a child recovers from an earlier tool error. Thanks to @white-hat for the report in #888.
 
 ## [0.43.0] - 2026-08-07

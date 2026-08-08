@@ -3323,10 +3323,11 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	);
 	if (errorResult) return errorResult;
 
-	let worktreeFinalized = false;
+	let worktreeCleanupHandled = false;
+	let pendingHandoff: Details["parallelHandoff"];
 	try {
 		if (worktreeSetup) {
-			writePendingParallelHandoff({
+			pendingHandoff = writePendingParallelHandoff({
 				manifestPath: parallelHandoffPath(artifactsDir, runId),
 				runId,
 				mode: "parallel",
@@ -3429,10 +3430,13 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			updateForegroundNestedProjection(foregroundControl);
 			attachRootChildrenToSteps(runId, results, foregroundControl.nestedChildren);
 		}
+		const detached = results.find((result) => result.detached);
 		let handoff: ReturnType<typeof finalizeParallelWorktreeHandoff> | undefined;
 		if (worktreeSetup) {
-			worktreeFinalized = true;
-			handoff = finalizeParallelWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: effectiveCwd, tasks, results });
+			worktreeCleanupHandled = true;
+			handoff = detached
+				? { suffix: pendingHandoff ? formatParallelHandoffReference(pendingHandoff) : "", reference: pendingHandoff }
+				: finalizeParallelWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: effectiveCwd, tasks, results });
 		}
 		const interrupted = results.find((result) => result.interrupted);
 		const totalCost = sumResultsCost(results);
@@ -3455,11 +3459,10 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				details,
 			};
 		}
-		const detachedIndex = results.findIndex((result) => result.detached);
-		const detached = detachedIndex >= 0 ? results[detachedIndex] : undefined;
 		if (detached) {
+			const handoffSuffix = handoff?.suffix ? `\n\n${handoff.suffix}` : "";
 			return {
-				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
+				content: [{ type: "text", text: `Parallel run detached for intercom coordination (${detached.agent}). Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.${handoffSuffix}` }],
 				details,
 			};
 		}
@@ -3508,7 +3511,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			details,
 		};
 	} finally {
-		if (worktreeSetup && !worktreeFinalized) cleanupWorktrees(worktreeSetup);
+		if (worktreeSetup && !worktreeCleanupHandled) cleanupWorktrees(worktreeSetup);
 	}
 }
 
@@ -3895,6 +3898,8 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 	const output = result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
 		? result.details.results[0].finalOutput
 		: receiptOutput;
+	const detached = result.details.results.some((child) => child.detached);
+	const ok = result.isError !== true && !detached;
 	const artifactPaths = new Set<string>();
 	if (result.details.asyncDir) artifactPaths.add(result.details.asyncDir);
 	if (result.details.parallelHandoff?.path) artifactPaths.add(result.details.parallelHandoff.path);
@@ -3906,10 +3911,10 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 	const structured = result.details.results.map((child) => child.structuredOutput).filter((value) => value !== undefined);
 	return {
 		key,
-		ok: result.isError !== true,
+		ok,
 		...(result.details.runId || result.details.asyncId ? { runId: result.details.runId ?? result.details.asyncId } : {}),
 		output,
-		...(result.isError === true ? { error: receiptOutput || output || "Child run failed." } : {}),
+		...(!ok ? { error: receiptOutput || output || "Child run failed." } : {}),
 		...(structured.length === 1 ? { structuredOutput: structured[0] } : structured.length > 1 ? { structuredOutput: structured } : {}),
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,

@@ -324,9 +324,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		initialAsyncJobs: SubagentState["asyncJobs"] = new Map(),
 		workflowControllers?: Map<string, AbortController>,
 		handleScheduledRunAction?: Parameters<typeof createSubagentExecutor>[0]["handleScheduledRunAction"],
+		piEvents = createEventBus(),
 	) {
 		return createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
+			pi: { events: piEvents, getSessionName: () => undefined },
 			state: {
 				baseCwd: tempDir,
 				currentSessionId: initialSpawnState?.sessionId ?? null,
@@ -895,6 +896,87 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(worktreePaths.size, 2);
 		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), false);
 		assert.match(result.content[0]?.text ?? "", /handoffs/);
+	});
+
+	it("preserves a workflow worktree when its child detaches for supervisor coordination", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
+			],
+		});
+		const piEvents = createEventBus();
+		const executor = makeExecutor(
+			[makeAgent("worker", { systemPrompt: "Intercom orchestration channel:" })],
+			{},
+			false,
+			undefined,
+			true,
+			new Map(),
+			undefined,
+			undefined,
+			piEvents,
+		);
+		let detachAccepted = false;
+		piEvents.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
+			if ((payload as { requestId?: unknown }).requestId === "workflow-worktree-detach") {
+				detachAccepted ||= (payload as { accepted?: unknown }).accepted === true;
+			}
+		});
+		const detachTimer = setInterval(() => {
+			if (!detachAccepted) piEvents.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "workflow-worktree-detach" });
+		}, 10);
+		detachTimer.unref();
+
+		const result = await executor.execute(
+			"scripted-workflow-detached-worktree",
+			{
+				async: false,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "detaches", agent: "worker", task: "Ask then continue", worktree: true }
+					]);
+					return children.map(({ key, ok, artifactPaths }) => ({ key, ok, artifactPaths }));
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		clearInterval(detachTimer);
+
+		assert.equal(detachAccepted, true);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.match(result.content[0]?.text ?? "", /run detaches: failed/);
+		const workflowValue = result.details.workflow?.value as Array<{ ok: boolean; artifactPaths: string[] }>;
+		assert.equal(workflowValue[0]?.ok, false);
+		const handoffPath = workflowValue[0]?.artifactPaths.find((candidate) => candidate.endsWith(".json"));
+		assert.ok(handoffPath, result.content[0]?.text ?? "missing pending handoff");
+		const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+			groups: Array<{
+				cleanup: { state: string; tasks: Array<{ path: string; branch: string; preserved: boolean; worktreeRemoved: boolean; branchRemoved: boolean }> };
+			}>;
+		};
+		const cleanup = handoff.groups[0]?.cleanup;
+		assert.equal(cleanup?.state, "partial");
+		assert.equal(cleanup?.tasks[0]?.preserved, true);
+		assert.equal(cleanup?.tasks[0]?.worktreeRemoved, false);
+		assert.equal(cleanup?.tasks[0]?.branchRemoved, false);
+		const worktreePath = cleanup?.tasks[0]?.path;
+		const branch = cleanup?.tasks[0]?.branch;
+		assert.ok(worktreePath);
+		assert.ok(branch);
+		assert.equal(fs.existsSync(worktreePath), true, "live detached worktree must remain present");
+
+		await new Promise((resolve) => setTimeout(resolve, 750));
+		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
+		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
 	});
 
 	it("inherits workflow-level worktree isolation and allows a child opt-out", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
