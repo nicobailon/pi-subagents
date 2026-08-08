@@ -1880,6 +1880,19 @@ function getRequestedModeLabel(params: SubagentParamsLike): Details["mode"] {
 	return "single";
 }
 
+function formatStatusTargetLabel(params: Pick<SubagentParamsLike, "dir" | "index" | "view">, targetRunId: string | undefined): string {
+	let target: string;
+	if (targetRunId) {
+		target = `run ${targetRunId}`;
+	} else if (params.dir) {
+		target = `dir ${params.dir}`;
+	} else {
+		target = params.view === "transcript" ? "active run" : "active runs";
+	}
+	if (params.view !== "transcript") return `Status target: ${target}`;
+	return `Transcript target: ${target}${params.index !== undefined ? ` · child ${params.index}` : ""}`;
+}
+
 interface AgentDefaultContextPolicy {
 	params: SubagentParamsLike;
 	contextForAgent(agentName: string): ContextMode;
@@ -4618,10 +4631,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "status") {
 				if (!preserveActiveSession) deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
-				const target = targetRunId ? `run ${targetRunId}` : paramsWithResolvedCwd.dir ? `dir ${paramsWithResolvedCwd.dir}` : undefined;
-				const targetLabel = paramsWithResolvedCwd.view === "transcript"
-					? `Transcript target: ${target ?? "active run"}${paramsWithResolvedCwd.index !== undefined ? ` · child ${paramsWithResolvedCwd.index}` : ""}`
-					: `Status target: ${target ?? "active runs"}`;
+				const hasDirectoryTarget = Boolean(paramsWithResolvedCwd.dir);
+				const targetLabel = formatStatusTargetLabel(paramsWithResolvedCwd, targetRunId);
 				const withBudget = (result: AgentToolResult<Details>) => {
 					const budgeted = withSpawnBudgetStatus(result, deps.state, deps.config, deps.state.currentSessionId);
 					return {
@@ -4655,7 +4666,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const message = error instanceof Error ? error.message : String(error);
 						return withBudget({ content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } });
 					}
-				} else if (!paramsWithResolvedCwd.dir) {
+				} else if (!hasDirectoryTarget) {
 					const foreground = getForegroundControl(deps.state, undefined);
 					if (foreground && paramsWithResolvedCwd.view !== "transcript") return withBudget(foregroundStatusResult(foreground));
 					if (foreground && paramsWithResolvedCwd.view === "transcript") {

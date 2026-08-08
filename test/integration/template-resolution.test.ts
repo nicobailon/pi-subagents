@@ -173,10 +173,10 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 
 	it("ignores boolean and string true output overrides", () => {
 		const config = { name: "test", output: "report.md" };
-		assert.equal(resolveStepBehavior(config, { output: true } as any).output, "report.md");
-		assert.equal(resolveStepBehavior(config, { output: "true" } as any).output, "report.md");
-		assert.equal(resolveStepBehavior({ name: "test" }, { output: true } as any).output, false);
-		assert.equal(resolveStepBehavior({ name: "test" }, { output: "true" } as any).output, false);
+		assert.equal(resolveStepBehavior(config, { output: true }).output, "report.md");
+		assert.equal(resolveStepBehavior(config, { output: "true" }).output, "report.md");
+		assert.equal(resolveStepBehavior({ name: "test" }, { output: true }).output, false);
+		assert.equal(resolveStepBehavior({ name: "test" }, { output: "true" }).output, false);
 	});
 
 	it("defaults to false when agent has no config", () => {
