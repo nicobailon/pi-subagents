@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -205,6 +206,7 @@ function isSubagentToolCallBlock(block: unknown): boolean {
 	return b?.type === "toolCall" && b.name === "subagent";
 }
 
+const MAX_PORTABLE_TOOL_ID_LENGTH = 64;
 const PORTABLE_TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const COMPOSITE_TOOL_ID_APIS = new Set([
 	"azure-openai-responses",
@@ -214,8 +216,10 @@ const COMPOSITE_TOOL_ID_APIS = new Set([
 ]);
 
 function portableToolId(id: string): string {
-	if (PORTABLE_TOOL_ID_PATTERN.test(id)) return id;
-	return `tool_${Buffer.from(id).toString("base64url") || "empty"}`;
+	if (id.length <= MAX_PORTABLE_TOOL_ID_LENGTH && PORTABLE_TOOL_ID_PATTERN.test(id)) return id;
+	const encoded = `tool_${Buffer.from(id).toString("base64url") || "empty"}`;
+	if (encoded.length <= MAX_PORTABLE_TOOL_ID_LENGTH) return encoded;
+	return `tool_${createHash("sha256").update(id).digest("base64url")}`;
 }
 
 function sanitizeToolHistoryMessage(message: unknown): unknown {

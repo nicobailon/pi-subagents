@@ -725,6 +725,26 @@ describe("subagent prompt runtime", () => {
 		]);
 	});
 
+	it("hashes oversized composite tool ids within Codex's limit", () => {
+		const compositeToolId = "call_N7iYNRPXLl9czpXh3bDyMpIL|fc_0e76718634eca88f016a76fdc89aec81919763fa7858f67a0d";
+		const assistant = {
+			role: "assistant",
+			content: [{ type: "toolCall", id: compositeToolId, name: "bash", input: { command: "true" } }],
+		};
+		const result = { role: "toolResult", toolName: "bash", toolCallId: compositeToolId, content: "ok" };
+
+		const sanitized = stripParentOnlySubagentMessages([assistant, result]) as Array<{
+			content?: Array<{ id?: string }>;
+			toolCallId?: string;
+		}>;
+		const toolCallId = sanitized[0]?.content?.[0]?.id;
+
+		assert.ok(toolCallId);
+		assert.match(toolCallId, /^[A-Za-z0-9_-]+$/);
+		assert.ok(toolCallId.length <= 64);
+		assert.equal(sanitized[1]?.toolCallId, toolCallId);
+	});
+
 	it("preserves live nested subagent calls and results in fanout child context", () => {
 		const user = { role: "user", content: "Task" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };
