@@ -23,8 +23,10 @@ export interface ResolvedStepBehavior {
 	model?: string;
 }
 
+export type OutputOverrideInput = string | boolean;
+
 export interface StepOverrides {
-	output?: string | false;
+	output?: OutputOverrideInput;
 	outputMode?: OutputMode;
 	reads?: string[] | false;
 	progress?: boolean;
@@ -51,7 +53,7 @@ export interface SequentialStep {
 	as?: string;
 	outputSchema?: JsonSchemaObject;
 	cwd?: string;
-	output?: string | false;
+	output?: OutputOverrideInput;
 	outputMode?: OutputMode;
 	reads?: string[] | false;
 	progress?: boolean;
@@ -73,7 +75,7 @@ export interface ParallelTaskItem {
 	outputSchema?: JsonSchemaObject;
 	cwd?: string;
 	count?: number;
-	output?: string | false;
+	output?: OutputOverrideInput;
 	outputMode?: OutputMode;
 	reads?: string[] | false;
 	progress?: boolean;
@@ -125,7 +127,7 @@ export interface CheckpointStep {
 	agent?: string;
 	task?: string;
 	as?: string;
-	output?: string | false;
+	output?: OutputOverrideInput;
 	outputMode?: OutputMode;
 	reads?: string[] | false;
 	progress?: boolean;
