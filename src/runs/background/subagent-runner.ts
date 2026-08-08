@@ -4538,7 +4538,6 @@ async function runSubagent(
 	} catch (err) {
 		console.error(`Failed to write result file ${resultPath}:`, err);
 	}
-	writeStatusPayload();
 	appendJsonl(
 		eventsPath,
 		JSON.stringify({
@@ -4593,6 +4592,7 @@ async function runSubagent(
 			console.error(`Failed to write process-terminal candidate for '${id}':`, error);
 		}
 	}
+	writeStatusPayload();
 }
 
 async function waitForStartupControl(
