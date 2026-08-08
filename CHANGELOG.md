@@ -13,6 +13,7 @@
 ### Fixed
 - Ignore stale extension-context errors from advisory foreground control notifications after reload. Thanks to @alexei-led for #905.
 - Bound inherited portable tool IDs to 64 characters for Codex-compatible child contexts while keeping tool calls and results paired. Thanks to @alexei-led for #903.
+- Prevent boolean chain `output` values from crashing clarify rendering. Thanks to @ftoleedo for #901.
 - Preserve `workflow` mode when asynchronous workflow mission runs complete.
 - Serialize and merge each mission workflow-state write with the latest file so separate workflows do not drop unrelated keys.
 - Preserve `workflowScript` worktree children that detach for supervisor coordination instead of cleaning a live managed worktree. Thanks to @astarktc for #896.

@@ -32,8 +32,10 @@ export interface StepOverrides {
 	model?: string;
 }
 
-function normalizeOutputOverride(output: string | false | undefined): string | false | undefined {
-	return output === "false" ? false : output;
+function normalizeOutputOverride(output: unknown): string | false | undefined {
+	if (output === false || output === "false") return false;
+	if (output === true || output === "true") return undefined;
+	return typeof output === "string" && output.length > 0 ? output : undefined;
 }
 
 // =============================================================================

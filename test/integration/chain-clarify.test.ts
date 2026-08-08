@@ -304,6 +304,35 @@ describe("chain clarify model display", { skip: !available ? "pi packages not av
 		assert.equal(component.getEffectiveModel(0), "github-copilot/gpt-5:high");
 	});
 
+	it("renders malformed chain output values without throwing", () => {
+		const component = new ChainClarifyComponent(
+			{ requestRender() {} },
+			{ fg(_key: string, text: string) { return text; } },
+			[{
+				name: "worker",
+				description: "",
+				systemPrompt: "",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				source: "user",
+				filePath: "worker.md",
+			}],
+			["Task"],
+			"Task",
+			undefined,
+			[{ output: true, outputMode: "inline", reads: false, progress: false, skills: [], model: undefined }],
+			[],
+			undefined,
+			[],
+			() => {},
+			"chain",
+		);
+
+		assert.doesNotThrow(() => component.render(84));
+		assert.match(component.render(84).map(stripAnsi).join("\n"), /writes: \(none\)/);
+	});
+
 	it("labels every shortcut and keeps the clarify overlay within its allocated width", () => {
 		for (const mode of ["single", "parallel", "chain"] as const) {
 			const count = mode === "single" ? 1 : mode === "parallel" ? 2 : 4;
