@@ -405,11 +405,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		mockPi.onCall({ output: "async workflow child" });
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();
 		const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } }, false, undefined, true, asyncJobs);
+		const workflowCwd = path.join(tempDir, "workflow-cwd");
+		fs.mkdirSync(workflowCwd);
 		const toolCallId = "call_demo|fc_demo";
 
 		const result = await executor.execute(
 			toolCallId,
 			{
+				cwd: workflowCwd,
 				workflowScript: `emit("starting"); await runs.run("work", { agent: "echo", task: "Async work" }); return { answer: 42 };`,
 				mission: { summary: "Review the active backlog", labels: ["github-backlog", "review"] },
 			},
@@ -428,11 +431,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(workflowRunId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 		assert.equal(path.basename(result.details.asyncDir!), workflowRunId);
 		assert.equal(asyncJobs.has(workflowRunId), true);
+		assert.equal(asyncJobs.get(workflowRunId)?.cwd, workflowCwd);
 		assert.equal(asyncJobs.has(toolCallId), false);
 		assert.equal(fs.existsSync(path.join(DIRS.async, toolCallId)), false);
 		assert.match(result.content[0]?.text ?? "", /Async workflow/);
 		const statusPath = path.join(result.details.asyncDir!, "status.json");
-		let status: { runId?: string; toolCallId?: string; state?: string; steps?: Array<{ parentWorkflowRunId?: string }>; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; state?: string }> } } = {};
+		let status: { runId?: string; toolCallId?: string; cwd?: string; state?: string; steps?: Array<{ parentWorkflowRunId?: string }>; workflow?: { value?: unknown; emits?: unknown[]; trace?: Array<{ key?: string; state?: string }> } } = {};
 		for (let attempt = 0; attempt < 100; attempt++) {
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 			if (status.state === "complete" || status.state === "failed") break;
@@ -441,6 +445,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.state, "complete");
 		assert.equal(status.runId, workflowRunId);
 		assert.equal(status.toolCallId, toolCallId);
+		assert.equal(status.cwd, workflowCwd);
 		assert.equal(status.steps?.length, 1);
 		assert.ok(status.steps?.every((step) => step.parentWorkflowRunId === workflowRunId));
 		assert.deepEqual(status.workflow?.value, { answer: 42 });
@@ -448,11 +453,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 		assert.ok(status.workflow?.trace?.some((entry) => entry.key === "work" && entry.state === "completed"));
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; summary?: string; workflow?: { value?: unknown } };
+		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown } };
 		assert.equal(persistedResult.id, workflowRunId);
 		assert.equal(persistedResult.runId, workflowRunId);
 		assert.equal(persistedResult.toolCallId, toolCallId);
 		assert.equal(persistedResult.agent, "workflow");
+		assert.equal(persistedResult.cwd, workflowCwd);
 		assert.match(persistedResult.summary ?? "", /Return: \{\n  "answer": 42\n\}/);
 		assert.deepEqual(persistedResult.workflow?.value, { answer: 42 });
 		assert.equal(fs.existsSync(path.join(DIRS.results, `${toolCallId}.json`)), false);

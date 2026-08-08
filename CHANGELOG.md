@@ -11,6 +11,7 @@
 - Point interactive async-launch guidance to `subagent_wait({ id, nonBlocking: true })` when an explicit wake is needed without blocking the current turn.
 
 ### Fixed
+- Report the explicit workflow execution cwd in async workflow status, job, and result records. Thanks to @nicobailon for #907.
 - Ignore stale extension-context errors from advisory foreground control notifications after reload. Thanks to @alexei-led for #905.
 - Bound inherited portable tool IDs to 64 characters for Codex-compatible child contexts while keeping tool calls and results paired. Thanks to @alexei-led for #903.
 - Preserve `workflow` mode when asynchronous workflow mission runs complete.
