@@ -339,7 +339,7 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 			: undefined);
 	return updateMission(binding.location, binding.missionId, {
 		status: missionStatusForRun(current, runId, runStatus),
-		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(usage && usage.tokens > 0 ? { usage } : {}) }],
+		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(usage && usage.tokens > 0 ? { usage } : {}) }],
 		addArtifacts: artifacts,
 		...(summary ? { summary } : {}),
 	});

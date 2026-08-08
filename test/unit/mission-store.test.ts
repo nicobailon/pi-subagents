@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -21,6 +22,14 @@ function fixture() {
 	fs.mkdirSync(projectRoot, { recursive: true });
 	const location = resolveMissionStoreLocation({ projectRoot, agentDir });
 	return { root, projectRoot, agentDir, location };
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		if (fs.existsSync(filePath)) return;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error(`Timed out waiting for ${filePath}`);
 }
 
 describe("mission store", () => {
@@ -76,15 +85,144 @@ describe("mission store", () => {
 			const nextWorkflow = createMissionWorkflowState(test.location, mission.id);
 			assert.equal(nextWorkflow.get("external"), true);
 			nextWorkflow.set("review.stage", { count: 2 });
+			const concurrentWorkflow = createMissionWorkflowState(test.location, mission.id);
+			assert.deepEqual(concurrentWorkflow.get("review.stage"), { count: 2 });
 			nextWorkflow.set("approved", false);
+			concurrentWorkflow.set("reviewer", "ready");
 			assert.deepEqual(JSON.parse(fs.readFileSync(missionStatePath(test.location, mission.id), "utf-8")), {
 				external: true,
 				"review.stage": { count: 2 },
 				approved: false,
+				reviewer: "ready",
 			});
 			assert.throws(() => nextWorkflow.set("bad key", true), /state key must be 1-128 characters/);
 			assert.throws(() => nextWorkflow.set("too-large", "x".repeat(MISSION_STATE_MAX_BYTES)), /256 KiB limit/);
 			assert.equal(nextWorkflow.get("too-large"), undefined);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("serializes workflow state writes behind the state-file lock", async () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Locked state", objective: "Serialize state writes" });
+			const statePath = missionStatePath(test.location, mission.id);
+			fs.mkdirSync(path.dirname(statePath), { recursive: true });
+			fs.writeFileSync(statePath, JSON.stringify({ external: true }, null, 2), "utf-8");
+			const lockPath = `${statePath}.lock`;
+			const readyPath = path.join(test.root, "writer-ready");
+			fs.mkdirSync(lockPath);
+			const script = `
+				import * as fs from "node:fs";
+				import { createMissionWorkflowState } from "./src/missions/workflow-state.ts";
+				const location = JSON.parse(process.env.MISSION_LOCATION);
+				fs.writeFileSync(process.env.READY_FILE, "ready", "utf-8");
+				createMissionWorkflowState(location, process.env.MISSION_ID).set("reviewer", "ready");
+			`;
+			const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+				cwd: process.cwd(),
+				env: { ...process.env, MISSION_LOCATION: JSON.stringify(test.location), MISSION_ID: mission.id, READY_FILE: readyPath },
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+			let stderr = "";
+			child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+			await waitForFile(readyPath);
+			fs.writeFileSync(statePath, JSON.stringify({ external: true, approved: false }, null, 2), "utf-8");
+			fs.rmSync(lockPath, { recursive: true, force: true });
+			const exit = await Promise.race([
+				new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.on("exit", (code, signal) => resolve({ code, signal }))),
+				new Promise<{ code: "timeout"; signal: null }>((resolve) => setTimeout(() => { child.kill(); resolve({ code: "timeout", signal: null }); }, 5_000)),
+			]);
+			assert.deepEqual(exit, { code: 0, signal: null }, stderr);
+			assert.deepEqual(JSON.parse(fs.readFileSync(statePath, "utf-8")), {
+				external: true,
+				approved: false,
+				reviewer: "ready",
+			});
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("recovers abandoned workflow state locks", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Stale lock", objective: "Recover state writes" });
+			const state = createMissionWorkflowState(test.location, mission.id);
+			const lockPath = `${state.path}.lock`;
+			fs.mkdirSync(lockPath, { recursive: true });
+			const staleAt = new Date(Date.now() - 120_000);
+			fs.utimesSync(lockPath, staleAt, staleAt);
+
+			state.set("reviewer", "ready");
+
+			assert.equal(fs.existsSync(lockPath), false);
+			assert.deepEqual(JSON.parse(fs.readFileSync(state.path, "utf-8")), { reviewer: "ready" });
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("recovers abandoned workflow state locks even when the owner pid was reused", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Reused pid", objective: "Recover by lock age" });
+			const state = createMissionWorkflowState(test.location, mission.id);
+			const lockPath = `${state.path}.lock`;
+			fs.mkdirSync(lockPath, { recursive: true });
+			fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({ pid: process.pid, token: "abandoned", createdAt: Date.now(), processKey: "stale-process" }), "utf-8");
+
+			state.set("reviewer", "ready");
+
+			assert.equal(fs.existsSync(lockPath), false);
+			assert.deepEqual(JSON.parse(fs.readFileSync(state.path, "utf-8")), { reviewer: "ready" });
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("serializes competing abandoned-lock recovery", async () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Competing stale lock", objective: "Recover once" });
+			const statePath = missionStatePath(test.location, mission.id);
+			fs.mkdirSync(path.dirname(statePath), { recursive: true });
+			fs.writeFileSync(statePath, JSON.stringify({ external: true }, null, 2), "utf-8");
+			const lockPath = `${statePath}.lock`;
+			fs.mkdirSync(lockPath, { recursive: true });
+			const staleAt = new Date(Date.now() - 120_000);
+			fs.utimesSync(lockPath, staleAt, staleAt);
+			const script = `
+				import { createMissionWorkflowState } from "./src/missions/workflow-state.ts";
+				const location = JSON.parse(process.env.MISSION_LOCATION);
+				createMissionWorkflowState(location, process.env.MISSION_ID).set(process.env.STATE_KEY, process.env.STATE_VALUE);
+			`;
+			const spawnWriter = (key: string, value: string) => {
+				let stderr = "";
+				const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+					cwd: process.cwd(),
+					env: { ...process.env, MISSION_LOCATION: JSON.stringify(test.location), MISSION_ID: mission.id, STATE_KEY: key, STATE_VALUE: value },
+					stdio: ["ignore", "pipe", "pipe"],
+				});
+				child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+				return new Promise<void>((resolve, reject) => {
+					const timeout = setTimeout(() => { child.kill(); reject(new Error(`${key} writer timed out`)); }, 5_000);
+					child.on("exit", (code, signal) => {
+						clearTimeout(timeout);
+						if (code === 0 && signal === null) resolve();
+						else reject(new Error(`${key} writer failed with code ${code} signal ${signal}: ${stderr}`));
+					});
+				});
+			};
+
+			await Promise.all([spawnWriter("reviewer", "ready"), spawnWriter("approved", "false")]);
+
+			assert.deepEqual(JSON.parse(fs.readFileSync(statePath, "utf-8")), {
+				external: true,
+				reviewer: "ready",
+				approved: "false",
+			});
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}

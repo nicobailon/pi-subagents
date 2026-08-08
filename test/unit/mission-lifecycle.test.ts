@@ -201,7 +201,7 @@ describe("mission launch lifecycle", () => {
 		}
 	});
 
-	it("binds an async launch and reconciles terminal status and artifacts", () => {
+	it("binds an async workflow launch and preserves its mode through completion", () => {
 		const test = projectFixture();
 		try {
 			const asyncDir = path.join(test.root, "async-run");
@@ -216,7 +216,7 @@ describe("mission launch lifecycle", () => {
 				binding,
 				result: {
 					content: [{ type: "text", text: "Async started" }],
-					details: { mode: "chain", runId: "async-1", asyncId: "async-1", asyncDir, results: [] },
+					details: { mode: "workflow", runId: "async-1", asyncId: "async-1", asyncDir, results: [] },
 				},
 			});
 			assert.equal(readMissionBinding(asyncDir)?.missionId, binding.missionId);
@@ -226,7 +226,7 @@ describe("mission launch lifecycle", () => {
 				id: "async-1",
 				runId: "async-1",
 				asyncDir,
-				mode: "chain",
+				mode: "workflow",
 				state: "complete",
 				success: true,
 				summary: "Background work completed",
@@ -234,6 +234,7 @@ describe("mission launch lifecycle", () => {
 			});
 			assert.equal(completed?.status, "completed");
 			assert.equal(completed?.runs[0]?.status, "complete");
+			assert.equal(completed?.runs[0]?.mode, "workflow");
 			assert.ok(completed?.artifacts.some((artifact) => artifact.kind === "output"));
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });

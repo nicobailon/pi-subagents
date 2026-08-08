@@ -11,15 +11,15 @@ Missions are durable wrappers around runs. The noun map:
 - **Run** — one actual subagent execution.
 - **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
 
-Ordinary task launches create a mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts.
+Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Workflow children do not create separate missions.
 
 Behavior:
 
 - Automatic persistence failures do not block the run and are reported as `details.missionWarning`. Explicit `missionId` and `mission` requests remain strict before launch.
 - Human receipts end with `Mission: <id> (<status>)`, while JSON/structured output text stays unchanged and `details.missionId` is authoritative.
-- Pass `mission: false` for an intentionally ephemeral launch that should not leave a durable mission record.
+- Pass `mission: false` for an intentionally ephemeral workflow. It creates no mission for the workflow or its children and has no `state` global.
 - Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.
-- A mission-attached `workflowScript` can use `await state.get(key)` and `await state.set(key, value)` for durable JSON state. Missing keys return `undefined`. Keys use the same format as `runs.run` keys. Each set atomically replaces `<cwd>/.pi-subagents/missions/<mission-id>/state.json`, and the complete file cannot exceed 256 KiB. The file is read once on first access in each workflow. A `mission:false` workflow has no `state` global.
+- A workflow with a mission can use `await state.get(key)` and `await state.set(key, value)` for durable JSON state. Missing keys return `undefined`. Keys use the same format as `runs.run` keys. Each set takes the state-file lock, reads the latest file, merges the key, and atomically writes `<cwd>/.pi-subagents/missions/<mission-id>/state.json`. The complete file cannot exceed 256 KiB. Each workflow caches the file on its first `get`. A `mission:false` workflow has no `state` global.
 
 ```ts
 const created = subagent({
@@ -54,7 +54,7 @@ subagent({
 })
 ```
 
-After each parent turn, an idle goal mission sends one needs-attention notice with its title, remaining token budget, and next ready action. The action comes from `state.nextReadyAction`, `state.nextAction`, a state item with `status: "ready"`, an open decision, or linked-run state. When the latest linked workflow has a completed retained child, the notice names that child as the `resume` target. The extension never launches or replans goal work by itself.
+After each parent turn, an idle goal mission sends one needs-attention notice with its title, remaining token budget, and next ready action. The action comes from `state.nextReadyAction`, `state.nextAction`, a state item with `status: "ready"`, an open decision, or linked-run state. A workflow can write `state.nextReadyAction` to tell the next notice exactly what work is ready. When the latest linked workflow has a completed retained child, the notice names that child as the `resume` target. The extension never launches or replans goal work by itself.
 
 Linked-run token totals are stored on each run and folded into mission `usage`. An active linked run suppresses notices. Reaching the token budget changes the goal status to `budget-exhausted` and stops notices without closing the mission or reporting success.
 

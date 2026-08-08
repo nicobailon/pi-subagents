@@ -3,12 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Added one automatic enclosing mission and durable workflow state to plain `workflowScript` launches; child runs no longer create separate missions.
 - Added `scheduledRuns.storeRoot` for durable schedules outside project repositories. Thanks to @ProCleiton for #891 and the prior #890 implementation.
 
 ### Changed
 - Clarified native supervisor messaging and optional external intercom result delivery in the docs and packaged skill.
 
 ### Fixed
+- Preserve `workflow` mode when asynchronous workflow mission runs complete.
+- Serialize and merge each mission workflow-state write with the latest file so separate workflows do not drop unrelated keys.
 - Preserve `workflowScript` worktree children that detach for supervisor coordination instead of cleaning a live managed worktree. Thanks to @astarktc for #896.
 - Accept schema-valid structured output after a child recovers from an earlier tool error. Thanks to @white-hat for the report in #888.
 

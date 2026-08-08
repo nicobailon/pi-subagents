@@ -33,8 +33,8 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | `chainName` | string | - | Chain name for management actions. |
 | `config` | object/string | - | Agent or existing durable chain config for management create/update. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; `fork` creates real branched sessions from the parent leaf. Packaged `worker`, `oracle`, and `advisor` default to `fork`. |
-| `missionId` | string | - | Attach a workflow launch to an existing project mission. |
-| `mission` | object/false | - | Create-and-attach shortcut: `{ title, objective?, goal?, budget?, labels? }`; `goal: true` requires `budget.tokens` and enables continuation notices. Pass `false` for an intentionally ephemeral launch with no mission record or workflow `state` global. Explicit mission persistence failures are strict. |
+| `missionId` | string | - | Attach a workflow to an existing project mission instead of creating its default enclosing mission. |
+| `mission` | object/false | auto-create | Override the default enclosing mission with `{ title, objective?, goal?, budget?, labels? }`; `goal: true` requires `budget.tokens` and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
 | `focus` | boolean | true | Focus the newly split pane for `action: "inspector.open"`; not a standalone action. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
@@ -75,7 +75,7 @@ Use `outputMode: "file-only"` when a saved output may be large and the parent on
 
 In workflowScript, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
 
-Mission-attached workflows can use `await state.get(key)` and `await state.set(key, value)` to share durable JSON values across later workflows attached with the same `missionId`. Missing keys return `undefined`. The complete state file has a strict 256 KiB limit.
+Workflows get `await state.get(key)` and `await state.set(key, value)` through their default or explicit mission. Use them to share durable JSON values across later workflows attached with the same `missionId`. Each `set` takes the state-file lock and merges its key with the latest on-disk state. Missing keys return `undefined`, and the complete state file has a strict 256 KiB limit. `mission:false` workflows have no `state` global.
 
 ### Retained children
 

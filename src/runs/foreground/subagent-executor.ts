@@ -91,11 +91,12 @@ import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { updateMission } from "../../missions/store.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import {
 	cleanupWorktrees,
@@ -4128,11 +4129,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
 			const chatProgress = chatProgressResult.projection!;
 			const explicitMission = requestParams.missionId !== undefined || requestParams.mission !== undefined;
+			const autoMission = !explicitMission;
+			const workflowPreview = autoMission ? previewSimpleWorkflowRun(requestParams.workflowScript) : undefined;
+			const previewTask = workflowPreview?.task?.trim() || undefined;
+			const previewAgent = workflowPreview?.agent?.trim() || undefined;
+			const scriptFirstLine = requestParams.workflowScript.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "Workflow";
+			const boundedScriptPreview = scriptFirstLine.length > 100 ? `${scriptFirstLine.slice(0, 97)}...` : scriptFirstLine;
+			const derivedObjective = previewTask || (previewAgent ? `Workflow: ${previewAgent}` : boundedScriptPreview);
 			let missionBinding: MissionLaunchBinding | undefined;
 			let missionWarning: string | undefined;
 			try {
 				missionBinding = prepareMissionLaunch({
-					params: requestParams,
+					params: autoMission ? { ...requestParams, task: derivedObjective } : requestParams,
 					projectRoot: workflowCwd,
 					...(deps.config.missions ? { config: deps.config.missions } : {}),
 					ownerSessionId: resolveCurrentSessionId(ctx.sessionManager),
@@ -4141,6 +4149,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (explicitMission) return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "workflow", results: [] } };
 				missionWarning = `Mission tracking unavailable: ${error instanceof Error ? error.message : String(error)}`;
 			}
+			let shouldPatchMissionObjective = autoMission && previewTask === undefined && missionBinding !== undefined;
+			const patchMissionObjective = (task: unknown): void => {
+				if (!shouldPatchMissionObjective || !missionBinding || typeof task !== "string" || !task.trim()) return;
+				shouldPatchMissionObjective = false;
+				const objective = task.trim();
+				const firstLine = objective.split(/\r?\n/, 1)[0]?.trim() || objective;
+				const title = firstLine.length > 100 ? `${firstLine.slice(0, 97)}...` : firstLine;
+				try {
+					updateMission(missionBinding.location, missionBinding.missionId, { title, objective });
+				} catch (error) {
+					console.warn(`[pi-subagents] Failed to update automatic mission objective: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			};
+			const detachWorkflowChildMissions = autoMission || missionBinding !== undefined || requestParams.mission === false;
 			const workflowState = missionBinding ? createMissionWorkflowState(missionBinding.location, missionBinding.missionId) : undefined;
 			const attachWorkflowMission = (result: AgentToolResult<Details>): AgentToolResult<Details> => {
 				if (!missionBinding) return missionWarning ? { ...result, details: { ...result.details, missionWarning } } : result;
@@ -4245,7 +4267,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-								const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: missionBinding !== undefined || requestParams.mission === false });
+								patchMissionObjective(childParams.task);
+								const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions });
 								const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 								workflowResults.push(...result.details.results);
 								const child = workflowChildResult(key, result);
@@ -4306,7 +4329,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-						const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: missionBinding !== undefined || requestParams.mission === false, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
+						patchMissionObjective(childParams.task);
+						const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
 						const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 						workflowResults.push(...result.details.results);
 						return workflowChildResult(key, result);
