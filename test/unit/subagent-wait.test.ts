@@ -241,6 +241,29 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("reports malformed terminal result files as actionable errors", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-malformed-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-bad", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					writeStatus(asyncRoot, "run-bad", "complete", { sessionId: "sess-1" });
+					fs.writeFileSync(path.join(resultsDir, "run-bad.json"), "{not json", "utf-8");
+				},
+			}));
+
+			assert.equal(result.isError, true);
+			assert.match(textOf(result), /Failed to read subagent result/);
+			assert.match(textOf(result), /run-bad\.json/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("surfaces completions from the watcher record when the result file is already consumed", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-record-"));
 		try {

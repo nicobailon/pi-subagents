@@ -7,6 +7,16 @@ function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
 }
 
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error
+		? (error as NodeJS.ErrnoException).code
+		: undefined;
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Project a terminal result payload into the slim shape that is safe to surface in
  * tool_result details: run identity, per-child outcome, and the artifact trail.
@@ -81,10 +91,16 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			completions.push(recorded.completion);
 			continue;
 		}
+		const resultPath = path.join(resultsDir, `${run.id}.json`);
 		try {
-			const raw = JSON.parse(fs.readFileSync(path.join(resultsDir, `${run.id}.json`), "utf-8")) as Record<string, unknown>;
+			const raw = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
 			completions.push(toWaitCompletion(raw, run.id));
-		} catch {
+		} catch (error) {
+			if (errorCode(error) !== "ENOENT") {
+				throw new Error(`Failed to read subagent result '${resultPath}': ${errorMessage(error)}`, {
+					cause: error instanceof Error ? error : undefined,
+				});
+			}
 			// The watcher may have consumed the file between the store check and the
 			// read; its record is authoritative when present, otherwise the payload
 			// is gone and the text summary remains the only surface for this run.
