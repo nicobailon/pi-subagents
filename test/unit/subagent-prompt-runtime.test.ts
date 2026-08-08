@@ -1020,7 +1020,32 @@ describe("subagent prompt runtime", () => {
 		});
 	});
 
-	it("preserves composite tool ids for APIs that normalize them", () => {
+	it("bounds composite tool ids for Codex child context", () => {
+		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
+				if (event === "context") contextHandler = handler;
+			},
+		} as { on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined): void });
+
+		const toolCallId = "call_N7iYNRPXLl9czpXh3bDyMpIL|fc_0e76718634eca88f016a76fdc89aec81919763fa7858f67a0d";
+		const messages = [
+			{ role: "user", content: "Task" },
+			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
+			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
+		];
+
+		const context = contextHandler?.({ messages }, { model: { api: "openai-codex-responses" } });
+		assert.ok(context);
+		const mappedCallId = (context.messages[1] as { content: Array<{ id?: unknown }> }).content[0]?.id;
+		const mappedResultId = (context.messages[2] as { toolCallId?: unknown }).toolCallId;
+		assert.equal(typeof mappedCallId, "string");
+		assert.match(mappedCallId, /^[a-zA-Z0-9_-]+$/);
+		assert.ok(mappedCallId.length <= 64);
+		assert.equal(mappedResultId, mappedCallId);
+	});
+
+	it("preserves composite tool ids for non-Codex APIs that normalize them", () => {
 		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
 		registerSubagentPromptRuntime({
 			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
@@ -1035,7 +1060,7 @@ describe("subagent prompt runtime", () => {
 			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
 		];
 
-		assert.equal(contextHandler?.({ messages }, { model: { api: "openai-codex-responses" } }), undefined);
+		assert.equal(contextHandler?.({ messages }, { model: { api: "openai-responses" } }), undefined);
 	});
 
 	it("does not rewrite child context when no parent-only artifacts are present", () => {
