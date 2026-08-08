@@ -210,6 +210,7 @@ describe("subagent_wait tool", () => {
 						success: true,
 						results: [{
 							agent: "reviewer",
+							runId: "a1b2c3d4",
 							success: true,
 							outputState: "present",
 							output: "full output text stays out of details",
@@ -230,6 +231,7 @@ describe("subagent_wait tool", () => {
 			assert.equal(completions![0]!.success, true);
 			const child = completions![0]!.results?.[0];
 			assert.equal(child?.agent, "reviewer");
+			assert.equal(child?.runId, "a1b2c3d4");
 			assert.equal(child?.artifactPaths?.metadataPath, "/tmp/a1b2c3d4_reviewer_0_meta.json");
 			assert.equal("output" in (child ?? {}), false);
 			// The result file is the watcher's to consume; the wait must not delete it.

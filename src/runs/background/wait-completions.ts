@@ -25,10 +25,12 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				? (child.artifactPaths as Partial<ArtifactPaths>)
 				: undefined;
 			const agent = asNonEmptyString(child.agent);
+			const childRunId = asNonEmptyString(child.runId);
 			const error = asNonEmptyString(child.error);
 			const model = asNonEmptyString(child.model);
 			return [{
 				...(agent ? { agent } : {}),
+				...(childRunId ? { runId: childRunId } : {}),
 				...(typeof child.success === "boolean" ? { success: child.success } : {}),
 				...(outputState ? { outputState } : {}),
 				...(error ? { error } : {}),

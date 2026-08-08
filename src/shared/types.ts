@@ -950,6 +950,8 @@ export interface SpawnBudgetSnapshot {
 /** Slim per-child projection of a terminal result payload, safe to surface in tool_result details. */
 export interface WaitCompletionChild {
 	agent?: string;
+	/** Child run identity where the producer records one (workflow children); artifact files are keyed by it. */
+	runId?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
 	error?: string;
