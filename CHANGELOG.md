@@ -8,6 +8,7 @@
 
 ### Changed
 - Clarified native supervisor messaging and optional external intercom result delivery in the docs and packaged skill.
+- Identify status and transcript targets before the spawn-budget summary in collapsed tool-result cards.
 - Point interactive async-launch guidance to `subagent_wait({ id, nonBlocking: true })` when an explicit wake is needed without blocking the current turn.
 
 ### Fixed

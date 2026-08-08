@@ -4617,13 +4617,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (action === "status") {
 				if (!preserveActiveSession) deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-				const withBudget = (result: AgentToolResult<Details>) => withSpawnBudgetStatus(
-					result,
-					deps.state,
-					deps.config,
-					deps.state.currentSessionId,
-				);
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
+				const target = targetRunId ? `run ${targetRunId}` : paramsWithResolvedCwd.dir ? `dir ${paramsWithResolvedCwd.dir}` : undefined;
+				const targetLabel = paramsWithResolvedCwd.view === "transcript"
+					? `Transcript target: ${target ?? "active run"}${paramsWithResolvedCwd.index !== undefined ? ` · child ${paramsWithResolvedCwd.index}` : ""}`
+					: `Status target: ${target ?? "active runs"}`;
+				const withBudget = (result: AgentToolResult<Details>) => {
+					const budgeted = withSpawnBudgetStatus(result, deps.state, deps.config, deps.state.currentSessionId);
+					return {
+						...budgeted,
+						content: budgeted.content.map((item, index) => index === 0 && item.type === "text"
+							? { ...item, text: `${targetLabel}\n${item.text}` }
+							: item),
+					};
+				};
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
 				if (paramsWithResolvedCwd.view === "fleet") {
@@ -4648,7 +4655,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const message = error instanceof Error ? error.message : String(error);
 						return withBudget({ content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } });
 					}
-				} else {
+				} else if (!paramsWithResolvedCwd.dir) {
 					const foreground = getForegroundControl(deps.state, undefined);
 					if (foreground && paramsWithResolvedCwd.view !== "transcript") return withBudget(foregroundStatusResult(foreground));
 					if (foreground && paramsWithResolvedCwd.view === "transcript") {

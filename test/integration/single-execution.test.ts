@@ -1575,7 +1575,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
-		assert.match(status.content[0]?.text ?? "", /^Spawn budget: 3\/5 used, 2 remaining/);
+		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining/);
 		assert.deepEqual(status.details?.spawnBudget, {
 			used: 3,
 			configuredLimit: 4,

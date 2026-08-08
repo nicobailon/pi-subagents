@@ -196,11 +196,52 @@ describe("nested control routing", () => {
 			const result = await createExecutor(state).execute("status", { action: "status", id: "root-control" }, new AbortController().signal, undefined, ctx(root));
 
 			assert.equal(result.isError, undefined);
+			assert.match(text(result), /^Status target: run root-control\nSpawn budget:/);
 			assert.match(text(result), /Run: root-control/);
 			assert.match(text(result), /↳ worker \[nested-foreground\] running/);
 			assert.match(text(result), /Status: subagent\(\{ action: "status", id: "nested-foreground" \}\)/);
+
+			const transcript = await createExecutor(state).execute("transcript", { action: "status", id: "root-control", index: 0, view: "transcript" }, new AbortController().signal, undefined, ctx(root));
+			assert.equal(transcript.isError, undefined);
+			assert.match(text(transcript), /^Transcript target: run root-control · child 0\nSpawn budget:/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("labels dir-target status output", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-status-dir-label-"));
+		const runId = `status-dir-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				mode: "single",
+				state: "running",
+				startedAt: 1,
+				lastUpdate: 1,
+				cwd: root,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+
+			const state = createState();
+			state.foregroundControls.set("foreground-live", { runId: "foreground-live", mode: "single", startedAt: 1, updatedAt: 1, currentAgent: "worker", currentIndex: 0 });
+			state.lastForegroundControlId = "foreground-live";
+			const executor = createExecutor(state);
+			const result = await executor.execute("status-dir", { action: "status", dir: asyncDir }, new AbortController().signal, undefined, ctx(root));
+
+			assert.equal(result.isError, undefined);
+			assert.ok(text(result).startsWith(`Status target: dir ${asyncDir}\nSpawn budget:`), text(result));
+			assert.match(text(result), new RegExp(`Run: ${runId}`));
+			assert.doesNotMatch(text(result), /foreground-live/);
+
+			const transcript = await executor.execute("transcript-dir", { action: "status", dir: asyncDir, view: "transcript" }, new AbortController().signal, undefined, ctx(root));
+			assert.ok(text(transcript).startsWith(`Transcript target: dir ${asyncDir}\nSpawn budget:`), text(transcript));
+			assert.doesNotMatch(text(transcript), /Live foreground transcript/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(asyncDir, { recursive: true, force: true });
 		}
 	});
 
