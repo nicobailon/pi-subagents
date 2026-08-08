@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Clarified mission-use policy in the packaged `pi-subagents` skill. Thanks to @nicobailon for #914.
+
 ## [0.44.0] - 2026-08-08
 
 ### Added
