@@ -14,6 +14,7 @@
 - Serialize and merge each mission workflow-state write with the latest file so separate workflows do not drop unrelated keys.
 - Preserve `workflowScript` worktree children that detach for supervisor coordination instead of cleaning a live managed worktree. Thanks to @astarktc for #896.
 - Accept schema-valid structured output after a child recovers from an earlier tool error. Thanks to @white-hat for the report in #888.
+- Cap oversized inherited composite tool-call ids at the provider's 64-character limit while preserving correlation between calls and results.
 
 ## [0.43.0] - 2026-08-07
 

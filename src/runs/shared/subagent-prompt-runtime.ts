@@ -215,17 +215,21 @@ const COMPOSITE_TOOL_ID_APIS = new Set([
 	"openai-responses",
 ]);
 
-function portableToolId(id: string): string {
-	if (id.length <= MAX_PORTABLE_TOOL_ID_LENGTH && PORTABLE_TOOL_ID_PATTERN.test(id)) return id;
+function portableToolId(id: string, preserveCompositeToolIds = false): string {
+	if (
+		id.length <= MAX_PORTABLE_TOOL_ID_LENGTH &&
+		(PORTABLE_TOOL_ID_PATTERN.test(id) || (preserveCompositeToolIds && id.includes("|")))
+	)
+		return id;
 	const encoded = `tool_${Buffer.from(id).toString("base64url") || "empty"}`;
 	if (encoded.length <= MAX_PORTABLE_TOOL_ID_LENGTH) return encoded;
 	return `tool_${createHash("sha256").update(id).digest("base64url")}`;
 }
 
-function sanitizeToolHistoryMessage(message: unknown): unknown {
+function sanitizeToolHistoryMessage(message: unknown, preserveCompositeToolIds = false): unknown {
 	const m = message as { role?: string; content?: unknown; toolCallId?: unknown };
 	if (m?.role === "toolResult" && typeof m.toolCallId === "string") {
-		const toolCallId = portableToolId(m.toolCallId);
+		const toolCallId = portableToolId(m.toolCallId, preserveCompositeToolIds);
 		return toolCallId === m.toolCallId ? message : { ...m, toolCallId };
 	}
 	if (m?.role !== "assistant" || !Array.isArray(m.content)) return message;
@@ -233,7 +237,7 @@ function sanitizeToolHistoryMessage(message: unknown): unknown {
 	const content = m.content.map((block) => {
 		const b = block as { type?: string; id?: unknown };
 		if (b?.type !== "toolCall" || typeof b.id !== "string") return block;
-		const id = portableToolId(b.id);
+		const id = portableToolId(b.id, preserveCompositeToolIds);
 		if (id === b.id) return block;
 		changed = true;
 		return { ...b, id };
@@ -250,7 +254,10 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean } = {}): unknown[] {
+export function stripParentOnlySubagentMessages(
+	messages: unknown[],
+	options: { sanitizeToolIds?: boolean; preserveCompositeToolIds?: boolean } = {},
+): unknown[] {
 	const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
 	const sanitizeToolIds = options.sanitizeToolIds ?? true;
 	let changed = false;
@@ -265,7 +272,9 @@ export function stripParentOnlySubagentMessages(messages: unknown[], options: { 
 			changed = true;
 			continue;
 		}
-		const sanitized = sanitizeToolIds ? sanitizeToolHistoryMessage(stripped) : stripped;
+		const sanitized = sanitizeToolIds
+			? sanitizeToolHistoryMessage(stripped, options.preserveCompositeToolIds)
+			: stripped;
 		if (stripped !== message || sanitized !== stripped) changed = true;
 		filtered.push(sanitized);
 	}
@@ -558,7 +567,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	onRuntimeEvent("context", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const messages = stripParentOnlySubagentMessages(event.messages, {
-			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
+			preserveCompositeToolIds: COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
 		});
 		if (messages === event.messages) return undefined;
 		return { messages };

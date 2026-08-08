@@ -1040,7 +1040,7 @@ describe("subagent prompt runtime", () => {
 		});
 	});
 
-	it("preserves composite tool ids for APIs that normalize them", () => {
+	it("caps oversized composite tool ids for APIs that normally preserve them", () => {
 		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
 		registerSubagentPromptRuntime({
 			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
@@ -1051,6 +1051,31 @@ describe("subagent prompt runtime", () => {
 		const toolCallId = "call_7XJjvAJfk07117JO8LgBCZjY|fc_0e92b09b28010bac016a756e9e79cc8197b01825a5dc3d9eaa";
 		const messages = [
 			{ role: "user", content: "Task" },
+			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
+			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
+		];
+
+		const rewritten = contextHandler?.({ messages }, { model: { api: "openai-codex-responses" } });
+		assert.ok(rewritten);
+		const rewrittenAssistant = rewritten.messages[1] as { content: Array<{ id: string }> };
+		const rewrittenResult = rewritten.messages[2] as { toolCallId: string };
+		const rewrittenId = rewrittenAssistant.content[0]?.id;
+		assert.ok(rewrittenId);
+		assert.match(rewrittenId, /^[A-Za-z0-9_-]+$/);
+		assert.ok(rewrittenId.length <= 64);
+		assert.equal(rewrittenResult.toolCallId, rewrittenId);
+	});
+
+	it("preserves short composite tool ids for APIs that normalize them", () => {
+		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
+		registerSubagentPromptRuntime({
+			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
+				if (event === "context") contextHandler = handler;
+			},
+		} as { on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined): void });
+
+		const toolCallId = "call_short|fc_short";
+		const messages = [
 			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
 			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
 		];
