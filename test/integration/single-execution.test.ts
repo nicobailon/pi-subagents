@@ -235,6 +235,7 @@ interface ExecutorToolResult {
 	isError?: boolean;
 	details?: {
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
+		controlEvents?: Array<{ type?: string }>;
 		asyncId?: string;
 		timeoutMs?: number;
 		turnBudget?: { maxTurns: number; graceTurns: number };
@@ -1788,6 +1789,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.details?.totalCost, { inputTokens: 100, outputTokens: 50, costUsd: 0.001 });
+	});
+
+	it("ignores stale foreground control notification contexts after reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			jsonl: [
+				events.assistantMessage("first update"),
+				events.assistantMessage("second update"),
+			],
+		});
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundRuns: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const staleEvents = {
+			on: createEventBus().on,
+			emit() { throw new Error("This extension ctx is stale after session replacement or reload."); },
+		};
+		const updates: ExecutorToolResult[] = [];
+		const executor = createSubagentExecutor!({
+			pi: { events: staleEvents, getSessionName: () => undefined },
+			state,
+			config: { control: { enabled: true, activeNoticeAfterTurns: 2, activeNoticeAfterMs: 999_999, activeNoticeAfterTokens: 999_999, notifyOn: ["active_long_running"], notifyChannels: ["event"] } },
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, ".pi-subagents", "sessions"),
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+			allowMutatingManagementActions: true,
+		});
+
+		const result = await executor.execute(
+			"stale-control-context",
+			{ agent: "echo", task: "Investigate behavior", async: false },
+			new AbortController().signal,
+			(update: ExecutorToolResult) => updates.push(update),
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "foreground run failed");
+		assert.equal(result.details.results[0]?.exitCode, 0);
+		const controlEvents = updates.flatMap((update) => update.details?.controlEvents ?? []);
+		assert.equal(controlEvents[0]?.type, "active_long_running");
 	});
 
 	it("emits resolved model and thinking for nested foreground starts", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

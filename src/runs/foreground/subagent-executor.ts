@@ -799,6 +799,20 @@ function getAsyncInterruptTarget(
 	return newest ? { asyncId: newest.asyncId, asyncDir: newest.asyncDir } : undefined;
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	return /extension ctx is stale|stale after session replacement or reload/i.test(error.message);
+}
+
+function emitAdvisoryControlEvent(pi: ExtensionAPI, channel: string, payload: unknown): void {
+	try {
+		pi.events.emit(channel, payload);
+	} catch (error) {
+		if (isStaleExtensionContextError(error)) return;
+		throw error;
+	}
+}
+
 function emitControlNotification(input: {
 	pi: ExtensionAPI;
 	controlConfig: ResolvedControlConfig;
@@ -816,10 +830,10 @@ function emitControlNotification(input: {
 		noticeText: formatControlNoticeMessage(input.event, childIntercomTarget),
 	};
 	if (input.controlConfig.notifyChannels.includes("event")) {
-		input.pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+		emitAdvisoryControlEvent(input.pi, SUBAGENT_CONTROL_EVENT, payload);
 	}
 	if (input.event.type !== "active_long_running" && input.controlConfig.notifyChannels.includes("intercom") && input.intercomBridge.active && input.intercomBridge.orchestratorTarget) {
-		input.pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
+		emitAdvisoryControlEvent(input.pi, SUBAGENT_CONTROL_INTERCOM_EVENT, {
 			...payload,
 			to: input.intercomBridge.orchestratorTarget,
 			message: formatControlIntercomMessage(input.event, childIntercomTarget),
