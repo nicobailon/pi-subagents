@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Omit undefined object fields from `workflowScript` return values so completed `runs.all` results are not discarded when callers include unsupported fields such as `status` (#930).
 - Keep child steering inbox `auto` requests queued between `agent_end` and `agent_settled` so settlement-time guidance is not sent as an idle prompt too early. Thanks to @jtac for #928.
 
 ## [0.45.1] - 2026-08-09

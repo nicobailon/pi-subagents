@@ -139,6 +139,25 @@ function assertJsonValue(value, path = "emit", seen = new Set()) {
   seen.delete(value);
 }
 
+function isPlainWorkflowObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null || prototype === Object.prototype || prototype === contextObjectPrototype;
+}
+
+function omitUndefinedWorkflowValues(value, seen = new Set()) {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  const normalized = Array.isArray(value)
+    ? value.map((entry) => entry === undefined ? null : omitUndefinedWorkflowValues(entry, seen))
+    : isPlainWorkflowObject(value) && Object.getOwnPropertySymbols(value).length === 0
+      ? Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => entry === undefined ? [] : [[key, omitUndefinedWorkflowValues(entry, seen)]]))
+      : value;
+  seen.delete(value);
+  return normalized;
+}
+
 parentPort.on("message", async (message) => {
   if (message.type === "response") {
     const entry = pending.get(message.callId);
@@ -163,7 +182,7 @@ parentPort.on("message", async (message) => {
       return;
     }
     const value = await compiled.runInContext(context);
-    const persistedValue = value === undefined ? null : value;
+    const persistedValue = value === undefined ? null : omitUndefinedWorkflowValues(value);
     assertJsonValue(persistedValue, "return");
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {

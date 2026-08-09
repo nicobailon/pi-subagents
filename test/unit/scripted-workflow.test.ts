@@ -340,6 +340,25 @@ describe("scripted workflow runtime", () => {
 		});
 	});
 
+	it("omits undefined fields in workflow return objects", async () => {
+		const result = await runWorkflowScript({
+			script: `
+				const children = await runs.all([{ key: "review", agent: "worker", task: "review" }]);
+				return children.map((child) => ({
+					key: child.key,
+					status: child.status,
+					output: child.output,
+					values: [child.status],
+				}));
+			`,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, output: "completed", artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(result.value, [{ key: "review", output: "completed", values: [null] }]);
+	});
+
 	it("rejects non-plain child result values", async () => {
 		await assert.rejects(
 			runWorkflowScript({
@@ -522,6 +541,7 @@ describe("scripted workflow runtime", () => {
 			`return 1n;`,
 			`return new (class Object { constructor() { this.ok = true; } })();`,
 			`const value = {}; value.self = value; return value;`,
+			`const value = {}; value[Symbol("hidden")] = true; return value;`,
 			`return () => true;`,
 			`return Symbol("value");`,
 		];
