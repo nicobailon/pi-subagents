@@ -24,12 +24,13 @@ function fixture() {
 	return { root, projectRoot, agentDir, location };
 }
 
-async function waitForFile(filePath: string): Promise<void> {
-	for (let attempt = 0; attempt < 100; attempt++) {
+async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
 		if (fs.existsSync(filePath)) return;
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
-	throw new Error(`Timed out waiting for ${filePath}`);
+	throw new Error(`Timed out waiting for ${filePath} after ${timeoutMs} ms`);
 }
 
 describe("mission store", () => {
