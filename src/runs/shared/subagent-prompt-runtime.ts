@@ -67,14 +67,6 @@ const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/na
 const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
-const LEGACY_AGENT_SETTLEMENT_FALLBACK_MS = 1_000;
-
-function scheduleLegacyAgentSettlementFallback(callback: () => void): () => void {
-	const timer = setTimeout(callback, LEGACY_AGENT_SETTLEMENT_FALLBACK_MS);
-	timer.unref?.();
-	return () => clearTimeout(timer);
-}
-
 function readBooleanEnv(name: string): boolean | undefined {
 	const value = process.env[name];
 	if (value === undefined) return undefined;
@@ -340,7 +332,6 @@ export function registerSteeringInbox(
 	deps: {
 		watch?: typeof fs.watch;
 		nativeRealpath?: (filePath: string) => string;
-		scheduleLegacySettlementFallback?: (callback: () => void) => () => void;
 	} = {},
 ): void {
 	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
@@ -355,7 +346,6 @@ export function registerSteeringInbox(
 	let agentRunning = false;
 	let inTurn = false;
 	let awaitingAgentSettlement = false;
-	let cancelLegacySettlementFallback: (() => void) | undefined;
 	let flushing = false;
 	let started = false;
 	let canSteer = typeof sendUserMessage === "function";
@@ -453,28 +443,11 @@ export function registerSteeringInbox(
 		flush();
 		return undefined;
 	};
-	const cancelSettlementFallback = (): void => {
-		cancelLegacySettlementFallback?.();
-		cancelLegacySettlementFallback = undefined;
-	};
 	const settleAgent = (): undefined => {
-		cancelSettlementFallback();
 		agentRunning = false;
 		inTurn = false;
 		awaitingAgentSettlement = false;
 		return activate();
-	};
-	const armLegacySettlementFallback = (): void => {
-		cancelSettlementFallback();
-		const schedule = deps.scheduleLegacySettlementFallback ?? scheduleLegacyAgentSettlementFallback;
-		cancelLegacySettlementFallback = schedule(() => {
-			cancelLegacySettlementFallback = undefined;
-			if (disposed || !awaitingAgentSettlement) return;
-			agentRunning = false;
-			inTurn = false;
-			awaitingAgentSettlement = false;
-			activate();
-		});
 	};
 
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
@@ -482,24 +455,19 @@ export function registerSteeringInbox(
 	onRuntimeEvent("input", onInput);
 	onRuntimeEvent("session_start", () => start());
 	onRuntimeEvent("agent_start", () => {
-		cancelSettlementFallback();
 		agentRunning = true;
 		return activate();
 	});
-	onRuntimeEvent("agent_end", (event) => {
+	onRuntimeEvent("agent_end", () => {
 		agentRunning = true;
 		inTurn = false;
 		awaitingAgentSettlement = true;
-		if ((event as { willRetry?: unknown } | undefined)?.willRetry === true) cancelSettlementFallback();
-		else armLegacySettlementFallback();
 		return activate();
 	});
 	onRuntimeEvent("agent_settled", () => settleAgent());
 	onRuntimeEvent("turn_start", () => {
-		cancelSettlementFallback();
 		agentRunning = true;
 		inTurn = true;
-		awaitingAgentSettlement = false;
 		const next = queued.findIndex((entry) => entry.ready);
 		if (next >= 0) {
 			const [entry] = queued.splice(next, 1);
@@ -518,7 +486,6 @@ export function registerSteeringInbox(
 	onRuntimeEvent("session_shutdown", () => {
 		for (const entry of queued) acknowledge(entry.request, "failed", "Run ended before queued follow-up delivery.", "queued");
 		disposed = true;
-		cancelSettlementFallback();
 		try { watcher?.close(); } catch {}
 		if (interval) clearInterval(interval);
 	});
