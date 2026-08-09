@@ -481,6 +481,64 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
+	it("retries pending correlation once as a follow-up after compaction", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-compaction-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: Array<{ content: string; deliverAs?: string }> = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+			} as never);
+			handlers.get("session_start")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "compact", ts: 1, message: "Keep this guidance." });
+			handlers.get("message_start")?.({});
+			assert.equal(sent.length, 1);
+			assert.deepEqual(consumeSteerAcks(dir), []);
+
+			handlers.get("session_compact")?.({ reason: "manual" });
+			assert.equal(sent.length, 2);
+			assert.equal(sent[1]?.deliverAs, "followUp");
+			handlers.get("input")?.({ source: "extension", text: sent[1]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "queued");
+			handlers.get("turn_start")?.({});
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "delivered");
+			handlers.get("session_compact")?.({ reason: "manual" });
+			assert.equal(sent.length, 2);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("fails pending correlation when the session shuts down", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-pending-shutdown-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_CAPABILITY_ENV] = path.join(dir, "capability.json");
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			registerSteeringInbox({ on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); }, sendUserMessage() {} } as never);
+			handlers.get("session_start")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "pending", ts: 1, message: "Unconfirmed guidance." });
+			handlers.get("message_start")?.({});
+			handlers.get("session_shutdown")?.({});
+			const ack = consumeSteerAcks(dir)[0];
+			assert.equal(ack?.requestId, "pending");
+			assert.equal(ack?.state, "failed");
+			assert.match(ack?.message ?? "", /before Pi confirmed steering input delivery/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("correlates duplicate guidance FIFO without a visible marker", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-fifo-runtime-"));
 		try {

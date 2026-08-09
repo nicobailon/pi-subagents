@@ -494,6 +494,18 @@ export function registerSteeringInbox(
 		return activate();
 	});
 	onRuntimeEvent("agent_settled", markSettled);
+	onRuntimeEvent("session_compact", () => {
+		const unresolved = [...pending.values()].flat();
+		pending.clear();
+		for (const entry of unresolved) {
+			try {
+				writeSteerRequestToDir(steerInbox, { ...entry.request, mode: "follow_up" });
+			} catch (error) {
+				acknowledge(entry.request, "failed", `Could not retry steering after compaction: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+		return activate();
+	});
 	onRuntimeEvent("turn_start", () => {
 		clearSettleFallback();
 		agentRunning = true;
@@ -516,6 +528,9 @@ export function registerSteeringInbox(
 	}
 	onRuntimeEvent("session_shutdown", () => {
 		for (const entry of queued) acknowledge(entry.request, "failed", "Run ended before queued follow-up delivery.", "queued");
+		for (const entries of pending.values()) {
+			for (const entry of entries) acknowledge(entry.request, "failed", "Run ended before Pi confirmed steering input delivery.");
+		}
 		disposed = true;
 		clearSettleFallback();
 		try { watcher?.close(); } catch {}
