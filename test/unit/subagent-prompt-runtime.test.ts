@@ -136,6 +136,65 @@ function setSupervisorEnv(): void {
 	process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 }
 
+function createSteeringLifecycleHarness(prefix: string): {
+	dir: string;
+	inbox: string;
+	handlers: Map<string, (payload?: unknown) => unknown>;
+	sent: Array<{ content: string; deliverAs?: string }>;
+	fallbackScheduled(): boolean;
+	fallbackCancelled(): boolean;
+	runFallback(): void;
+	cleanup(): void;
+} {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	const inbox = path.join(dir, "inbox");
+	process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+	process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+	process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+	const handlers = new Map<string, (payload?: unknown) => unknown>();
+	const sent: Array<{ content: string; deliverAs?: string }> = [];
+	let fallback: (() => void) | undefined;
+	let fallbackActive = false;
+	let cancelled = false;
+	const fakeWatcher = { on() { return fakeWatcher; }, close() {} } as fs.FSWatcher;
+
+	registerSteeringInbox({
+		on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+		sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+	} as never, {
+		watch: (() => fakeWatcher) as typeof fs.watch,
+		scheduleLegacySettlementFallback(callback) {
+			fallback = callback;
+			fallbackActive = true;
+			cancelled = false;
+			return () => {
+				if (!fallbackActive) return;
+				fallbackActive = false;
+				cancelled = true;
+			};
+		},
+	});
+	handlers.get("session_start")?.({});
+
+	return {
+		dir,
+		inbox,
+		handlers,
+		sent,
+		fallbackScheduled: () => fallbackActive,
+		fallbackCancelled: () => cancelled,
+		runFallback() {
+			assert.ok(fallbackActive && fallback, "legacy settlement fallback should be scheduled");
+			fallbackActive = false;
+			fallback();
+		},
+		cleanup() {
+			handlers.get("session_shutdown")?.({});
+			fs.rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
 describe("subagent prompt runtime", () => {
 	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {
 		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
@@ -346,6 +405,106 @@ describe("subagent prompt runtime", () => {
 			assert.match(failed?.message ?? "", /ended before queued follow-up/);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("queues auto guidance from agent_end until agent_settled and delivers it once", () => {
+		const runtime = createSteeringLifecycleHarness("subagent-agent-settled-runtime-");
+		try {
+			runtime.handlers.get("agent_start")?.({});
+			runtime.handlers.get("turn_start")?.({});
+			runtime.handlers.get("turn_end")?.({});
+			runtime.handlers.get("agent_end")?.({ willRetry: false });
+			assert.equal(runtime.fallbackScheduled(), true);
+
+			writeSteerRequestToDir(runtime.inbox, { type: "steer", id: "settlement-gap", ts: 1, message: "Use the settled result.", mode: "auto" });
+			runtime.handlers.get("message_start")?.({});
+			assert.equal(runtime.sent.length, 1);
+			assert.equal(runtime.sent[0]?.deliverAs, "followUp");
+			runtime.handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: runtime.sent[0]?.content });
+			assert.equal(consumeSteerAcks(runtime.dir)[0]?.state, "queued");
+
+			assert.ok(runtime.handlers.has("agent_settled"));
+			runtime.handlers.get("agent_settled")?.({});
+			assert.equal(runtime.fallbackCancelled(), true);
+			assert.equal(runtime.sent.length, 1);
+			runtime.handlers.get("turn_start")?.({});
+			const delivered = consumeSteerAcks(runtime.dir);
+			assert.equal(delivered.length, 1);
+			assert.equal(delivered[0]?.requestId, "settlement-gap");
+			assert.equal(delivered[0]?.state, "delivered");
+			assert.equal(runtime.sent.length, 1);
+		} finally {
+			runtime.cleanup();
+		}
+	});
+
+	it("keeps retrying agent_end auto guidance queued across the next turn", () => {
+		const runtime = createSteeringLifecycleHarness("subagent-agent-retry-runtime-");
+		try {
+			runtime.handlers.get("agent_start")?.({});
+			runtime.handlers.get("turn_start")?.({});
+			runtime.handlers.get("turn_end")?.({});
+			runtime.handlers.get("agent_end")?.({ willRetry: true });
+			assert.equal(runtime.fallbackScheduled(), false);
+
+			writeSteerRequestToDir(runtime.inbox, { type: "steer", id: "retry-gap", ts: 1, message: "Keep this for the retry.", mode: "auto" });
+			runtime.handlers.get("message_start")?.({});
+			assert.equal(runtime.sent.length, 1);
+			assert.equal(runtime.sent[0]?.deliverAs, "followUp");
+			runtime.handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: runtime.sent[0]?.content });
+			assert.equal(consumeSteerAcks(runtime.dir)[0]?.state, "queued");
+
+			runtime.handlers.get("agent_start")?.({});
+			runtime.handlers.get("turn_start")?.({});
+			assert.equal(consumeSteerAcks(runtime.dir)[0]?.state, "delivered");
+			assert.equal(runtime.sent.length, 1);
+			runtime.handlers.get("turn_end")?.({});
+			runtime.handlers.get("agent_end")?.({ willRetry: false });
+			runtime.handlers.get("agent_settled")?.({});
+			assert.equal(runtime.sent.length, 1);
+		} finally {
+			runtime.cleanup();
+		}
+	});
+
+	it("delivers auto guidance immediately after agent_settled", () => {
+		const runtime = createSteeringLifecycleHarness("subagent-agent-idle-runtime-");
+		try {
+			runtime.handlers.get("agent_start")?.({});
+			runtime.handlers.get("agent_end")?.({ willRetry: false });
+			assert.ok(runtime.handlers.has("agent_settled"));
+			runtime.handlers.get("agent_settled")?.({});
+
+			writeSteerRequestToDir(runtime.inbox, { type: "steer", id: "settled-idle", ts: 1, message: "Deliver between turns.", mode: "auto" });
+			runtime.handlers.get("message_start")?.({});
+			assert.equal(runtime.sent.length, 1);
+			assert.equal(runtime.sent[0]?.deliverAs, undefined);
+			runtime.handlers.get("input")?.({ source: "extension", streamingBehavior: "steer", text: runtime.sent[0]?.content });
+			const delivered = consumeSteerAcks(runtime.dir);
+			assert.equal(delivered[0]?.requestId, "settled-idle");
+			assert.equal(delivered[0]?.state, "delivered");
+		} finally {
+			runtime.cleanup();
+		}
+	});
+
+	it("uses a deterministic bounded fallback when agent_settled is unavailable", () => {
+		const runtime = createSteeringLifecycleHarness("subagent-agent-legacy-runtime-");
+		try {
+			runtime.handlers.get("agent_start")?.({});
+			runtime.handlers.get("agent_end")?.({ willRetry: false });
+			assert.equal(runtime.fallbackScheduled(), true);
+			runtime.runFallback();
+
+			writeSteerRequestToDir(runtime.inbox, { type: "steer", id: "legacy-idle", ts: 1, message: "Deliver after fallback.", mode: "auto" });
+			runtime.handlers.get("message_start")?.({});
+			assert.equal(runtime.sent.length, 1);
+			assert.equal(runtime.sent[0]?.deliverAs, undefined);
+			runtime.handlers.get("input")?.({ source: "extension", streamingBehavior: "steer", text: runtime.sent[0]?.content });
+			assert.equal(consumeSteerAcks(runtime.dir)[0]?.state, "delivered");
+		} finally {
+			runtime.cleanup();
 		}
 	});
 

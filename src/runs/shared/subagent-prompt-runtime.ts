@@ -67,6 +67,13 @@ const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/na
 const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
+const LEGACY_AGENT_SETTLEMENT_FALLBACK_MS = 1_000;
+
+function scheduleLegacyAgentSettlementFallback(callback: () => void): () => void {
+	const timer = setTimeout(callback, LEGACY_AGENT_SETTLEMENT_FALLBACK_MS);
+	timer.unref?.();
+	return () => clearTimeout(timer);
+}
 
 function readBooleanEnv(name: string): boolean | undefined {
 	const value = process.env[name];
@@ -330,7 +337,11 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 
 export function registerSteeringInbox(
 	pi: ExtensionAPI,
-	deps: { watch?: typeof fs.watch; nativeRealpath?: (filePath: string) => string } = {},
+	deps: {
+		watch?: typeof fs.watch;
+		nativeRealpath?: (filePath: string) => string;
+		scheduleLegacySettlementFallback?: (callback: () => void) => () => void;
+	} = {},
 ): void {
 	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
 	if (!steerInbox) return;
@@ -343,6 +354,8 @@ export function registerSteeringInbox(
 	let disposed = false;
 	let agentRunning = false;
 	let inTurn = false;
+	let awaitingAgentSettlement = false;
+	let cancelLegacySettlementFallback: (() => void) | undefined;
 	let flushing = false;
 	let started = false;
 	let canSteer = typeof sendUserMessage === "function";
@@ -375,7 +388,7 @@ export function registerSteeringInbox(
 					continue;
 				}
 				const requestedMode = request.mode ?? "steer";
-				const delivery = requestedMode === "follow_up" || (requestedMode === "auto" && inTurn) ? "followUp" as const : "steer" as const;
+				const delivery = requestedMode === "follow_up" || (requestedMode === "auto" && (inTurn || awaitingAgentSettlement)) ? "followUp" as const : "steer" as const;
 				const pendingFollowUps = [...pending.values()].reduce((count, entries) => count + entries.filter((entry) => entry.deliveryStatus === "queued").length, 0);
 				if (delivery === "followUp" && queued.length + pendingFollowUps >= MAX_STEER_QUEUE_SIZE) {
 					acknowledge(request, "failed", `Follow-up queue is full (${MAX_STEER_QUEUE_SIZE} messages).`);
@@ -440,15 +453,53 @@ export function registerSteeringInbox(
 		flush();
 		return undefined;
 	};
+	const cancelSettlementFallback = (): void => {
+		cancelLegacySettlementFallback?.();
+		cancelLegacySettlementFallback = undefined;
+	};
+	const settleAgent = (): undefined => {
+		cancelSettlementFallback();
+		agentRunning = false;
+		inTurn = false;
+		awaitingAgentSettlement = false;
+		return activate();
+	};
+	const armLegacySettlementFallback = (): void => {
+		cancelSettlementFallback();
+		const schedule = deps.scheduleLegacySettlementFallback ?? scheduleLegacyAgentSettlementFallback;
+		cancelLegacySettlementFallback = schedule(() => {
+			cancelLegacySettlementFallback = undefined;
+			if (disposed || !awaitingAgentSettlement) return;
+			agentRunning = false;
+			inTurn = false;
+			awaitingAgentSettlement = false;
+			activate();
+		});
+	};
 
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
 	// Register input before the watcher so an accepted extension input cannot race request dispatch.
 	onRuntimeEvent("input", onInput);
 	onRuntimeEvent("session_start", () => start());
-	onRuntimeEvent("agent_start", () => { agentRunning = true; return activate(); });
-	onRuntimeEvent("agent_end", () => { agentRunning = false; inTurn = false; return activate(); });
+	onRuntimeEvent("agent_start", () => {
+		cancelSettlementFallback();
+		agentRunning = true;
+		return activate();
+	});
+	onRuntimeEvent("agent_end", (event) => {
+		agentRunning = true;
+		inTurn = false;
+		awaitingAgentSettlement = true;
+		if ((event as { willRetry?: unknown } | undefined)?.willRetry === true) cancelSettlementFallback();
+		else armLegacySettlementFallback();
+		return activate();
+	});
+	onRuntimeEvent("agent_settled", () => settleAgent());
 	onRuntimeEvent("turn_start", () => {
+		cancelSettlementFallback();
+		agentRunning = true;
 		inTurn = true;
+		awaitingAgentSettlement = false;
 		const next = queued.findIndex((entry) => entry.ready);
 		if (next >= 0) {
 			const [entry] = queued.splice(next, 1);
@@ -467,6 +518,7 @@ export function registerSteeringInbox(
 	onRuntimeEvent("session_shutdown", () => {
 		for (const entry of queued) acknowledge(entry.request, "failed", "Run ended before queued follow-up delivery.", "queued");
 		disposed = true;
+		cancelSettlementFallback();
 		try { watcher?.close(); } catch {}
 		if (interval) clearInterval(interval);
 	});

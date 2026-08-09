@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Keep `auto` steering queued between `agent_end` and `agent_settled`, including retrying turns, while retaining immediate settled delivery and a bounded legacy fallback. (#928)
+
 ## [0.45.1] - 2026-08-09
 
 ### Changed
