@@ -349,6 +349,105 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
+	it("queues auto steering after agent_end until agent_settled", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-settled-steering-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: Array<{ content: string; deliverAs?: string }> = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+			} as never);
+			handlers.get("session_start")?.({});
+			handlers.get("agent_start")?.({});
+			handlers.get("turn_start")?.({});
+			handlers.get("turn_end")?.({});
+			handlers.get("agent_end")?.({ willRetry: false });
+
+			writeSteerRequestToDir(inbox, { type: "steer", id: "settling-auto", ts: 1, message: "Wait for settled.", mode: "auto" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[0]?.deliverAs, "followUp");
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: sent[0]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "queued");
+
+			handlers.get("agent_settled")?.({});
+			writeSteerRequestToDir(inbox, { type: "steer", id: "settled-auto", ts: 2, message: "Now idle.", mode: "auto" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[1]?.deliverAs, undefined);
+			handlers.get("input")?.({ source: "extension", text: sent[1]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.deliveryStatus, "delivered");
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps auto steering queued while agent_end will retry", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-retry-steering-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			process.env[SUBAGENT_STEER_ACK_DIR_ENV] = path.join(dir, "control", "steer-acks", "0");
+			process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: Array<{ content: string; deliverAs?: string }> = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+			} as never);
+			handlers.get("session_start")?.({});
+			handlers.get("agent_start")?.({});
+			handlers.get("turn_start")?.({});
+			handlers.get("turn_end")?.({});
+			handlers.get("agent_end")?.({ willRetry: true });
+
+			writeSteerRequestToDir(inbox, { type: "steer", id: "retry-auto", ts: 1, message: "Keep this guidance.", mode: "auto" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[0]?.deliverAs, "followUp");
+			handlers.get("input")?.({ source: "extension", streamingBehavior: "followUp", text: sent[0]?.content });
+			assert.equal(consumeSteerAcks(dir)[0]?.state, "queued");
+
+			handlers.get("turn_start")?.({});
+			const delivered = consumeSteerAcks(dir)[0];
+			assert.equal(delivered?.requestId, "retry-auto");
+			assert.equal(delivered?.deliveryStatus, "delivered");
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to idle delivery for runtimes without agent_settled", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-legacy-steering-runtime-"));
+		try {
+			const inbox = path.join(dir, "inbox");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const sent: Array<{ content: string; deliverAs?: string }> = [];
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) { handlers.set(event, handler); },
+				sendUserMessage(content: string, options?: { deliverAs?: string }) { sent.push({ content, deliverAs: options?.deliverAs }); },
+			} as never, { legacySettleFallbackMs: 5 });
+			handlers.get("session_start")?.({});
+			handlers.get("agent_start")?.({});
+			handlers.get("turn_start")?.({});
+			handlers.get("turn_end")?.({});
+			handlers.get("agent_end")?.({ willRetry: false });
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			writeSteerRequestToDir(inbox, { type: "steer", id: "legacy-auto", ts: 1, message: "Legacy idle.", mode: "auto" });
+			handlers.get("message_start")?.({});
+			assert.equal(sent[0]?.deliverAs, undefined);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("does not acknowledge sendUserMessage until the correlated Pi input event arrives", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-ack-runtime-"));
 		try {

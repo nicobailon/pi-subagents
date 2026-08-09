@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Keep child steering inbox `auto` requests queued between `agent_end` and `agent_settled` so settlement-time guidance is not sent as an idle prompt too early. Thanks to @jtac for #928.
+
 ## [0.45.1] - 2026-08-09
 
 ### Changed
