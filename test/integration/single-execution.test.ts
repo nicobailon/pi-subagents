@@ -517,6 +517,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(liveStatus.currentPath ?? "", /src[/\\]example\.ts$/);
 		assert.equal(liveStatus.toolCount, 1);
 		assert.equal(liveStatus.steps?.[0]?.status, "running");
+		assert.equal(liveStatus.steps?.[0]?.agent, "echo");
+		assert.match(liveStatus.steps?.[0]?.sessionFile ?? "", /session\.jsonl$/);
+		assert.equal(fs.existsSync(liveStatus.steps?.[0]?.sessionFile ?? ""), true);
 		assert.equal(liveStatus.steps?.[0]?.activityState, "active_long_running");
 		assert.equal(typeof liveStatus.steps?.[0]?.lastActivityAt, "number");
 		assert.equal(liveStatus.steps?.[0]?.toolCount, 1);
@@ -616,6 +619,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 		assert.ok(childRunId);
+		const workflowStatus = JSON.parse(fs.readFileSync(path.join(started.details.asyncDir!, "status.json"), "utf-8")) as AsyncStatus;
+		const workflowStepSessionFile = workflowStatus.steps?.[0]?.sessionFile ?? "";
+		assert.equal(workflowStatus.steps?.[0]?.agent, "echo");
+		assert.match(workflowStepSessionFile, /session\.jsonl$/);
 		const childDir = path.join(DIRS.async, childRunId);
 		const childStatusPath = path.join(childDir, "status.json");
 		let childStatus: { state?: string; mode?: string; parentWorkflowRunId?: string; workflowKey?: string; parallelHandoff?: { path?: string } } = {};
@@ -635,6 +642,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const childResult = JSON.parse(fs.readFileSync(childResultPath, "utf-8")) as { parentWorkflowRunId?: string; workflowKey?: string };
 		assert.equal(childResult.parentWorkflowRunId, workflowRunId);
 		assert.equal(childResult.workflowKey, "background");
+		assert.equal(fs.existsSync(workflowStepSessionFile), true);
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
 		fs.rmSync(workflowResultPath, { force: true });
 		fs.rmSync(childDir, { recursive: true, force: true });

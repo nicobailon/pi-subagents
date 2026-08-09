@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Persist the actual agent and session file for workflow children when they start so their sessions can resume after a parent restart. Thanks to @Livan-pro for #932.
 - Retry steering requests that remain pending after manual compaction and fail unresolved requests at shutdown. Thanks to @jtac for #933.
 - Omit undefined object fields from `workflowScript` return values so completed `runs.all` results are not discarded when callers include unsupported fields such as `status` (#930).
 - Keep child steering inbox `auto` requests queued between `agent_end` and `agent_settled` so settlement-time guidance is not sent as an idle prompt too early. Thanks to @jtac for #928.

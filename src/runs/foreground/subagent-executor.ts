@@ -3942,6 +3942,8 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 	};
 }
 
+const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionFile?: string }) => void>();
+
 function workflowChildResult(key: string, result: AgentToolResult<Details>): WorkflowScriptChildResult {
 	const receiptOutput = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
 	const output = result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
@@ -4159,6 +4161,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 		preserveActiveSession = false,
 	): Promise<AgentToolResult<Details>> => {
+		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		if (!preserveActiveSession) deps.state.baseCwd = ctx.cwd;
@@ -4349,6 +4352,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 								patchMissionObjective(childParams.task);
 								const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions });
+								workflowLaunchObservers.set(childRequest, (launch) => {
+									const step = status.steps?.find((candidate) => candidate.workflowKey === key);
+									if (!step) return;
+									step.agent = launch.agent;
+									step.sessionFile = launch.sessionFile;
+									persist();
+								});
 								const result = await execute(randomUUID(), childRequest, workflowSignal, (update) => {
 									const progress = update.details.progress?.[0];
 									const step = status.steps?.find((candidate) => candidate.workflowKey === key);
@@ -5421,6 +5431,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
 		let nestedForegroundStarted = false;
 		try {
+			if (workflowLaunchObserver) {
+				const singleTask = hasTasks && effectiveParams.tasks?.length === 1 ? effectiveParams.tasks[0] : undefined;
+				const launch = hasSingle
+					? { agent: effectiveParams.agent!, sessionFile: childSessionFileForTask(effectiveParams.agent!, 0, effectiveParams.model) }
+					: singleTask
+						? { agent: singleTask.agent, sessionFile: childSessionFileForTask(singleTask.agent, 0, singleTask.model) }
+						: undefined;
+				if (launch) {
+					workflowLaunchObservers.delete(params);
+					workflowLaunchObserver(launch);
+				}
+			}
 			const asyncResult = runAsyncPath(execData, deps);
 			if (asyncResult) return attachMission(withResolvedContext(withForkThinkingNotes(asyncResult, forkThinkingDowngrades), contextPolicy.contextSummary));
 			if (foregroundControl) {
