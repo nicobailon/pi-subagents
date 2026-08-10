@@ -969,6 +969,8 @@ export interface WaitCompletion {
 	mode?: string;
 	state?: string;
 	success?: boolean;
+	/** Versioned bounded output archive retained with the durable completion replay. */
+	archivePath?: string;
 	results?: WaitCompletionChild[];
 }
 

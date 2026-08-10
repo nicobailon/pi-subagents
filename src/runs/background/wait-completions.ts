@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ArtifactPaths, SubagentState, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
 import type { AsyncRunSummary } from "./async-status.ts";
+import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
@@ -68,12 +69,34 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
  * file is deleted after delivery, so this record is the only in-process source once
  * the watcher has consumed it.
  */
-export function recordWaitCompletion(state: SubagentState, runId: string, data: Record<string, unknown>, now: number, ttlMs: number): void {
+export function recordWaitCompletion(
+	state: SubagentState,
+	runId: string,
+	data: Record<string, unknown>,
+	now: number,
+	ttlMs: number,
+	persistence?: { resultsDir: string; sessionId: string },
+): void {
 	const store = state.completedResults ??= new Map();
 	for (const [key, entry] of store) {
 		if (now - entry.seenAt > ttlMs) store.delete(key);
 	}
-	store.set(runId, { seenAt: now, completion: toWaitCompletion(data, runId) });
+	let completion = toWaitCompletion(data, runId);
+	if (persistence) {
+		try {
+			completion = writeCompletionReplay({
+				...persistence,
+				runId,
+				completion,
+				data,
+				now,
+				ttlMs,
+			}).completion;
+		} catch (error) {
+			console.error(`Failed to persist completion replay for '${runId}':`, error);
+		}
+	}
+	store.set(runId, { seenAt: now, completion });
 }
 
 /**
@@ -102,10 +125,21 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 				});
 			}
 			// The watcher may have consumed the file between the store check and the
-			// read; its record is authoritative when present, otherwise the payload
-			// is gone and the text summary remains the only surface for this run.
+			// read. Prefer its in-memory record, then the durable replay written before
+			// result cleanup so watcher reloads do not lose completion details.
 			const late = state.completedResults?.get(run.id);
-			if (late) completions.push(late.completion);
+			if (late) {
+				completions.push(late.completion);
+				continue;
+			}
+			try {
+				const replay = readCompletionReplay(resultsDir, run.id, { sessionId: run.sessionId });
+				if (replay) completions.push(replay.completion);
+			} catch (replayError) {
+				throw new Error(`Failed to read completion replay for '${run.id}': ${errorMessage(replayError)}`, {
+					cause: replayError instanceof Error ? replayError : undefined,
+				});
+			}
 		}
 	}
 	return completions.length > 0 ? completions : undefined;

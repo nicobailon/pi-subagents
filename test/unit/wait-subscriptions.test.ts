@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../../src/runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../../src/runs/background/wait-subscriptions.ts";
+import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
 
@@ -120,10 +121,10 @@ describe("non-blocking wait subscriptions", () => {
 		const resultsDir = path.join(root, "results");
 		const subscriptionsDir = path.join(root, "subscriptions");
 		const bus = new TestBus();
-		const sent: Array<{ message: { content?: unknown }; options?: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{ message: { content?: unknown; details?: { completions?: Array<{ runId?: string; archivePath?: string }> } }; options?: { triggerTurn?: boolean } }> = [];
 		const pi = {
 			events: bus,
-			sendMessage(message: { content?: unknown }, options?: { triggerTurn?: boolean }) { sent.push({ message, options }); },
+			sendMessage(message: { content?: unknown; details?: { completions?: Array<{ runId?: string; archivePath?: string }> } }, options?: { triggerTurn?: boolean }) { sent.push({ message, options }); },
 		};
 		try {
 			writeStatus(asyncRoot, "run-exact", "running", { sessionId: "session-a", pid: 999_999 });
@@ -145,9 +146,19 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(sent.length, 0, "an unrelated exact run must not satisfy the subscription");
 
 			writeStatus(asyncRoot, "run-exact", "complete", { sessionId: "session-a" });
+			recordWaitCompletion(restoredState, "run-exact", {
+				agent: "worker",
+				state: "complete",
+				success: true,
+				results: [{ agent: "worker", success: true, output: "done" }],
+			}, Date.now(), 60_000, { resultsDir, sessionId: "session-a" });
+			restoredState.completedResults?.clear();
 			bus.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-exact" });
 			assert.equal(sent.length, 1);
 			assert.match(String(sent[0]?.message.content), /run run-exact: completed/);
+			assert.match(String(sent[0]?.message.content), /Completion archive:/);
+			assert.equal(sent[0]?.message.details?.completions?.[0]?.runId, "run-exact");
+			assert.ok(sent[0]?.message.details?.completions?.[0]?.archivePath);
 			assert.equal(sent[0]?.options?.triggerTurn, true);
 			assert.equal(restoredState.waitSubscriptions?.has(registration.token), false);
 			assert.equal(fs.existsSync(path.join(subscriptionsDir, `${registration.token}.json`)), false);

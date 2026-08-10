@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Preserve short-lived completion replay records and bounded output archives so waits can recover consumed async result details after watcher delivery or restart.
+
 ## [0.45.2] - 2026-08-10
 
 ### Fixed

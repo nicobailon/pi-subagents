@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
+import { readCompletionReplay } from "./completion-replay.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
 	DIRS,
@@ -14,6 +15,7 @@ import {
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
 	type SubagentState,
+	type WaitCompletion,
 	type WaitSubscriptionRecord,
 } from "../../shared/types.ts";
 
@@ -104,7 +106,7 @@ export function createWaitSubscriptionManager(
 		unresolvedRestoredForegroundTokens.delete(record.token);
 	};
 
-	const settle = (record: WaitSubscriptionRecord, outcome: string, detail: string) => {
+	const settle = (record: WaitSubscriptionRecord, outcome: string, detail: string, completion?: WaitCompletion) => {
 		if (disposed || state.currentSessionId !== record.sessionId) return;
 		try {
 			remove(record);
@@ -117,7 +119,12 @@ export function createWaitSubscriptionManager(
 				customType: "subagent-wait-subscription",
 				content: `Wait subscription ${record.token} fired for run ${record.runId}: ${outcome}. ${detail}`,
 				display: true,
-				details: { token: record.token, runId: record.runId, outcome },
+				details: {
+					token: record.token,
+					runId: record.runId,
+					outcome,
+					...(completion ? { completions: [completion] } : {}),
+				},
 			}, { triggerTurn: true });
 		} catch (error) {
 			console.error(`Failed to deliver wait subscription '${record.token}' after clearing it:`, error);
@@ -167,7 +174,15 @@ export function createWaitSubscriptionManager(
 			return;
 		}
 		if (run.state !== "queued" && run.state !== "running") {
-			settle(record, run.state === "complete" ? "completed" : run.state, formatResumeFirstFailedRunDetail(run) ?? "Inspect the run status for its final output.");
+			let completion: WaitCompletion | undefined;
+			try {
+				completion = readCompletionReplay(resultsDir, record.runId, { sessionId: record.sessionId, now: now() })?.completion;
+			} catch (error) {
+				console.error(`Failed to read completion replay for wait subscription '${record.token}':`, error);
+			}
+			const detail = formatResumeFirstFailedRunDetail(run) ?? "Inspect the run status for its final output.";
+			const archiveDetail = completion?.archivePath ? ` Completion archive: ${completion.archivePath}.` : "";
+			settle(record, run.state === "complete" ? "completed" : run.state, `${detail}${archiveDetail}`, completion);
 		}
 	};
 

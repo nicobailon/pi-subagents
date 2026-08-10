@@ -156,10 +156,12 @@ export function createResultWatcher(
 			}
 			const epoch = deliveryEpoch;
 			if (!ownsSession(data.sessionId, epoch)) return;
-			// Recorded before dedupe and before the unlink below: the result file is
-			// the only durable carrier of the per-run payload, and subagent_wait
-			// surfaces this record in details once the file is gone.
-			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs);
+			// Recorded before dedupe and before the unlink below so subagent_wait can
+			// use the in-memory record or its bounded durable replay after cleanup.
+			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
+				resultsDir,
+				sessionId: data.sessionId,
+			});
 			const hasExplicitNestedChildren = data.nestedChildren !== undefined;
 			let nestedChildren = compactNestedResultChildren(sanitizeNestedResultChildren(data.nestedChildren, resultPath, "nestedChildren"));
 			if (!nestedChildren?.length && !hasExplicitNestedChildren) {
