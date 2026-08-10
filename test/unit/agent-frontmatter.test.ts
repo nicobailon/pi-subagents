@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -21,6 +22,50 @@ function writeJson(filePath: string, value: unknown): void {
 function writeAgent(filePath: string, body: string): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, body, "utf-8");
+}
+
+function createNestedLinkedWorktree(): { repo: string; worktree: string } {
+	const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-linked-worktree-"));
+	tempDirs.push(repo);
+	execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+	execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+	execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+	fs.writeFileSync(path.join(repo, "base.txt"), "base\n", "utf-8");
+	execFileSync("git", ["add", "base.txt"], { cwd: repo });
+	execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+	const worktree = path.join(repo, ".worktrees", "linked");
+	execFileSync("git", ["worktree", "add", "-b", "linked", worktree], { cwd: repo, stdio: "ignore" });
+	return { repo, worktree };
+}
+
+function writeLinkedWorktreePackage(repo: string): { packageAgentName: string; packageAgentPath: string; settingsPath: string } {
+	const packageAgentName = "issue950-workflow.reviewer";
+	const packageRoot = path.join(repo, ".pi", "vendor", "workflow");
+	const packageAgentPath = path.join(packageRoot, "agents", "reviewer.md");
+	const settingsPath = path.join(repo, ".pi", "settings.json");
+	writeJson(settingsPath, {
+		packages: [{ source: "file:./vendor/workflow" }],
+		subagents: {
+			projectRootResolution: "git-root",
+			agentOverrides: {
+				reviewer: { model: "issue950/outer-model" },
+			},
+		},
+	});
+	writeJson(path.join(packageRoot, "package.json"), {
+		name: "issue950-workflow",
+		"pi-subagents": { agents: ["./agents"] },
+	});
+	writeAgent(packageAgentPath, `---
+name: reviewer
+package: issue950-workflow
+description: Review from the primary checkout.
+---
+
+Review the linked worktree.
+`);
+	return { packageAgentName, packageAgentPath, settingsPath };
 }
 
 function withTempHome<T>(fn: (home: string) => T): T {
@@ -759,6 +804,51 @@ Plan outer project work.
 		const reviewer = agents.find((candidate) => candidate.name === "reviewer");
 		assert.equal(reviewer?.model, "openai/gpt-5.4");
 		assert.equal(reviewer?.override?.path, path.join(dir, ".pi", "settings.json"));
+	}));
+
+	it("keeps git-root discovery stable when a nested linked worktree creates incidental .pi state", () => withTempHome(() => {
+		const { repo, worktree } = createNestedLinkedWorktree();
+		const { packageAgentName, packageAgentPath, settingsPath } = writeLinkedWorktreePackage(repo);
+
+		const before = discoverAgents(worktree, "both").agents;
+		const beforePackageAgent = before.find((candidate) => candidate.name === packageAgentName);
+		assert.ok(beforePackageAgent);
+		assert.equal(beforePackageAgent.source, "package");
+		assert.equal(beforePackageAgent.filePath, packageAgentPath);
+		assert.equal(before.find((candidate) => candidate.name === "reviewer")?.override?.path, settingsPath);
+
+		fs.mkdirSync(path.join(worktree, ".pi", "todos"), { recursive: true });
+
+		const after = discoverAgents(worktree, "both").agents;
+		const all = discoverAgentsAll(worktree);
+		const afterPackageAgent = after.find((candidate) => candidate.name === packageAgentName);
+		const allPackageAgent = all.package.find((candidate) => candidate.name === packageAgentName);
+		assert.equal(afterPackageAgent?.source, beforePackageAgent.source);
+		assert.equal(afterPackageAgent?.filePath, beforePackageAgent.filePath);
+		assert.equal(allPackageAgent?.filePath, afterPackageAgent.filePath);
+		assert.equal(all.projectSettingsPath, settingsPath);
+		assert.equal(after.find((candidate) => candidate.name === "reviewer")?.override?.path, all.projectSettingsPath);
+	}));
+
+	it("lets a linked worktree opt back into nearest-root discovery", () => withTempHome(() => {
+		const { repo, worktree } = createNestedLinkedWorktree();
+		const { packageAgentName } = writeLinkedWorktreePackage(repo);
+		const worktreeSettingsPath = path.join(worktree, ".pi", "settings.json");
+		writeJson(worktreeSettingsPath, {
+			subagents: {
+				projectRootResolution: "nearest",
+				agentOverrides: {
+					reviewer: { model: "issue950/worktree-model" },
+				},
+			},
+		});
+
+		const discovered = discoverAgents(worktree, "both").agents;
+		const all = discoverAgentsAll(worktree);
+		assert.equal(discovered.find((candidate) => candidate.name === packageAgentName), undefined);
+		assert.equal(all.package.find((candidate) => candidate.name === packageAgentName), undefined);
+		assert.equal(discovered.find((candidate) => candidate.name === "reviewer")?.model, "issue950/worktree-model");
+		assert.equal(all.projectSettingsPath, worktreeSettingsPath);
 	}));
 
 	it("does not register legacy skill files from broad package agent roots", () => withTempHome(() => {

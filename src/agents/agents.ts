@@ -659,16 +659,25 @@ function findConfiguredProjectRoot(cwd: string): string | null {
 	const nearestRoot = candidates[0];
 	if (!nearestRoot) return null;
 
-	const nearestMode = readProjectRootResolution(nearestRoot);
-	if (nearestMode === "nearest") return nearestRoot;
+	let policyRoot: string | undefined;
+	let policyRootIndex = -1;
+	for (const [index, candidate] of candidates.entries()) {
+		const mode = readProjectRootResolution(candidate);
+		if (mode === "nearest") return nearestRoot;
+		if (mode === "git-root") {
+			policyRoot = candidate;
+			policyRootIndex = index;
+			break;
+		}
+	}
+	if (!policyRoot) return nearestRoot;
 
 	const gitRoot = findNearestGitRoot(cwd);
-	const gitProjectRoot = gitRoot ? candidates.find((candidate) => path.resolve(candidate) === path.resolve(gitRoot)) : undefined;
-	if (gitProjectRoot && (nearestMode === "git-root" || readProjectRootResolution(gitProjectRoot) === "git-root")) {
-		return gitProjectRoot;
-	}
-
-	return nearestRoot;
+	const gitProjectRoot = gitRoot
+		? candidates.slice(policyRootIndex).find((candidate) => path.resolve(candidate) === path.resolve(gitRoot))
+		: undefined;
+	const configuredGitRoot = fs.existsSync(path.join(policyRoot, ".git")) ? policyRoot : undefined;
+	return gitProjectRoot ?? configuredGitRoot ?? nearestRoot;
 }
 
 function getUserAgentSettingsPath(): string {
