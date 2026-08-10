@@ -270,6 +270,23 @@ subagent({ action: "project.close", cwd: "/path/to/repo" })
 
 A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority; existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi-subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
 
+Other Pi extensions should use the versioned public TypeScript surface instead of invoking the model-facing tool or importing inspector internals:
+
+```ts
+import {
+  PROJECT_PANES_API_VERSION,
+  openProjectPane,
+  getProjectPaneStatus,
+  closeProjectPane,
+} from "pi-subagents/project-panes";
+
+const opened = await openProjectPane({ cwd: "/path/to/repo", focus: false });
+const status = await getProjectPaneStatus({ cwd: "/path/to/repo" });
+const closed = await closeProjectPane({ cwd: "/path/to/repo", requireIdle: true });
+```
+
+The API returns discriminated structured results with canonical project root, binding path, pane identity, bounded Herdr runtime fields, and stable error codes. `requireIdle: true` fails closed unless Herdr explicitly reports `agent_status: "idle"`; use it when an owning extension must not close a working or blocked pane. The API deliberately reports `trust: "human-verification-required"`: it never bypasses or claims to attest Pi's project-trust prompt. `PROJECT_PANES_API_VERSION` is currently `1`.
+
 ## Runtime files
 
 The main runtime files in this repository:

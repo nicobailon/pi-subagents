@@ -63,6 +63,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
 		"./pi-args": "./src/api/pi-args.ts",
 		"./shared-types": "./src/api/shared-types.ts",
+		"./project-panes": "./src/api/project-panes.ts",
 	});
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
@@ -89,6 +90,11 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
 	assert.equal("TEMP_ROOT_DIR" in sharedTypes, false);
+	const projectPanes = await import("pi-subagents/project-panes");
+	assert.equal(projectPanes.PROJECT_PANES_API_VERSION, 1);
+	assert.equal(typeof projectPanes.openProjectPane, "function");
+	assert.equal(typeof projectPanes.getProjectPaneStatus, "function");
+	assert.equal(typeof projectPanes.closeProjectPane, "function");
 });
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {

@@ -15,7 +15,8 @@
     "./control-channel": "./src/api/control-channel.ts",
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./pi-args": "./src/api/pi-args.ts",
-    "./shared-types": "./src/api/shared-types.ts"
+    "./shared-types": "./src/api/shared-types.ts",
+    "./project-panes": "./src/api/project-panes.ts"
   },
   "repository": {
     "type": "git",

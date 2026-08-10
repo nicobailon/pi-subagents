@@ -9,6 +9,7 @@ import { handleHerdrInspectorAction, readHerdrInspectorBinding } from "../../src
 import { createHerdrClient, detectHerdr, parseHerdrVersion, supportsRawPanes, type HerdrClient } from "../../src/inspectors/herdr/client.ts";
 import { formatInspectorDashboard, submitInspectorControl } from "../../src/inspectors/herdr/inspector-runner.ts";
 import { handleHerdrProjectPaneAction, readHerdrProjectPaneBinding } from "../../src/inspectors/herdr/project-panes.ts";
+import { PROJECT_PANES_API_VERSION, createProjectPaneManager } from "../../src/api/project-panes.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
 import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
@@ -191,6 +192,10 @@ describe("Herdr inspector", () => {
 					calls.push(args);
 					if (args[0] === "--version") return { ok: true, data: "herdr 0.7.5" as T };
 					if (args[0] === "pane" && args[1] === "split") return { ok: true, data: { pane: { pane_id: "w1:p10" } } as T };
+					if (args[0] === "pane" && args[1] === "get") return { ok: true, data: { pane: {
+						pane_id: "w1:p10", agent: "pi", agent_status: "idle", cwd: projectRoot,
+						foreground_cwd: projectRoot, focused: false, terminal_title_stripped: "Pi · project",
+					} } as T };
 					return { ok: true, data: {} as T };
 				},
 			};
@@ -217,6 +222,18 @@ describe("Herdr inspector", () => {
 			assert.equal(status.isError, undefined, text(status));
 			assert.match(text(status), /project pane w1:p10 is open/);
 
+			const manager = createProjectPaneManager({ client });
+			const publicStatus = await manager.status({ cwd: root });
+			assert.equal(publicStatus.ok, true);
+			if (publicStatus.ok) {
+				assert.equal(publicStatus.data.apiVersion, PROJECT_PANES_API_VERSION);
+				assert.equal(publicStatus.data.state, "open");
+				assert.equal(publicStatus.data.runtime?.agentStatus, "idle");
+				assert.equal(publicStatus.data.runtime?.cwd, projectRoot);
+				assert.equal(publicStatus.data.safeToClose, true);
+				assert.equal(publicStatus.data.trust, "human-verification-required");
+			}
+
 			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: process.cwd(), client });
 			assert.equal(closed.isError, undefined, text(closed));
 			assert.match(text(closed), /Closed Herdr project pane w1:p10/);
@@ -225,6 +242,78 @@ describe("Herdr inspector", () => {
 		} finally {
 			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
 			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when an idle-only project pane close sees active work", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-busy-"));
+		try {
+			const projectRoot = fs.realpathSync(root);
+			const calls: string[][] = [];
+			let opened = false;
+			const client: HerdrClient = {
+				run: async <T>(args: string[]) => {
+					calls.push(args);
+					if (args[0] === "--version") return { ok: true, data: "herdr 0.8.0" as T };
+					if (args[0] === "pane" && args[1] === "split") return { ok: true, data: { pane: { pane_id: "w1:p11" } } as T };
+					if (args[0] === "pane" && args[1] === "run") { opened = true; return { ok: true, data: {} as T }; }
+					if (args[0] === "pane" && args[1] === "get" && opened) return { ok: true, data: { pane: {
+						pane_id: "w1:p11", agent: "pi", agent_status: "working", cwd: projectRoot,
+					} } as T };
+					return { ok: true, data: {} as T };
+				},
+			};
+			const manager = createProjectPaneManager({ client });
+			const open = await manager.open({ cwd: root, focus: false });
+			assert.equal(open.ok, true);
+			const closed = await manager.close({ cwd: root, requireIdle: true });
+			assert.equal(closed.ok, false);
+			if (!closed.ok) assert.equal(closed.error.code, "PANE_NOT_IDLE");
+			assert.equal(calls.some((args) => args.join(" ") === "pane close w1:p11"), false);
+			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p11");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves legacy model-facing recovery for transient and opaque pane inspection results", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-legacy-"));
+		try {
+			let splitCount = 0;
+			let getMode: "valid" | "timeout" | "opaque" = "valid";
+			const client: HerdrClient = {
+				run: async <T>(args: string[]) => {
+					if (args[0] === "--version") return { ok: true, data: "herdr 0.8.0" as T };
+					if (args[0] === "pane" && args[1] === "split") {
+						splitCount++;
+						return { ok: true, data: { pane: { pane_id: `w1:p3${splitCount}` } } as T };
+					}
+					if (args[0] === "pane" && args[1] === "get") {
+						if (getMode === "timeout") return { ok: false, error: { code: "TIMEOUT", message: "temporary" } };
+						if (getMode === "opaque") return { ok: true, data: {} as T };
+						return { ok: true, data: { pane: { pane_id: `w1:p3${splitCount}`, agent_status: "idle", cwd: root } } as T };
+					}
+					return { ok: true, data: {} as T };
+				},
+			};
+			const first = await handleHerdrProjectPaneAction("project.open", { cwd: root }, { cwd: root, client });
+			assert.equal(first.isError, undefined, text(first));
+			getMode = "timeout";
+			const recovered = await handleHerdrProjectPaneAction("project.open", { cwd: root }, { cwd: root, client });
+			assert.equal(recovered.isError, undefined, text(recovered));
+			assert.equal(splitCount, 2);
+			assert.equal(readHerdrProjectPaneBinding(root)?.paneId, "w1:p32");
+			getMode = "opaque";
+			const status = await handleHerdrProjectPaneAction("project.status", { cwd: root }, { cwd: root, client });
+			assert.equal(status.isError, undefined, text(status));
+			assert.match(text(status), /w1:p32 is open/);
+			const legacyBinding = readHerdrProjectPaneBinding(root)!;
+			fs.writeFileSync(path.join(root, ".pi-subagents", "project-panes", "herdr.json"), JSON.stringify({ ...legacyBinding, startupMessage: 42 }));
+			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: root, client });
+			assert.equal(closed.isError, undefined, text(closed));
+			assert.equal(readHerdrProjectPaneBinding(root), undefined);
+		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
