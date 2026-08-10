@@ -9,6 +9,7 @@
 
 ### Fixed
 - Give invalid `subagent` actions safe next steps and typo suggestions without suggesting destructive actions for ambiguous input.
+- Compact noisy repeated subagent live-output lines and bound workflow live-card rows so progress stays readable in the TUI (#947).
 
 ## [0.45.2] - 2026-08-10
 

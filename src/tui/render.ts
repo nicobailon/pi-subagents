@@ -202,6 +202,95 @@ function getToolCallLines(
 	return result.toolCalls?.map((toolCall) => expanded ? toolCall.expandedText : toolCall.text) ?? [];
 }
 
+const ansiEscapePattern = /\x1b\[[0-9;]*m/g;
+const noisyStatusPatterns = [
+	/^(?:i|we)\s+(?:will|need|can|should|am|are)\b/i,
+	/^i(?:'m|’m| am)\b/i,
+	/\bso i (?:will|need|can)\b/i,
+	/^(?:checking|fetching|reading|inspecting|verifying|collecting|confirming|polling)\b/i,
+];
+const liveOutputWordSignalPattern = /\b(?:access denied|denied|error|exception|fail(?:ed|ure)?|fatal|panic|rejected|timeout|timed out|unable|warning)\b/i;
+const liveOutputCodeSignalPattern = /\bE[A-Z0-9_]{2,}\b/;
+
+function oneLine(text: string): string {
+	return text.replace(ansiEscapePattern, "").replace(/\s+/g, " ").trim();
+}
+
+function hasLiveOutputSignal(line: string): boolean {
+	const clean = oneLine(line);
+	return liveOutputWordSignalPattern.test(clean) || liveOutputCodeSignalPattern.test(clean);
+}
+
+function isNoisyStatusLine(line: string): boolean {
+	const clean = oneLine(line);
+	return clean.length > 0
+		&& clean.length <= 240
+		&& !hasLiveOutputSignal(clean)
+		&& noisyStatusPatterns.some((pattern) => pattern.test(clean));
+}
+
+function latestActivityText(line: string): string {
+	return oneLine(line)
+		.replace(/^i (?:will|can|need to|am going to)\s+/i, "")
+		.replace(/^i(?:'m|’m| am)\s+/i, "");
+}
+
+function compactRecentOutputLines(recentOutput: string[] | undefined): string[] {
+	const lines = (recentOutput ?? []).map(oneLine).filter((line) => line && line !== "(running...)");
+	if (lines.length <= 5) return lines;
+
+	const noisyCount = lines.filter(isNoisyStatusLine).length;
+	if (noisyCount < 4 || noisyCount !== lines.length) {
+		const tail = lines.slice(-5);
+		const hiddenSignals = lines.slice(0, -5).filter(hasLiveOutputSignal);
+		if (hiddenSignals.length === 0) return tail;
+		return [
+			`… ${hiddenSignals.length} older signal ${hiddenSignals.length === 1 ? "line" : "lines"}: ${hiddenSignals.at(-1)}`,
+			...lines.slice(-4),
+		];
+	}
+
+	const counts = new Map<string, number>();
+	for (const line of lines) counts.set(line.toLowerCase(), (counts.get(line.toLowerCase()) ?? 0) + 1);
+	const exactRepeatCount = Math.max(...counts.values());
+	const latest = latestActivityText(lines[lines.length - 1]!);
+	const repeat = exactRepeatCount > 1 ? ` · repeated ${exactRepeatCount}×` : "";
+	return [
+		`↻ ${lines.length} progress updates${repeat} · latest: ${latest}`,
+		"pattern: repeated short status lines",
+	];
+}
+
+function compactWorkflowError(error: string): string {
+	const outputMatch = error.match(/(?:^|\n)Output:\s*([\s\S]+)/);
+	if (!outputMatch) return oneLine(error);
+	const prefix = oneLine(error.slice(0, outputMatch.index)).replace(/:$/, "") || "Failed";
+	const outputLines = outputMatch[1]!.split(/\r?\n/).map(oneLine).filter(Boolean);
+	const allOutputLinesAreNoisy = outputLines.length > 0 && outputLines.every(isNoisyStatusLine);
+	const latest = outputLines.at(-1);
+	return allOutputLinesAreNoisy && latest
+		? `${prefix} · latest: ${latestActivityText(latest)}`
+		: `${prefix} · ${oneLine(outputMatch[1] ?? "")}`;
+}
+
+const WORKFLOW_LIVE_ROW_LIMIT = 8;
+
+function visibleWorkflowRows(rows: WorkflowChatProgressRow[]): { rows: WorkflowChatProgressRow[]; hiddenRows: number } {
+	if (rows.length <= WORKFLOW_LIVE_ROW_LIMIT) return { rows, hiddenRows: 0 };
+	const selected = new Set<string>();
+	const add = (row: WorkflowChatProgressRow): void => {
+		if (selected.size >= WORKFLOW_LIVE_ROW_LIMIT || selected.has(row.key)) return;
+		selected.add(row.key);
+	};
+	for (const row of [...rows].reverse()) {
+		if (row.state === "failed") add(row);
+	}
+	for (const row of [...rows].reverse()) add(row);
+	return {
+		rows: rows.filter((row) => selected.has(row.key)),
+		hiddenRows: rows.length - selected.size,
+	};
+}
 
 function snapshotNowForProgress(progress: Pick<AgentProgress, "currentToolStartedAt" | "durationMs" | "lastActivityAt">): number | undefined {
 	if (progress.currentToolStartedAt !== undefined && progress.durationMs !== undefined) return progress.currentToolStartedAt + progress.durationMs;
@@ -1038,7 +1127,7 @@ function foregroundStyleWidgetStepLines(
 				const argsPreview = tool.args.length <= maxArgsLen ? tool.args : `${tool.args.slice(0, maxArgsLen)}...`;
 				lines.push(`      ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
 			}
-			for (const line of step.recentOutput?.slice(-5) ?? []) {
+			for (const line of compactRecentOutputLines(step.recentOutput)) {
 				lines.push(`      ${theme.fg("dim", line)}`);
 			}
 		}
@@ -1513,12 +1602,14 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		c.addChild(new Text(truncLine(theme.fg("dim", "  ◦ waiting for workflow child launches"), width), 0, 0));
 		return c;
 	}
-	for (const row of rows) {
+	const visible = visibleWorkflowRows(rows);
+	if (visible.hiddenRows > 0) c.addChild(new Text(truncLine(theme.fg("dim", `  … ${visible.hiddenRows} older workflow rows hidden`), width), 0, 0));
+	for (const row of visible.rows) {
 		const status = workflowRowStateLabel(row, theme);
-		const label = row.label && row.label !== row.key ? ` ${row.label}` : "";
+		const label = row.label && row.label !== row.key ? ` ${oneLine(row.label)}` : "";
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
-		const error = row.error ? ` ${theme.fg("error", `· ${row.error}`)}` : "";
+		const error = row.error ? ` ${theme.fg("error", `· ${compactWorkflowError(row.error)}`)}` : "";
 		c.addChild(new Text(truncLine(`  ${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
 	}
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `  Emits  ${workflow.emits.length}`), width), 0, 0));
@@ -1762,7 +1853,7 @@ export function renderSubagentResult(
 					c.addChild(new Text(fit(theme.fg("dim", `${t.tool}: ${argsPreview}`)), 0, 0));
 				}
 			}
-			for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
+			for (const line of compactRecentOutputLines(r.progress.recentOutput)) {
 				c.addChild(new Text(fit(theme.fg("dim", `  ${line}`)), 0, 0));
 			}
 			if (toolLine || liveStatusLine || r.progress.recentTools?.length || r.progress.recentOutput?.length || r.artifactPaths) {
@@ -1995,8 +2086,7 @@ export function renderSubagentResult(
 					c.addChild(new Text(fit(theme.fg("dim", `      ${t.tool}: ${argsPreview}`)), 0, 0));
 				}
 			}
-			const recentLines = (rProg.recentOutput ?? []).slice(-5);
-			for (const line of recentLines) {
+			for (const line of compactRecentOutputLines(rProg.recentOutput)) {
 				c.addChild(new Text(fit(theme.fg("dim", `      ${line}`)), 0, 0));
 			}
 		}

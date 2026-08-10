@@ -482,6 +482,119 @@ describe("subagent async widget rendering", () => {
 		assert.match(expandedText, /checking expanded state/);
 	});
 
+	it("compacts noisy repeated live output in expanded async widget rows", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-noisy",
+			asyncDir: "/tmp/noisy",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					currentTool: "read",
+					currentToolArgs: "src/tui/render.ts",
+					currentToolStartedAt: now - 2000,
+					recentOutput: [
+						"I will read the required plan first.",
+						"I will inspect the exact head.",
+						"I will read the relevant implementation seams.",
+						"I will verify the action list.",
+						"I will inspect the public tool schema.",
+						"I will check the async launch path.",
+						"I will read agent default application path.",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expandedText, /↻ 7 progress updates/);
+		assert.match(expandedText, /latest: read agent default application path/);
+		assert.match(expandedText, /pattern: repeated short status lines/);
+		assert.doesNotMatch(expandedText, /required plan first/);
+	});
+
+	it("keeps mixed live output raw instead of hiding non-status lines", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-mixed",
+			asyncDir: "/tmp/mixed",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					recentOutput: [
+						"I will read the required plan first.",
+						"I will inspect the exact head.",
+						"I will verify the action list.",
+						"I will check the async launch path.",
+						"error: failed to fetch review threads",
+						"details: GraphQL returned 502",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.doesNotMatch(expandedText, /↻/);
+		assert.match(expandedText, /error: failed to fetch review threads/);
+		assert.match(expandedText, /details: GraphQL returned 502/);
+	});
+
+	it("keeps status-looking error signals visible", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-status-error",
+			asyncDir: "/tmp/status-error",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					recentOutput: [
+						"Checking permissions: Access Denied",
+						"Checking token state: error from GitHub",
+						"Checking CI: failed",
+						"Checking retry: timed out",
+						"Checking fallback: unable to recover",
+						"Checking final status: rejected",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.doesNotMatch(expandedText, /↻/);
+		assert.match(expandedText, /older signal line: Checking permissions: Access Denied/);
+		assert.match(expandedText, /Checking final status: rejected/);
+	});
+
 	it("shows step detail and configured live detail key hint for running single async jobs with steps", () => {
 		const now = Date.now();
 		const job = {
