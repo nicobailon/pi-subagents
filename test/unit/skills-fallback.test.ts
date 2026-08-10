@@ -80,6 +80,29 @@ describe("skills filesystem fallback", () => {
 		assert.equal(discovered?.description, "Test description");
 	});
 
+	it("reads block scalar descriptions for discovery and child injection", () => {
+		const cases = [
+			["|", "first line\nsecond line"],
+			["|-", "first line\nsecond line"],
+			[">", "first line second line"],
+			[">-", "first line second line"],
+		] as const;
+
+		for (const [index, [indicator]] of cases.entries()) {
+			makeProjectSkill(tempDir, `block-scalar-${index}`, "Use block scalar metadata.", `${indicator}\n  first line\n  second line`);
+		}
+
+		for (const [index, [, description]] of cases.entries()) {
+			const name = `block-scalar-${index}`;
+			const discovered = discoverAvailableSkills(tempDir).find((skill) => skill.name === name);
+			assert.equal(discovered?.description, description);
+
+			const { resolved, missing } = resolveSkills([name], tempDir);
+			assert.deepEqual(missing, []);
+			assert.match(buildSkillInjection(resolved), new RegExp(`<description>${description.replace("\n", "\\n")}</description>`));
+		}
+	});
+
 	it("discovers project skills nested below grouping directories", () => {
 		writeSkillFile(
 			path.join(tempDir, ".pi", "skills", "shell", "issue-262-nested-skill"),

@@ -83,12 +83,13 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 	let currentBlockLines: string[] | null = null;
 	let currentIndent: number | null = null;
 	let currentFolded = false;
+	let currentLiteral = false;
 
 	for (const line of lines) {
 		const indent = line.search(/\S|$/); // position of first non-whitespace char
 		const trimmed = line.trim();
 
-		if (currentKey !== null && currentBlockLines !== null && (indent > (currentIndent ?? 0) || (currentFolded && trimmed === ""))) {
+		if (currentKey !== null && currentBlockLines !== null && (indent > (currentIndent ?? 0) || ((currentFolded || currentLiteral) && trimmed === ""))) {
 			// This line is part of the current block value
 			currentBlockLines.push(line);
 			continue;
@@ -109,6 +110,7 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 			currentBlockLines = null;
 			currentIndent = null;
 			currentFolded = false;
+			currentLiteral = false;
 		}
 
 		const match = line.match(/^([\w-]+):\s*(.*)$/);
@@ -119,13 +121,15 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 			const isQuoted = (rawValue.startsWith('"') && rawValue.endsWith('"')) || (rawValue.startsWith("'") && rawValue.endsWith("'"));
 			const value = isQuoted ? rawValue.slice(1, -1) : rawValue;
 			const isFolded = !isQuoted && (rawValue === ">" || rawValue === ">-");
+			const isLiteral = !isQuoted && (rawValue === "|" || rawValue === "|-");
 
-			if (value === "" || isFolded) {
-				// Key with empty value or folded block indicator — defer storing until we see indent
+			if (value === "" || isFolded || isLiteral) {
+				// Key with empty value or block scalar indicator — defer storing until we see indent
 				currentKey = key;
 				currentBlockLines = [];
 				currentIndent = indent;
 				currentFolded = isFolded;
+				currentLiteral = isLiteral;
 			} else {
 				// Simple key: value
 				frontmatter[key] = value;

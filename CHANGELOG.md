@@ -10,6 +10,7 @@
 
 ### Fixed
 - Keep `git-root` project agent and package discovery stable when incidental `.pi` state appears in a nested linked worktree. Thanks to @klajdo-f for #950.
+- Read skill descriptions from YAML block scalars instead of exposing their markers. Thanks to @ashlineldridge for #945.
 - Give invalid `subagent` actions safe next steps and typo suggestions without suggesting destructive actions for ambiguous input.
 - Compact noisy repeated subagent live-output lines and bound workflow live-card rows so progress stays readable in the TUI (#947).
 

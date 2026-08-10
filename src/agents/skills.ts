@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { parseFrontmatter } from "./frontmatter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 
 export type SkillSource =
@@ -395,15 +396,7 @@ function chooseHigherPrioritySkill(existing: CachedSkillEntry | undefined, candi
 }
 
 function parseSkillDescription(content: string): string | undefined {
-	const normalized = content.replace(/\r\n/g, "\n");
-	if (!normalized.startsWith("---")) return undefined;
-
-	const endIndex = normalized.indexOf("\n---", 3);
-	if (endIndex === -1) return undefined;
-
-	const frontmatter = normalized.slice(3, endIndex).trim();
-	const match = frontmatter.match(/^description:\s*(.+)$/m);
-	return match?.[1]?.trim().replace(/^['\"]|['\"]$/g, "");
+	return parseFrontmatter(content).frontmatter.description;
 }
 
 function maybeReadSkillDescription(filePath: string): string | undefined {

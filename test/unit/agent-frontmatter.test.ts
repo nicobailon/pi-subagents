@@ -139,6 +139,18 @@ body`);
 		assert.equal(parsed.frontmatter.other, ">-");
 	});
 
+	it("preserves lines for | and |-", () => {
+		for (const indicator of ["|", "|-"]) {
+			const parsed = parseFrontmatter(`---
+description: ${indicator}
+  first line
+  second line
+---
+body`);
+			assert.equal(parsed.frontmatter.description, "first line\nsecond line");
+		}
+	});
+
 	it("preserves more-indented lines and repeated whitespace-only separators", () => {
 		const parsed = parseFrontmatter(`---
 description: >
