@@ -39,6 +39,9 @@ export type ProjectPaneErrorCode = HerdrErrorCode
 	| "INVALID_PROJECT_ROOT"
 	| "INVALID_PANE_RESPONSE"
 	| "INVALID_BINDING"
+	| "BINDING_READ_FAILED"
+	| "BINDING_WRITE_FAILED"
+	| "BINDING_REMOVE_FAILED"
 	| "PANE_NOT_IDLE"
 	| "PANE_OWNERSHIP_UNVERIFIED";
 
@@ -171,16 +174,24 @@ function parseBinding(value: unknown, strict = false): HerdrProjectPaneBinding |
 	return input as HerdrProjectPaneBinding;
 }
 
-interface BindingReadResult {
-	state: "absent" | "invalid" | "valid";
-	binding?: HerdrProjectPaneBinding;
-}
+type BindingReadResult =
+	| { state: "absent" }
+	| { state: "invalid" }
+	| { state: "read-error"; cause: unknown }
+	| { state: "valid"; binding: HerdrProjectPaneBinding };
 
 function readBinding(projectRoot: string, strict: boolean): BindingReadResult {
 	const file = projectPaneBindingPath(projectRoot);
-	if (!fs.existsSync(file)) return { state: "absent" };
+	let raw: string;
 	try {
-		const binding = parseBinding(JSON.parse(fs.readFileSync(file, "utf-8")), strict);
+		raw = fs.readFileSync(file, "utf-8");
+	} catch (cause) {
+		const code = (cause as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return { state: "absent" };
+		return { state: "read-error", cause };
+	}
+	try {
+		const binding = parseBinding(JSON.parse(raw), strict);
 		return binding ? { state: "valid", binding } : { state: "invalid" };
 	} catch {
 		return { state: "invalid" };
@@ -189,12 +200,26 @@ function readBinding(projectRoot: string, strict: boolean): BindingReadResult {
 
 /** Legacy model-facing reader; preserves the original required-field-only parsing contract. */
 export function readHerdrProjectPaneBinding(projectRoot: string): HerdrProjectPaneBinding | undefined {
-	return readBinding(projectRoot, false).binding;
+	const read = readBinding(projectRoot, false);
+	return read.state === "valid" ? read.binding : undefined;
 }
 
 /** Strict public reader for extension integrations. */
-export function readProjectPaneBinding(projectRoot: string): HerdrProjectPaneBinding | undefined {
-	return readBinding(projectRoot, true).binding;
+export function readProjectPaneBinding(projectRoot: string): ProjectPaneResult<HerdrProjectPaneBinding | undefined> {
+	const read = readBinding(projectRoot, true);
+	if (read.state === "absent") return { ok: true, data: undefined };
+	if (read.state === "read-error") {
+		const bindingPath = projectPaneBindingPath(projectRoot);
+		return projectPaneError("BINDING_READ_FAILED", `Failed to read project pane binding '${bindingPath}': ${read.cause instanceof Error ? read.cause.message : String(read.cause)}`, {
+			projectRoot, bindingPath, details: fileSystemErrorDetails(read.cause),
+		});
+	}
+	if (read.state === "invalid") {
+		return projectPaneError("INVALID_BINDING", `Project pane binding '${projectPaneBindingPath(projectRoot)}' is malformed.`, {
+			projectRoot, bindingPath: projectPaneBindingPath(projectRoot),
+		});
+	}
+	return { ok: true, data: read.binding };
 }
 
 function paneRecord(value: unknown): Record<string, unknown> | undefined {
@@ -276,13 +301,20 @@ function projectPaneOwnership(runtime: ProjectPaneRuntime, binding: HerdrProject
 function bindingForManager(projectRoot: string, legacyToolCompatibility: boolean | undefined): ProjectPaneResult<HerdrProjectPaneBinding | undefined> {
 	const read = readBinding(projectRoot, !legacyToolCompatibility);
 	if (read.state === "absent") return { ok: true, data: undefined };
+	if (read.state === "read-error") {
+		if (legacyToolCompatibility) return { ok: true, data: undefined };
+		const bindingPath = projectPaneBindingPath(projectRoot);
+		return projectPaneError("BINDING_READ_FAILED", `Failed to read project pane binding '${bindingPath}': ${read.cause instanceof Error ? read.cause.message : String(read.cause)}`, {
+			projectRoot, bindingPath, details: fileSystemErrorDetails(read.cause),
+		});
+	}
 	if (read.state === "invalid") {
 		if (legacyToolCompatibility) return { ok: true, data: undefined };
 		return projectPaneError("INVALID_BINDING", `Project pane binding '${projectPaneBindingPath(projectRoot)}' is malformed.`, {
 			projectRoot, bindingPath: projectPaneBindingPath(projectRoot),
 		});
 	}
-	const binding = read.binding!;
+	const binding = read.binding;
 	if (!legacyToolCompatibility && canonicalRuntimePath(binding.projectRoot) !== projectRoot) {
 		return projectPaneError("INVALID_BINDING", `Project pane binding root '${binding.projectRoot}' does not match '${projectRoot}'.`, {
 			projectRoot, bindingPath: projectPaneBindingPath(projectRoot), details: binding,
@@ -298,6 +330,24 @@ function common(projectRoot: string): ProjectPaneCommonData {
 		bindingPath: projectPaneBindingPath(projectRoot),
 		trust: PROJECT_PANE_TRUST_STATUS,
 	};
+}
+
+function fileSystemErrorDetails(cause: unknown): unknown {
+	if (!(cause instanceof Error)) return cause;
+	const code = (cause as NodeJS.ErrnoException).code;
+	return { name: cause.name, message: cause.message, ...(code ? { code } : {}) };
+}
+
+function removeProjectPaneBinding(projectRoot: string): ProjectPaneResult<void> {
+	const bindingPath = projectPaneBindingPath(projectRoot);
+	try {
+		fs.rmSync(bindingPath, { force: true });
+		return { ok: true, data: undefined };
+	} catch (cause) {
+		return projectPaneError("BINDING_REMOVE_FAILED", `Failed to remove project pane binding '${bindingPath}': ${cause instanceof Error ? cause.message : String(cause)}`, {
+			projectRoot, bindingPath, details: fileSystemErrorDetails(cause),
+		});
+	}
 }
 
 function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOptions = {}): ProjectPaneManager {
@@ -388,7 +438,26 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 				command,
 				...(startupMessage ? { startupMessage } : {}),
 			};
-			writeAtomicJson(projectPaneBindingPath(projectRoot), binding);
+			const bindingPath = projectPaneBindingPath(projectRoot);
+			try {
+				writeAtomicJson(bindingPath, binding);
+			} catch (cause) {
+				let cleanup: { paneClosed: true } | { paneClosed: false; error: unknown };
+				try {
+					const closed = await client.run(["pane", "close", paneId], { timeoutMs: 5_000 });
+					cleanup = closed.ok
+						? { paneClosed: true }
+						: { paneClosed: false, error: closed.error };
+				} catch (cleanupCause) {
+					cleanup = { paneClosed: false, error: fileSystemErrorDetails(cleanupCause) };
+				}
+				const cleanupMessage = cleanup.paneClosed
+					? ` The newly opened pane '${paneId}' was closed.`
+					: ` Cleanup could not close the newly opened pane '${paneId}'.`;
+				return projectPaneError("BINDING_WRITE_FAILED", `Failed to persist project pane binding '${bindingPath}': ${cause instanceof Error ? cause.message : String(cause)}.${cleanupMessage}`, {
+					projectRoot, bindingPath, details: { cause: fileSystemErrorDetails(cause), cleanup },
+				});
+			}
 			return { ok: true, data: { ...common(projectRoot), disposition: "opened", binding } };
 		},
 
@@ -405,7 +474,8 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 				const live = await inspectPane(client as HerdrClient, existing.paneId, input.signal);
 				if (!live.ok) {
 					if (live.error.code === "NOT_FOUND" || live.error.code === "PANE_GONE") {
-						fs.rmSync(projectPaneBindingPath(projectRoot), { force: true });
+						const removed = removeProjectPaneBinding(projectRoot);
+						if (!removed.ok) return removed;
 						return { ok: true, data: { ...common(projectRoot), disposition: "stale-binding-removed", binding: existing } };
 					}
 					return { ok: false, error: { ...live.error, projectRoot, bindingPath: projectPaneBindingPath(projectRoot) } };
@@ -428,7 +498,8 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 				return projectPaneError(closed.error.code, closed.error.message, { projectRoot, bindingPath: projectPaneBindingPath(projectRoot), details: closed.error.details });
 			}
 			const disposition: CloseProjectPaneData["disposition"] = closed.ok ? "closed" : "stale-binding-removed";
-			fs.rmSync(projectPaneBindingPath(projectRoot), { force: true });
+			const removed = removeProjectPaneBinding(projectRoot);
+			if (!removed.ok) return removed;
 			return { ok: true, data: { ...common(projectRoot), disposition, binding: existing, ...(runtime ? { runtime } : {}) } };
 		},
 	};

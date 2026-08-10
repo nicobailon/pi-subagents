@@ -64,7 +64,7 @@ describe("public project-panes package export", () => {
 			const close = await manager.close({ cwd: root, requireIdle: true });
 			assert.equal(close.ok, true);
 			if (close.ok) assert.equal(close.data.disposition, "closed");
-			assert.equal(readProjectPaneBinding(root), undefined);
+			assert.deepEqual(readProjectPaneBinding(root), { ok: true, data: undefined });
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p20"));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -86,7 +86,92 @@ describe("public project-panes package export", () => {
 			const result = await createProjectPaneManager({ client }).close({ cwd: root });
 			assert.equal(result.ok, true);
 			if (result.ok) assert.equal(result.data.disposition, "stale-binding-removed");
-			assert.equal(readProjectPaneBinding(root), undefined);
+			assert.deepEqual(readProjectPaneBinding(root), { ok: true, data: undefined });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a structured error when an existing binding cannot be read", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-read-failure-"));
+		try {
+			const projectRoot = fs.realpathSync(root);
+			const bindingPath = projectPaneBindingPath(projectRoot);
+			fs.mkdirSync(bindingPath, { recursive: true });
+			const binding = readProjectPaneBinding(projectRoot);
+			assert.equal(binding.ok, false);
+			if (!binding.ok) {
+				assert.equal(binding.error.code, "BINDING_READ_FAILED");
+				assert.equal(binding.error.bindingPath, bindingPath);
+			}
+			let clientCalled = false;
+			const manager = createProjectPaneManager({ client: { run: async () => { clientCalled = true; return { ok: true, data: {} }; } } });
+			const status = await manager.status({ cwd: root });
+			assert.equal(status.ok, false);
+			if (!status.ok) {
+				assert.equal(status.error.code, "BINDING_READ_FAILED");
+				assert.equal(status.error.bindingPath, bindingPath);
+				assert.match(status.error.message, /Failed to read project pane binding/);
+				assert.match(String((status.error.details as { code?: unknown }).code), /EISDIR|EPERM|EACCES/);
+			}
+			assert.equal(clientCalled, false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a structured error and closes the pane when binding persistence fails", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-write-failure-"));
+		try {
+			fs.writeFileSync(path.join(root, ".pi-subagents"), "directory collision");
+			const calls: string[][] = [];
+			const client: ProjectPaneCommandClient = {
+				run: async <T>(args: string[]) => {
+					calls.push(args);
+					if (args[0] === "--version") return { ok: true, data: "herdr 0.8.0" as T };
+					if (args[1] === "split") return { ok: true, data: { pane: { pane_id: "w1:p24" } } as T };
+					return { ok: true, data: {} as T };
+				},
+			};
+			const result = await createProjectPaneManager({ client }).open({ cwd: root, focus: false });
+			assert.equal(result.ok, false);
+			if (!result.ok) {
+				assert.equal(result.error.code, "BINDING_WRITE_FAILED");
+				assert.equal(result.error.bindingPath, projectPaneBindingPath(fs.realpathSync(root)));
+				assert.match(result.error.message, /newly opened pane 'w1:p24' was closed/);
+			}
+			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p24"));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a structured error when binding removal fails after closing the pane", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-remove-failure-"));
+		try {
+			const projectRoot = fs.realpathSync(root);
+			const bindingPath = projectPaneBindingPath(projectRoot);
+			fs.mkdirSync(path.dirname(bindingPath), { recursive: true });
+			fs.writeFileSync(bindingPath, JSON.stringify({
+				schemaVersion: 1, kind: "herdr-project-pane", projectRoot, paneId: "w1:p25",
+				openedAt: "2026-01-01T00:00:00.000Z", command: "pi",
+			}));
+			const client: ProjectPaneCommandClient = {
+				run: async <T>(args: string[]) => {
+					if (args.join(" ") === "pane close w1:p25") {
+						fs.rmSync(bindingPath);
+						fs.mkdirSync(bindingPath);
+					}
+					return { ok: true, data: {} as T };
+				},
+			};
+			const result = await createProjectPaneManager({ client }).close({ cwd: root });
+			assert.equal(result.ok, false);
+			if (!result.ok) {
+				assert.equal(result.error.code, "BINDING_REMOVE_FAILED");
+				assert.equal(result.error.bindingPath, bindingPath);
+			}
+			assert.equal(fs.statSync(bindingPath).isDirectory(), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -119,7 +204,9 @@ describe("public project-panes package export", () => {
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.equal(result.error.code, "PANE_OWNERSHIP_UNVERIFIED");
 			assert.equal(closeCalled, false);
-			assert.equal(readProjectPaneBinding(root)?.paneId, "w1:p22");
+			const binding = readProjectPaneBinding(root);
+			assert.equal(binding.ok, true);
+			if (binding.ok) assert.equal(binding.data?.paneId, "w1:p22");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 			fs.rmSync(other, { recursive: true, force: true });
@@ -135,7 +222,9 @@ describe("public project-panes package export", () => {
 				schemaVersion: 1, kind: "herdr-project-pane", projectRoot, paneId: "w1:p23",
 				openedAt: "2026-01-01T00:00:00.000Z", command: "pi", startupMessage: 42,
 			}));
-			assert.equal(readProjectPaneBinding(root), undefined);
+			const binding = readProjectPaneBinding(root);
+			assert.equal(binding.ok, false);
+			if (!binding.ok) assert.equal(binding.error.code, "INVALID_BINDING");
 			let clientCalled = false;
 			const manager = createProjectPaneManager({ client: { run: async () => { clientCalled = true; return { ok: true, data: {} }; } } });
 			const status = await manager.status({ cwd: root });
