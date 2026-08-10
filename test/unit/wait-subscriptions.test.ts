@@ -186,6 +186,44 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("tells the parent to revive the failed child before replacing resumable async runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-revive-first-"));
+		const asyncRoot = path.join(root, "runs");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const completedSessionFile = path.join(root, "completed-session.jsonl");
+		const failedSessionFile = path.join(root, "failed-session.jsonl");
+		const sent: string[] = [];
+		const state = makeState();
+		const manager = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, state, { asyncDirRoot: asyncRoot, subscriptionsDir, pollIntervalMs: 60_000, kill: () => true });
+		try {
+			fs.writeFileSync(completedSessionFile, "{}\n", "utf-8");
+			fs.writeFileSync(failedSessionFile, "{}\n", "utf-8");
+			writeStatus(asyncRoot, "run-revive", "running", { sessionId: "session-a", pid: 999_999 });
+			manager.arm({ targetKind: "async", runId: "run-revive", requestedId: "run-revive", timeoutMs: 30_000 });
+
+			writeStatus(asyncRoot, "run-revive", "failed", {
+				sessionId: "session-a",
+				steps: [
+					{ agent: "first", status: "complete", sessionFile: completedSessionFile },
+					{ agent: "second", status: "failed", sessionFile: failedSessionFile },
+				],
+			});
+			manager.reconcile();
+
+			const message = sent[0] ?? "";
+			assert.match(message, /Resume-first/);
+			assert.match(message, /subagent\(\{ action: "resume", id: "run-revive", index: 1, message:/);
+			assert.match(message, /before reporting failure or launching a replacement/);
+			assert.match(message, /only if revive fails or the user explicitly asks/);
+		} finally {
+			manager.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("waits for foreground run restoration before reconciling a restored subscription", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-foreground-restore-"));
 		const subscriptionsDir = path.join(root, "subscriptions");

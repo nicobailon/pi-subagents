@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { listAsyncRuns } from "./async-status.ts";
+import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
 	DIRS,
@@ -61,7 +62,7 @@ function parseRecord(value: unknown): WaitSubscriptionRecord | undefined {
 	return record as WaitSubscriptionRecord;
 }
 
-function needsAttention(run: ReturnType<typeof listAsyncRuns>[number]): boolean {
+function needsAttention(run: AsyncRunSummary): boolean {
 	return run.activityState === "needs_attention" || run.steps.some((step) => step.activityState === "needs_attention");
 }
 
@@ -166,7 +167,7 @@ export function createWaitSubscriptionManager(
 			return;
 		}
 		if (run.state !== "queued" && run.state !== "running") {
-			settle(record, run.state === "complete" ? "completed" : run.state, "Inspect the run status for its final output.");
+			settle(record, run.state === "complete" ? "completed" : run.state, formatResumeFirstFailedRunDetail(run) ?? "Inspect the run status for its final output.");
 		}
 	};
 
