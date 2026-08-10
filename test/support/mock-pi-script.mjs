@@ -337,7 +337,7 @@ async function main() {
 	writeToolDiagnostic(response);
 	const callPath = path.join(queueDir, `call-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`);
 	const callTempPath = `${callPath}.tmp-${process.pid}-${Date.now()}`;
-	fs.writeFileSync(callTempPath, JSON.stringify({ args, systemPrompts: readSystemPromptRecords(args) }), "utf-8");
+	fs.writeFileSync(callTempPath, JSON.stringify({ args, cwd: process.cwd(), systemPrompts: readSystemPromptRecords(args) }), "utf-8");
 	fs.renameSync(callTempPath, callPath);
 
 	if (typeof response.delay === "number" && response.delay > 0) {

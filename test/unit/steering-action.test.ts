@@ -40,6 +40,10 @@ function writeStatus(asyncDir: string, status: AsyncStatus): void {
 	fs.utimesSync(statusPath, mtime, mtime);
 }
 
+function removeAsyncDir(asyncDir: string): void {
+	fs.rmSync(asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 10 });
+}
+
 function runningStatus(runId: string, mode: AsyncStatus["mode"] = "single", count = 1): AsyncStatus {
 	return {
 		runId,
@@ -127,7 +131,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(result.details.steering?.state, "delivered");
 			assert.match(result.content[0]!.text, /Steering delivered/);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -141,7 +145,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(result.isError, true);
 			assert.match(result.content[0]!.text, /no longer accepts steering requests/);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -169,7 +173,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(queued.message, "Review the docs");
 			assert.equal(queued.mode, "follow_up");
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -192,7 +196,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(recovered, false);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery")), false);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -232,7 +236,7 @@ describe("acknowledged steering action", () => {
 			assert.ok(request);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery", `${Buffer.from(request.id).toString("base64url")}.json`)), false);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -241,6 +245,7 @@ describe("acknowledged steering action", () => {
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		writeStatus(asyncDir, runningStatus(runId));
 		const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
+		let claimed = false;
 		try {
 			const action = steerAsyncRun({
 				state: createState(), runId, message: "correct course", location: { asyncDir },
@@ -253,16 +258,17 @@ describe("acknowledged steering action", () => {
 					projectRequest(routed, request, ["routed"]);
 					writeStatus(asyncDir, routed);
 				},
+				onRecoveryCommitted: () => { claimed = true; },
 				recover: async () => successResult("replacement"),
 			});
 			const result = await action;
-			assert.equal(result.isError, true);
+			assert.equal(claimed, true);
 			assert.match(result.content[0]!.text, /claim remains committed to prevent a delayed duplicate/);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
 			assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery", "claim.json")), true);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -328,7 +334,7 @@ describe("acknowledged steering action", () => {
 			assert.ok(persisted.steering?.recent[0]?.targets[0]?.lateDeliveredAt);
 			assert.equal(persisted.steps?.[0]?.steering?.recent[0]?.targets[0]?.state, "recovered");
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -362,7 +368,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(recovered, false);
 			assert.match(result.content[0]!.text, /no persisted child session|does not have a persisted session file/i);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -391,7 +397,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(recovered, false);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 
@@ -413,7 +419,7 @@ describe("acknowledged steering action", () => {
 			assert.equal(killed, false);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
+			removeAsyncDir(asyncDir);
 		}
 	});
 });

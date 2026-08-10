@@ -10,6 +10,9 @@ const { inspect } = require("node:util");
 let nextCallId = 0;
 const pending = new Map();
 const runKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const trackedPromisePatch = Symbol("trackedPromisePatch");
+const trackedPromiseObservations = new WeakMap();
+let suppressRunObservation = 0;
 
 function stableRunJson(value) {
   if (Array.isArray(value)) return "[" + value.map(stableRunJson).join(",") + "]";
@@ -17,12 +20,124 @@ function stableRunJson(value) {
   return JSON.stringify(value) ?? "undefined";
 }
 
-function hostCall(method, args) {
-  return new Promise((resolve, reject) => {
-    const callId = ++nextCallId;
+function isDirectWorkflowScriptPromiseHandlerCall() {
+  const stack = new Error().stack;
+  if (typeof stack !== "string") return false;
+  const frame = stack.split("\n").slice(1).map((line) => line.trim()).find((line) =>
+    line &&
+    !line.includes("isDirectWorkflowScriptPromiseHandlerCall") &&
+    !line.includes("markObserved") &&
+    !line.includes("promise.then") &&
+    !line.includes("promise.catch") &&
+    !line.includes("promise.finally")
+  );
+  return frame ? frame.includes("workflow-script.js") && !frame.includes("at async ") : false;
+}
+
+function mergeObservations(...groups) {
+  const seen = new Set();
+  const merged = [];
+  for (const group of groups) {
+    for (const observation of group) {
+      if (!observation || typeof observation.callId !== "number" || typeof observation.key !== "string" || seen.has(observation.callId)) continue;
+      seen.add(observation.callId);
+      merged.push(observation);
+    }
+  }
+  return merged;
+}
+
+function trackedObservations(value) {
+  return value && (typeof value === "object" || typeof value === "function") ? trackedPromiseObservations.get(value) ?? [] : [];
+}
+
+function withSuppressedRunObservation(callback) {
+  suppressRunObservation += 1;
+  try {
+    return callback();
+  } finally {
+    suppressRunObservation -= 1;
+  }
+}
+
+function trackRunObservation(observations, promise) {
+  const merged = mergeObservations(trackedObservations(promise), observations);
+  if (merged.length === 0 || !promise || typeof promise.then !== "function") return promise;
+  trackedPromiseObservations.set(promise, merged);
+  if (promise[trackedPromisePatch]) return promise;
+
+  const observedCallIds = new Set();
+  const markObserved = () => {
+    if (suppressRunObservation > 0 || isDirectWorkflowScriptPromiseHandlerCall()) return;
+    for (const observation of trackedObservations(promise)) {
+      if (observedCallIds.has(observation.callId)) continue;
+      observedCallIds.add(observation.callId);
+      parentPort.postMessage({ type: "runObserved", callId: observation.callId, key: observation.key });
+    }
+  };
+  const originalThen = promise.then.bind(promise);
+  const originalCatch = promise.catch.bind(promise);
+  const originalFinally = promise.finally.bind(promise);
+  Object.defineProperty(promise, trackedPromisePatch, { value: true });
+  promise.then = (onFulfilled, onRejected) => {
+    markObserved();
+    return trackRunObservation(trackedObservations(promise), originalThen(onFulfilled, onRejected));
+  };
+  promise.catch = (onRejected) => {
+    markObserved();
+    return trackRunObservation(trackedObservations(promise), originalCatch(onRejected));
+  };
+  promise.finally = (onFinally) => {
+    markObserved();
+    return trackRunObservation(trackedObservations(promise), originalFinally(onFinally));
+  };
+  return promise;
+}
+
+function trackPromiseCombinator(items, createPromise) {
+  const values = Array.from(items);
+  const observations = mergeObservations(...values.map(trackedObservations));
+  const promise = withSuppressedRunObservation(() => createPromise(values));
+  return observations.length > 0 ? trackRunObservation(observations, promise) : promise;
+}
+
+const workflowPromise = new Proxy(Promise, {
+  construct(target, args) {
+    return new target(...args);
+  },
+  get(target, prop) {
+    if (prop === "all") return (items) => trackPromiseCombinator(items, (values) => target.all(values));
+    if (prop === "allSettled") return (items) => trackPromiseCombinator(items, (values) => target.allSettled(values));
+    if (prop === "race") return (items) => trackPromiseCombinator(items, (values) => target.race(values));
+    if (prop === "any") return (items) => trackPromiseCombinator(items, (values) => target.any(values));
+    if (prop === "resolve") return (value) => {
+      const observations = trackedObservations(value);
+      const promise = withSuppressedRunObservation(() => target.resolve(value));
+      return observations.length > 0 ? trackRunObservation(observations, promise) : promise;
+    };
+    const value = target[prop];
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
+
+function hostCall(method, args, observation) {
+  const callId = ++nextCallId;
+  const promise = new Promise((resolve, reject) => {
     pending.set(callId, { resolve, reject });
     parentPort.postMessage({ type: "call", callId, method, args });
   });
+  return observation && typeof observation.key === "string"
+    ? trackRunObservation([{ key: observation.key, callId }], promise)
+    : promise;
+}
+
+function runHostCall(key, params, collectFailure) {
+  const callId = ++nextCallId;
+  const promise = new Promise((resolve, reject) => {
+    pending.set(callId, { resolve, reject });
+    parentPort.postMessage({ type: "call", callId, method: "run", args: { key, params, ...(collectFailure ? { collectFailure: true } : {}) } });
+  });
+  return { key, callId, promise };
 }
 
 function formatRef(result) {
@@ -58,7 +173,7 @@ function validateRunCall(key, params, label, fingerprints) {
 const runs = Object.freeze({
   run(key, params) {
     validateRunCall(key, params, "runs.run", runFingerprints);
-    return hostCall("run", { key, params });
+    return hostCall("run", { key, params }, { key });
   },
   all(items) {
     if (!Array.isArray(items)) throw new Error("runs.all(items) requires an array.");
@@ -73,7 +188,8 @@ const runs = Object.freeze({
       calls.push({ key, params });
     }
     for (const { key, params } of calls) runFingerprints.set(key, stableRunJson(params));
-    return Promise.all(calls.map(({ key, params }) => hostCall("run", { key, params, collectFailure: true })));
+    const launched = calls.map(({ key, params }) => runHostCall(key, params, true));
+    return trackRunObservation(launched.map(({ key, callId }) => ({ key, callId })), Promise.all(launched.map(({ promise }) => promise)));
   },
   status(keyOrRunId) { return hostCall("status", { keyOrRunId }); },
   ref: formatRef,
@@ -169,7 +285,7 @@ parentPort.on("message", async (message) => {
   }
   if (message.type !== "start") return;
   try {
-    const sandbox = { runs, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    const sandbox = { runs, Promise: workflowPromise, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
     if (message.stateEnabled) sandbox.state = state;
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
@@ -194,6 +310,8 @@ parentPort.on("message", async (message) => {
 export interface WorkflowScriptChildResult {
 	key: string;
 	ok: boolean;
+	/** Canonical child agent name when launch resolution produced one. */
+	agent?: string;
 	runId?: string;
 	output: string;
 	error?: string;
@@ -206,6 +324,8 @@ export interface WorkflowScriptTraceEntry {
 	operation: "run" | "status";
 	key: string;
 	state: "started" | "completed" | "failed" | "reused";
+	/** Canonical child agent name when resolved launch or result data is available. */
+	agent?: string;
 	runId?: string;
 	durationMs?: number;
 	phase?: string;
@@ -355,7 +475,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const trace: WorkflowScriptTraceEntry[] = [];
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
-	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult> }>();
+	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
+	const observedRunCalls = new Set<number>();
 	const childController = new AbortController();
 	let settled = false;
 
@@ -372,8 +493,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (timer) clearTimeout(timer);
 			options.signal?.removeEventListener("abort", onAbort);
 			void worker.terminate();
-			childController.abort("error" in outcome ? outcome.error : new Error("Workflow script completed; unawaited child launches are aborted."));
+			const unobservedKeys = "value" in outcome ? [...launches].filter(([, launch]) => !launch.observed).map(([key]) => key) : [];
+			const completionError = unobservedKeys.length > 0
+				? new Error(`workflowScript completed with unawaited runs.run launch(es): ${unobservedKeys.map((key) => `'${key}'`).join(", ")}. Await or return each launch.`)
+				: undefined;
+			childController.abort("error" in outcome ? outcome.error : completionError ?? new Error("Workflow script completed."));
 			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial()));
+			else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
 			else resolve({ value: outcome.value, ...partial() });
 		};
 		const onAbort = () => finish({ error: new Error("Workflow script aborted.") });
@@ -418,6 +544,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return finish({ value: message.value });
 			}
 			if (message.type === "error") return finish({ error: new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") });
+			if (message.type === "runObserved" && typeof message.callId === "number") {
+				const key = typeof message.key === "string" ? message.key : undefined;
+				const launch = key ? launches.get(key) : undefined;
+				if (launch) launch.observed = true;
+				else observedRunCalls.add(message.callId);
+				return;
+			}
 			if (message.type !== "call" || typeof message.callId !== "number" || typeof message.method !== "string" || !isRecord(message.args)) return;
 
 			const respond = (promise: Promise<unknown>) => {
@@ -501,6 +634,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return respond(Promise.reject(new Error(`runs.run('${key}') resume requires a non-empty task follow-up.`)));
 			}
 			const collectFailure = message.args.collectFailure === true;
+			const callObserved = observedRunCalls.delete(message.callId);
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
 				? promise
 				: promise.then((result) => {
@@ -511,6 +645,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
+				if (callObserved) existing.observed = true;
 				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params) });
 				traceChanged();
 				return respond(deliver(existing.promise));
@@ -523,7 +658,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const promise = Promise.resolve().then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal)).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				children.set(key, normalized);
-				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
+				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
 				return normalized;
 			}, (error: unknown) => {
@@ -534,7 +669,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				traceChanged();
 				return failure;
 			});
-			launches.set(key, { fingerprint, promise });
+			launches.set(key, { fingerprint, promise, observed: callObserved });
 			respond(deliver(promise));
 		});
 

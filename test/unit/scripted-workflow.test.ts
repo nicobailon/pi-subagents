@@ -490,21 +490,128 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
-	it("aborts an unawaited child launch when the script completes", async () => {
+	it("rejects and aborts an unawaited child launch when the script completes", async () => {
 		let childAborted = false;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.run("bg", { agent: "worker", task: "fire and forget" }); return "done";`,
+				timeoutMs: 2_000,
+				launch(_key, _params, signal) {
+					return new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
+						childAborted = true;
+						reject(signal.reason);
+					}, { once: true }));
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("unawaited runs.run launch(es): 'bg'")
+				&& error.message.includes("Await or return each launch"),
+		);
+		assert.equal(childAborted, true);
+	});
+
+	it("rejects an unawaited child launch that settles before the script completes", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.run("fast", { agent: "worker", task: "quick" }); await runs.status("probe"); return "done";`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "fast output", artifactPaths: [] }; },
+				async status(key) {
+					await Promise.resolve();
+					return { key, ok: true, output: "ok", artifactPaths: [] };
+				},
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("unawaited runs.run launch(es): 'fast'")
+				&& error.partial.children.some((child) => child.key === "fast"),
+		);
+	});
+
+	it("rejects an unawaited runs.all launch group", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.all([{ key: "a", agent: "worker", task: "one" }]); return "done";`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message.includes("unawaited runs.run launch(es): 'a'"),
+		);
+	});
+
+	it("rejects an unawaited native Promise.all over runs.run", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `Promise.all([runs.run("native", { agent: "worker", task: "one" })]); return "done";`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message.includes("unawaited runs.run launch(es): 'native'"),
+		);
+	});
+
+	it("rejects fire-and-forget callbacks on a runs.run promise", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.run("bg", { agent: "worker", task: "fire" }).then(() => {}); return "done";`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message.includes("unawaited runs.run launch(es): 'bg'"),
+		);
+	});
+
+	it("rejects reading output from an unawaited runs.run promise", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("x", { agent: "worker", task: "run" }).output;`,
+				timeoutMs: 2_000,
+				launch(_key, _params, signal) {
+					return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.message.includes("unawaited runs.run launch(es): 'x'"),
+		);
+	});
+
+	it("names every outstanding workflow launch", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.run("first", { agent: "worker", task: "one" }); runs.run("second", { agent: "worker", task: "two" }); return null;`,
+				timeoutMs: 2_000,
+				launch(_key, _params, signal) {
+					return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("'first', 'second'")
+				&& error.partial.children.length === 0,
+		);
+	});
+
+	it("accepts a directly returned runs.run promise", async () => {
 		const result = await runWorkflowScript({
-			script: `runs.run("bg", { agent: "worker", task: "fire and forget" }); return "done";`,
+			script: `return runs.run("direct", { agent: "worker", task: "run" });`,
 			timeoutMs: 2_000,
-			launch(_key, _params, signal) {
-				return new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
-					childAborted = true;
-					reject(signal.reason);
-				}, { once: true }));
-			},
+			async launch(key) { return { key, ok: true, output: "direct output", artifactPaths: [] }; },
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 		});
-		assert.equal(result.value, "done");
-		assert.equal(childAborted, true);
+		assert.equal((result.value as { output?: string }).output, "direct output");
+	});
+
+	it("accepts output from an explicitly awaited runs.run promise", async () => {
+		const result = await runWorkflowScript({
+			script: `return (await runs.run("awaited", { agent: "worker", task: "run" })).output;`,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, output: "awaited output", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(result.value, "awaited output");
 	});
 
 	it("rejects non-JSON-safe emitted values without persisting them", async () => {

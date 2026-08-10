@@ -1047,6 +1047,7 @@ export interface Details {
 			operation: "run" | "status";
 			key: string;
 			state: "started" | "completed" | "failed" | "reused";
+			agent?: string;
 			runId?: string;
 			phase?: string;
 			label?: string;

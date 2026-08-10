@@ -8,6 +8,7 @@ import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
+import { alignForkedSessionCwd } from "../../shared/fork-context.ts";
 import {
 	ensureArtifactsDir,
 	formatOutputArtifactContent,
@@ -1416,6 +1417,9 @@ async function runSyncCompletion(
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
+	if (options.context === "fork" && options.sessionFile && existsSync(options.sessionFile)) {
+		alignForkedSessionCwd(options.sessionFile, options.cwd ?? runtimeCwd);
+	}
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
 	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
