@@ -6,6 +6,9 @@
 - Preserve short-lived completion replay records and bounded output archives so waits can recover consumed async result details after watcher delivery or restart.
 - Add `subagent({ action: "guide" })` and `/subagents-guide [topic]` to read current-version packaged guides.
 
+### Fixed
+- Give invalid `subagent` actions safe next steps and typo suggestions without suggesting destructive actions for ambiguous input.
+
 ## [0.45.2] - 2026-08-10
 
 ### Fixed

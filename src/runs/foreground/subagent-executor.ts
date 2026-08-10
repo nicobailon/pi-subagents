@@ -51,7 +51,7 @@ import {
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.ts";
-import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
+import { isScheduledRunAction, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
@@ -152,6 +152,47 @@ import {
 } from "../../shared/types.ts";
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
+const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "reject-checkpoint", "schedule.delete"]);
+
+function editDistance(left: string, right: string): number {
+	const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+	for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+		let diagonal = previous[0]!;
+		previous[0] = leftIndex;
+		for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+			const above = previous[rightIndex]!;
+			previous[rightIndex] = left[leftIndex - 1] === right[rightIndex - 1]
+				? diagonal
+				: Math.min(diagonal, above, previous[rightIndex - 1]!) + 1;
+			diagonal = above;
+		}
+	}
+	return previous[right.length]!;
+}
+
+function hasSingleAdjacentTransposition(left: string, right: string): boolean {
+	if (left.length !== right.length) return false;
+	const mismatch = [...left].findIndex((character, index) => character !== right[index]);
+	return mismatch >= 0
+		&& left[mismatch] === right[mismatch + 1]
+		&& left[mismatch + 1] === right[mismatch]
+		&& left.slice(mismatch + 2) === right.slice(mismatch + 2);
+}
+
+export function unknownSubagentActionMessage(action: string): string {
+	const requested = action.toLowerCase();
+	const suggestion = SUBAGENT_ACTIONS.find((candidate) => {
+		const distance = editDistance(requested, candidate);
+		const closeMatch = distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate);
+		if (DESTRUCTIVE_MANAGEMENT_ACTIONS.has(candidate)) return distance === 1 && requested.length >= candidate.length - 1;
+		return closeMatch;
+	});
+	const nextStep = 'Use subagent({ action: "status" }) to inspect runs or subagent({ action: "list" }) to inspect agents.';
+	const validActions = `Valid: ${SUBAGENT_ACTIONS.join(", ")}.`;
+	return suggestion
+		? `Unknown action: ${action}. Did you mean ${suggestion}? ${nextStep} ${validActions}`
+		: `Unknown action: ${action}. ${nextStep} ${validActions}`;
+}
 
 type UndefinedOmitted<T extends object> = {
 	[K in keyof T as undefined extends T[K] ? never : K]: T[K];
@@ -4914,6 +4955,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return appendStepToAsyncChain(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel }));
 			}
 			if (action.startsWith("schedule.")) {
+				if (!isScheduledRunAction(action)) {
+					return { content: [{ type: "text", text: unknownSubagentActionMessage(action) }], isError: true, details: { mode: "management", results: [] } };
+				}
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 					return {
 						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
@@ -5020,7 +5064,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
 				return {
-					content: [{ type: "text", text: `Unknown action: ${action}. Valid: ${SUBAGENT_ACTIONS.join(", ")}` }],
+					content: [{ type: "text", text: unknownSubagentActionMessage(action) }],
 					isError: true,
 					details: { mode: "management" as const, results: [] },
 				};
