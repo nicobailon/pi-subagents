@@ -6,6 +6,7 @@ import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Compo
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { DIRS, type AsyncJobState, type Details, type FleetKeybindingAction, type FleetKeybindingsConfig, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
+import { decodeUtf8Tail } from "../shared/utf8.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
@@ -329,7 +330,7 @@ function trustedFileTail(filePath: string, trustedRoots: string[]): { text?: str
 			const bytes = Math.min(stat.size, OUTPUT_TAIL_BYTES);
 			const buffer = Buffer.alloc(bytes);
 			fs.readSync(fd, buffer, 0, bytes, stat.size - bytes);
-			return { text: buffer.toString("utf-8") };
+			return { text: decodeUtf8Tail(buffer) };
 		} finally {
 			fs.closeSync(fd);
 		}

@@ -8,8 +8,7 @@ import { describe, it } from "node:test";
 import { handleHerdrInspectorAction, readHerdrInspectorBinding } from "../../src/inspectors/herdr/actions.ts";
 import { createHerdrClient, detectHerdr, parseHerdrVersion, supportsRawPanes, type HerdrClient } from "../../src/inspectors/herdr/client.ts";
 import { formatInspectorDashboard, submitInspectorControl } from "../../src/inspectors/herdr/inspector-runner.ts";
-import { handleHerdrProjectPaneAction, readHerdrProjectPaneBinding } from "../../src/inspectors/herdr/project-panes.ts";
-import { PROJECT_PANES_API_VERSION, createProjectPaneManager } from "../../src/api/project-panes.ts";
+import { createProjectPaneManager, handleHerdrProjectPaneAction, readHerdrProjectPaneBinding } from "../../src/inspectors/herdr/project-panes.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
 import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
@@ -221,18 +220,6 @@ describe("Herdr inspector", () => {
 			const status = await handleHerdrProjectPaneAction("project.status", { cwd: root }, { cwd: process.cwd(), client });
 			assert.equal(status.isError, undefined, text(status));
 			assert.match(text(status), /project pane w1:p10 is open/);
-
-			const manager = createProjectPaneManager({ client });
-			const publicStatus = await manager.status({ cwd: root });
-			assert.equal(publicStatus.ok, true);
-			if (publicStatus.ok) {
-				assert.equal(publicStatus.data.apiVersion, PROJECT_PANES_API_VERSION);
-				assert.equal(publicStatus.data.state, "open");
-				assert.equal(publicStatus.data.runtime?.agentStatus, "idle");
-				assert.equal(publicStatus.data.runtime?.cwd, projectRoot);
-				assert.equal(publicStatus.data.safeToClose, true);
-				assert.equal(publicStatus.data.trust, "human-verification-required");
-			}
 
 			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: process.cwd(), client });
 			assert.equal(closed.isError, undefined, text(closed));

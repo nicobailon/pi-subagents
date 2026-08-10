@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { readCompletionArchive, readCompletionReplay, writeCompletionArchive } from "../../src/runs/background/completion-replay.ts";
+import { cleanupCompletionReplay, completionArchivePath, readCompletionArchive, readCompletionReplay, writeCompletionArchive } from "../../src/runs/background/completion-replay.ts";
+import { utf8Tail } from "../../src/shared/utf8.ts";
 import { collectWaitCompletions, recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+
+const require = createRequire(import.meta.url);
+const fsCjs = require("node:fs") as typeof fs;
 
 function makeState(): SubagentState {
 	return {
@@ -50,6 +55,109 @@ describe("completion replay", () => {
 			assert.equal(completions?.[0]?.archivePath, replay?.archivePath);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps UTF-8 tails valid at multibyte boundaries", () => {
+		const bounded = utf8Tail(`start-${"é".repeat(10)}-tail`, 9);
+		assert.equal(bounded.truncated, true);
+		assert.equal(bounded.text, "éé-tail");
+	});
+
+	it("does not delete untrusted or cross-run archive paths from replay records", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-replay-untrusted-"));
+		try {
+			const resultsDir = path.join(root, "results");
+			const replayDir = path.join(resultsDir, "completion-replay");
+			fs.mkdirSync(replayDir, { recursive: true });
+			const victim = path.join(root, "victim.txt");
+			fs.writeFileSync(victim, "keep", "utf-8");
+			fs.writeFileSync(path.join(replayDir, `${encodeURIComponent("run-c")}.json`), JSON.stringify({
+				version: 1,
+				runId: "run-c",
+				sessionId: "session-a",
+				completedAt: 1,
+				expiresAt: 2,
+				archivePath: victim,
+				completion: { runId: "run-c", archivePath: victim },
+			}), "utf-8");
+
+			const replayPath = path.join(replayDir, `${encodeURIComponent("run-c")}.json`);
+			assert.equal(readCompletionReplay(resultsDir, "run-c", { sessionId: "session-a", now: 1 }), undefined);
+			assert.equal(fs.readFileSync(victim, "utf-8"), "keep");
+			assert.equal(fs.existsSync(replayPath), false);
+
+			fs.writeFileSync(replayPath, JSON.stringify({
+				version: 1,
+				runId: "run-c",
+				sessionId: "session-a",
+				completedAt: 1,
+				expiresAt: 2,
+				archivePath: victim,
+				completion: { runId: "run-c", archivePath: victim },
+			}), "utf-8");
+			cleanupCompletionReplay(resultsDir, 3, 60_000);
+			assert.equal(fs.readFileSync(victim, "utf-8"), "keep");
+			assert.equal(fs.existsSync(replayPath), false);
+
+			const victimArchive = completionArchivePath(resultsDir, "run-a");
+			fs.mkdirSync(path.dirname(victimArchive), { recursive: true });
+			fs.writeFileSync(victimArchive, "keep", "utf-8");
+			fs.writeFileSync(replayPath, JSON.stringify({
+				version: 1,
+				runId: "run-a",
+				sessionId: "session-a",
+				completedAt: 1,
+				expiresAt: 2,
+				archivePath: victimArchive,
+				completion: { runId: "run-a", archivePath: victimArchive },
+			}), "utf-8");
+			cleanupCompletionReplay(resultsDir, 3, 60_000);
+			assert.equal(fs.readFileSync(victimArchive, "utf-8"), "keep");
+			assert.equal(fs.existsSync(replayPath), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("treats replay read deletion failures as best-effort cleanup", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-replay-rm-failure-"));
+		const originalRmSync = fsCjs.rmSync;
+		try {
+			const resultsDir = path.join(root, "results");
+			const replayDir = path.join(resultsDir, "completion-replay");
+			const replayPath = path.join(replayDir, `${encodeURIComponent("run-d")}.json`);
+			const archivePath = completionArchivePath(resultsDir, "run-d");
+			fs.mkdirSync(replayDir, { recursive: true });
+			fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+			fs.writeFileSync(archivePath, "archive", "utf-8");
+			fs.writeFileSync(replayPath, JSON.stringify({
+				version: 1,
+				runId: "run-d",
+				sessionId: "session-a",
+				completedAt: 1,
+				expiresAt: 2,
+				archivePath,
+				completion: { runId: "run-d", archivePath },
+			}), "utf-8");
+
+			fsCjs.rmSync = ((target: Parameters<typeof fs.rmSync>[0], options?: Parameters<typeof fs.rmSync>[1]) => {
+				if (String(target) === replayPath || String(target) === archivePath) {
+					const error = new Error("busy") as NodeJS.ErrnoException;
+					error.code = "EPERM";
+					throw error;
+				}
+				return originalRmSync(target, options);
+			}) as typeof fs.rmSync;
+			syncBuiltinESMExports();
+
+			assert.equal(readCompletionReplay(resultsDir, "run-d", { sessionId: "session-a", now: 3 }), undefined);
+			assert.equal(fs.existsSync(replayPath), true);
+			assert.equal(fs.existsSync(archivePath), true);
+		} finally {
+			fsCjs.rmSync = originalRmSync;
+			syncBuiltinESMExports();
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 

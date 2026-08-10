@@ -249,9 +249,15 @@ function progressUpdateSummary(lines: string[]): string {
 }
 
 function compactRecentOutputLines(recentOutput: string[] | undefined): string[] {
-	const lines = (recentOutput ?? []).map(oneLine).filter((line) => line && line !== "(running...)");
-	const noisyLines = lines.filter(isNoisyStatusLine);
-	const otherLines = lines.filter((line) => !isNoisyStatusLine(line));
+	const lines: string[] = [];
+	const noisyLines: string[] = [];
+	const otherLines: string[] = [];
+	for (const rawLine of recentOutput ?? []) {
+		const line = oneLine(rawLine);
+		if (!line || line === "(running...)") continue;
+		lines.push(line);
+		(isNoisyStatusLine(line) ? noisyLines : otherLines).push(line);
+	}
 	if (noisyLines.length >= 4 && !otherLines.some(hasLiveOutputSignal)) {
 		if (otherLines.length === 0) {
 			return [

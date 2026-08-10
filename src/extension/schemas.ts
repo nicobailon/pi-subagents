@@ -263,7 +263,7 @@ const SubagentParamsSchema = Type.Object({
 	})),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run."
+		description: "Run id or prefix for status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, mission.attach-run, or the decision id for mission.resolve-decision."
 	})),
 	runId: Type.Optional(Type.String({
 		description: "Target run ID for interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."

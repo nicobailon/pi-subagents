@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { ForegroundResumeChild, ForegroundResumeRun, SubagentState } from "../../shared/types.ts";
 import { DIRS } from "../../shared/types.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { utf8Tail } from "../../shared/utf8.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
 const HISTORY_VERSION = 1;
@@ -18,9 +19,7 @@ function historyPath(resultsDir: string): string {
 }
 
 function boundedTail(value: string): string {
-	const buffer = Buffer.from(value, "utf-8");
-	if (buffer.byteLength <= MAX_INLINE_OUTPUT_BYTES) return value;
-	return buffer.subarray(buffer.byteLength - MAX_INLINE_OUTPUT_BYTES).toString("utf-8");
+	return utf8Tail(value, MAX_INLINE_OUTPUT_BYTES).text;
 }
 
 function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {

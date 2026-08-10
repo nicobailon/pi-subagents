@@ -54,7 +54,6 @@ import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./
 import { buildSubagentToolDescription } from "./tool-description.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
-import { syncMissionFromAsyncCompletion } from "../missions/lifecycle.ts";
 import { resolveMissionStoreLocation } from "../missions/store.ts";
 import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
@@ -654,11 +653,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
 		scheduledRunManager.handleAsyncCompletion(payload);
-		try {
-			syncMissionFromAsyncCompletion(payload);
-		} catch (error) {
-			console.error("Failed to update mission from async completion:", error);
-		}
 		fleetStatus?.refresh();
 	};
 	const eventUnsubscribes = [

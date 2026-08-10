@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import type { WaitCompletion } from "../../shared/types.ts";
+import { utf8Tail } from "../../shared/utf8.ts";
 
 const REPLAY_VERSION = 1;
 const ARCHIVE_VERSION = 1;
@@ -60,14 +61,6 @@ function existingFile(value: unknown): string | undefined {
 	}
 }
 
-function tailUtf8(value: string, maxBytes: number): { text: string; truncated: boolean } {
-	const bytes = Buffer.from(value, "utf-8");
-	if (bytes.length <= maxBytes) return { text: value, truncated: false };
-	let start = bytes.length - maxBytes;
-	while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
-	return { text: bytes.subarray(start).toString("utf-8"), truncated: true };
-}
-
 function outputArtifactPath(child: Record<string, unknown>): string | undefined {
 	if (!child.artifactPaths || typeof child.artifactPaths !== "object" || Array.isArray(child.artifactPaths)) return undefined;
 	return existingFile((child.artifactPaths as Record<string, unknown>).outputPath);
@@ -107,7 +100,7 @@ export function writeCompletionArchive(resultsDir: string, runId: string, data: 
 		if (summary) fallback.push(summary);
 	}
 	if (fallback.length > 0) {
-		const bounded = tailUtf8(fallback.join("\n\n"), ARCHIVE_TEXT_LIMIT_BYTES);
+		const bounded = utf8Tail(fallback.join("\n\n"), ARCHIVE_TEXT_LIMIT_BYTES);
 		entries.push({ source: "result-tail", text: bounded.text, ...(bounded.truncated ? { truncated: true } : {}) });
 	}
 	const archive: CompletionArchive = { version: ARCHIVE_VERSION, runId, createdAt, entries };
@@ -134,6 +127,30 @@ function parseReplay(value: unknown): CompletionReplayRecord | undefined {
 		|| typeof record.archivePath !== "string") return undefined;
 	const completion = parseCompletion(record.completion, record.runId);
 	return completion ? { ...record, completion } as CompletionReplayRecord : undefined;
+}
+
+function validateReplayRecord(resultsDir: string, runId: string, record: CompletionReplayRecord): CompletionReplayRecord | undefined {
+	if (record.runId !== runId) return undefined;
+	const archivePath = completionArchivePath(resultsDir, runId);
+	return path.resolve(record.archivePath) === path.resolve(archivePath)
+		? { ...record, archivePath, completion: { ...record.completion, archivePath } }
+		: undefined;
+}
+
+function runIdFromReplayFile(file: string): string | undefined {
+	if (!file.endsWith(".json")) return undefined;
+	try {
+		const runId = decodeURIComponent(file.slice(0, -".json".length));
+		return safeRunFile(runId) === file ? runId : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function removeBestEffort(filePath: string): void {
+	try {
+		fs.rmSync(filePath, { force: true });
+	} catch { /* cleanup only */ }
 }
 
 function parseArchive(value: unknown): CompletionArchive | undefined {
@@ -192,10 +209,16 @@ export function readCompletionReplay(resultsDir: string, runId: string, options:
 		throw error;
 	}
 	if (!parsed) return undefined;
+	const safeRecord = validateReplayRecord(resultsDir, runId, parsed);
+	if (!safeRecord) {
+		removeBestEffort(replayPath);
+		return undefined;
+	}
+	parsed = safeRecord;
 	if (options.sessionId !== undefined && parsed.sessionId !== options.sessionId) return undefined;
 	if (parsed.expiresAt <= (options.now ?? Date.now())) {
-		try { fs.rmSync(replayPath, { force: true }); } catch { /* best-effort expiry */ }
-		try { fs.rmSync(parsed.archivePath, { force: true }); } catch { /* best-effort expiry */ }
+		removeBestEffort(replayPath);
+		removeBestEffort(parsed.archivePath);
 		return undefined;
 	}
 	return parsed;
@@ -215,13 +238,17 @@ export function cleanupCompletionReplay(resultsDir: string, now: number, maxAgeM
 	const replayDir = path.join(resultsDir, REPLAY_DIR_NAME);
 	try {
 		for (const file of fs.readdirSync(replayDir)) {
-			if (!file.endsWith(".json")) continue;
+			const runId = runIdFromReplayFile(file);
+			if (!runId) continue;
 			const filePath = path.join(replayDir, file);
 			try {
 				const record = parseReplay(JSON.parse(fs.readFileSync(filePath, "utf-8")));
-				if (record && record.expiresAt <= now) {
+				const safeRecord = record ? validateReplayRecord(resultsDir, runId, record) : undefined;
+				if (record && !safeRecord) {
 					fs.rmSync(filePath, { force: true });
-					fs.rmSync(record.archivePath, { force: true });
+				} else if (safeRecord && safeRecord.expiresAt <= now) {
+					fs.rmSync(filePath, { force: true });
+					fs.rmSync(safeRecord.archivePath, { force: true });
 				} else if (!record && now - fs.statSync(filePath).mtimeMs > maxAgeMs) {
 					fs.rmSync(filePath, { force: true });
 				}

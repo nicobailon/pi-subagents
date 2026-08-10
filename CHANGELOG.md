@@ -9,6 +9,7 @@
 - Persist workflow child attempts, status heartbeats, session paths, and artifacts in their enclosing mission, and add explicit mission decision resolution.
 
 ### Fixed
+- Reject mismatched completion replay archive paths so stale replay cleanup cannot delete another run's saved output archive.
 - Keep `git-root` project agent and package discovery stable when incidental `.pi` state appears in a nested linked worktree. Thanks to @klajdo-f for #950.
 - Read skill descriptions from YAML block scalars instead of exposing their markers. Thanks to @ashlineldridge for #945.
 - Collapse repeated subagent status snapshots in live widgets so status polling does not overflow the chat.

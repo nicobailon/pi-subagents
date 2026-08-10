@@ -471,7 +471,7 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 			if (!existing) return { ok: true, data: { ...common(projectRoot), disposition: "absent" } };
 			let runtime: ProjectPaneRuntime | undefined;
 			if (input.requireIdle) {
-				const live = await inspectPane(client as HerdrClient, existing.paneId, input.signal);
+				const live = await inspectPane(client, existing.paneId, input.signal);
 				if (!live.ok) {
 					if (live.error.code === "NOT_FOUND" || live.error.code === "PANE_GONE") {
 						const removed = removeProjectPaneBinding(projectRoot);
