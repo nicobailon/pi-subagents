@@ -523,6 +523,51 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(expandedText, /required plan first/);
 	});
 
+	it("compacts repeated subagent status snapshots inside mixed live output", () => {
+		const now = Date.now();
+		const job = {
+			asyncId: "run-status-snapshots",
+			asyncDir: "/tmp/status-snapshots",
+			status: "running",
+			mode: "parallel",
+			agents: ["reviewer"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			updatedAt: now,
+			steps: [
+				{
+					index: 0,
+					agent: "reviewer",
+					status: "running",
+					currentTool: "bash",
+					currentToolArgs: "set -euo pipefail",
+					currentToolStartedAt: now - 2000,
+					recentOutput: [
+						"reviewer · step 1/1 · 11 tool uses · 3m27s",
+						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"reviewer · step 1/1 · 11 tool uses · 3m29s",
+						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"reviewer · step 1/1 · 11 tool uses · 3m32s",
+						"Step 1/1: reviewer · running (gpt-5.5 · thinking xhigh) · 4 turns · 11 tool uses",
+						"repo=nicobailon/pi-subagents",
+						"sha=d61aca... | 2m32s",
+						"output: /var/folders/x/T/pi-subagents-uid-501/async-subagent-runs/run-status-snapshots/output.log",
+					],
+				},
+			],
+		};
+
+		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
+		assert.match(expandedText, /↻ 7 progress updates/);
+		assert.match(expandedText, /latest: output: \/var\/folders\/x\/T\/pi-subagents-uid-501\/async-subagent-runs\/run-status-snapshots\/output.log/);
+		assert.match(expandedText, /repo=nicobailon\/pi-subagents/);
+		assert.match(expandedText, /sha=d61aca\.\.\. \| 2m32s/);
+		assert.doesNotMatch(expandedText, /3m27s/);
+		assert.doesNotMatch(expandedText, /3m29s/);
+	});
+
 	it("keeps mixed live output raw instead of hiding non-status lines", () => {
 		const now = Date.now();
 		const job = {

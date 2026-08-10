@@ -208,6 +208,10 @@ const noisyStatusPatterns = [
 	/^i(?:'m|’m| am)\b/i,
 	/\bso i (?:will|need|can)\b/i,
 	/^(?:checking|fetching|reading|inspecting|verifying|collecting|confirming|polling)\b/i,
+	/^(?:async\s+subagent\s+)?[\w.-]+\s*·\s*(?:step|agent)\s+\d+\/\d+\s*·/i,
+	/^(?:Step|Agent)\s+\d+\/\d+:\s+[\w.-]+\s*·\s*(?:running|queued|pending|complete|completed)\b/i,
+	/^Press\s+\S+\s+for\s+live\s+detail$/i,
+	/^output:\s+.+\/async-subagent-runs\//i,
 ];
 const liveOutputWordSignalPattern = /\b(?:access denied|denied|error|exception|fail(?:ed|ure)?|fatal|panic|rejected|timeout|timed out|unable|warning)\b/i;
 const liveOutputCodeSignalPattern = /\bE[A-Z0-9_]{2,}\b/;
@@ -235,29 +239,42 @@ function latestActivityText(line: string): string {
 		.replace(/^i(?:'m|’m| am)\s+/i, "");
 }
 
-function compactRecentOutputLines(recentOutput: string[] | undefined): string[] {
-	const lines = (recentOutput ?? []).map(oneLine).filter((line) => line && line !== "(running...)");
-	if (lines.length <= 5) return lines;
-
-	const noisyCount = lines.filter(isNoisyStatusLine).length;
-	if (noisyCount < 4 || noisyCount !== lines.length) {
-		const tail = lines.slice(-5);
-		const hiddenSignals = lines.slice(0, -5).filter(hasLiveOutputSignal);
-		if (hiddenSignals.length === 0) return tail;
-		return [
-			`… ${hiddenSignals.length} older signal ${hiddenSignals.length === 1 ? "line" : "lines"}: ${hiddenSignals.at(-1)}`,
-			...lines.slice(-4),
-		];
-	}
-
+function progressUpdateSummary(lines: string[]): string {
 	const counts = new Map<string, number>();
 	for (const line of lines) counts.set(line.toLowerCase(), (counts.get(line.toLowerCase()) ?? 0) + 1);
 	const exactRepeatCount = Math.max(...counts.values());
 	const latest = latestActivityText(lines[lines.length - 1]!);
 	const repeat = exactRepeatCount > 1 ? ` · repeated ${exactRepeatCount}×` : "";
+	return `↻ ${lines.length} progress updates${repeat} · latest: ${latest}`;
+}
+
+function compactRecentOutputLines(recentOutput: string[] | undefined): string[] {
+	const lines = (recentOutput ?? []).map(oneLine).filter((line) => line && line !== "(running...)");
+	const noisyLines = lines.filter(isNoisyStatusLine);
+	const otherLines = lines.filter((line) => !isNoisyStatusLine(line));
+	if (noisyLines.length >= 4 && !otherLines.some(hasLiveOutputSignal)) {
+		if (otherLines.length === 0) {
+			return [
+				progressUpdateSummary(noisyLines),
+				"pattern: repeated short status lines",
+			];
+		}
+		const visibleTail = otherLines.slice(-3);
+		const hiddenSignals = otherLines.slice(0, -3).filter(hasLiveOutputSignal);
+		return [
+			progressUpdateSummary(noisyLines),
+			...(hiddenSignals.length > 0 ? [`… ${hiddenSignals.length} older signal ${hiddenSignals.length === 1 ? "line" : "lines"}: ${hiddenSignals.at(-1)}`] : []),
+			...visibleTail,
+		].slice(0, 5);
+	}
+	if (lines.length <= 5) return lines;
+
+	const tail = lines.slice(-5);
+	const hiddenSignals = lines.slice(0, -5).filter(hasLiveOutputSignal);
+	if (hiddenSignals.length === 0) return tail;
 	return [
-		`↻ ${lines.length} progress updates${repeat} · latest: ${latest}`,
-		"pattern: repeated short status lines",
+		`… ${hiddenSignals.length} older signal ${hiddenSignals.length === 1 ? "line" : "lines"}: ${hiddenSignals.at(-1)}`,
+		...lines.slice(-4),
 	];
 }
 
