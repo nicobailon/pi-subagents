@@ -25,7 +25,7 @@ EXECUTION:
 • Durable mission attachment is automatic by default. Use missionId to attach an existing mission, mission:{...} to override auto-create, or mission:false for ephemeral work.
 
 MANAGEMENT / CONTROL (use action; omit execution fields):
-• list, get, models, children.list, create, update, delete, eject, disable, enable, reset, doctor, grant-spawn-budget, worktree.discard, refine/refine.show/refine.rollback, mission.create/list/show/update/attach-run/close, inspector.open/status/close, project.open/status/close, and watchdog actions remain available.
+• list, get, models, guide, children.list, create, update, delete, eject, disable, enable, reset, doctor, grant-spawn-budget, worktree.discard, refine/refine.show/refine.rollback, mission.create/list/show/update/attach-run/close, inspector.open/status/close, project.open/status/close, and watchdog actions remain available. Use {action:"guide", topic:"overview"} for packaged current-version help; topics are overview, workflows, agents, missions, observability, tool-reference, configuration, models, watchdog, and extension-api.
 • status, interrupt, stop, resume, and steer manage live or persisted runs. Use status view:"fleet" for an overview or view:"transcript" with id and optional index to tail output.
 • { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable legacy chain. step is control-only, not an execution mode.
 • approve-checkpoint and reject-checkpoint decide a paused durable legacy chain checkpoint.
@@ -42,7 +42,7 @@ EXECUTE:
 • context can be fresh or fork. timeoutMs/maxRuntimeMs apply to foreground and async workflows; foreground workflows default to 30 minutes and async workflows have no default timeout. Omit acceptance for reviewer/read-only calls.
 
 MANAGE / CONTROL:
-• Use action without execution fields for list/get/models/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, script-only scheduling, diagnostics, and other management actions.
+• Use action without execution fields for list/get/models/guide/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, script-only scheduling, diagnostics, and other management actions. guide reads shipped current-version docs by topic.
 • append-step uses step:{...} only for an already-running durable legacy chain; step is not an execution mode.
 
 ASYNC / SAFETY:

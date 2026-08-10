@@ -22,6 +22,7 @@ import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
+import { SUBAGENT_GUIDE_TOPICS } from "../extension/subagent-guide.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
 import {
 	applySlashUpdate,
@@ -695,6 +696,21 @@ export function registerSlashCommands(
 		description: "Show subagent diagnostics",
 		handler: async (_args, ctx) => {
 			await runSlashSubagent(pi, ctx, { action: "doctor" });
+		},
+	});
+
+	pi.registerCommand("subagents-guide", {
+		description: "Show a packaged subagents guide topic",
+		getArgumentCompletions: (prefix) => prefix.includes(" ") ? null : SUBAGENT_GUIDE_TOPICS
+			.filter((topic) => topic.startsWith(prefix))
+			.map((topic) => ({ value: topic, label: topic })),
+		handler: async (args, ctx) => {
+			const topic = args.trim();
+			if (topic.includes(" ")) {
+				ctx.ui.notify("Usage: /subagents-guide [topic]", "error");
+				return;
+			}
+			await runSlashSubagent(pi, ctx, { action: "guide", ...(topic ? { topic } : {}) });
 		},
 	});
 

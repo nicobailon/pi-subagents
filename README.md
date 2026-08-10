@@ -101,6 +101,8 @@ Details, keybindings, and the machine-readable run artifacts are in [Observabili
 
 or ask: "Check whether subagents and intercom are set up correctly."
 
+For installed-version help, use `/subagents-guide [topic]` or `subagent({ action: "guide", topic: "workflows" })`. The default topic is `overview`; available topics are `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, and `extension-api`.
+
 ## Documentation
 
 The full reference lives in `docs/`:
