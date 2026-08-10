@@ -75,4 +75,11 @@ describe("subagent action recovery", () => {
 		assert.equal(result.content[0]?.type, "text");
 		assert.equal(result.content[0]?.text, unknownSubagentActionMessage("schedule.lsit"));
 	});
+
+	it("lists and suggests mission decision resolution", () => {
+		const message = unknownSubagentActionMessage("mission.resolve-decison");
+
+		assert.match(message, /Did you mean mission\.resolve-decision\?/);
+		assert.match(message, /Valid: .*mission\.resolve-decision/);
+	});
 });

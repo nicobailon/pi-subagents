@@ -11,7 +11,7 @@ Missions are durable wrappers around runs. The noun map:
 - **Run** — one actual subagent execution.
 - **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
 
-Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Workflow children do not create separate missions.
+Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Workflow children do not create separate missions. Each workflow child attempt is stored in the enclosing mission with its stable workflow key, run id when known, agent, task metadata, timestamps, session and artifact paths, and latest status heartbeat.
 
 Behavior:
 
@@ -62,9 +62,11 @@ Pause and resume notices with `mission.update` and `{ goal: { paused: true } }` 
 
 ### Managing missions
 
-Use `mission.list`, `mission.show`, `mission.update`, `mission.attach-run`, and `mission.close`.
+Use `mission.list`, `mission.show`, `mission.update`, `mission.resolve-decision`, `mission.attach-run`, and `mission.close`.
 
-- Use `mission.update` to record decisions, artifacts, labels, summaries, and delivery receipts while work runs. Receipts are durable links for pull requests, CI, deployments, or releases, each with `kind`, `status`, `title`, `url`, and optional `description`. They record delivery state only; pi-subagents does not merge, poll CI, or deploy.
+- Use `mission.update` to record decisions, artifacts, labels, summaries, and delivery receipts while work runs. Adding a decision moves an open mission to `needs_decision`. Resolve it with `mission.resolve-decision`, `missionId`, the decision `id`, and a resolution in `summary`. The mission returns to `active` after its last open decision is resolved.
+- `mission.show` includes each workflow child's latest status, phase, update time, session path metadata, and heartbeat. The ledger is a recovery record only. It does not schedule or restart children.
+- Receipts are durable links for pull requests, CI, deployments, or releases, each with `kind`, `status`, `title`, `url`, and optional `description`. They record delivery state only; pi-subagents does not merge, poll CI, or deploy.
 - Use `mission.close` with a terminal status and summary when a mission is done.
 - After compaction or restart, resume from `mission.list`/`mission.show` first: `mission.show` refreshes linked async status where available, then use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions.
 - `mission.list` with `missionScope: "global"` reads the user-local pointer index under the Pi agent directory. Project records remain the source of truth, and missing records are reported as stale rather than hiding other projects.

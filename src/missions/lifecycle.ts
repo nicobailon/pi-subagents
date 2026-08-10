@@ -160,7 +160,7 @@ function persistedBinding(binding: MissionLaunchBinding): PersistedMissionBindin
 	};
 }
 
-function writeAsyncBinding(asyncDir: string, binding: MissionLaunchBinding): void {
+export function writeMissionAsyncBinding(asyncDir: string, binding: MissionLaunchBinding): void {
 	writePrivateAtomicJson(path.join(asyncDir, MISSION_BINDING_FILE), persistedBinding(binding));
 }
 
@@ -210,7 +210,7 @@ export function attachMissionToLaunchResult(input: {
 		...(input.result.details.results.length === 1 && input.result.details.results[0]?.acceptance ? { acceptance: input.result.details.results[0].acceptance } : {}),
 	});
 	if (input.result.details.asyncDir) {
-		writeAsyncBinding(input.result.details.asyncDir, input.binding);
+		writeMissionAsyncBinding(input.result.details.asyncDir, input.binding);
 		const statusPath = path.join(input.result.details.asyncDir, "status.json");
 		if (fs.existsSync(statusPath)) {
 			try {
@@ -337,10 +337,29 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 				return total + (usageFromUnknown((result as { tokens?: unknown }).tokens)?.tokens ?? 0);
 			}, 0) }
 			: undefined);
+	const workflowRunId = typeof event.parentWorkflowRunId === "string" && event.parentWorkflowRunId.trim() ? event.parentWorkflowRunId.trim() : undefined;
+	const workflowKey = typeof event.workflowKey === "string" && event.workflowKey.trim() ? event.workflowKey.trim() : undefined;
+	const workflowChildStatus = runStatus === "complete" || runStatus === "completed" || event.success === true
+		? "completed"
+		: runStatus === "paused"
+			? "paused"
+			: runStatus === "stopped"
+				? "stopped"
+				: "failed";
+	const workflowChildTerminal = !["running", "queued", "active", "paused"].includes(workflowChildStatus);
 	return updateMission(binding.location, binding.missionId, {
 		status: missionStatusForRun(current, runId, runStatus),
 		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(usage && usage.tokens > 0 ? { usage } : {}) }],
 		addArtifacts: artifacts,
+		...(workflowRunId && workflowKey ? { upsertWorkflowChildren: [{
+			workflowRunId,
+			key: workflowKey,
+			runId,
+			status: workflowChildStatus,
+			artifactPaths: artifacts.map((artifact) => artifact.path),
+			...(workflowChildTerminal ? { completedAt } : {}),
+			heartbeat: { status: workflowChildStatus, ...(summary ? { message: summary } : {}) },
+		}] } : {}),
 		...(summary ? { summary } : {}),
 	});
 }

@@ -27,6 +27,7 @@ import {
 	type MissionTokenBudget,
 	type MissionTokenUsage,
 	type MissionUpdateInput,
+	type MissionWorkflowChild,
 } from "./types.ts";
 
 const MISSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -149,6 +150,33 @@ function parseDecision(value: unknown, label: string): MissionDecision {
 	};
 }
 
+function parseWorkflowChild(value: unknown, label: string): MissionWorkflowChild {
+	const input = asObject(value, label);
+	const artifactPaths = input.artifactPaths === undefined ? [] : stringArray(input.artifactPaths, `${label}.artifactPaths`);
+	const heartbeat = input.heartbeat === undefined ? undefined : asObject(input.heartbeat, `${label}.heartbeat`);
+	return {
+		workflowRunId: requiredString(input.workflowRunId, `${label}.workflowRunId`),
+		key: validateMissionId(input.key, `${label}.key`),
+		status: requiredString(input.status, `${label}.status`),
+		startedAt: timestamp(input.startedAt, `${label}.startedAt`),
+		updatedAt: timestamp(input.updatedAt, `${label}.updatedAt`),
+		artifactPaths,
+		...(optionalString(input.runId, `${label}.runId`) ? { runId: input.runId as string } : {}),
+		...(optionalString(input.agent, `${label}.agent`) ? { agent: input.agent as string } : {}),
+		...(optionalString(input.task, `${label}.task`) ? { task: input.task as string } : {}),
+		...(optionalString(input.label, `${label}.label`) ? { label: input.label as string } : {}),
+		...(optionalString(input.phase, `${label}.phase`) ? { phase: input.phase as string } : {}),
+		...(input.completedAt !== undefined ? { completedAt: timestamp(input.completedAt, `${label}.completedAt`) } : {}),
+		...(optionalString(input.sessionPath, `${label}.sessionPath`) ? { sessionPath: input.sessionPath as string } : {}),
+		...(heartbeat ? { heartbeat: {
+			updatedAt: timestamp(heartbeat.updatedAt, `${label}.heartbeat.updatedAt`),
+			...(optionalString(heartbeat.status, `${label}.heartbeat.status`) ? { status: heartbeat.status as string } : {}),
+			...(optionalString(heartbeat.phase, `${label}.heartbeat.phase`) ? { phase: heartbeat.phase as string } : {}),
+			...(optionalString(heartbeat.message, `${label}.heartbeat.message`) ? { message: heartbeat.message as string } : {}),
+		} } : {}),
+	};
+}
+
 function parseArtifact(value: unknown, label: string): MissionArtifact {
 	const input = asObject(value, label);
 	const kind = requiredString(input.kind, `${label}.kind`) as MissionArtifactKind;
@@ -186,10 +214,12 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	const input = asObject(value, source);
 	if (input.schemaVersion !== 1) throw new Error(`${source}.schemaVersion must be 1`);
 	if (!Array.isArray(input.runs)) throw new Error(`${source}.runs must be an array`);
+	if (input.workflowChildren !== undefined && !Array.isArray(input.workflowChildren)) throw new Error(`${source}.workflowChildren must be an array`);
 	if (!Array.isArray(input.decisions)) throw new Error(`${source}.decisions must be an array`);
 	if (!Array.isArray(input.artifacts)) throw new Error(`${source}.artifacts must be an array`);
 	if (input.receipts !== undefined && !Array.isArray(input.receipts)) throw new Error(`${source}.receipts must be an array`);
 	const runs = input.runs as unknown[];
+	const workflowChildren = (input.workflowChildren ?? []) as unknown[];
 	const decisions = input.decisions as unknown[];
 	const artifacts = input.artifacts as unknown[];
 	const receipts = (input.receipts ?? []) as unknown[];
@@ -211,6 +241,7 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 		createdAt: timestamp(input.createdAt, `${source}.createdAt`),
 		updatedAt: timestamp(input.updatedAt, `${source}.updatedAt`),
 		runs: runs.map((item, index) => parseRunLink(item, `${source}.runs[${index}]`)),
+		workflowChildren: workflowChildren.map((item, index) => parseWorkflowChild(item, `${source}.workflowChildren[${index}]`)),
 		decisions: decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`)),
 		artifacts: artifacts.map((item, index) => parseArtifact(item, `${source}.artifacts[${index}]`)),
 		receipts: receipts.map((item, index) => parseReceipt(item, `${source}.receipts[${index}]`)),
@@ -346,6 +377,7 @@ export function createMission(location: MissionStoreLocation, input: MissionCrea
 		updatedAt: createdAt,
 		cwd: location.projectRoot,
 		runs: [],
+		workflowChildren: [],
 		decisions: [],
 		artifacts: [],
 		receipts: [],
@@ -412,6 +444,28 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 		if (existingIndex === -1) runs.push(run);
 		else runs[existingIndex] = { ...runs[existingIndex]!, ...run };
 	}
+	const workflowChildren = [...current.workflowChildren];
+	for (const candidate of update.upsertWorkflowChildren ?? []) {
+		const nowIso = now.toISOString();
+		const parsed = parseWorkflowChild({
+			...candidate,
+			startedAt: candidate.startedAt ?? nowIso,
+			updatedAt: nowIso,
+			artifactPaths: candidate.artifactPaths ?? [],
+			...(candidate.heartbeat ? { heartbeat: { ...candidate.heartbeat, updatedAt: nowIso } } : {}),
+		}, "mission.update.upsertWorkflowChildren[]");
+		const existingIndex = workflowChildren.findIndex((child) => child.workflowRunId === parsed.workflowRunId && child.key === parsed.key);
+		if (existingIndex === -1) workflowChildren.push(parsed);
+		else {
+			const existing = workflowChildren[existingIndex]!;
+			workflowChildren[existingIndex] = parseWorkflowChild({
+				...existing,
+				...parsed,
+				startedAt: existing.startedAt,
+				artifactPaths: [...new Set([...existing.artifactPaths, ...parsed.artifactPaths])],
+			}, "mission.update.upsertWorkflowChildren[]");
+		}
+	}
 	const artifacts = [...current.artifacts];
 	for (const candidate of update.addArtifacts ?? []) {
 		const artifact = parseArtifact(candidate, "mission.update.addArtifacts[]");
@@ -439,6 +493,18 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 			...(decision.recommendation ? { recommendation: requiredString(decision.recommendation, "mission.update.addDecisions[].recommendation") } : {}),
 		})),
 	];
+	if (update.resolveDecision) {
+		const decisionId = validateMissionId(update.resolveDecision.id, "mission.update.resolveDecision.id");
+		const decisionIndex = decisions.findIndex((decision) => decision.id === decisionId);
+		if (decisionIndex === -1) throw new Error(`Decision '${decisionId}' was not found in mission '${missionId}'`);
+		if (decisions[decisionIndex]!.status === "resolved") throw new Error(`Decision '${decisionId}' is already resolved`);
+		decisions[decisionIndex] = {
+			...decisions[decisionIndex]!,
+			status: "resolved",
+			resolvedAt: createdAt,
+			resolution: requiredString(update.resolveDecision.resolution, "mission.update.resolveDecision.resolution").trim(),
+		};
+	}
 	const budget = update.budget !== undefined ? parseBudget(update.budget, "mission.update.budget") : current.budget;
 	const usage = update.usage !== undefined
 		? parseUsage(update.usage, "mission.update.usage")
@@ -452,10 +518,20 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 				? { status: "active" }
 				: goal;
 	}
+	const hasOpenDecisions = decisions.some((decision) => decision.status === "open");
+	const requestedStatus = update.status !== undefined ? missionStatus(update.status, "mission.update.status") : undefined;
+	const candidateStatus = requestedStatus
+		?? (update.addDecisions?.length && current.status === "active"
+			? "needs_decision"
+			: update.resolveDecision && current.status === "needs_decision" && !hasOpenDecisions
+				? "active"
+				: current.status);
+	const decisionStatus = hasOpenDecisions && (candidateStatus === "active" || candidateStatus === "completed") ? "needs_decision" : candidateStatus;
 	const next: MissionRecord = {
 		...current,
 		updatedAt: createdAt,
 		runs,
+		workflowChildren,
 		artifacts,
 		receipts,
 		decisions,
@@ -463,7 +539,7 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 		...(update.objective !== undefined ? { objective: requiredString(update.objective, "mission.update.objective").trim() } : {}),
 		...(budget ? { budget } : {}),
 		...(goal ? { goal, usage } : {}),
-		...(update.status !== undefined ? { status: missionStatus(update.status, "mission.update.status") } : {}),
+		status: decisionStatus,
 		...(update.summary !== undefined ? { summary: requiredString(update.summary, "mission.update.summary") } : {}),
 		...(update.labels !== undefined ? { labels: stringArray(update.labels, "mission.update.labels") } : {}),
 		...(update.acceptance !== undefined ? { acceptance: update.acceptance } : {}),

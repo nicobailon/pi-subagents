@@ -51,6 +51,36 @@ export interface MissionDecision {
 	resolution?: string;
 }
 
+export interface MissionChildHeartbeat {
+	updatedAt: string;
+	status?: string;
+	phase?: string;
+	message?: string;
+}
+
+export interface MissionWorkflowChild {
+	workflowRunId: string;
+	key: string;
+	status: string;
+	startedAt: string;
+	updatedAt: string;
+	runId?: string;
+	agent?: string;
+	task?: string;
+	label?: string;
+	phase?: string;
+	completedAt?: string;
+	sessionPath?: string;
+	artifactPaths: string[];
+	heartbeat?: MissionChildHeartbeat;
+}
+
+export type MissionWorkflowChildUpdate = Pick<MissionWorkflowChild, "workflowRunId" | "key" | "status"> & Partial<Omit<MissionWorkflowChild, "workflowRunId" | "key" | "status" | "startedAt" | "updatedAt" | "artifactPaths" | "heartbeat">> & {
+	startedAt?: string;
+	artifactPaths?: string[];
+	heartbeat?: Omit<MissionChildHeartbeat, "updatedAt"> & { updatedAt?: string };
+};
+
 export interface MissionArtifact {
 	kind: MissionArtifactKind;
 	path: string;
@@ -80,6 +110,7 @@ export interface MissionRecord {
 	cwd?: string;
 	ownerSessionId?: string;
 	runs: MissionRunLink[];
+	workflowChildren: MissionWorkflowChild[];
 	decisions: MissionDecision[];
 	artifacts: MissionArtifact[];
 	receipts: MissionReceipt[];
@@ -151,7 +182,9 @@ export interface MissionUpdateInput {
 	labels?: string[];
 	acceptance?: unknown;
 	addRuns?: MissionRunLink[];
+	upsertWorkflowChildren?: MissionWorkflowChildUpdate[];
 	addArtifacts?: MissionArtifact[];
 	addDecisions?: Array<Omit<MissionDecision, "id" | "status" | "createdAt">>;
+	resolveDecision?: { id: string; resolution: string };
 	addReceipts?: Array<Omit<MissionReceipt, "createdAt">>;
 }

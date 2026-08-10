@@ -54,7 +54,7 @@ describe("mission store", () => {
 				addDecisions: [{ title: "Choose release window", options: ["now", "later"] }],
 			});
 
-			assert.equal(readMission(test.location, created.id).status, "active");
+			assert.equal(readMission(test.location, created.id).status, "needs_decision");
 			assert.equal(updated.runs[0]?.runId, "run-1");
 			assert.equal(readMission(test.location, created.id).runs[1]?.mode, "workflow");
 			assert.equal(updated.decisions[0]?.status, "open");
@@ -68,6 +68,107 @@ describe("mission store", () => {
 			const global = listGlobalMissions(test.location.globalIndexDir);
 			assert.equal(global.entries[0]?.missionId, created.id);
 			assert.equal(global.entries[0]?.stale, false);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("persists workflow child attempts and projects their latest heartbeat", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Dispatch ledger", objective: "Track workflow children", status: "active" });
+			updateMission(test.location, mission.id, {
+				upsertWorkflowChildren: [{
+					workflowRunId: "workflow-1",
+					key: "review",
+					status: "running",
+					agent: "reviewer",
+					task: "Review the diff",
+					phase: "review",
+					sessionPath: "/tmp/review.jsonl",
+					heartbeat: { status: "running", phase: "review" },
+				}],
+			}, new Date("2026-08-11T10:00:00.000Z"));
+			const completed = updateMission(test.location, mission.id, {
+				upsertWorkflowChildren: [{
+					workflowRunId: "workflow-1",
+					key: "review",
+					status: "completed",
+					runId: "child-1",
+					completedAt: "2026-08-11T10:05:00.000Z",
+					artifactPaths: ["/tmp/review.md"],
+					heartbeat: { status: "completed", phase: "review" },
+				}],
+			}, new Date("2026-08-11T10:05:00.000Z"));
+
+			assert.equal(completed.workflowChildren.length, 1);
+			assert.deepEqual(completed.workflowChildren[0], {
+				workflowRunId: "workflow-1",
+				key: "review",
+				status: "completed",
+				startedAt: "2026-08-11T10:00:00.000Z",
+				updatedAt: "2026-08-11T10:05:00.000Z",
+				runId: "child-1",
+				agent: "reviewer",
+				task: "Review the diff",
+				phase: "review",
+				completedAt: "2026-08-11T10:05:00.000Z",
+				sessionPath: "/tmp/review.jsonl",
+				artifactPaths: ["/tmp/review.md"],
+				heartbeat: { status: "completed", phase: "review", updatedAt: "2026-08-11T10:05:00.000Z" },
+			});
+			const shown = handleMissionAction("mission.show", { missionId: mission.id }, { cwd: test.projectRoot, agentDir: test.agentDir });
+			assert.match(shown.content[0]?.type === "text" ? shown.content[0].text : "", /review \(child-1\): completed — reviewer \[review\]; updated .*; heartbeat completed\/review at/);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("gates a mission on open decisions and resolves them explicitly", () => {
+		const test = fixture();
+		try {
+			const ctx = { cwd: test.projectRoot, agentDir: test.agentDir };
+			const mission = createMission(test.location, { title: "Decision gate", objective: "Wait for owner", status: "active" });
+			const pending = handleMissionAction("mission.update", {
+				missionId: mission.id,
+				missionUpdate: { decisions: [{ title: "Choose release window", options: ["now", "later"], recommendation: "later" }] },
+			}, ctx);
+			const decisionId = pending.details?.mission?.decisions[0]?.id;
+			assert.ok(decisionId);
+			assert.equal(pending.details?.mission?.status, "needs_decision");
+			assert.match(handleMissionAction("mission.list", {}, ctx).content[0]?.type === "text" ? handleMissionAction("mission.list", {}, ctx).content[0].text : "", /decisions: 1 open, 0 resolved/);
+
+			const refreshed = updateMission(test.location, mission.id, {
+				status: "active",
+				addRuns: [{ runId: "run-1", mode: "single", status: "running" }],
+			});
+			assert.equal(refreshed.status, "needs_decision");
+
+			const resolved = handleMissionAction("mission.resolve-decision", { missionId: mission.id, id: decisionId, summary: "Release later" }, ctx);
+			assert.equal(resolved.details?.mission?.status, "active");
+			assert.equal(resolved.details?.mission?.decisions[0]?.status, "resolved");
+			assert.equal(resolved.details?.mission?.decisions[0]?.resolution, "Release later");
+			assert.match(resolved.content[0]?.type === "text" ? resolved.content[0].text : "", /resolved — Choose release window; resolution: Release later/);
+			assert.throws(() => handleMissionAction("mission.resolve-decision", { missionId: mission.id, id: decisionId, summary: "Again" }, ctx), /already resolved/);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps planned and waiting missions in their lifecycle state while decisions are resolved", () => {
+		const test = fixture();
+		try {
+			for (const status of ["planned", "waiting"] as const) {
+				const mission = createMission(test.location, { title: `${status} decision`, objective: "Keep state", status });
+				const pending = updateMission(test.location, mission.id, { addDecisions: [{ title: "Choose next step" }] });
+				const decisionId = pending.decisions[0]?.id;
+				assert.ok(decisionId);
+				assert.equal(pending.status, status);
+
+				const resolved = updateMission(test.location, mission.id, { resolveDecision: { id: decisionId, resolution: "Later" } });
+				assert.equal(resolved.status, status);
+				assert.equal(resolved.decisions[0]?.status, "resolved");
+			}
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
@@ -244,6 +345,7 @@ describe("mission store", () => {
 			assert.equal(mission.objective, "Stay readable");
 			assert.equal(mission.goal, undefined);
 			assert.deepEqual(mission.receipts, []);
+			assert.deepEqual(mission.workflowChildren, []);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}

@@ -92,8 +92,9 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
-import { attachMissionToLaunchResult, prepareMissionLaunch, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
 import { updateMission } from "../../missions/store.ts";
+import type { MissionWorkflowChildUpdate } from "../../missions/types.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
@@ -151,7 +152,7 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "reject-checkpoint", "schedule.delete"]);
 
 function editDistance(left: string, right: string): number {
@@ -269,6 +270,7 @@ export interface SubagentParamsLike {
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	workflowChildAsyncId?: string;
 	suppressRoutineResultIntercom?: boolean;
 	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
 	chain?: ChainStep[];
@@ -2457,7 +2459,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			details: { mode: "single" as const, results: [] },
 		};
 	}
-	const id = randomUUID();
+	const requestedWorkflowChildAsyncId = typeof params.workflowChildAsyncId === "string" ? params.workflowChildAsyncId.trim() : "";
+	const id = requestedWorkflowChildAsyncId && path.basename(requestedWorkflowChildAsyncId) === requestedWorkflowChildAsyncId ? requestedWorkflowChildAsyncId : randomUUID();
 	const parentModel = data.parentModel;
 	const asyncCtx = compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
 		pi: deps.pi,
@@ -3987,6 +3990,61 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionFile?: string }) => void>();
 
+function recordMissionWorkflowChild(
+	binding: MissionLaunchBinding | undefined,
+	workflowRunId: string,
+	key: string,
+	update: Omit<MissionWorkflowChildUpdate, "workflowRunId" | "key">,
+): void {
+	if (!binding) return;
+	try {
+		updateMission(binding.location, binding.missionId, { upsertWorkflowChildren: [{ workflowRunId, key, ...update }] });
+	} catch (error) {
+		console.warn(`[pi-subagents] Failed to record mission workflow child '${key}': ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+export function missionWorkflowChildStatus(result: AgentToolResult<Details>): string {
+	const childResults = result.details.results;
+	if (childResults.some((child) => child.detached || child.interrupted)) return "paused";
+	if (result.isError === true || childResults.some((child) => child.exitCode !== 0)) return "failed";
+	if (childResults.length === 0 && (result.details.asyncId || result.details.asyncDir)) return "running";
+	return "completed";
+}
+
+export async function runMissionWorkflowChild(
+	binding: MissionLaunchBinding | undefined,
+	workflowRunId: string,
+	key: string,
+	phase: string | undefined,
+	run: () => Promise<AgentToolResult<Details>>,
+): Promise<AgentToolResult<Details>> {
+	try {
+		return await run();
+	} catch (error) {
+		recordMissionWorkflowChild(binding, workflowRunId, key, {
+			status: "failed",
+			completedAt: new Date().toISOString(),
+			heartbeat: { status: "failed", ...(phase ? { phase } : {}), message: error instanceof Error ? error.message : String(error) },
+		});
+		throw error;
+	}
+}
+
+export function bindMissionWorkflowChildAsyncLaunch(
+	params: SubagentParamsLike,
+	binding: MissionLaunchBinding | undefined,
+	asyncByDefault: boolean,
+	asyncId: string = randomUUID(),
+): SubagentParamsLike {
+	const requestedAsync = params.async ?? asyncByDefault;
+	if (!binding || !requestedAsync || params.clarify === true) return params;
+	const id = asyncId.trim();
+	if (!id || path.basename(id) !== id) throw new Error("workflow child async id must be a single path segment");
+	writeMissionAsyncBinding(path.join(DIRS.async, id), binding);
+	return { ...params, workflowChildAsyncId: id };
+}
+
 function workflowChildResult(key: string, result: AgentToolResult<Details>): WorkflowScriptChildResult {
 	const receiptOutput = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
 	const output = result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
@@ -4394,37 +4452,70 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 								patchMissionObjective(childParams.task);
-								const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions });
-								workflowLaunchObservers.set(childRequest, (launch) => {
-									const step = status.steps?.find((candidate) => candidate.workflowKey === key);
-									if (!step) return;
-									step.agent = launch.agent;
-									step.sessionFile = launch.sessionFile;
-									persist();
+								const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
+								const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
+								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
+									status: "running",
+									...(typeof childParams.agent === "string" && childParams.agent.trim() ? { agent: childParams.agent.trim() } : {}),
+									...(typeof childParams.task === "string" && childParams.task.trim() ? { task: childParams.task.trim() } : {}),
+									...(childLabel ? { label: childLabel } : {}),
+									...(childPhase ? { phase: childPhase } : {}),
+									heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
 								});
-								const result = await execute(randomUUID(), childRequest, workflowSignal, (update) => {
-									const progress = update.details.progress?.[0];
-									const step = status.steps?.find((candidate) => candidate.workflowKey === key);
-									if (!progress || !step) return;
-									step.status = progress.status === "completed" ? "completed" : progress.status === "failed" ? "failed" : "running";
-									step.activityState = progress.activityState;
-									step.lastActivityAt = progress.lastActivityAt;
-									step.currentTool = progress.currentTool;
-									step.currentToolArgs = progress.currentToolArgs;
-									step.currentToolStartedAt = progress.currentToolStartedAt;
-									step.currentPath = progress.currentPath;
-									step.recentTools = progress.recentTools.map((tool) => ({ ...tool }));
-									step.recentOutput = [...progress.recentOutput];
-									step.turnCount = progress.turnCount;
-									step.toolCount = progress.toolCount;
-									step.model = progress.model;
-									step.thinking = progress.thinking;
-									step.error = progress.error;
-									projectWorkflowActivity();
-									persist();
-								}, ctx, preserveActiveSession);
+								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
+									const childRequest = bindMissionWorkflowChildAsyncLaunch(
+										prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions }),
+										missionBinding,
+										deps.asyncByDefault,
+									);
+									workflowLaunchObservers.set(childRequest, (launch) => {
+										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
+										if (step) {
+											step.agent = launch.agent;
+											step.sessionFile = launch.sessionFile;
+											persist();
+										}
+										recordMissionWorkflowChild(missionBinding, workflowRunId, key, { status: "running", agent: launch.agent, ...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}) });
+									});
+									return execute(randomUUID(), childRequest, workflowSignal, (update) => {
+										const progress = update.details.progress?.[0];
+										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
+										if (!progress || !step) return;
+										step.status = progress.status === "completed" ? "completed" : progress.status === "failed" ? "failed" : "running";
+										step.activityState = progress.activityState;
+										step.lastActivityAt = progress.lastActivityAt;
+										step.currentTool = progress.currentTool;
+										step.currentToolArgs = progress.currentToolArgs;
+										step.currentToolStartedAt = progress.currentToolStartedAt;
+										step.currentPath = progress.currentPath;
+										step.recentTools = progress.recentTools.map((tool) => ({ ...tool }));
+										step.recentOutput = [...progress.recentOutput];
+										step.turnCount = progress.turnCount;
+										step.toolCount = progress.toolCount;
+										step.model = progress.model;
+										step.thinking = progress.thinking;
+										step.error = progress.error;
+										projectWorkflowActivity();
+										persist();
+										recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
+											status: step.status,
+											heartbeat: { status: step.status, ...(childPhase ? { phase: childPhase } : {}) },
+										});
+									}, ctx, preserveActiveSession);
+								});
 								workflowResults.push(...result.details.results);
+								if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 								const child = workflowChildResult(key, result);
+								const childStatus = missionWorkflowChildStatus(result);
+								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
+									status: childStatus,
+									...(child.runId ? { runId: child.runId } : {}),
+									...(result.details.results[0]?.agent ? { agent: result.details.results[0].agent } : {}),
+									...(result.details.results[0]?.sessionFile ? { sessionPath: result.details.results[0].sessionFile } : {}),
+									artifactPaths: child.artifactPaths,
+									...(["completed", "failed"].includes(childStatus) ? { completedAt: new Date().toISOString() } : {}),
+									heartbeat: { status: childStatus, ...(childPhase ? { phase: childPhase } : {}) },
+								});
 								if (result.details.asyncId) {
 									const childJob = deps.state.asyncJobs.get(result.details.asyncId);
 									if (childJob) { childJob.parentWorkflowRunId = workflowRunId; childJob.workflowKey = key; }
@@ -4483,10 +4574,51 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 						patchMissionObjective(childParams.task);
-						const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
-						const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
+						const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
+						const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
+						recordMissionWorkflowChild(missionBinding, _id, key, {
+							status: "running",
+							...(typeof childParams.agent === "string" && childParams.agent.trim() ? { agent: childParams.agent.trim() } : {}),
+							...(typeof childParams.task === "string" && childParams.task.trim() ? { task: childParams.task.trim() } : {}),
+							...(childLabel ? { label: childLabel } : {}),
+							...(childPhase ? { phase: childPhase } : {}),
+							heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
+						});
+						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
+							const childRequest = bindMissionWorkflowChildAsyncLaunch(
+								prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card" }),
+								missionBinding,
+								deps.asyncByDefault,
+							);
+							workflowLaunchObservers.set(childRequest, (launch) => recordMissionWorkflowChild(missionBinding, _id, key, {
+								status: "running",
+								agent: launch.agent,
+								...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}),
+							}));
+							return execute(randomUUID(), childRequest, workflowSignal, (update) => {
+								const progress = update.details.progress?.[0];
+								if (!progress) return;
+								const progressStatus = progress.status === "completed" ? "completed" : progress.status === "failed" ? "failed" : "running";
+								recordMissionWorkflowChild(missionBinding, _id, key, {
+									status: progressStatus,
+									heartbeat: { status: progressStatus, ...(childPhase ? { phase: childPhase } : {}) },
+								});
+							}, ctx, preserveActiveSession);
+						});
 						workflowResults.push(...result.details.results);
-						return workflowChildResult(key, result);
+						if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
+						const child = workflowChildResult(key, result);
+						const childStatus = missionWorkflowChildStatus(result);
+						recordMissionWorkflowChild(missionBinding, _id, key, {
+							status: childStatus,
+							...(child.runId ? { runId: child.runId } : {}),
+							...(result.details.results[0]?.agent ? { agent: result.details.results[0].agent } : {}),
+							...(result.details.results[0]?.sessionFile ? { sessionPath: result.details.results[0].sessionFile } : {}),
+							artifactPaths: child.artifactPaths,
+							...(["completed", "failed"].includes(childStatus) ? { completedAt: new Date().toISOString() } : {}),
+							heartbeat: { status: childStatus, ...(childPhase ? { phase: childPhase } : {}) },
+						});
+						return child;
 					},
 					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
 				});

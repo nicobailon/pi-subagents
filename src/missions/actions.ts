@@ -34,6 +34,7 @@ export const MISSION_ACTIONS = [
 	"mission.list",
 	"mission.show",
 	"mission.update",
+	"mission.resolve-decision",
 	"mission.attach-run",
 	"mission.close",
 ] as const;
@@ -298,9 +299,20 @@ function formatMission(record: MissionRecord): string {
 		lines.push("Runs:");
 		for (const run of record.runs) lines.push(`  ${run.runId} (${run.mode}${run.status ? `, ${run.status}` : ""})${run.asyncDir ? ` — ${run.asyncDir}` : ""}`);
 	}
+	if (record.workflowChildren.length) {
+		lines.push("Workflow children:");
+		for (const child of record.workflowChildren) {
+			const identity = child.runId ? `${child.key} (${child.runId})` : child.key;
+			const heartbeat = child.heartbeat ? `; heartbeat ${child.heartbeat.status ?? child.status}${child.heartbeat.phase ? `/${child.heartbeat.phase}` : ""} at ${child.heartbeat.updatedAt}` : "";
+			const recovery = child.sessionPath ? `; session ${child.sessionPath}` : child.artifactPaths.length ? `; artifacts ${child.artifactPaths.length}` : "";
+			lines.push(`  ${identity}: ${child.status}${child.agent ? ` — ${child.agent}` : ""}${child.phase ? ` [${child.phase}]` : ""}; updated ${child.updatedAt}${heartbeat}${recovery}`);
+		}
+	}
 	if (record.decisions.length) {
 		lines.push("Decisions:");
-		for (const decision of record.decisions) lines.push(`  ${decision.id}: ${decision.status} — ${decision.title}`);
+		for (const decision of record.decisions) {
+			lines.push(`  ${decision.id}: ${decision.status} — ${decision.title}${decision.resolution ? `; resolution: ${decision.resolution}` : ""}`);
+		}
 	}
 	if (record.artifacts.length) {
 		lines.push("Artifacts:");
@@ -351,7 +363,11 @@ export function handleMissionAction(
 		const listed = listMissions(location);
 		const lines = listed.records.length === 0
 			? ["No project missions."]
-			: listed.records.map((record) => `${record.id}  ${record.status}  ${record.title}  ${record.updatedAt}`);
+			: listed.records.map((record) => {
+				const open = record.decisions.filter((decision) => decision.status === "open").length;
+				const resolved = record.decisions.length - open;
+				return `${record.id}  ${record.status}  ${record.title}  ${record.updatedAt}${record.decisions.length ? `  decisions: ${open} open, ${resolved} resolved` : ""}`;
+			});
 		if (listed.warnings.length) lines.push("", ...listed.warnings.map((warning) => `Warning: ${warning}`));
 		return textResult(lines.join("\n"), { mode: "management", results: [], missions: { records: listed.records, warnings: listed.warnings } });
 	}
@@ -371,6 +387,13 @@ export function handleMissionAction(
 	if (action === "mission.update") {
 		const record = updateMission(location, requireMissionId(params), validateMissionUpdate(params.missionUpdate));
 		return textResult(`Updated mission ${record.id}.\n\n${formatMission(record)}`, { mode: "management", results: [], missionId: record.id, missionPath: pathFor(record.id), mission: record });
+	}
+	if (action === "mission.resolve-decision") {
+		const missionId = requireMissionId(params);
+		const decisionId = validateMissionId(params.id, "id");
+		if (typeof params.summary !== "string" || !params.summary.trim()) throw new Error("mission.resolve-decision requires a non-empty summary");
+		const record = updateMission(location, missionId, { resolveDecision: { id: decisionId, resolution: params.summary.trim() } });
+		return textResult(`Resolved decision ${decisionId} for mission ${record.id}.\n\n${formatMission(record)}`, { mode: "management", results: [], missionId: record.id, missionPath: pathFor(record.id), mission: record });
 	}
 	if (action === "mission.attach-run") {
 		const missionId = requireMissionId(params);

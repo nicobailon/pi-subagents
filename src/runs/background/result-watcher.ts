@@ -21,6 +21,7 @@ import {
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
+import { syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
@@ -149,6 +150,11 @@ export function createResultWatcher(
 			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
+			try {
+				syncMissionFromAsyncCompletion({ ...data, runId });
+			} catch (error) {
+				console.error(`Mission completion sync failed for '${resultPath}':`, error);
+			}
 			try {
 				deps.observeCompletion?.({ ...data, runId });
 			} catch (error) {

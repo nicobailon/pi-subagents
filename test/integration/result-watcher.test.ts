@@ -7,6 +7,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
+import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
+import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -70,6 +72,74 @@ describe("result watcher", () => {
 			assert.equal(fs.existsSync(resultPath), false);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("syncs mission workflow child completion before result cleanup", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-mission-"));
+		const resultsDir = path.join(root, "results");
+		const project = path.join(root, "project");
+		const asyncDir = path.join(root, "async-child");
+		fs.mkdirSync(resultsDir, { recursive: true });
+		fs.mkdirSync(project, { recursive: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		try {
+			const outputPath = path.join(asyncDir, "output.md");
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Workflow mission" }, task: "Run async child" },
+				projectRoot: project,
+				config: { globalIndexDir: path.join(root, "global-index") },
+				ownerSessionId: "session-current",
+			});
+			assert.ok(binding);
+			writeMissionAsyncBinding(asyncDir, binding);
+			updateMission(binding.location, binding.missionId, {
+				upsertWorkflowChildren: [{
+					workflowRunId: "workflow-1",
+					key: "background",
+					runId: "async-child",
+					status: "running",
+					artifactPaths: [asyncDir],
+					heartbeat: { status: "running" },
+				}],
+			});
+			fs.writeFileSync(path.join(resultsDir, "async-child.json"), JSON.stringify({
+				id: "async-child",
+				runId: "async-child",
+				sessionId: "session-current",
+				asyncDir,
+				mode: "single",
+				state: "complete",
+				success: true,
+				summary: "Async child completed",
+				parentWorkflowRunId: "workflow-1",
+				workflowKey: "background",
+				results: [{ agent: "worker", success: true, output: "done", artifactPaths: { outputPath } }],
+			}), "utf-8");
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				notifier: { deliver: async () => true },
+			});
+			try {
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			const mission = readMission(binding.location, binding.missionId);
+			const child = mission.workflowChildren[0];
+			assert.equal(fs.existsSync(path.join(resultsDir, "async-child.json")), false);
+			assert.equal(child?.status, "completed");
+			assert.equal(child?.runId, "async-child");
+			assert.ok(child?.completedAt);
+			assert.equal(child?.heartbeat?.status, "completed");
+			assert.equal(child?.heartbeat?.message, "Async child completed");
+			assert.ok(child?.artifactPaths.includes(outputPath));
+			assert.ok(child?.artifactPaths.includes(path.join(asyncDir, "status.json")));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
