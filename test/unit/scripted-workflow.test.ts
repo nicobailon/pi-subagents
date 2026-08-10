@@ -135,6 +135,31 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(emitSnapshots, [1]);
 	});
 
+	it("renders prompt text before passing it explicitly to a child", async () => {
+		let launchTask: unknown;
+		const result = await runWorkflowScript({
+			script: `
+				const task = await prompts.render("project:writer-followup", { pass: 2, previous: "draft" });
+				return runs.run("followup", { resume: "retained-run", task });
+			`,
+			prompts: {
+				render(ref, vars) {
+					assert.equal(ref, "project:writer-followup");
+					assert.deepEqual(vars, { pass: 2, previous: "draft" });
+					return "Pass 2: revise draft";
+				},
+			},
+			async launch(key, params) {
+				launchTask = params.task;
+				return { key, ok: true, runId: "latest-run", output: "revised", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.equal(launchTask, "Pass 2: revise draft");
+		assert.equal((result.value as { runId: string }).runId, "latest-run");
+	});
+
 	it("waits for every runs.all child and returns ordinary failures in input order", async () => {
 		let delayedFinished = false;
 		let delayedAborted = false;

@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverPromptWorkflows, registerPromptWorkflowCommands } from "../../src/slash/prompt-workflows.ts";
+import { renderWorkflowPrompt } from "../../src/shared/prompt-resources.ts";
 import type { SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -65,6 +66,28 @@ Project body $1
 		assert.equal(workflow?.description, "Project version");
 		assert.equal(workflow?.agent, "worker");
 		assert.equal(workflow?.model, "openai/gpt-5-mini");
+	});
+
+	it("renders explicitly scoped prompt fragments with simple variables", () => {
+		writePrompt(path.join(agentDir, "prompts"), "writer-followup", `---
+description: User follow-up
+---
+User pass {{pass}}: {{previous}} {{missing}}
+`);
+		writePrompt(path.join(cwd, ".pi", "prompts"), "writer-followup", "Project pass {{pass}}: {{previous}}");
+
+		assert.equal(renderWorkflowPrompt("user:writer-followup", { pass: 1, previous: "draft" }, cwd), "User pass 1: draft {{missing}}");
+		assert.equal(renderWorkflowPrompt("project:writer-followup", { pass: 2, previous: "revision" }, cwd), "Project pass 2: revision");
+		assert.match(renderWorkflowPrompt("package:review-loop", undefined, cwd), /^Run a parent-orchestrated review loop/);
+		assert.throws(() => renderWorkflowPrompt("writer-followup", {}, cwd), /package:<name>.*user:<name>.*project:<name>/);
+		assert.throws(() => renderWorkflowPrompt("project:../secret", {}, cwd), /ref must use/);
+		try {
+			fs.symlinkSync(path.join(agentDir, "prompts", "writer-followup.md"), path.join(cwd, ".pi", "prompts", "linked.md"));
+			assert.throws(() => renderWorkflowPrompt("project:linked", {}, cwd), /not a regular file/);
+		} catch (error) {
+			if (!["EPERM", "EACCES", "ENOSYS"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+		}
+		assert.throws(() => renderWorkflowPrompt("project:writer-followup", { previous: { nested: true } }, cwd), /string, number, or boolean/);
 	});
 
 	it("runs a named workflow through native subagent execution", async () => {

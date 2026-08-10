@@ -78,13 +78,29 @@ In workflowScript, give each child an explicit output path when later script ste
 
 Workflows get `await state.get(key)` and `await state.set(key, value)` through their default or explicit mission. Use them to share durable JSON values across later workflows attached with the same `missionId`. Each `set` takes the state-file lock and merges its key with the latest on-disk state. Missing keys return `undefined`, and the complete state file has a strict 256 KiB limit. `mission:false` workflows have no `state` global.
 
+### Prompt fragments
+
+Use `await prompts.render(ref, vars?)` to render reusable plain task text. Refs require an explicit scope: `package:<name>` reads the installed package `prompts/` directory, `user:<name>` reads the Pi agent `prompts/` directory, and `project:<name>` reads the current workflow project's config `prompts/` directory. Each ref names a top-level `<name>.md` file. Frontmatter is removed. Scalar string, number, and boolean variables replace matching `{{name}}` placeholders. Unknown placeholders stay unchanged.
+
+Rendering only returns text to the sandbox. It does not give the script filesystem access and does not change child launch parameters, worktree capture, or cleanup. Pass the rendered result explicitly as `task`.
+
 ### Retained children
 
 Completed workflow children from the current parent session stay addressable as retained children. `{ action: "children.list" }` lists up to the last 10 with their run ids. A later workflow continues one by passing `resume` instead of `agent`:
 
 ```js
-{ workflowScript: `return runs.run("continue", { resume: "<retained-run-id>", task: "Apply the follow-up feedback" })` }
+{ workflowScript: `
+  let writer = await runs.run("implement", { agent: "worker", task: "Implement the accepted contract" });
+  for (const pass of [1, 2]) {
+    if (!writer.runId) throw new Error("writer did not return a retained run id");
+    const task = await prompts.render("project:writer-followup", { pass, previous: writer.output });
+    writer = await runs.run("followup-" + pass, { resume: writer.runId, task });
+  }
+  return writer;
+` }
 ```
+
+Inside `workflowScript`, `await runs.run(key, { resume, task })` waits for the revived child to finish and returns its completed output and new `runId`. Each resume can return a new retained run id, so loops must continue from the latest returned `runId`. Top-level `{ action: "resume" }` remains detached and returns a background-run receipt.
 
 `resume` and `agent` are mutually exclusive. The revived child keeps its stored agent, model, and tool contract. `gate` is rejected on retained resume items because resume uses the retained child contract.
 

@@ -51,7 +51,7 @@ import {
 	type StepOverrides,
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
-import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable } from "../background/async-execution.ts";
+import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, workflowAwaitedAsyncResultPath } from "../background/async-execution.ts";
 import { isScheduledRunAction, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
@@ -86,7 +86,7 @@ import { updateSteeringTarget, waitForSteeringAction } from "../background/steer
 import { steerAsyncRun } from "./async-steering-action.ts";
 import { stopAsyncRun } from "./async-stop-action.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
-import { resolveAsyncRootResultPath } from "../background/chain-root-attachment.ts";
+import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -101,6 +101,7 @@ import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { renderWorkflowPrompt } from "../../shared/prompt-resources.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import {
 	cleanupWorktrees,
@@ -1333,6 +1334,7 @@ async function resumeAsyncRun(input: {
 	deps: ExecutorDeps;
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
+	signal?: AbortSignal;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
@@ -1619,6 +1621,58 @@ async function resumeAsyncRun(input: {
 	}
 
 	const revivedId = result.details.asyncId ?? runId;
+	if (input.params.workflowParentRunId !== undefined && result.details.asyncDir) {
+		const asyncDir = result.details.asyncDir;
+		const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
+		const stopOnAbort = () => { stopAsyncRun(input.deps.state, revivedId, input.deps.kill, { asyncDir, resolvedId: revivedId }); };
+		if (input.signal?.aborted) stopOnAbort();
+		else input.signal?.addEventListener("abort", stopOnAbort, { once: true });
+		let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
+		try {
+			completed = await waitForImportedAsyncRoot({ runId: revivedId, asyncDir, resultPath, index: 0 });
+		} finally {
+			input.signal?.removeEventListener("abort", stopOnAbort);
+		}
+		fs.rmSync(resultPath, { force: true });
+		const totalCost = completed.totalCost;
+		const childResult: SingleResult = {
+			index: 0,
+			agent: completed.agent,
+			task: effectiveFollowUp,
+			exitCode: completed.exitCode,
+			usage: {
+				input: totalCost?.inputTokens ?? 0,
+				output: totalCost?.outputTokens ?? 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: totalCost?.costUsd ?? 0,
+				turns: 0,
+			},
+			finalOutput: completed.output,
+			outputState: completed.output.trim() ? "present" : "absent",
+			...(completed.error ? { error: completed.error } : {}),
+			...(completed.timedOut ? { timedOut: true } : {}),
+			...(completed.stopped ? { stopped: true } : {}),
+			...(completed.sessionFile ? { sessionFile: completed.sessionFile } : {}),
+			...(completed.model ? { model: completed.model } : {}),
+			...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
+			...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
+			...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
+			...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
+			...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
+			...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
+		};
+		return {
+			content: [{ type: "text", text: completed.output || completed.error || `Revived ${target.source} subagent ${revivedId} completed without output.` }],
+			...(completed.success ? {} : { isError: true }),
+			details: {
+				...result.details,
+				runId: revivedId,
+				results: [childResult],
+				...(target.launchContractDigest ? { sourceLaunchContractDigest: target.launchContractDigest } : {}),
+			},
+		};
+	}
 	const revivedTarget = intercomBridge.active ? resolveSubagentIntercomTarget(revivedId, target.agent, 0) : undefined;
 	const sourceLabel = target.source;
 	const lines = [
@@ -4292,6 +4346,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
+			const workflowPrompts = { render: (ref: string, vars?: unknown) => renderWorkflowPrompt(ref, vars, workflowCwd) };
 			const chatProgressResult = resolveWorkflowChatProgress({ requested: requestParams.chatProgress, parentCwd, workflowCwd, background: requestParams.async !== false });
 			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
 			const chatProgress = chatProgressResult.projection!;
@@ -4453,6 +4508,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							script: workflowScript,
 							timeoutMs: timeout,
 							signal: controller.signal,
+							prompts: workflowPrompts,
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							onEmit: (emits) => {
@@ -4574,6 +4630,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					script: requestParams.workflowScript,
 					timeoutMs: timeout,
 					signal,
+					prompts: workflowPrompts,
 					...(workflowState ? { state: workflowState } : {}),
 					onTrace: (trace) => {
 						liveWorkflow = { ...liveWorkflow, trace };
@@ -5020,7 +5077,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 			if (action === "resume") {
-				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel }));
+				return resumeAsyncRun(omitUndefinedProperties({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel, signal }));
 			}
 			if (action === "steer") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);

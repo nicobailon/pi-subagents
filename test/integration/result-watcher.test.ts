@@ -32,6 +32,15 @@ function createState(): SubagentState {
 	};
 }
 
+async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (!predicate()) {
+		if (Date.now() >= deadline) return predicate();
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	return true;
+}
+
 describe("result watcher", () => {
 	it("processes deferred session-scoped results after session identity is restored", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-session-"));
@@ -1153,6 +1162,8 @@ describe("result watcher", () => {
 			const originalError = console.error;
 			const logged: unknown[][] = [];
 			console.error = (...args: unknown[]) => { logged.push(args); };
+			const loggedWarning = () => logged.some((entry) => /Subagent async grouped result intercom delivery was not acknowledged/.test(String(entry[0] ?? "")));
+			let warned = false;
 			try {
 				fs.writeFileSync(path.join(resultsDir, "unacknowledged.json"), JSON.stringify({
 					id: "unacknowledged",
@@ -1165,14 +1176,14 @@ describe("result watcher", () => {
 					intercomTarget: "orchestrator",
 				}), "utf-8");
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 600));
+				warned = await waitForPredicate(loggedWarning);
 			} finally {
 				console.error = originalError;
 				watcher.stopResultWatcher();
 			}
 
 			assert.equal(emitted.filter((entry) => entry.event === "subagent:result-intercom").length, 1);
-			assert.equal(logged.some((entry) => /Subagent async grouped result intercom delivery was not acknowledged/.test(String(entry[0] ?? ""))), true);
+			assert.equal(warned, true);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}

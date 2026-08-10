@@ -213,6 +213,14 @@ const state = Object.freeze({
   },
 });
 
+const prompts = Object.freeze({
+  render(ref, vars) {
+    if (typeof ref !== "string" || !ref.trim()) throw new Error("prompts.render(ref, vars) requires a non-empty ref string.");
+    if (vars !== undefined) assertJsonValue(vars, "prompts.render vars");
+    return hostCall("prompts.render", { ref, vars });
+  },
+});
+
 let contextObjectPrototype;
 
 const capturedConsole = Object.freeze(Object.fromEntries(
@@ -285,7 +293,7 @@ parentPort.on("message", async (message) => {
   }
   if (message.type !== "start") return;
   try {
-    const sandbox = { runs, Promise: workflowPromise, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
+    const sandbox = { runs, prompts, Promise: workflowPromise, emit(value) { assertJsonValue(value); parentPort.postMessage({ type: "emit", value }); }, console: capturedConsole };
     if (message.stateEnabled) sandbox.state = state;
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
@@ -360,6 +368,9 @@ export interface RunWorkflowScriptOptions {
 	state?: {
 		get: (key: string) => unknown | Promise<unknown>;
 		set: (key: string, value: unknown) => void | Promise<void>;
+	};
+	prompts?: {
+		render: (ref: string, vars?: unknown) => string | Promise<string>;
 	};
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
 	onEmit?: (emits: unknown[]) => void;
@@ -563,6 +574,17 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					},
 				);
 			};
+
+			if (message.method === "prompts.render") {
+				if (!options.prompts) return respond(Promise.reject(new Error("Workflow prompt rendering is unavailable.")));
+				const ref = message.args.ref;
+				const vars = message.args.vars;
+				if (typeof ref !== "string" || !ref.trim()) return respond(Promise.reject(new Error("prompts.render(ref, vars) requires a non-empty ref string.")));
+				return respond(Promise.resolve().then(() => options.prompts!.render(ref, vars)).then((rendered) => {
+					if (typeof rendered !== "string") throw new Error("prompts.render must return task text.");
+					return rendered;
+				}));
+			}
 
 			if (message.method === "state.get" || message.method === "state.set") {
 				if (!options.state) return respond(Promise.reject(new Error("Workflow state is unavailable without a mission.")));

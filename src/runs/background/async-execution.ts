@@ -1197,6 +1197,10 @@ export function executeAsyncChain(
 /**
  * Execute a single agent asynchronously
  */
+export function workflowAwaitedAsyncResultPath(asyncDir: string): string {
+	return path.join(asyncDir, "workflow-result.json");
+}
+
 export function executeAsyncSingle(
 	id: string,
 	params: AsyncSingleParams,
@@ -1456,7 +1460,9 @@ export function executeAsyncSingle(
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 					},
 				],
-				resultPath: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
+				resultPath: params.parentWorkflowRunId !== undefined && params.revivalLease !== undefined
+					? workflowAwaitedAsyncResultPath(asyncDir)
+					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : path.join(DIRS.results, `${id}.json`),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,

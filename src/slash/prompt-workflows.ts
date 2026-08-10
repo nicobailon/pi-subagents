@@ -1,10 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { parseFrontmatter } from "../agents/frontmatter.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
-import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import { getPromptDirectories } from "../shared/prompt-resources.ts";
 
 interface PromptWorkflow {
 	name: string;
@@ -32,21 +31,9 @@ const RESERVED_COMMAND_NAMES = new Set([
 	"subagents-models",
 ]);
 
-function packagePromptsDir(): string {
-	return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts");
-}
-
-function promptDirs(cwd: string): string[] {
-	return [
-		packagePromptsDir(),
-		path.join(getAgentDir(), "prompts"),
-		path.join(getProjectConfigDir(cwd), "prompts"),
-	];
-}
-
 function readPromptFiles(cwd: string): string[] {
 	const files: string[] = [];
-	for (const dir of promptDirs(cwd)) {
+	for (const dir of Object.values(getPromptDirectories(cwd))) {
 		let entries: fs.Dirent[];
 		try {
 			entries = fs.readdirSync(dir, { withFileTypes: true });

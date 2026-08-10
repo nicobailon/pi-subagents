@@ -3,12 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- Add `prompts.render(ref, vars?)` to `workflowScript` for explicitly scoped package, user, and project prompt fragments with simple `{{name}}` interpolation (#960).
 - Expose a versioned `pi-subagents/project-panes` TypeScript API so other Pi extensions can deterministically open, inspect, and close project-owned Herdr panes without invoking the model-facing `subagent` tool. The structured status includes bounded pane runtime state and an opt-in idle-only close guard; Pi project trust remains an explicit human verification step. Thanks to @wiizard-chen for #949.
 - Preserve short-lived completion replay records and bounded output archives so waits can recover consumed async result details after watcher delivery or restart.
 - Add `subagent({ action: "guide" })` and `/subagents-guide [topic]` to read current-version packaged guides.
 - Persist workflow child attempts, status heartbeats, session paths, and artifacts in their enclosing mission, and add explicit mission decision resolution.
 
 ### Fixed
+- Wait for retained-child resumes inside `workflowScript` to finish and return completed output before the script continues (#961).
 - Keep fork-context workflow children inside their managed worktree by aligning the persisted child session cwd before launch. Thanks to @flopsi for #953.
 - Show the resolved child agent in async workflow status while keeping the workflow key as its stable label. Thanks to @albertgwo for #955.
 - Reject workflow scripts that finish with unawaited child launches and name every launch that was aborted. Thanks to @zig-zag-zig for #957.

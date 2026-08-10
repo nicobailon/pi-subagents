@@ -597,6 +597,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	it("keeps ordinary async workflow child results in the watcher-owned path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "async child done" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute(
+			`scripted-workflow-async-child-${Date.now()}`,
+			{ workflowScript: `return await runs.run("background", { agent: "echo", task: "Async child", async: true });`, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const childRunId = (result.details.workflow?.value as { runId?: string } | undefined)?.runId;
+		assert.ok(childRunId);
+		const childDir = path.join(DIRS.async, childRunId);
+		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
+		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(fs.existsSync(childResultPath), true);
+		assert.equal(fs.existsSync(path.join(childDir, "workflow-result.json")), false);
+		fs.rmSync(childDir, { recursive: true, force: true });
+		fs.rmSync(childResultPath, { force: true });
+	});
+
 	it("persists workflow parent metadata in an async worktree child status and result", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });

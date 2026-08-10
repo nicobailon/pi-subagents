@@ -26,6 +26,7 @@ interface ExecutorResult {
 		runId?: string;
 		results?: Array<{ agent?: string; finalOutput?: string; sessionFile?: string; acceptance?: { status?: string }; artifactPaths?: { metadataPath?: string } }>;
 		asyncId?: string;
+		workflow?: { value?: unknown };
 	};
 }
 
@@ -246,6 +247,57 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(events.emitted.filter((entry) => entry.channel === "subagent:result-intercom").length, 1);
 		assert.match(result.content[0]?.text ?? "", /Workflow child output/);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Delivered single subagent result via intercom\./);
+	});
+
+	it("waits for retained workflow resume loops and returns each completed revived child", async () => {
+		mockPi.onCall({ output: "Completed retained follow-up one" });
+		mockPi.onCall({ output: "Completed retained follow-up two" });
+		const sourceRunId = `workflow-resume-source-${Date.now()}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		const sessionFile = path.join(tempDir, "workflow-resume-session.jsonl");
+		let revivedIds: string[] = [];
+		try {
+			fs.mkdirSync(sourceAsyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
+				runId: sourceRunId,
+				sessionId: "session-123",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: tempDir,
+				sessionFile,
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor();
+
+			const result = await executor.execute(
+				"workflow-retained-resume",
+				{
+					workflowScript: `const first = await runs.run("followup-1", { resume: "${sourceRunId}", task: "Continue once" }); const second = await runs.run("followup-2", { resume: first.runId, task: "Continue twice" }); return { firstRunId: first.runId, firstOutput: first.output, runId: second.runId, output: second.output };`,
+					async: false,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			assert.match(result.content[0]?.text ?? "", /Completed retained follow-up two/);
+			assert.doesNotMatch(result.content[0]?.text ?? "", /detached and running in the background/);
+			const value = result.details?.workflow?.value as { firstRunId?: string; firstOutput?: string; runId?: string; output?: string } | undefined;
+			revivedIds = [value?.firstRunId, value?.runId].filter((id): id is string => Boolean(id));
+			assert.equal(revivedIds.length, 2);
+			assert.notEqual(revivedIds[0], sourceRunId);
+			assert.notEqual(revivedIds[1], revivedIds[0], "expected the latest revived run id from pass two");
+			assert.equal(value?.firstOutput, "Completed retained follow-up one");
+			assert.equal(value?.output, "Completed retained follow-up two");
+			assert.equal(revivedIds.every((id) => !fs.existsSync(path.join(ASYNC_DIR, id, "workflow-result.json"))), true);
+		} finally {
+			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+			for (const id of revivedIds) fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
+		}
 	});
 
 	it("falls back to legacy foreground output when the bridge is inactive", async () => {
