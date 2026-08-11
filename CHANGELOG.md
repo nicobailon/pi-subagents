@@ -6,7 +6,7 @@
 - Reduce repeated async status parsing and workflow trace projection work.
 
 ### Fixed
-- Recover durable async completions when a healthy native result watcher misses a filesystem event. Thanks to @xz-dev.
+- Recover durable async completions when a healthy native result watcher misses a filesystem event. Thanks to @xz-dev for #973.
 
 ## [0.46.0] - 2026-08-11
 
