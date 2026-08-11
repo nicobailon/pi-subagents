@@ -616,7 +616,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(fs.existsSync(childResultPath), true);
 		assert.equal(fs.existsSync(path.join(childDir, "workflow-result.json")), false);
-		fs.rmSync(childDir, { recursive: true, force: true });
+		fs.rmSync(childDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(childResultPath, { force: true });
 	});
 
