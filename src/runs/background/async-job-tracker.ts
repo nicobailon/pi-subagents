@@ -74,6 +74,19 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			throw error;
 		}
 	};
+	const requestLastWidgetRender = () => {
+		const ctx = state.lastUiContext;
+		if (!ctx || state.widgetsSuspended || options.widgetEnabled === false) return;
+		try {
+			if (ctx.hasUI) (ctx.ui as { requestRender?: () => void }).requestRender?.();
+		} catch (error) {
+			if (error instanceof Error && error.message.includes("extension ctx is stale")) {
+				state.lastUiContext = null;
+				return;
+			}
+			throw error;
+		}
+	};
 	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);
 	const restoredControlEventCursor = (asyncDir: string) => {
 		try {
@@ -401,6 +414,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			}
 
 			if (widgetChanged) rerenderLastWidget();
+			else if (Array.from(state.asyncJobs.values()).some((job) => job.status === "running")) requestLastWidgetRender();
 		}, pollIntervalMs);
 		state.poller.unref?.();
 	};

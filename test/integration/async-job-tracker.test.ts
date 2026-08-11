@@ -514,36 +514,38 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("rerenders changed polled status but not unchanged bookkeeping", async () => {
+	it("repaints unchanged running widgets without rebuilding them and stops at terminal status", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
 		try {
 			const runDir = path.join(asyncRoot, "run-unchanged");
 			fs.mkdirSync(runDir, { recursive: true });
-			const writeStatus = (lastUpdate: number, toolCount?: number) => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+			const writeStatus = (lastUpdate: number, toolCount?: number, state = "running") => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
 				runId: "run-unchanged",
 				mode: "single",
-				state: "running",
+				state,
 				startedAt: 1000,
 				lastUpdate,
 				...(toolCount !== undefined ? { toolCount } : {}),
-				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+				steps: [{ agent: "worker", status: state === "running" ? "running" : "complete", startedAt: 1000 }],
 			}), "utf-8");
 			writeStatus(2000);
 
 			const state = createState();
 			const ui = createUiContext();
 			const recorder = createEventRecorder();
-			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
 				pollIntervalMs: 10,
 			});
 			tracker.resetJobs(ui.ctx as never);
 			tracker.handleStarted({ id: "run-unchanged", asyncDir: runDir, agent: "worker" });
 
 			const requestsAfterStart = ui.renderRequests;
-			await new Promise((resolve) => setTimeout(resolve, 35));
+			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.updatedAt === 2000, "first status load");
 			assert.ok(ui.renderRequests > requestsAfterStart, "first status load should redraw the widget");
 
 			const requestsAfterStatusLoaded = ui.renderRequests;
+			const widgetsAfterStatusLoaded = ui.widgets.length;
 			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.control",
 				channels: ["event"],
@@ -556,14 +558,21 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 					message: "worker needs attention",
 				},
 			})}\n`, "utf-8");
-			await new Promise((resolve) => setTimeout(resolve, 40));
-			assert.equal(recorder.events.some((event) => event.channel === "subagent:control-event"), true);
-			assert.equal(ui.renderRequests, requestsAfterStatusLoaded, "unchanged status and control cursors should not request widget redraws");
+			await waitForCondition(() => recorder.events.some((event) => event.channel === "subagent:control-event"), "control event delivery");
+			await waitForCondition(() => ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence repaint");
+			assert.equal(ui.widgets.length, widgetsAfterStatusLoaded, "unchanged running status must not replace the widget component");
 
 			writeStatus(3000, 1);
-			await new Promise((resolve) => setTimeout(resolve, 40));
-			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "changed non-terminal status should redraw the widget");
+			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
+			assert.ok(ui.widgets.length > widgetsAfterStatusLoaded, "changed status should replace the widget component");
+
+			writeStatus(4000, 1, "complete");
+			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");
+			const requestsAfterTerminal = ui.renderRequests;
+			await new Promise((resolve) => setTimeout(resolve, 35));
+			assert.equal(ui.renderRequests, requestsAfterTerminal, "terminal-only jobs must not request cadence repaints");
 		} finally {
+			tracker?.resetJobs();
 			removeTempDir(asyncRoot);
 		}
 	});
