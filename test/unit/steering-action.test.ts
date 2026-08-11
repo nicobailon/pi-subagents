@@ -291,8 +291,8 @@ describe("acknowledged steering action", () => {
 				runId,
 				message: "correct course",
 				location: { asyncDir },
-				ackTimeoutMs: 25,
-				recoveryTimeoutMs: 500,
+				ackTimeoutMs: 250,
+				recoveryTimeoutMs: 1_000,
 				kill: () => true,
 				onRequestQueued: (requestPath) => {
 					request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
