@@ -550,6 +550,24 @@ describe("below-editor subagent FleetView", () => {
 		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), entries.map((entry) => entry.key));
 	});
 
+	it("labels workflow-owned foreground children", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "reviewer", description: "Review the change", startedAt: 10, updatedAt: 20 }]]),
+		});
+
+		assert.deepEqual(collectFleetStatusEntries(state).map((entry) => ({ agent: entry.agent, description: entry.description })), [{
+			agent: "reviewer",
+			description: "workflow child: workflow-1 (review) · Review the change",
+		}]);
+	});
+
 	it("uses the same item keys as the full inspector", () => {
 		const state = stateForTest();
 		state.foregroundControls.set("foreground", {

@@ -5,6 +5,8 @@ import {
 	registerHerdrStatusBridge,
 	type HerdrStatusBridgeEvents,
 } from "../../src/integrations/herdr-status.ts";
+import { projectActiveHerdrRuns } from "../../src/extension/index.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
@@ -52,7 +54,58 @@ class FakeEvents implements HerdrStatusBridgeEvents {
 	}
 }
 
+function stateForTest(): SubagentState {
+	return {
+		baseCwd: process.cwd(),
+		currentSessionId: "session-current",
+		asyncJobs: new Map(),
+		fleetJobs: new Map(),
+		foregroundRuns: new Map(),
+		foregroundControls: new Map(),
+		lastForegroundControlId: null,
+		cleanupTimers: new Map(),
+		lastUiContext: null,
+		poller: null,
+		completionSeen: new Map(),
+		watcher: null,
+		watcherRestartTimer: null,
+		resultFileCoalescer: { schedule: () => false, clear: () => {} },
+	};
+}
+
 describe("Herdr status bridge", () => {
+	it("projects foreground workflow children onto the parent run without a shell duplicate", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: ["workflow"],
+		});
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, {
+				index: 0,
+				agent: "reviewer",
+				startedAt: 10,
+				updatedAt: 20,
+				currentActivityState: "needs_attention",
+			}]]),
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [{
+			id: "workflow-1",
+			agents: ["reviewer"],
+			needsAttention: true,
+		}]);
+	});
+
 	it("reports an async run as visible and semantically busy", async () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];

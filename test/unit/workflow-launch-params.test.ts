@@ -3,6 +3,42 @@ import { describe, it } from "node:test";
 import { prepareWorkflowLaunchParams } from "../../src/runs/foreground/subagent-executor.ts";
 
 describe("workflow launch params", () => {
+	it("keeps omitted workflow child async foreground", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "worker", task: "Run" },
+				"workflow-run",
+				"run",
+			),
+			{
+				agent: "worker",
+				task: "Run",
+				async: false,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "run",
+			},
+		);
+	});
+
+	it("preserves explicit async workflow children", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ agent: "worker", task: "Run", async: true },
+				"workflow-run",
+				"run",
+			),
+			{
+				agent: "worker",
+				task: "Run",
+				async: true,
+				workflowParentRunId: "workflow-run",
+				workflowKey: "run",
+			},
+		);
+	});
+
 	it("places workflow child gates inside managed worktree tasks", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
@@ -13,6 +49,7 @@ describe("workflow launch params", () => {
 			),
 			{
 				worktree: true,
+				async: false,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "gated",
 				tasks: [{

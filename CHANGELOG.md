@@ -10,6 +10,7 @@
 - Persist workflow child attempts, status heartbeats, session paths, and artifacts in their enclosing mission, and add explicit mission decision resolution.
 
 ### Fixed
+- Make live foreground workflow children visible as workflow-owned Fleet rows, route Herdr inspection to their workflow parent, and report their active and needs-attention state to Herdr. Thanks to @lukechen526 for #965.
 - Wait for retained-child resumes inside `workflowScript` to finish and return completed output before the script continues (#961).
 - Keep fork-context workflow children inside their managed worktree by aligning the persisted child session cwd before launch. Thanks to @flopsi for #953.
 - Show the resolved child agent in async workflow status while keeping the workflow key as its stable label. Thanks to @albertgwo for #955.

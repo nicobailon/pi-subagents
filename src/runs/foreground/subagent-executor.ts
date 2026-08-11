@@ -4168,6 +4168,7 @@ export function prepareWorkflowLaunchParams(
 	}
 	const launchParams = {
 		...workflowDefaults,
+		async: false,
 		...childParams,
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
@@ -5589,6 +5590,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				runId,
 				sessionId: requestSessionId,
 				mode: foregroundMode,
+				...(effectiveParams.workflowParentRunId ? { parentWorkflowRunId: effectiveParams.workflowParentRunId } : {}),
+				...(effectiveParams.workflowKey ? { workflowKey: effectiveParams.workflowKey } : {}),
 				startedAt: Date.now(),
 				updatedAt: Date.now(),
 				cwd: effectiveCwd,

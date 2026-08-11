@@ -1541,6 +1541,10 @@ export interface ForegroundChildControl {
 
 export interface ForegroundRunControl {
 	runId: string;
+	/** Workflow shell that owns this live foreground child, when applicable. */
+	parentWorkflowRunId?: string;
+	/** Stable workflow lane key for this live foreground child. */
+	workflowKey?: string;
 	/** Originating parent session; required for public fleet projection. */
 	sessionId?: string;
 	mode: SubagentRunMode;

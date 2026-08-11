@@ -144,6 +144,12 @@ function isStaleExtensionContextError(error: unknown): boolean {
 			|| error.message.includes("Extension context no longer active"));
 }
 
+function foregroundDescription(control: { parentWorkflowRunId?: string; workflowKey?: string }, description: string | undefined): string | undefined {
+	if (!control.parentWorkflowRunId) return description;
+	const workflow = `workflow child: ${control.parentWorkflowRunId}${control.workflowKey ? ` (${control.workflowKey})` : ""}`;
+	return description ? `${workflow} · ${description}` : workflow;
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	for (const control of state.foregroundControls.values()) {
@@ -154,7 +160,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 					key: `foreground-active:${control.runId}:${child.index}`,
 					agent: child.agent,
 					...(modelThinking ? { modelThinking } : {}),
-					description: child.description,
+					description: foregroundDescription(control, child.description),
 					startedAt: child.startedAt,
 					tokens: child.tokens ?? 0,
 					state: "running",
@@ -170,7 +176,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			key: `foreground-active:${control.runId}:${control.currentIndex ?? 0}`,
 			agent: control.currentAgent ?? control.mode,
 			...(modelThinking ? { modelThinking } : {}),
-			description: control.description,
+			description: foregroundDescription(control, control.description),
 			startedAt: control.startedAt,
 			tokens: control.tokens ?? 0,
 			state: "running",

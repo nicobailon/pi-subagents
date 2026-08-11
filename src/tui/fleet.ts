@@ -289,6 +289,7 @@ function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-act
 		"Source: foreground",
 		`State: running`,
 		`Mode: ${control.mode}`,
+		control.parentWorkflowRunId ? `Workflow child of: ${control.parentWorkflowRunId}${control.workflowKey ? ` (${control.workflowKey})` : ""}` : undefined,
 		item.index !== undefined ? `Child: ${item.index} (${item.agent})` : `Agent: ${item.agent}`,
 		modelThinking ? `Model: ${modelThinking}` : undefined,
 		`Started: ${new Date(live.startedAt).toISOString()}`,
@@ -648,6 +649,19 @@ export class SubagentFleetComponent implements Component {
 		return { item };
 	}
 
+	private selectedHerdrInspectAction(): { runId: string; asyncDir: string; index?: number } | { reason: string } {
+		const item = this.snapshot.items[this.selected];
+		if (!item) return { reason: "No child is selected." };
+		if (item.kind === "async") {
+			if (!isActionableAsyncState(item.run.state) || !isActionableAsyncState(item.state)) return { reason: `Selected child is ${item.state}; controls require a running or queued async child.` };
+			return { runId: item.runId, asyncDir: item.run.asyncDir, ...(item.index !== undefined ? { index: item.index } : {}) };
+		}
+		if (item.kind !== "foreground-active" || !item.control.parentWorkflowRunId) return { reason: "Fleet controls are available for current-session top-level async runs only." };
+		const parent = this.state.asyncJobs.get(item.control.parentWorkflowRunId) ?? this.state.fleetJobs?.get(item.control.parentWorkflowRunId);
+		if (!parent || !isActionableAsyncState(parent.status)) return { reason: "The parent workflow is no longer available for Herdr inspection." };
+		return { runId: parent.asyncId, asyncDir: parent.asyncDir };
+	}
+
 	private actionLines(): string[] {
 		const lines: string[] = [];
 		if (this.actionBusy) lines.push(this.theme.fg("accent", "Action pending..."));
@@ -784,9 +798,9 @@ export class SubagentFleetComponent implements Component {
 			return;
 		}
 		if (matchesFleetAction(data, this.keybindings, "inspect")) {
-			const target = this.selectedAsyncAction();
+			const target = this.selectedHerdrInspectAction();
 			if ("reason" in target || !this.options.actions?.inspect) this.setActionNotice({ text: "reason" in target ? target.reason : "Herdr inspector controls are unavailable in this context.", isError: true });
-			else this.runAction(() => this.options.actions!.inspect!({ runId: target.item.runId, asyncDir: target.item.run.asyncDir, ...(target.item.index !== undefined ? { index: target.item.index } : {}) }));
+			else this.runAction(() => this.options.actions!.inspect!(target));
 			return;
 		}
 		if (matchesFleetAction(data, this.keybindings, "stop")) {

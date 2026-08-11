@@ -37,7 +37,7 @@ import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
-import { registerHerdrStatusBridge } from "../integrations/herdr-status.ts";
+import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
@@ -307,6 +307,36 @@ class SubagentControlNoticeComponent implements Component {
 		lines.push(this.theme.fg("accent", `╰${borderChar.repeat(bodyWidth)}╯`));
 		return lines;
 	}
+}
+
+export function projectActiveHerdrRuns(state: SubagentState): HerdrStatusRun[] {
+	const active = (status: string) => status === "queued" || status === "running";
+	const foregroundChildrenByWorkflow = new Map<string, Array<{ agent: string; needsAttention: boolean }>>();
+	for (const control of state.foregroundControls.values()) {
+		if (!control.parentWorkflowRunId) continue;
+		const children = control.activeChildren?.size
+			? [...control.activeChildren.values()].map((child) => ({
+				agent: child.agent,
+				needsAttention: child.currentActivityState === "needs_attention",
+			}))
+			: control.currentAgent
+				? [{ agent: control.currentAgent, needsAttention: control.currentActivityState === "needs_attention" }]
+				: [];
+		if (children.length === 0) continue;
+		const existing = foregroundChildrenByWorkflow.get(control.parentWorkflowRunId) ?? [];
+		existing.push(...children);
+		foregroundChildrenByWorkflow.set(control.parentWorkflowRunId, existing);
+	}
+	return [...state.asyncJobs.values()]
+		.filter((job) => active(job.status))
+		.map((job) => {
+			const children = job.mode === "workflow" ? foregroundChildrenByWorkflow.get(job.asyncId) : undefined;
+			return {
+				id: job.asyncId,
+				agents: children?.length ? children.map((child) => child.agent) : job.agents,
+				needsAttention: job.activityState === "needs_attention" || children?.some((child) => child.needsAttention),
+			};
+		});
 }
 
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
@@ -621,13 +651,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
 	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
-	const activeHerdrRuns = () => [...state.asyncJobs.values()]
-		.filter((job) => job.status === "queued" || job.status === "running")
-		.map((job) => ({
-			id: job.asyncId,
-			agents: job.agents,
-			needsAttention: job.activityState === "needs_attention",
-		}));
+	const activeHerdrRuns = () => projectActiveHerdrRuns(state);
 	const herdrStatusBridge = registerHerdrStatusBridge({
 		events: pi.events,
 		getRuns: activeHerdrRuns,

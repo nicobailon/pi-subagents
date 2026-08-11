@@ -229,6 +229,54 @@ describe("native subagent fleet", () => {
 		assert.equal(snapshot.items[0]?.agent, "workflow");
 	});
 
+	it("labels workflow-owned foreground children and opens their parent Herdr inspector", async () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			startedAt: 10,
+			updatedAt: 20,
+		});
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "reviewer", startedAt: 10, updatedAt: 20 }]]),
+		});
+		const snapshot = collectFleetSnapshot(state);
+		const child = snapshot.items.find((item) => item.key === "foreground-active:child-1:0");
+		assert.equal(child?.kind, "foreground-active");
+		const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{
+				initialKey: "foreground-active:child-1:0",
+				refreshMs: 60_000,
+				actions: {
+					async steer() { return { text: "unused" }; },
+					stop() { return { text: "unused" }; },
+					async inspect(input) { calls.push(input); return { text: "Inspector opened." }; },
+				},
+			},
+		);
+		try {
+			assert.ok(component.render(100).some((line) => line.includes("Workflow child of: workflow-1 (review)")));
+			component.handleInput("H");
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.deepEqual(calls, [{ runId: "workflow-1", asyncDir: "/tmp/workflow-1" }]);
+		} finally {
+			component.dispose();
+		}
+	});
+
 	it("keeps every active async run ahead of the bounded recent-completion window", () => {
 		const state = stateForTest();
 		for (let index = 0; index < 22; index++) {
