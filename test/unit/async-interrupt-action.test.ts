@@ -161,7 +161,6 @@ describe("async interrupt action", () => {
 				ackTimeoutMs: 40,
 			});
 			await waitUntil(() => fs.existsSync(stepSteerInboxDir(routeDir, 0)) ? true : undefined);
-			await new Promise((resolve) => setTimeout(resolve, 25));
 			fs.rmSync(routeDir, { recursive: true, force: true });
 			const result = await action;
 
