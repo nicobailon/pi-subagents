@@ -587,25 +587,41 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
 	});
 
-	it("top-level parallel reads are injected once with chain-style prefix", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("top-level parallel reads include existing files and omit missing files", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "a.md"), "context");
 		mockPi.onCall({ output: "Read done" });
 		const executor = makeExecutor();
 
 		await executor.execute(
 			"parallel-reads",
-			{ tasks: [{ agent: "echo", task: "Inspect", reads: ["a.md", "b.md"] }] },
+			{ tasks: [{ agent: "echo", task: "Inspect", reads: ["a.md", "missing.md"] }] },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 
-		const args = readLastCallArgs();
-		const taskArg = args.at(-1) ?? "";
-		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
+		const taskArg = readLastCallArgs().at(-1) ?? "";
+		assert.ok(taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}]
 
 Inspect
 
 ## Acceptance Contract`));
+		assert.doesNotMatch(taskArg, /missing\.md/);
+	});
+
+	it("top-level parallel omits the read prefix when all files are missing", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Read done" });
+		const executor = makeExecutor();
+
+		await executor.execute(
+			"parallel-missing-reads",
+			{ tasks: [{ agent: "echo", task: "Inspect", reads: ["missing.md"] }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.doesNotMatch(readLastCallArgs().at(-1) ?? "", /\[Read from:/);
 	});
 
 	it("top-level parallel defaultProgress uses isolated run storage", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

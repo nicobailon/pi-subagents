@@ -39,6 +39,7 @@ import {
 	isParallelStep,
 	isDynamicParallelStep,
 	resolveChainPath,
+	resolveExistingReadPaths,
 	resolveStepBehavior,
 	suppressProgressForReadOnlyTask,
 	taskDisallowsFileUpdates,
@@ -3864,8 +3865,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	// Reads: caller override > agent defaultReads > none. `~`/`~/` expand to home;
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = readsOverride !== undefined ? readsOverride : agentConfig.defaultReads ?? false;
-	const readsInstruction = Array.isArray(reads) && reads.length > 0
-		? `[Read from: ${reads.map((f) => resolveChainPath(f, effectiveCwd)).join(", ")}]\n\n`
+	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, effectiveCwd) : [];
+	const readsInstruction = readPaths.length > 0
+		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
 	task = readsInstruction + task;
 	task = injectSingleOutputInstruction(task, outputPath, agentConfig);

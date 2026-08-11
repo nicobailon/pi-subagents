@@ -353,6 +353,18 @@ export function resolveChainPath(filePath: string, chainDir: string): string {
 	return path.isAbsolute(expanded) ? expanded : path.join(chainDir, expanded);
 }
 
+export function resolveExistingReadInstructionPaths(reads: readonly string[], instructionCwd: string, existenceCwd = instructionCwd): string[] {
+	return reads.flatMap((filePath) => {
+		const instructionPath = resolveChainPath(filePath, instructionCwd);
+		const existencePath = resolveChainPath(filePath, existenceCwd);
+		return fs.existsSync(existencePath) ? [instructionPath] : [];
+	});
+}
+
+export function resolveExistingReadPaths(reads: readonly string[], cwd: string): string[] {
+	return resolveExistingReadInstructionPaths(reads, cwd);
+}
+
 /**
  * Build chain instructions from resolved behavior.
  * These are appended to the task to tell the agent what to read/write.
@@ -367,14 +379,15 @@ export function buildChainInstructions(
 	chainDir: string,
 	isFirstProgressAgent: boolean,
 	previousSummary?: string,
+	readExistenceDir = chainDir,
 ): { prefix: string; suffix: string } {
 	const prefixParts: string[] = [];
 	const suffixParts: string[] = [];
 
 	// READS - prepend to override any hardcoded filenames in task text
 	if (behavior.reads && behavior.reads.length > 0) {
-		const files = behavior.reads.map((f) => resolveChainPath(f, chainDir));
-		prefixParts.push(`[Read from: ${files.join(", ")}]`);
+		const files = resolveExistingReadInstructionPaths(behavior.reads, chainDir, readExistenceDir);
+		if (files.length > 0) prefixParts.push(`[Read from: ${files.join(", ")}]`);
 	}
 
 	// OUTPUT - prepend so agent knows where to write

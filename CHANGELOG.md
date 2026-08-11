@@ -11,6 +11,7 @@
 - Keep parsed async statuses cached beyond 50 runs while preserving per-read freshness checks. Thanks to @bcanvural for #982.
 
 ### Fixed
+- Omit missing configured read files from child task instructions.
 - Stabilize steering recovery budget coverage around the confirmed paused handoff.
 - Keep timeout-sensitive async acceptance verification coverage off Windows CI where signal delivery is intermittent.
 - Retry transient Windows mission state lock creation failures and stabilize no-session steering recovery coverage.

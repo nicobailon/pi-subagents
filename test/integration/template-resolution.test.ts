@@ -214,13 +214,25 @@ describe("read-only progress suppression", { skip: !available ? "pi packages not
 });
 
 describe("buildChainInstructions", { skip: !available ? "pi packages not available" : undefined }, () => {
-	it("adds [Read from:] prefix for reads", () => {
-		const behavior = { reads: ["context.md"], output: false, outputMode: "inline", progress: false, skills: undefined };
+	it("includes existing reads and omits missing reads", () => {
+		const behavior = { reads: ["context.md", "missing.md"], output: false, outputMode: "inline", progress: false, skills: undefined };
 		const dir = createTempDir("chain-test-");
 		try {
+			fs.writeFileSync(path.join(dir, "context.md"), "context");
 			const { prefix } = buildChainInstructions(behavior, dir, false);
 			assert.ok(prefix.includes("[Read from:"), `should have Read instruction: ${prefix}`);
-			assert.ok(prefix.includes("context.md"), "should reference the file");
+			assert.ok(prefix.includes("context.md"), "should reference the existing file");
+			assert.doesNotMatch(prefix, /missing\.md/);
+		} finally {
+			removeTempDir(dir);
+		}
+	});
+
+	it("omits the read prefix when all configured reads are missing", () => {
+		const behavior = { reads: ["missing.md"], output: false, outputMode: "inline", progress: false, skills: undefined };
+		const dir = createTempDir("chain-test-");
+		try {
+			assert.doesNotMatch(buildChainInstructions(behavior, dir, false).prefix, /\[Read from:/);
 		} finally {
 			removeTempDir(dir);
 		}

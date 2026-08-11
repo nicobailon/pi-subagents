@@ -593,6 +593,25 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal(sessionManager.flushed, true);
 	});
 
+	it("/run preserves existing relative reads and omits missing reads", async () => {
+		await withTempProject("pi-slash-reads-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "scout.md"), `---
+name: scout
+description: Scout
+---
+
+Inspect
+`, "utf-8");
+			fs.writeFileSync(path.join(root, "context.md"), "context");
+
+			const run = await captureSlashCommandParams("run", "scout[reads=context.md+missing.md] Inspect", root);
+			assert.deepEqual(run.params, {
+				workflowScript: "return runs.run(\"run\", {\"agent\":\"scout\",\"task\":\"[Read from: context.md]\\n\\nInspect\",\"agentScope\":\"both\"})",
+				async: false,
+			});
+		});
+	});
+
 	it("/run finalizes the slash snapshot before the last UI redraw on success", async () => {
 		const sent: unknown[] = [];
 		const log: string[] = [];
