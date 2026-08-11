@@ -153,13 +153,24 @@ function withMandatorySafetyGuidance(description: string): string {
 		: SUBAGENT_SAFETY_GUIDANCE;
 }
 
-export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
+function withoutLegacyChainControlGuidance(description: string): string {
+	return description
+		.split("\n")
+		.filter((line) => !/append-step|approve-checkpoint|reject-checkpoint/.test(line))
+		.join("\n");
+}
+
+export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode" | "legacyChainControls"> = {}, options?: ToolDescriptionOptions): string {
 	const mode = resolveToolDescriptionMode(config, options);
-	if (mode === "compact") return COMPACT_SUBAGENT_TOOL_DESCRIPTION;
-	if (mode === "custom") {
+	let description: string;
+	if (mode === "compact") description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
+	else if (mode === "custom") {
 		const custom = loadCustomToolDescription(options);
-		if (custom) return withMandatorySafetyGuidance(custom);
-		warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
-	}
-	return FULL_SUBAGENT_TOOL_DESCRIPTION;
+		if (custom) description = withMandatorySafetyGuidance(custom);
+		else {
+			warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
+			description = FULL_SUBAGENT_TOOL_DESCRIPTION;
+		}
+	} else description = FULL_SUBAGENT_TOOL_DESCRIPTION;
+	return config.legacyChainControls === true ? description : withoutLegacyChainControlGuidance(description);
 }

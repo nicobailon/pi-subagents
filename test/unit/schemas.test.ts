@@ -195,11 +195,17 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(properties?.output, "output remains a workflow child default");
 	});
 
-	it("removes legacy top-level orchestration parameters", () => {
+	it("omits legacy chain controls by default and includes them when enabled", () => {
 		for (const name of ["tasks", "chain", "concurrency", "chainDir"]) {
 			assert.equal((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], undefined, `${name} should not be public`);
 		}
-		const stepSchema = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.step;
+
+		const trimmed = (schemas.createSubagentParamsSchema as (options?: { legacyChainControls?: boolean }) => SubagentParamsSchema)();
+		assert.equal(trimmed.properties?.step, undefined);
+		assert.doesNotMatch(JSON.stringify(trimmed), /append-step|approve-checkpoint|reject-checkpoint/);
+
+		const full = (schemas.createSubagentParamsSchema as (options: { legacyChainControls: boolean }) => SubagentParamsSchema)({ legacyChainControls: true });
+		const stepSchema = (full.properties as Record<string, JsonSchemaNode> | undefined)?.step;
 		assert.equal(stepSchema?.type, "object");
 		assert.match(String(stepSchema?.description ?? ""), /append-step.*only/i);
 	});

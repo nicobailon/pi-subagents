@@ -246,7 +246,7 @@ The persisted `steering` ledger retains 20 requests and replaces the old `steerC
 
 ### append-step
 
-`append-step` accepts exactly one `step` object for an existing durable chain for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish. Completed, failed, rejected, paused, foreground, single, and non-chain runs reject appends.
+`append-step` requires `legacyChainControls: true`. The default registered model-facing schema omits this legacy control surface. When enabled, it accepts exactly one `step` object for an existing durable chain for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish. Completed, failed, rejected, paused, foreground, single, and non-chain runs reject appends.
 
 ## Acceptance gates
 

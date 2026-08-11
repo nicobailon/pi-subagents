@@ -41,6 +41,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
+	if (config.legacyChainControls !== undefined && typeof config.legacyChainControls !== "boolean") {
+		throw new Error("config.legacyChainControls must be a boolean");
+	}
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);

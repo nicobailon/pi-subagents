@@ -1821,6 +1821,8 @@ export interface ExtensionConfig {
 	asyncWidget?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** Include legacy append-step and checkpoint controls in the registered tool schema. Defaults to false. */
+	legacyChainControls?: boolean;
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
 	forceTopLevelAsync?: boolean;

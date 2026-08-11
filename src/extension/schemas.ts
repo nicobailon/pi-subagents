@@ -254,7 +254,7 @@ const ControlOverrides = Type.Object({
 	})),
 });
 
-const SubagentParamsSchema = Type.Object({
+const SubagentParamProperties = {
 	agent: Type.Optional(Type.String({ description: "Agent target for management actions such as get, update, delete, and models." })),
 	resume: Type.Optional(Type.String({ description: "Retained child run id for a workflowScript runs.run/runs.all item. Mutually exclusive with agent; task supplies the follow-up." })),
 	// Management action (when present, tool operates in management mode)
@@ -353,9 +353,29 @@ const SubagentParamsSchema = Type.Object({
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gate: Type.Optional(Type.String({ minLength: 1, description: "Host gate command. Cannot be combined with acceptance." })),
-});
+};
+
+const { step: _legacyChainStep, ...subagentParamPropertiesWithoutStep } = SubagentParamProperties;
+const trimmedSubagentParamProperties = {
+	...subagentParamPropertiesWithoutStep,
+	id: Type.Optional(Type.String({
+		description: "Run id or prefix for status, interrupt, stop, resume, steer, mission.attach-run, or the decision id for mission.resolve-decision."
+	})),
+	runId: Type.Optional(Type.String({
+		description: "Target run ID for interrupt, stop, resume, steer, or mission.attach-run. Prefer id for new calls."
+	})),
+};
+const SubagentParamsSchema = Type.Object(SubagentParamProperties);
+const TrimmedSubagentParamsSchema = Type.Object(trimmedSubagentParamProperties);
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
+export const SubagentParamsWithoutLegacyChainControls = keepTopLevelParameterDescriptions(TrimmedSubagentParamsSchema);
+
+export function createSubagentParamsSchema(options: { legacyChainControls?: boolean } = {}): typeof SubagentParams | typeof SubagentParamsWithoutLegacyChainControls {
+	return options.legacyChainControls === true
+		? SubagentParams
+		: SubagentParamsWithoutLegacyChainControls;
+}
 
 const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({

@@ -38,7 +38,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /Sequential example/i);
 		assert.match(description, /Parallel example/i);
 		assert.doesNotMatch(description, /Compatibility tasks\[\]|CHAIN EXAMPLES|PARALLEL \(compatibility\)/i);
-		assert.match(description, /append-step.*step:/i);
+		assert.doesNotMatch(description, /append-step|approve-checkpoint|reject-checkpoint/);
 		assert.match(description, /cannot access filesystem, shell, arbitrary Pi tools, or host globals/i);
 		assert.match(description, /exactly one non-empty title or summary/i);
 		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
@@ -46,8 +46,14 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /status\.json/);
 	});
 
+	it("includes legacy chain-control guidance when enabled", () => {
+		const description = buildSubagentToolDescription({ legacyChainControls: true });
+		assert.match(description, /append-step.*step:/i);
+		assert.match(description, /approve-checkpoint|reject-checkpoint/);
+	});
+
 	it("offers a compact mode that keeps the cutover and safety guidance", () => {
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact", legacyChainControls: true });
 		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 		assert.match(description, /^Run subagents only through \{ workflowScript \}/i);
 		assert.match(description, /runs\.run for one child and runs\.all for parallel work/i);
@@ -125,7 +131,7 @@ describe("registered subagent tool description", () => {
 		const warnings: string[] = [];
 
 		const description = buildSubagentToolDescription(
-			{ toolDescriptionMode: "custom" },
+			{ toolDescriptionMode: "custom", legacyChainControls: true },
 			{ cwd, agentDir, warn: (message) => warnings.push(message) },
 		);
 
@@ -137,7 +143,7 @@ describe("registered subagent tool description", () => {
 		const warnings: string[] = [];
 
 		const description = buildSubagentToolDescription(
-			{ toolDescriptionMode: "tiny" } as never,
+			{ toolDescriptionMode: "tiny", legacyChainControls: true } as never,
 			{ warn: (message) => warnings.push(message) },
 		);
 
@@ -145,7 +151,7 @@ describe("registered subagent tool description", () => {
 		assert.ok(warnings.some((message) => message.includes("Ignoring invalid toolDescriptionMode")));
 	});
 
-	function readRegisteredDescription(agentDir: string): string {
+	function readRegisteredTool(agentDir: string): { description: string; properties: string[] } {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -166,7 +172,7 @@ describe("registered subagent tool description", () => {
 			});
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			process.stdout.write(JSON.stringify(registeredTool.description));
+			process.stdout.write(JSON.stringify({ description: registeredTool.description, properties: Object.keys(registeredTool.parameters.properties) }));
 		`;
 		const output = execFileSync(
 			process.execPath,
@@ -180,7 +186,7 @@ describe("registered subagent tool description", () => {
 			],
 			{ cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" },
 		);
-		return JSON.parse(output) as string;
+		return JSON.parse(output) as { description: string; properties: string[] };
 	}
 
 	function writeExtensionConfig(agentDir: string, config: Record<string, unknown>): void {
@@ -191,25 +197,41 @@ describe("registered subagent tool description", () => {
 
 	it("registers full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));
-		assert.equal(readRegisteredDescription(defaultAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		writeExtensionConfig(defaultAgentDir, { legacyChainControls: true });
+		assert.equal(readRegisteredTool(defaultAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 
 		const compactAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-"));
-		writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact" });
-		assert.equal(readRegisteredDescription(compactAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+		writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact", legacyChainControls: true });
+		assert.equal(readRegisteredTool(compactAgentDir).description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 
 		const customAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-custom-"));
 		writeExtensionConfig(customAgentDir, { toolDescriptionMode: "custom" });
 		fs.writeFileSync(path.join(customAgentDir, "subagent-tool-description.md"), "Registered custom description.", "utf-8");
-		const customDescription = readRegisteredDescription(customAgentDir);
+		const customDescription = readRegisteredTool(customAgentDir).description;
 		assert.match(customDescription, /Registered custom description/);
 		assert.match(customDescription, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 
 		const missingCustomAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-missing-"));
-		writeExtensionConfig(missingCustomAgentDir, { toolDescriptionMode: "custom" });
-		assert.equal(readRegisteredDescription(missingCustomAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		writeExtensionConfig(missingCustomAgentDir, { toolDescriptionMode: "custom", legacyChainControls: true });
+		assert.equal(readRegisteredTool(missingCustomAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 
 		const invalidAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-invalid-"));
-		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny" });
-		assert.equal(readRegisteredDescription(invalidAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny", legacyChainControls: true });
+		assert.equal(readRegisteredTool(invalidAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
+	});
+
+	it("registers the trimmed schema and description by default", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-trimmed-"));
+		const tool = readRegisteredTool(agentDir);
+		assert.equal(tool.properties.includes("step"), false);
+		assert.doesNotMatch(tool.description, /append-step|approve-checkpoint|reject-checkpoint/);
+	});
+
+	it("registers legacy chain controls when enabled", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-"));
+		writeExtensionConfig(agentDir, { legacyChainControls: true });
+		const tool = readRegisteredTool(agentDir);
+		assert.equal(tool.properties.includes("step"), true);
+		assert.match(tool.description, /append-step.*step:/i);
 	});
 });
