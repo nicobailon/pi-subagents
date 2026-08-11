@@ -180,6 +180,34 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("projects fleet text without control characters or malformed UTF-16", async () => {
+		const events = new FakeEvents();
+		const state = {
+			currentSessionId: "session-123",
+			foregroundControls: new Map(),
+			asyncJobs: new Map([["unicode", {
+				asyncId: "unicode", sessionId: "session-123", status: "running", mode: "single", startedAt: 1,
+				description: "start\n" + "😀".repeat(257),
+				agents: [`worker\ud800broken\udc00${"😀".repeat(45)}`],
+			}]]),
+		} as any;
+		const bridge = registerSubagentRpcBridge({
+			events, getContext: () => ctx("session-123", "session-123"), state,
+			execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any),
+		});
+		const reply = await request(events, "fleet-unicode", "status");
+		const entry = (reply as any).data.fleet.entries[0];
+		const malformedSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u;
+
+		assert.doesNotMatch(entry.agent, malformedSurrogate);
+		assert.doesNotMatch(entry.goal, malformedSurrogate);
+		assert.doesNotMatch(entry.goal, /[\r\n]/);
+		assert.ok(entry.agent.length <= 96);
+		assert.ok(entry.goal.length <= 512);
+		assert.match(entry.agent, /^worker broken/);
+		bridge.dispose();
+	});
+
 	it("projects resolved foreground model, effort, split usage, and goal", async () => {
 		const events = new FakeEvents();
 		const state = {

@@ -6,6 +6,7 @@
 - Reduce repeated async status parsing and workflow trace projection work.
 
 ### Fixed
+- Keep tool argument previews on one physical terminal line so live widget updates do not leave stacked terminal frames. Thanks to @xz-dev for #972.
 - Recover durable async completions when a healthy native result watcher misses a filesystem event. Thanks to @xz-dev for #973.
 
 ## [0.46.0] - 2026-08-11

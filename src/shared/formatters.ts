@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { Usage, SingleResult } from "./types.ts";
 import type { ChainStep } from "./settings.ts";
 import { isDynamicParallelStep, isParallelStep } from "./settings.ts";
+import { previewDisplayText, sanitizeDisplayText } from "./display-text.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
 
 /**
@@ -100,8 +101,7 @@ export function formatToolCall(name: string, args: Record<string, unknown>, expa
 	switch (name) {
 		case "bash": {
 			const command = typeof args.command === "string" ? args.command : "";
-			const maxLength = expanded ? 240 : 60;
-			return `$ ${command.slice(0, maxLength)}${command.length > maxLength ? "..." : ""}`;
+			return `$ ${previewDisplayText(command, expanded ? 240 : 60)}`;
 		}
 		case "read":
 		case "write":
@@ -111,12 +111,10 @@ export function formatToolCall(name: string, args: Record<string, unknown>, expa
 				: typeof args.file_path === "string"
 					? args.file_path
 					: "";
-			return `${name} ${shortenPath(target)}`;
+			return `${name} ${sanitizeDisplayText(shortenPath(target))}`;
 		}
 		default: {
-			const s = JSON.stringify(args);
-			const maxLength = expanded ? 160 : 40;
-			return `${name} ${s.slice(0, maxLength)}${s.length > maxLength ? "..." : ""}`;
+			return `${name} ${previewDisplayText(JSON.stringify(args), expanded ? 160 : 40)}`;
 		}
 	}
 }

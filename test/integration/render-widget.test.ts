@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { extractToolArgsPreview } from "../../src/shared/utils.ts";
 
 const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
@@ -14,6 +15,7 @@ const theme = {
 };
 
 const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
+const malformedSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u;
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -98,6 +100,57 @@ describe("subagent async widget rendering", () => {
 		assert.ok(text.indexOf("scout") < text.indexOf("queued"), "running row should precede queued summary");
 		assert.ok(text.indexOf("queued") < text.indexOf("reviewer"), "queued summary should precede completions");
 		assert.match(text, /⎿  read/);
+	});
+
+	it("returns one physical terminal line per widget line for tool previews", () => {
+		const preview = extractToolArgsPreview({ command: "first\r\n\t\x1b[31msecond\x1b[0m" });
+		const lines = buildWidgetLines([{
+			asyncId: "run-1",
+			asyncDir: "/tmp/run",
+			status: "running",
+			mode: "parallel",
+			agents: ["worker"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "worker",
+				status: "running",
+				currentTool: "bash",
+				currentToolArgs: preview,
+				recentTools: [{ tool: "bash", args: preview, endMs: 1 }],
+			}],
+		}], theme, 120, true);
+
+		assert.match(lines.join("\n"), /first second/);
+		for (const line of lines) assert.doesNotMatch(line, /[\r\n]/);
+	});
+
+	it("does not split surrogate pairs when widget rows shorten previews again", () => {
+		const preview = `a${"😀".repeat(30)}`;
+		const lines = buildWidgetLines([{
+			asyncId: "run-1",
+			asyncDir: "/tmp/run",
+			status: "running",
+			mode: "parallel",
+			agents: ["worker"],
+			activeParallelGroup: true,
+			runningSteps: 1,
+			completedSteps: 0,
+			stepsTotal: 1,
+			steps: [{
+				index: 0,
+				agent: "worker",
+				status: "running",
+				currentTool: "bash",
+				currentToolArgs: preview,
+				recentTools: [{ tool: "bash", args: preview, endMs: 1 }],
+			}],
+		}], theme, 60, true);
+
+		for (const line of lines) assert.doesNotMatch(line, malformedSurrogate);
 	});
 
 	it("uses parallel running/done wording for async jobs with parallel groups", () => {

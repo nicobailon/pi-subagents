@@ -18,6 +18,7 @@ import {
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
+import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
@@ -320,6 +321,12 @@ function snapshotNowForProgress(progress: Pick<AgentProgress, "currentToolStarte
 	return progress.lastActivityAt;
 }
 
+function renderToolArgsPreview(value: string, maxLength: number, expanded: boolean): string {
+	const normalized = sanitizeDisplayText(value);
+	if (expanded || normalized.length <= maxLength) return normalized;
+	return `${truncateDisplayText(normalized, maxLength)}...`;
+}
+
 function formatCurrentToolLine(
 	progress: Pick<AgentProgress, "currentTool" | "currentToolArgs" | "currentToolStartedAt">,
 	availableWidth: number,
@@ -329,9 +336,7 @@ function formatCurrentToolLine(
 	if (!progress.currentTool) return undefined;
 	const maxToolArgsLen = Math.max(50, availableWidth - 20);
 	const toolArgsPreview = progress.currentToolArgs
-		? (expanded || progress.currentToolArgs.length <= maxToolArgsLen
-			? progress.currentToolArgs
-			: `${progress.currentToolArgs.slice(0, maxToolArgsLen)}...`)
+		? renderToolArgsPreview(progress.currentToolArgs, maxToolArgsLen, expanded)
 		: "";
 	const durationSuffix = progress.currentToolStartedAt !== undefined && snapshotNow !== undefined
 		? ` | ${formatDuration(Math.max(0, snapshotNow - progress.currentToolStartedAt))}`
@@ -1147,7 +1152,7 @@ function foregroundStyleWidgetStepLines(
 			if (liveStatus && liveStatus !== activity) lines.push(`    ${theme.fg("accent", liveStatus)}`);
 			for (const tool of step.recentTools?.slice(-3) ?? []) {
 				const maxArgsLen = Math.max(40, width - 30);
-				const argsPreview = tool.args.length <= maxArgsLen ? tool.args : `${tool.args.slice(0, maxArgsLen)}...`;
+				const argsPreview = renderToolArgsPreview(tool.args, maxArgsLen, expanded);
 				lines.push(`      ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
 			}
 			for (const line of compactRecentOutputLines(step.recentOutput)) {
@@ -1870,9 +1875,7 @@ export function renderSubagentResult(
 			if (r.progress.recentTools?.length) {
 				for (const t of r.progress.recentTools.slice(-3)) {
 					const maxArgsLen = Math.max(40, w - 24);
-					const argsPreview = expanded || t.args.length <= maxArgsLen
-						? t.args
-						: `${t.args.slice(0, maxArgsLen)}...`;
+					const argsPreview = renderToolArgsPreview(t.args, maxArgsLen, expanded);
 					c.addChild(new Text(fit(theme.fg("dim", `${t.tool}: ${argsPreview}`)), 0, 0));
 				}
 			}
@@ -2103,9 +2106,7 @@ export function renderSubagentResult(
 			if (rProg.recentTools?.length) {
 				for (const t of rProg.recentTools.slice(-3)) {
 					const maxArgsLen = Math.max(40, w - 30);
-					const argsPreview = expanded || t.args.length <= maxArgsLen
-						? t.args
-						: `${t.args.slice(0, maxArgsLen)}...`;
+					const argsPreview = renderToolArgsPreview(t.args, maxArgsLen, expanded);
 					c.addChild(new Text(fit(theme.fg("dim", `      ${t.tool}: ${argsPreview}`)), 0, 0));
 				}
 			}

@@ -50,6 +50,43 @@ describe("foreground tool-call compaction", () => {
 		assert.equal(result.toolCalls, undefined);
 	});
 
+	it("keeps live tool argument previews on one terminal line", () => {
+		const preview = extractToolArgsPreview({
+			command: "set +e\r\n\t\x1b[31mrun\x1b[0m \x1b]0;title\x07now\u0000",
+		});
+
+		assert.equal(preview, "set +e run now");
+		assert.doesNotMatch(preview, /[\r\n\t\x1b]/);
+	});
+
+	it("keeps completed bash tool-call previews on one terminal line", () => {
+		const preview = formatToolCall("bash", { command: "first\n\x1b[32msecond\x1b[0m" });
+
+		assert.equal(preview, "$ first second");
+		assert.doesNotMatch(preview, /[\r\n\t\x1b]/);
+	});
+
+	it("does not split surrogate pairs when truncating previews", () => {
+		const preview = extractToolArgsPreview({ command: "😀".repeat(31) });
+
+		assert.equal(preview, `${"😀".repeat(28)}...`);
+		assert.doesNotMatch(preview, /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u);
+		assert.equal(extractToolArgsPreview({ command: `safe\ud800tail\udc00end` }), "safe tail end");
+	});
+
+	it("normalizes fallback argument keys before display", () => {
+		const preview = extractToolArgsPreview({ "bad\r\n\t\x1b[31mkey\x1b[0m\u0000": "value" });
+
+		assert.equal(preview, "bad key=value");
+		assert.doesNotMatch(preview, /[\u0000-\u001f\u007f-\u009f]/);
+	});
+
+	it("discards terminal string payloads while preserving readable suffixes", () => {
+		for (const control of ["\x1b]0;title\x07", "\x1bPpayload\x1b\\", "\x9d0;title\x9c"]) {
+			assert.equal(extractToolArgsPreview({ command: `before${control}after` }), "before after");
+		}
+	});
+
 	it("formats array-based web search previews clearly", () => {
 		assert.equal(
 			extractToolArgsPreview({

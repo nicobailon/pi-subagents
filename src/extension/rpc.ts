@@ -16,6 +16,7 @@ import {
 	SUBAGENT_PROCESS_TERMINAL_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 } from "../shared/types.ts";
+import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
@@ -101,12 +102,8 @@ const MAX_METADATA_LENGTH = 128;
 
 function displayText(value: unknown, maxLength: number): string | undefined {
 	if (typeof value !== "string") return undefined;
-	// Strip complete CSI/OSC/DCS/APC/PM strings and C1 controls before collapsing
-	// whitespace; never leave CSI parameters behind after removing ESC.
-	const normalized = value.slice(0, 4_096)
-		.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x9b[0-?]*[ -/]*[@-~]|\x1b][\s\S]*?(?:\x07|\x1b\\)|\x1b[PX^_][\s\S]*?\x1b\\|[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/\s+/g, " ").trim();
-	return normalized ? normalized.slice(0, maxLength) : undefined;
+	const normalized = sanitizeDisplayText(value.slice(0, 4_096));
+	return normalized ? truncateDisplayText(normalized, maxLength) : undefined;
 }
 
 function publicTokens(value: unknown): { input: number; output: number; total: number } {
