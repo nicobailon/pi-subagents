@@ -10,11 +10,12 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/sh
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-function parentToolEnv(): NodeJS.ProcessEnv {
+function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
 	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	delete env[WAIT_TOOL_ENABLED_ENV];
+	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
 
@@ -846,6 +847,37 @@ describe("subagent extension child mode", () => {
 			],
 			{ cwd: projectRoot, stdio: "pipe" },
 		);
+	});
+
+	it("trims legacy chain controls from the child-safe fanout tool by default", () => {
+		const readRegisteredTool = (legacyChainControls: boolean): { description: string; properties: string[]; id: string; runId: string } => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fanout-schema-"));
+			fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+			fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ legacyChainControls }), "utf-8");
+			const script = String.raw`
+				import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
+				import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
+				process.env[SUBAGENT_CHILD_ENV] = "1";
+				process.env[SUBAGENT_FANOUT_CHILD_ENV] = "1";
+				let tool;
+				registerFanoutChildSubagentExtension({ events: { on() { return () => {}; }, emit() {} }, registerTool(value) { tool = value; }, getSessionName() { return undefined; } });
+				process.stdout.write(JSON.stringify({ description: tool.description, properties: Object.keys(tool.parameters.properties), id: tool.parameters.properties.id.description, runId: tool.parameters.properties.runId.description }));
+			`;
+			const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], {
+				cwd: projectRoot,
+				env: parentToolEnv(agentDir),
+				encoding: "utf-8",
+			});
+			return JSON.parse(output) as { description: string; properties: string[]; id: string; runId: string };
+		};
+
+		const trimmed = readRegisteredTool(false);
+		assert.equal(trimmed.properties.includes("step"), false);
+		assert.doesNotMatch(`${trimmed.description}\n${trimmed.id}\n${trimmed.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
+
+		const legacy = readRegisteredTool(true);
+		assert.equal(legacy.properties.includes("step"), true);
+		assert.match(`${legacy.description}\n${legacy.id}\n${legacy.runId}`, /append-step/);
 	});
 
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {

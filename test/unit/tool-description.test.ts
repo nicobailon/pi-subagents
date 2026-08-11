@@ -125,6 +125,26 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 	});
 
+	it("preserves custom guidance while trimming built-in legacy chain guidance", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-note-"));
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+		fs.writeFileSync(
+			path.join(cwd, ".pi", "subagent-tool-description.md"),
+			[
+				"Custom migration note: append-step, approve-checkpoint, and reject-checkpoint appear here as audit context.",
+				"{{fullDescription}}",
+			].join("\n\n"),
+			"utf-8",
+		);
+
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+
+		assert.match(description, /Custom migration note: append-step, approve-checkpoint, and reject-checkpoint/);
+		assert.doesNotMatch(description, /appends one step to an already-running durable legacy chain/);
+		assert.doesNotMatch(description, /decide a paused durable legacy chain checkpoint/);
+	});
+
 	it("falls back to full mode when custom mode has no valid file", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-missing-"));
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));

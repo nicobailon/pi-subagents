@@ -153,10 +153,16 @@ function withMandatorySafetyGuidance(description: string): string {
 		: SUBAGENT_SAFETY_GUIDANCE;
 }
 
+const LEGACY_CHAIN_CONTROL_GUIDANCE_LINES = new Set([
+	'• { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable legacy chain. step is control-only, not an execution mode.',
+	"• approve-checkpoint and reject-checkpoint decide a paused durable legacy chain checkpoint.",
+	"• append-step uses step:{...} only for an already-running durable legacy chain; step is not an execution mode.",
+]);
+
 function withoutLegacyChainControlGuidance(description: string): string {
 	return description
 		.split("\n")
-		.filter((line) => !/append-step|approve-checkpoint|reject-checkpoint/.test(line))
+		.filter((line) => !LEGACY_CHAIN_CONTROL_GUIDANCE_LINES.has(line.trim()))
 		.join("\n");
 }
 
