@@ -430,6 +430,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
 	});
+	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
+		widgetEnabled: asyncWidgetEnabled,
+	});
 	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
 		pi,
 		state,
@@ -452,16 +455,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		supervisorChannel.dispose();
 		waitSubscriptionManager.dispose();
 		fleetStatus?.dispose();
-		if (state.poller) {
-			clearInterval(state.poller);
-			state.poller = null;
-		}
+		disposeAsyncJobTracker();
 	};
 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
-	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, DIRS.async, {
-		widgetEnabled: asyncWidgetEnabled,
-	});
 	const executor = createSubagentExecutor({
 		pi,
 		state,
@@ -824,8 +821,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			delete globalStore[eventUnsubscribeStoreKey];
 		}
 		scheduledRunManager.stop();
-		if (state.poller) clearInterval(state.poller);
-		state.poller = null;
+		disposeAsyncJobTracker();
 		for (const timer of state.cleanupTimers.values()) {
 			clearTimeout(timer);
 		}

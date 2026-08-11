@@ -13,6 +13,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -25,6 +26,8 @@ jobs:
       - name: Unit tests
         run: npm test
       - name: Integration tests
+        timeout-minutes: 10
         run: npm run test:integration
       - name: E2E tests
+        timeout-minutes: 5
         run: npm run test:e2e
