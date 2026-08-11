@@ -1018,7 +1018,7 @@ describe("result watcher", () => {
 
 				fs.rmSync(registryPath, { force: true });
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 650));
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath) && emitted.some((entry) => entry.event === "subagent:async-complete")), true);
 			} finally {
 				console.error = originalError;
 				watcher.stopResultWatcher();

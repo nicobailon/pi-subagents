@@ -1416,10 +1416,10 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
 }
 
-function fitAdaptiveWidgetLines(jobs: AsyncJobState[], lines: string[], theme: Theme, width: number, expanded: boolean, frame?: number): string[] {
+function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number): string[] {
 	if (expanded) {
 		resetWidgetLayoutSession();
-		return fitWidgetLineBudget(lines, theme, width, true);
+		return fitWidgetLineBudget(buildLines(), theme, width, true);
 	}
 
 	const hasMatchingSession = widgetSessionMatches(expanded);
@@ -1437,6 +1437,7 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], lines: string[], theme: T
 		return rendered.lines;
 	}
 
+	const lines = buildLines();
 	if (lines.length <= availableRows) {
 		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
 		return fitWidgetLineBudget(lines, theme, width, false);
@@ -1458,12 +1459,12 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: 
 		const container = new Container();
 		container.render = (renderWidth: number): string[] => {
 			const width = Math.max(0, renderWidth - 2);
-			const lines = expanded
+			const buildLines = (): string[] => expanded
 				? buildWidgetLines(jobs, theme, width, true)
 				: jobs.length === 1
 					? compactSingleWidgetLines(jobs[0]!, theme, width)
 					: buildWidgetLines(jobs, theme, width, false);
-			return fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded).map((line) => paddedWidgetLine(line, renderWidth));
+			return fitAdaptiveWidgetLines(jobs, buildLines, theme, width, expanded).map((line) => paddedWidgetLine(line, renderWidth));
 		};
 		return container;
 	};
