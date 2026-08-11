@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
-import { DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS, waitForFileSystemRetry } from "../shared/file-system-retry.ts";
+import { DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS, isRetryableFileSystemError, waitForFileSystemRetry } from "../shared/file-system-retry.ts";
 import { assertWorkflowJsonValue } from "../workflows/scripted-workflow.ts";
 import type { MissionStoreLocation } from "./types.ts";
 import { validateMissionId } from "./store.ts";
@@ -162,24 +162,30 @@ function withStateFileLock<T>(filePath: string, operation: () => T): T {
 			waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
 			continue;
 		}
+		let acquired = false;
 		try {
-			fs.mkdirSync(lockPath, { mode: 0o700 });
-			owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now(), ...(CURRENT_PROCESS_KEY ? { processKey: CURRENT_PROCESS_KEY } : {}) };
-			try {
-				fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify(owner), { encoding: "utf-8", mode: 0o600 });
-			} catch (error) {
-				removeOwnedStateLock(lockPath, owner);
-				owner = undefined;
-				throw error;
-			}
-			break;
+			acquired = tryMakeDirectory(lockPath, 0o700);
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-				throw new Error(`Failed to acquire mission state lock '${lockPath}': ${error instanceof Error ? error.message : String(error)}`);
+			if (isRetryableFileSystemError(error)) {
+				waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
+				continue;
 			}
+			throw new Error(`Failed to acquire mission state lock '${lockPath}': ${error instanceof Error ? error.message : String(error)}`);
+		}
+		if (!acquired) {
 			if (reclaimStaleStateLock(lockPath, reclaimPath)) continue;
 			waitForStateLock(DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS[attempt], lockPath);
+			continue;
 		}
+		owner = { pid: process.pid, token: randomUUID(), createdAt: Date.now(), ...(CURRENT_PROCESS_KEY ? { processKey: CURRENT_PROCESS_KEY } : {}) };
+		try {
+			fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify(owner), { encoding: "utf-8", mode: 0o600 });
+		} catch (error) {
+			fs.rmSync(lockPath, { recursive: true, force: true });
+			owner = undefined;
+			throw error;
+		}
+		break;
 	}
 	try {
 		return operation();

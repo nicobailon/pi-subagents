@@ -347,7 +347,7 @@ describe("acknowledged steering action", () => {
 		let recoveryCommitted = false;
 		let routed: AsyncStatus | undefined;
 		try {
-			const result = await steerAsyncRun({
+			const action = steerAsyncRun({
 				state: createState(), runId, message: "correct course", location: { asyncDir }, ackTimeoutMs: 250, recoveryTimeoutMs: 1_000, kill: () => true,
 				onRequestQueued: (requestPath) => {
 					const request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
@@ -361,6 +361,7 @@ describe("acknowledged steering action", () => {
 				},
 				recover: async () => { recovered = true; return successResult("replacement"); },
 			});
+			const result = await action;
 			assert.ok(recoveryCommitted);
 			assert.ok(routed);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);

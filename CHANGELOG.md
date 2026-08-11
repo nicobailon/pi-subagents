@@ -9,6 +9,7 @@
 - Keep parsed async statuses cached beyond 50 runs while preserving per-read freshness checks. Thanks to @bcanvural for #982.
 
 ### Fixed
+- Retry transient Windows mission state lock creation failures and stabilize no-session steering recovery coverage.
 - Accept persisted async recovery descriptors that include internal turn-budget state fields (#985).
 - Keep tool argument previews on one physical terminal line so live widget updates do not leave stacked terminal frames. Thanks to @xz-dev for #972.
 - Recover durable async completions when a healthy native result watcher misses a filesystem event. Thanks to @xz-dev for #973.
