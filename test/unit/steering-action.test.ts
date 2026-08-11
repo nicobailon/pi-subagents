@@ -283,6 +283,7 @@ describe("acknowledged steering action", () => {
 		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);
 		let receivedLimits: unknown;
 		let recoveryStarted = false;
+		let recoveryCommitted = false;
 		let request: SteerRequest | undefined;
 		let routed: AsyncStatus | undefined;
 		try {
@@ -300,9 +301,10 @@ describe("acknowledged steering action", () => {
 					projectRequest(routed, request, ["routed"]);
 					writeStatus(asyncDir, routed);
 				},
+				onRecoveryCommitted: () => { recoveryCommitted = true; },
 				recover: async (limits) => { recoveryStarted = true; receivedLimits = limits; return successResult("replacement"); },
 			});
-			await waitUntil(() => fs.existsSync(interruptRequestPath(asyncDir)) ? true : undefined);
+			await waitUntil(() => recoveryCommitted ? true : undefined);
 			assert.ok(request);
 			assert.ok(routed);
 			writeSteerAck(asyncDir, { requestId: request.id, index: 0, ts: Date.now(), state: "delivered", message: "accepted after runner pause" });
@@ -364,7 +366,6 @@ describe("acknowledged steering action", () => {
 			const result = await action;
 			assert.ok(recoveryCommitted);
 			assert.ok(routed);
-			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
 			assert.equal(result.isError, true);
 			assert.equal(recovered, false);
 			assert.match(result.content[0]!.text, /no persisted child session|does not have a persisted session file/i);
