@@ -307,26 +307,22 @@ export class SubagentFleetStatus {
 	refresh(): void {
 		const ctx = this.getActiveUiContext();
 		if (!ctx) return;
+		if (this.state.widgetsSuspended) {
+			this.clearWidget();
+			return;
+		}
 		this.entries = collectFleetStatusEntries(this.state);
 		this.clampSelection();
 		if (this.inspectorOpen || this.state.fleetInspectorOpen) {
 			this.lastRenderKey = "";
-			if (this.widgetRegistered) {
-				ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
-				this.widgetRegistered = false;
-				this.tui = undefined;
-			}
+			this.clearWidget();
 			return;
 		}
 		if (this.entries.length === 0) {
 			this.active = false;
 			this.selectedKey = "main";
 			this.lastRenderKey = "";
-			if (this.widgetRegistered) {
-				ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
-				this.widgetRegistered = false;
-				this.tui = undefined;
-			}
+			this.clearWidget();
 			return;
 		}
 
@@ -356,6 +352,7 @@ export class SubagentFleetStatus {
 	}
 
 	handleKey(data: string): { consume?: boolean; data?: string } | undefined {
+		if (this.state.widgetsSuspended) return undefined;
 		const ctx = this.getActiveUiContext();
 		if (!ctx || this.entries.length === 0 || isKeyRelease(data)) return undefined;
 		if (this.inspectorOpen) return undefined;
@@ -534,6 +531,13 @@ export class SubagentFleetStatus {
 			this.clearUiRegistration();
 			return undefined;
 		}
+	}
+
+	private clearWidget(): void {
+		if (!this.widgetRegistered) return;
+		this.ui?.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+		this.widgetRegistered = false;
+		this.tui = undefined;
 	}
 
 	private clearUiRegistration(): void {

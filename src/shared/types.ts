@@ -1614,6 +1614,8 @@ export interface SubagentState {
 	fleetJobs?: Map<string, AsyncJobState>;
 	/** Suppress dynamic status widgets while the fleet overlay owns the viewport. */
 	fleetInspectorOpen?: boolean;
+	/** Temporarily suppress dynamic widgets while Pi compacts the session. */
+	widgetsSuspended?: boolean;
 	foregroundRuns?: Map<string, ForegroundResumeRun>;
 	foregroundControls: Map<string, ForegroundRunControl>;
 	lastForegroundControlId: string | null;

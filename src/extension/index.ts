@@ -392,6 +392,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		lastUiContext: null,
 		poller: null,
 		completionSeen: new Map(),
+		widgetsSuspended: false,
 		watcher: null,
 		watcherRestartTimer: null,
 		resultFileCoalescer: {
@@ -713,7 +714,22 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	const suspendWidgetsForCompaction = () => {
+		if (state.widgetsSuspended) return;
+		state.widgetsSuspended = true;
+		if (state.lastUiContext?.hasUI) state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
+		fleetStatus?.refresh();
+	};
+	const resumeWidgetsAfterCompaction = () => {
+		if (!state.widgetsSuspended) return;
+		state.widgetsSuspended = false;
+		const ctx = state.lastUiContext;
+		if (ctx?.hasUI) refreshWidget(ctx);
+		fleetStatus?.refresh();
+	};
+
 	const resetSessionState = (ctx: ExtensionContext, recovering: boolean) => {
+		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
@@ -752,7 +768,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("agent_start", () => {
+		resumeWidgetsAfterCompaction();
 		herdrStatusBridge.agentStarted();
+	});
+
+	pi.on("agent_settled", () => {
+		resumeWidgetsAfterCompaction();
+	});
+
+	pi.on("session_before_compact", (event) => {
+		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
 	pi.on("session_compact", () => {
@@ -780,6 +805,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
+		state.widgetsSuspended = false;
 		stopResultWatcher();
 		state.currentSessionId = null;
 		state.parentSessionFile = null;
