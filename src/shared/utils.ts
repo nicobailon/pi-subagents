@@ -519,14 +519,141 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 }
 
 /**
+ * Return at most maxLength UTF-16 code units without splitting a surrogate pair.
+ */
+export function truncateDisplayText(value: string, maxLength: number): string {
+	if (maxLength <= 0) return "";
+	if (value.length <= maxLength) return value;
+	const end = value.charCodeAt(maxLength - 1) >= 0xd800 && value.charCodeAt(maxLength - 1) <= 0xdbff
+		? maxLength - 1
+		: maxLength;
+	return value.slice(0, end);
+}
+
+/**
+ * Normalize untrusted text for single-line terminal display.
+ */
+export function normalizeDisplayText(value: string): string {
+	const output: string[] = [];
+	let pendingSpace = false;
+	let state: "text" | "csi" | "string" = "text";
+	let csiIntermediates = false;
+	let stringType: number | undefined;
+
+	const appendSpace = (): void => {
+		if (output.length > 0) pendingSpace = true;
+	};
+	const appendText = (text: string): void => {
+		if (pendingSpace) output.push(" ");
+		output.push(text);
+		pendingSpace = false;
+	};
+	const appendPlain = (codePoint: number): void => {
+		if (
+			codePoint <= 0x1f
+			|| (codePoint >= 0x7f && codePoint <= 0x9f)
+			|| codePoint === 0x20
+			|| codePoint === 0xa0
+			|| codePoint === 0x1680
+			|| (codePoint >= 0x2000 && codePoint <= 0x200a)
+			|| codePoint === 0x2028
+			|| codePoint === 0x2029
+			|| codePoint === 0x202f
+			|| codePoint === 0x205f
+			|| codePoint === 0x3000
+			|| codePoint === 0xfeff
+		) {
+			appendSpace();
+		} else if (codePoint >= 0xd800 && codePoint <= 0xdfff) {
+			appendSpace();
+		} else {
+			appendText(String.fromCodePoint(codePoint));
+		}
+	};
+
+	for (let index = 0; index < value.length;) {
+		const codePoint = value.codePointAt(index)!;
+		const width = codePoint > 0xffff ? 2 : 1;
+
+		if (state === "string") {
+			if ((stringType === 0x5d && codePoint === 0x07) || codePoint === 0x9c) {
+				state = "text";
+				index += width;
+				continue;
+			}
+			if (codePoint === 0x1b && value.charCodeAt(index + 1) === 0x5c) {
+				state = "text";
+				index += 2;
+				continue;
+			}
+			index += width;
+			continue;
+		}
+
+		if (state === "csi") {
+			if (codePoint >= 0x40 && codePoint <= 0x7e) {
+				state = "text";
+				index += width;
+				continue;
+			}
+			if (!csiIntermediates && codePoint >= 0x30 && codePoint <= 0x3f) {
+				index += width;
+				continue;
+			}
+			if (codePoint >= 0x20 && codePoint <= 0x2f) {
+				csiIntermediates = true;
+				index += width;
+				continue;
+			}
+			state = "text";
+			continue;
+		}
+
+		if (codePoint === 0x9b || (codePoint === 0x1b && value.charCodeAt(index + 1) === 0x5b)) {
+			appendSpace();
+			state = "csi";
+			csiIntermediates = false;
+			index += codePoint === 0x9b ? 1 : 2;
+			continue;
+		}
+
+		if (codePoint === 0x90 || codePoint === 0x98 || codePoint === 0x9d || codePoint === 0x9e || codePoint === 0x9f) {
+			appendSpace();
+			state = "string";
+			stringType = codePoint === 0x9d ? 0x5d : codePoint;
+			index += 1;
+			continue;
+		}
+
+		if (codePoint === 0x1b) {
+			const introducer = value.charCodeAt(index + 1);
+			if (introducer === 0x5d || introducer === 0x50 || introducer === 0x58 || introducer === 0x5e || introducer === 0x5f) {
+				appendSpace();
+				state = "string";
+				stringType = introducer;
+				index += 2;
+				continue;
+			}
+		}
+
+		appendPlain(codePoint);
+		index += width;
+	}
+
+	return output.join("");
+}
+
+/**
  * Extract a preview of tool arguments for display
  */
 export function extractToolArgsPreview(args: Record<string, unknown>): string {
-	const truncatePreview = (value: string, maxLength: number): string =>
-		value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+	const truncatePreview = (value: string, maxLength: number): string => {
+		const normalized = normalizeDisplayText(value);
+		return normalized.length > maxLength ? `${truncateDisplayText(normalized, maxLength - 3)}...` : normalized;
+	};
 
 	const stringifyPreviewValue = (value: unknown): string | undefined => {
-		if (typeof value === "string" && value.trim().length > 0) return value;
+		if (typeof value === "string" && value.trim().length > 0) return normalizeDisplayText(value);
 		if (typeof value === "number" || typeof value === "boolean") return String(value);
 		return undefined;
 	};
@@ -541,9 +668,9 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
 
 	// Handle MCP tool calls - show server/tool info
 	if (args.tool && typeof args.tool === "string") {
-		const server = args.server && typeof args.server === "string" ? `${args.server}/` : "";
-		const toolArgs = args.args && typeof args.args === "string" ? ` ${args.args.slice(0, 40)}` : "";
-		return `${server}${args.tool}${toolArgs}`;
+		const server = args.server && typeof args.server === "string" ? `${normalizeDisplayText(args.server)}/` : "";
+		const toolArgs = args.args && typeof args.args === "string" ? ` ${truncateDisplayText(normalizeDisplayText(args.args), 40)}` : "";
+		return normalizeDisplayText(`${server}${args.tool}${toolArgs}`);
 	}
 
 	const queriesPreview = previewArray(args.queries);
@@ -566,11 +693,12 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
 	
 	// Fallback: show first string value found
 	for (const [key, value] of Object.entries(args)) {
+		const displayKey = normalizeDisplayText(key);
 		const arrayPreview = previewArray(value);
-		if (arrayPreview) return `${key}=${truncatePreview(arrayPreview, 50)}`;
+		if (arrayPreview) return `${displayKey}=${truncatePreview(arrayPreview, 50)}`;
 		if (typeof value === "string" && value.length > 0) {
 			const preview = truncatePreview(value, 50);
-			return `${key}=${preview}`;
+			return `${displayKey}=${preview}`;
 		}
 	}
 	return "";
