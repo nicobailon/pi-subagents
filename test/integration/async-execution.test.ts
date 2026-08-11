@@ -2581,6 +2581,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "worker",
 			task: "Do work",
 			acceptance: { level: "none", reason: "descriptor persistence coverage" },
+			turnBudget: { maxTurns: 8, graceTurns: 2 },
 			agentConfig: makeAgent("worker", {
 				model: "openai/gpt-5-mini:high",
 				fallbackModels: ["anthropic/claude-sonnet-4:low"],
@@ -2622,6 +2623,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(descriptor.cwd, tempDir);
 		assert.equal(descriptor.sessionDir, path.join(sessionRoot, `async-${id}`));
 		assert.deepEqual(descriptor.acceptance, { level: "none", reason: "descriptor persistence coverage" });
+		assert.deepEqual(descriptor.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
 		assert.equal(Object.hasOwn(descriptor.acceptance, "explicit"), false);
 		assert.equal(Object.hasOwn(descriptor.acceptance, "inferredReason"), false);
 		assert.equal(Object.hasOwn(descriptor, "task"), false);

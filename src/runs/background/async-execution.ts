@@ -1399,7 +1399,7 @@ export function executeAsyncSingle(
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
-		...(initialTurnBudget ? { initialTurnBudget } : {}),
+		...(initialTurnBudget ? { initialTurnBudget: { maxTurns: initialTurnBudget.maxTurns, graceTurns: initialTurnBudget.graceTurns } } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 		...(maxOutput ? { maxOutput } : {}),

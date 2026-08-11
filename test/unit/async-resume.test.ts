@@ -127,6 +127,60 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("normalizes persisted turn-budget state without weakening public input validation", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-turn-budget-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-turn-budget");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-turn-budget", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "paused", sessionFile }],
+			});
+			const descriptor = {
+				version: 1,
+				sourceRunId: "run-turn-budget",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			};
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				initialTurnBudget: {
+					maxTurns: 8,
+					graceTurns: 2,
+					outcome: "within-budget",
+					turnCount: 0,
+					wrapUpRequestedAtTurn: 8,
+					terminationDeferredAtTurn: 10,
+					exceededAtTurn: 11,
+				},
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.deepEqual(target.recoveryDescriptor?.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+				...descriptor,
+				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
+			});
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/recoveryDescriptor\.initialTurnBudget\.unrelated is not supported/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("accepts legacy resolved acceptance metadata in recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-acceptance-"));
 		try {

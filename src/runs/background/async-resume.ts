@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
+import { DIRS, type AcceptanceInput, type AsyncStatus, type ResolvedTurnBudget, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -273,6 +273,23 @@ function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): Ac
 	return value as AcceptanceInput;
 }
 
+function normalizeRecoveryTurnBudget(value: unknown, descriptorPath: string): ResolvedTurnBudget {
+	if (value && typeof value === "object" && !Array.isArray(value)) {
+		const {
+			outcome: _outcome,
+			turnCount: _turnCount,
+			wrapUpRequestedAtTurn: _wrapUpRequestedAtTurn,
+			terminationDeferredAtTurn: _terminationDeferredAtTurn,
+			exceededAtTurn: _exceededAtTurn,
+			...publicTurnBudget
+		} = value as Record<string, unknown>;
+		value = publicTurnBudget;
+	}
+	const result = resolveTurnBudgetConfig(value, "recoveryDescriptor.initialTurnBudget");
+	if (result.error || !result.turnBudget) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error ?? "recoveryDescriptor.initialTurnBudget is invalid."}`);
+	return result.turnBudget;
+}
+
 export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): SteeringRecoveryDescriptor | undefined {
 	if (!asyncDir) return undefined;
 	const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
@@ -329,8 +346,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	}
 	if (parsed.absoluteDeadlineAt !== undefined && (!Number.isFinite(parsed.absoluteDeadlineAt) || (parsed.absoluteDeadlineAt as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': absoluteDeadlineAt must be a positive timestamp.`);
 	if (parsed.initialTurnBudget !== undefined) {
-		const result = resolveTurnBudgetConfig(parsed.initialTurnBudget, "recoveryDescriptor.initialTurnBudget");
-		if (result.error) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error}`);
+		parsed.initialTurnBudget = normalizeRecoveryTurnBudget(parsed.initialTurnBudget, descriptorPath);
 	}
 	if (parsed.initialToolBudget !== undefined) {
 		const result = validateToolBudgetConfig(parsed.initialToolBudget, "recoveryDescriptor.initialToolBudget");
