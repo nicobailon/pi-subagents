@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { consumeSteerRequests, consumeSteerRequestsFromDir, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import { workflowForegroundSteeringDir } from "../../src/runs/foreground/workflow-foreground-steering.ts";
+import { steerWorkflowForegroundTarget, workflowForegroundSteeringDir } from "../../src/runs/foreground/workflow-foreground-steering.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 
 function createState(): SubagentState {
@@ -147,16 +147,21 @@ describe("async interrupt action", () => {
 		}
 	});
 
-	it("rejects a steer request when its workflow foreground route is removed before acknowledgment", async () => {
+	it("rejects a steer request when its workflow foreground route is removed during the final acknowledgment wait", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-removed-route-${Date.now().toString(36)}`;
 		const childRunId = `${workflowRunId}-child`;
 		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
 		const routeDir = createWorkflowForegroundControl(state, workflowRunId, childRunId);
 		try {
-			const action = executorWithKill(state, () => true)
-				.execute("steer", { action: "steer", id: childRunId, message: "Focus on the failing test." }, new AbortController().signal, undefined, ctx());
+			const control = state.foregroundControls.get(childRunId)!;
+			const action = steerWorkflowForegroundTarget({
+				target: { control, workflowRunId, sourceRunId: childRunId },
+				message: "Focus on the failing test.",
+				ackTimeoutMs: 40,
+			});
 			await waitUntil(() => fs.existsSync(stepSteerInboxDir(routeDir, 0)) ? true : undefined);
+			await new Promise((resolve) => setTimeout(resolve, 25));
 			fs.rmSync(routeDir, { recursive: true, force: true });
 			const result = await action;
 

@@ -125,7 +125,9 @@ export async function steerWorkflowForegroundTarget(input: {
 		}
 		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))));
 	}
-	if (routeRemoved) return managementError(`Foreground run '${control.runId}' has no live child session.`);
+	if (routeRemoved || (!ack && !input.signal?.aborted && !fs.existsSync(routeDir))) {
+		return managementError(`Foreground run '${control.runId}' has no live child session.`);
+	}
 	const target = ack?.state === "delivered"
 		? { index, state: "delivered" as const, deliveredAt: ack.ts }
 		: ack?.state === "queued"
