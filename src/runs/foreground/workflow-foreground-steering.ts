@@ -10,7 +10,7 @@ import {
 	steerAcksDir,
 	steerCapabilityPath,
 	stepSteerInboxDir,
-	writeSteerRequestToDir,
+	writeSteerRequestToExistingDir,
 	type SteerDeliveryMode,
 	type SteerRequest,
 } from "../background/control-channel.ts";
@@ -86,7 +86,7 @@ export async function steerWorkflowForegroundTarget(input: {
 }): Promise<AgentToolResult<Details>> {
 	const { control, sourceRunId } = input.target;
 	const routeDir = control.workflowSteeringDir;
-	if (!routeDir) return managementError(`Foreground run '${control.runId}' has no live workflow steering route.`);
+	if (!routeDir || !fs.existsSync(routeDir)) return managementError(`Foreground run '${control.runId}' has no live workflow steering route.`);
 	const activeIndexes = [...(control.activeChildren?.keys() ?? [])].sort((left, right) => left - right);
 	const index = input.index ?? (activeIndexes.length === 1 ? activeIndexes[0] : undefined);
 	if (index === undefined) {
@@ -108,8 +108,11 @@ export async function steerWorkflowForegroundTarget(input: {
 		source: "steer-action",
 	};
 	try {
-		writeSteerRequestToDir(stepSteerInboxDir(routeDir, index), request);
+		writeSteerRequestToExistingDir(stepSteerInboxDir(routeDir, index), request);
 	} catch (error) {
+		if (typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+			return managementError(`Foreground run '${control.runId}' has no live workflow steering route.`);
+		}
 		return managementError(`Failed to queue steering for foreground run ${control.runId}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 
@@ -172,9 +175,13 @@ export function removeWorkflowForegroundSteeringRoute(control: ForegroundRunCont
 
 export function workflowForegroundSteeringLaunchOptions(control: ForegroundRunControl | undefined, index: number): Pick<import("../../shared/types.ts").RunSyncOptions, "steerInboxDir" | "steerCapabilityPath" | "steerAckDir"> {
 	if (!control?.workflowSteeringDir) return {};
+	const steerInboxDir = stepSteerInboxDir(control.workflowSteeringDir, index);
+	const steerAckDir = steerAcksDir(control.workflowSteeringDir, index);
+	fs.mkdirSync(steerInboxDir, { recursive: true });
+	fs.mkdirSync(steerAckDir, { recursive: true });
 	return {
-		steerInboxDir: stepSteerInboxDir(control.workflowSteeringDir, index),
+		steerInboxDir,
 		steerCapabilityPath: steerCapabilityPath(control.workflowSteeringDir, index),
-		steerAckDir: steerAcksDir(control.workflowSteeringDir, index),
+		steerAckDir,
 	};
 }

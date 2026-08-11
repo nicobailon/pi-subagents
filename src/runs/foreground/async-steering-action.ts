@@ -220,7 +220,7 @@ export async function steerAsyncRun(input: {
 			const revived = await input.recover(limits);
 			if (revived.isError || !revived.details.asyncId) throw new Error(revived.content[0]?.type === "text" ? revived.content[0].text : "Replacement launch failed; source run remains paused.");
 			const sourceStatus = readStatus(asyncDir);
-			const targetIndex = input.index ?? status.steps?.findIndex((step) => step.status === "running") ?? -1;
+			const targetIndex = input.index ?? sourceStatus?.steering?.recent.find((request) => request.id === requestId)?.targets[0]?.index ?? status.steps?.findIndex((step) => step.status === "running") ?? -1;
 			if (sourceStatus?.state === "paused" && sourceStatus.steering && targetIndex >= 0) {
 				updateSteeringTarget(sourceStatus.steering, requestId, targetIndex, "recovered", Date.now(), { replacementRunId: revived.details.asyncId });
 				const stepSteering = sourceStatus.steps?.[targetIndex]?.steering;

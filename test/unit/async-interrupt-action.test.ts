@@ -80,6 +80,7 @@ function createWorkflowForegroundControl(state: SubagentState, workflowRunId: st
 		activeChildren: new Map([[0, { index: 0, agent: "worker", startedAt: 100, updatedAt: 100 }]]),
 		schedulingOwners: 1,
 	});
+	fs.mkdirSync(stepSteerInboxDir(routeDir, 0), { recursive: true });
 	return routeDir;
 }
 
@@ -147,6 +148,54 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("rejects a steer request when its workflow foreground route is already removed", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-missing-route-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const routeDir = createWorkflowForegroundControl(state, workflowRunId, childRunId);
+		try {
+			const control = state.foregroundControls.get(childRunId)!;
+			fs.rmSync(routeDir, { recursive: true, force: true });
+			const result = await steerWorkflowForegroundTarget({
+				target: { control, workflowRunId, sourceRunId: childRunId },
+				message: "Focus on the failing test.",
+				ackTimeoutMs: 40,
+			});
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /no live workflow steering route/);
+			assert.equal(result.details.steering, undefined);
+			assert.equal(fs.existsSync(routeDir), false);
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
+	it("rejects a steer request when its workflow foreground child inbox is missing", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-missing-inbox-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const routeDir = createWorkflowForegroundControl(state, workflowRunId, childRunId);
+		try {
+			const control = state.foregroundControls.get(childRunId)!;
+			fs.rmSync(stepSteerInboxDir(routeDir, 0), { recursive: true, force: true });
+			const result = await steerWorkflowForegroundTarget({
+				target: { control, workflowRunId, sourceRunId: childRunId },
+				message: "Focus on the failing test.",
+				ackTimeoutMs: 40,
+			});
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /no live workflow steering route/);
+			assert.equal(result.details.steering, undefined);
+			assert.equal(fs.existsSync(stepSteerInboxDir(routeDir, 0)), false);
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
 	it("rejects a steer request when its workflow foreground route is removed during the final acknowledgment wait", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-removed-route-${Date.now().toString(36)}`;
@@ -209,8 +258,8 @@ describe("async interrupt action", () => {
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /2 live foreground children/);
-			assert.equal(fs.existsSync(stepSteerInboxDir(firstRoute, 0)), false);
-			assert.equal(fs.existsSync(stepSteerInboxDir(secondRoute, 0)), false);
+			assert.equal(consumeSteerRequestsFromDir(stepSteerInboxDir(firstRoute, 0)).length, 0);
+			assert.equal(consumeSteerRequestsFromDir(stepSteerInboxDir(secondRoute, 0)).length, 0);
 		} finally {
 			cleanup(workflowRunId, asyncDir);
 		}
