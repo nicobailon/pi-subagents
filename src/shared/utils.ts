@@ -102,6 +102,23 @@ export function getAgentDir(): string {
 
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
 
+export function pruneStatusCacheForAsyncRoot(asyncDirRoot: string, runIds: Iterable<string>): number {
+	const root = path.resolve(asyncDirRoot);
+	const currentStatusPaths = new Set(
+		Array.from(runIds, (runId) => path.resolve(root, runId, "status.json")),
+	);
+	let removed = 0;
+	for (const statusPath of statusCache.keys()) {
+		const resolved = path.resolve(statusPath);
+		const relative = path.relative(root, resolved);
+		if (relative && !relative.startsWith("..") && !path.isAbsolute(relative) && !currentStatusPaths.has(resolved)) {
+			statusCache.delete(statusPath);
+			removed++;
+		}
+	}
+	return removed;
+}
+
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -128,7 +145,10 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	try {
 		stat = fs.statSync(statusPath);
 	} catch (error) {
-		if (isNotFoundError(error)) return null;
+		if (isNotFoundError(error)) {
+			statusCache.delete(statusPath);
+			return null;
+		}
 		throw new Error(`Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
@@ -149,7 +169,10 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	try {
 		content = fs.readFileSync(statusPath, "utf-8");
 	} catch (error) {
-		if (isNotFoundError(error)) return null;
+		if (isNotFoundError(error)) {
+			statusCache.delete(statusPath);
+			return null;
+		}
 		throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
@@ -171,10 +194,6 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		ino: stat.ino,
 		status,
 	});
-	if (statusCache.size > 50) {
-		const firstKey = statusCache.keys().next().value;
-		if (firstKey) statusCache.delete(firstKey);
-	}
 	return status;
 }
 

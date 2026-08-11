@@ -230,6 +230,7 @@ interface AsyncExecutionModule {
 
 interface UtilsModule {
 	readStatus(dir: string): { runId: string; state: string; mode: string } | null;
+	pruneStatusCacheForAsyncRoot(root: string, runIds: Iterable<string>): number;
 }
 
 interface TypesModule {
@@ -254,6 +255,7 @@ const isAsyncAvailable = asyncMod?.isAsyncAvailable;
 const executeAsyncSingle = asyncMod?.executeAsyncSingle;
 const executeAsyncChain = asyncMod?.executeAsyncChain;
 const readStatus = utils?.readStatus;
+const pruneStatusCacheForAsyncRoot = utils?.pruneStatusCacheForAsyncRoot;
 const ASYNC_DIR = typesMod?.ASYNC_DIR;
 const RESULTS_DIR = typesMod?.RESULTS_DIR;
 const TEMP_ROOT_DIR = typesMod?.TEMP_ROOT_DIR;
@@ -2518,33 +2520,49 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
-	it("readStatus caches unchanged files and invalidates same-mtime replacements", () => {
-		const dir = createTempDir();
+	it("readStatus caches ordered sweeps above 50 files and invalidates same-mtime replacements", () => {
+		const root = createTempDir();
 		try {
-			const statusPath = path.join(dir, "status.json");
 			const fixedTimestamp = new Date(1_700_000_000_000);
-			const statusData = {
-				runId: "cache-test",
-				state: "running",
-				mode: "single",
-				startedAt: fixedTimestamp.getTime(),
-			};
-			fs.writeFileSync(statusPath, JSON.stringify(statusData));
-			fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
+			const dirs = Array.from({ length: 51 }, (_, index) => {
+				const dir = path.join(root, `run-${index}`);
+				const statusPath = path.join(dir, "status.json");
+				fs.mkdirSync(dir);
+				fs.writeFileSync(statusPath, JSON.stringify({
+					runId: `cache-test-${index}`,
+					state: "running",
+					mode: "single",
+					startedAt: fixedTimestamp.getTime(),
+				}));
+				fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
+				return dir;
+			});
 
-			const cached = readStatus(dir);
-			assert.ok(cached);
-			assert.strictEqual(readStatus(dir), cached);
+			const cached = dirs.map((dir) => readStatus(dir));
+			cached.forEach((status) => assert.ok(status));
+			dirs.forEach((dir, index) => assert.strictEqual(readStatus(dir), cached[index]));
 
-			writeAtomicJson(statusPath, { ...statusData, state: "stopped" });
+			const replacedDir = dirs[25]!;
+			const cachedStatus = cached[25];
+			assert.ok(cachedStatus);
+			const statusPath = path.join(replacedDir, "status.json");
+			writeAtomicJson(statusPath, { ...cachedStatus, state: "stopped" });
 			fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
 			assert.equal(fs.statSync(statusPath).mtimeMs, fixedTimestamp.getTime());
-			const replaced = readStatus(dir);
+			const replaced = readStatus(replacedDir);
 			assert.ok(replaced);
 			assert.equal(replaced.state, "stopped");
-			assert.notStrictEqual(replaced, cached);
+			assert.notStrictEqual(replaced, cachedStatus);
+
+			fs.rmSync(statusPath);
+			assert.equal(readStatus(replacedDir), null);
+
+			const removedDir = dirs[50]!;
+			assert.ok(readStatus(removedDir));
+			fs.rmSync(removedDir, { recursive: true, force: true });
+			assert.equal(pruneStatusCacheForAsyncRoot(root, dirs.slice(0, 50).map((dir) => path.basename(dir))), 1);
 		} finally {
-			removeTempDir(dir);
+			removeTempDir(root);
 		}
 	});
 

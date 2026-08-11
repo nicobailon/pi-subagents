@@ -4,7 +4,7 @@ import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type ChainCheckpointState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { pruneStatusCacheForAsyncRoot, readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
@@ -370,6 +370,7 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 
 export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}): AsyncRunSummary[] {
 	let entries: string[];
+	let scannedCompleteRoot = false;
 	try {
 		if (options.runId !== undefined) {
 			const resolution = resolveTargetedAsyncRun(asyncDirRoot, options.runId, options.sessionId);
@@ -383,6 +384,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 					: [];
 		} else {
 			entries = fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry));
+			scannedCompleteRoot = true;
 		}
 	} catch (error) {
 		if (isNotFoundError(error)) return [];
@@ -392,6 +394,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	}
 
 	if (options.entryLimit !== undefined) {
+		scannedCompleteRoot = false;
 		const limit = Math.max(0, Math.floor(options.entryLimit));
 		entries = entries
 			.map((entry) => {
@@ -409,6 +412,8 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			.slice(0, limit)
 			.map((candidate) => candidate.entry);
 	}
+
+	if (scannedCompleteRoot) pruneStatusCacheForAsyncRoot(asyncDirRoot, entries);
 
 	const allowedStates = options.states ? new Set(options.states) : undefined;
 	const runs: AsyncRunSummary[] = [];

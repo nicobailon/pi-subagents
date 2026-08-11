@@ -6,6 +6,7 @@
 - Move project-scoped pi-subagents storage from `.pi-subagents/` to `.pi/subagents/` for cleaner project roots. Thanks to @yceachan for #971.
 - Clarify the accepted mission launch object contract for tool callers.
 - Reduce repeated async status parsing and workflow trace projection work.
+- Keep parsed async statuses cached beyond 50 runs while preserving per-read freshness checks. Thanks to @bcanvural for #982.
 
 ### Fixed
 - Keep tool argument previews on one physical terminal line so live widget updates do not leave stacked terminal frames. Thanks to @xz-dev for #972.
