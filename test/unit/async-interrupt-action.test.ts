@@ -147,6 +147,27 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("rejects a steer request when its workflow foreground route is removed before acknowledgment", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-removed-route-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const routeDir = createWorkflowForegroundControl(state, workflowRunId, childRunId);
+		try {
+			const action = executorWithKill(state, () => true)
+				.execute("steer", { action: "steer", id: childRunId, message: "Focus on the failing test." }, new AbortController().signal, undefined, ctx());
+			await waitUntil(() => fs.existsSync(stepSteerInboxDir(routeDir, 0)) ? true : undefined);
+			fs.rmSync(routeDir, { recursive: true, force: true });
+			const result = await action;
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /no live child session/);
+			assert.equal(result.details.steering, undefined);
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
 	it("steers the unique live foreground child by workflow id and directory", async () => {
 		for (const target of ["id", "dir"] as const) {
 			const state = createState();
