@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Reduce repeated async status parsing and workflow trace projection work.
+
 ## [0.46.0] - 2026-08-11
 
 ### Added

@@ -4483,10 +4483,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
+					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
+					let projectedTraceLength = 0;
+					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
 						status.workflow = { ...(status.workflow ?? { emits: [], console: [] }), trace };
-						for (const entry of trace.filter((candidate) => candidate.operation === "run")) {
-							const existing = status.steps?.find((step) => step.workflowKey === entry.key);
+						const rebuild = trace.length < projectedTraceLength
+							|| (projectedTraceLength > 0 && trace[projectedTraceLength - 1] !== projectedTraceTail);
+						if (rebuild) {
+							workflowSteps.clear();
+							for (const step of status.steps ?? []) {
+								if (step.workflowKey) workflowSteps.set(step.workflowKey, step);
+							}
+							projectedTraceLength = 0;
+						}
+						for (let index = projectedTraceLength; index < trace.length; index += 1) {
+							const entry = trace[index]!;
+							if (entry.operation !== "run") continue;
+							const existing = workflowSteps.get(entry.key);
 							if (entry.state === "reused" && existing) continue;
 							const mapped = entry.state === "started" || entry.state === "reused" ? "running" : entry.state === "completed" ? "completed" : "failed";
 							if (existing) {
@@ -4497,9 +4511,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (entry.durationMs === undefined) delete existing.durationMs;
 								else existing.durationMs = entry.durationMs;
 							} else {
-								status.steps?.push({ agent: entry.agent ?? entry.key, label: entry.key, workflowKey: entry.key, parentWorkflowRunId: workflowRunId, status: mapped, startedAt: Date.now() });
+								const step: NonNullable<AsyncStatus["steps"]>[number] = { agent: entry.agent ?? entry.key, label: entry.key, workflowKey: entry.key, parentWorkflowRunId: workflowRunId, status: mapped, startedAt: Date.now() };
+								status.steps?.push(step);
+								workflowSteps.set(entry.key, step);
 							}
 						}
+						projectedTraceLength = trace.length;
+						projectedTraceTail = trace.at(-1);
 						projectWorkflowActivity();
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.trace", trace });

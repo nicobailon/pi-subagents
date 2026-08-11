@@ -456,6 +456,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(status.workflow?.emits, ["starting"]);
 		assert.equal(mockPi.callCount(), 1);
 		assert.ok(status.workflow?.trace?.some((entry) => entry.key === "work" && entry.agent === "echo" && entry.state === "completed"));
+		const traceEvents = fs.readFileSync(path.join(result.details.asyncDir!, "events.jsonl"), "utf-8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { type?: string; trace?: Array<{ key?: string; state?: string }> })
+			.filter((event) => event.type === "subagent.workflow.trace");
+		assert.equal(traceEvents.length, 2);
+		assert.deepEqual(traceEvents[0]?.trace?.map(({ key, state }) => ({ key, state })), [{ key: "work", state: "started" }]);
+		assert.deepEqual(traceEvents[1]?.trace?.map(({ key, state }) => ({ key, state })), [
+			{ key: "work", state: "started" },
+			{ key: "work", state: "completed" },
+		]);
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
 		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown }; results?: Array<{ agent?: string; workflowKey?: string }> };
 		assert.equal(persistedResult.id, workflowRunId);
