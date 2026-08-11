@@ -219,15 +219,14 @@ export async function steerAsyncRun(input: {
 			const limits = remainingSteeringRecoveryLimits(recoveryTarget.recoveryDescriptor, paused);
 			const revived = await input.recover(limits);
 			if (revived.isError || !revived.details.asyncId) throw new Error(revived.content[0]?.type === "text" ? revived.content[0].text : "Replacement launch failed; source run remains paused.");
-			const sourceStatus = readStatus(asyncDir);
-			const targetIndex = input.index ?? sourceStatus?.steering?.recent.find((request) => request.id === requestId)?.targets[0]?.index ?? status.steps?.findIndex((step) => step.status === "running") ?? -1;
-			if (sourceStatus?.state === "paused" && sourceStatus.steering && targetIndex >= 0) {
-				updateSteeringTarget(sourceStatus.steering, requestId, targetIndex, "recovered", Date.now(), { replacementRunId: revived.details.asyncId });
-				const stepSteering = sourceStatus.steps?.[targetIndex]?.steering;
+			const targetIndex = input.index ?? paused.steering?.recent.find((request) => request.id === requestId)?.targets[0]?.index ?? status.steps?.findIndex((step) => step.status === "running") ?? -1;
+			if (paused.steering && targetIndex >= 0) {
+				updateSteeringTarget(paused.steering, requestId, targetIndex, "recovered", Date.now(), { replacementRunId: revived.details.asyncId });
+				const stepSteering = paused.steps?.[targetIndex]?.steering;
 				if (stepSteering) updateSteeringTarget(stepSteering, requestId, targetIndex, "recovered", Date.now(), { replacementRunId: revived.details.asyncId });
-				writeAtomicJson(path.join(asyncDir, "status.json"), sourceStatus);
+				writeAtomicJson(path.join(asyncDir, "status.json"), paused);
 			}
-			const recovered = sourceStatus?.steering ? actionResultFromSteeringStatus(sourceStatus.steering, status.runId, requestId, revived.details.asyncId) : undefined;
+			const recovered = paused.steering ? actionResultFromSteeringStatus(paused.steering, status.runId, requestId, revived.details.asyncId) : undefined;
 			appendSteeringNotice("recovered", `Steering recovered for run ${status.runId}; replacement ${revived.details.asyncId} launched.`);
 			return { content: [{ type: "text", text: `Steering recovered for async run ${status.runId}; replacement ${revived.details.asyncId} launched after the source paused.` }], details: { mode: "management", results: [], steering: recovered ?? { requestId, state: "recovered", sourceRunId: status.runId, replacementRunId: revived.details.asyncId, deliveryStatus: "delivered", targets: [{ index: input.index ?? 0, state: "recovered" }] } } };
 		} catch (error) {

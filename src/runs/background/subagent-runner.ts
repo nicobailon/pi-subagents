@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
@@ -2252,10 +2253,18 @@ async function runSubagent(
 		for (const node of graph.nodes) updateNode(node);
 		statusPayload.workflowGraph = graph;
 	};
-	const writeStatusPayload = (): void => {
+	const writeStatusPayloadNow = (): void => {
 		refreshWorkflowGraph();
 		writeAtomicJson(statusPath, statusPayload);
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
+	};
+	const statusWriteCoalescer = createFileCoalescer(writeStatusPayloadNow, 100);
+	const writeStatusPayload = (immediate = true): void => {
+		if (immediate || statusPayload.state !== "running" || statusPayload.activityState !== undefined) {
+			if (!statusWriteCoalescer.flush(statusPath)) writeStatusPayloadNow();
+			return;
+		}
+		statusWriteCoalescer.schedule(statusPath);
 	};
 	const updateExternalProcess = (index: number, process: ExternalProcessStatus): void => {
 		requiredStatusStep(statusPayload, index).externalProcess = process;
@@ -2783,7 +2792,7 @@ async function runSubagent(
 			step.lastActivityAt = now;
 			statusPayload.lastActivityAt = now;
 			statusPayload.lastUpdate = now;
-			writeStatusPayload();
+			writeStatusPayload(false);
 			return;
 		}
 		if (event.type === "tool_execution_start" && event.toolName) {
@@ -2919,7 +2928,7 @@ async function runSubagent(
 		statusPayload.lastActivityAt = now;
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
-		writeStatusPayload();
+		writeStatusPayload(false);
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
 		if (!controlConfig.enabled) return false;
@@ -4480,6 +4489,7 @@ async function runSubagent(
 			statusPayload.error = `Step failed: ${failedStep.agent}`;
 		}
 	}
+	writeStatusPayload();
 	try {
 		writeAtomicJson(resultPath, {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -4633,7 +4643,6 @@ async function runSubagent(
 			console.error(`Failed to write process-terminal candidate for '${id}':`, error);
 		}
 	}
-	writeStatusPayload();
 }
 
 async function waitForStartupControl(

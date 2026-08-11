@@ -11,6 +11,7 @@
 - Move project-scoped pi-subagents storage from `.pi-subagents/` to `.pi/subagents/` for cleaner project roots. Thanks to @yceachan for #971.
 - Clarify the accepted mission launch object contract for tool callers.
 - Reduce repeated async status parsing, workflow trace projection, and constrained widget rendering work.
+- Coalesce rapid running-status writes while keeping terminal and attention status changes durable immediately.
 - Keep parsed async statuses cached beyond 50 runs while preserving per-read freshness checks. Thanks to @bcanvural for #982.
 - Prefer native control inbox watchers over per-process 250 ms polling, with polling retained as a fallback.
 

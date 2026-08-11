@@ -53,6 +53,21 @@ describe("createFileCoalescer", () => {
 		assert.deepEqual(events.sort(), ["a.json", "b.json"]);
 	});
 
+	it("flushes a pending file immediately without a duplicate timer write", () => {
+		const events: string[] = [];
+		const timers = createFakeTimers();
+		const coalescer = createFileCoalescer((file) => events.push(file), 50, timers.timerApi);
+		coalescer.schedule("status.json");
+		coalescer.schedule("status.json");
+		assert.equal(timers.pendingCount(), 1);
+		assert.equal(coalescer.flush("status.json"), true);
+		assert.deepEqual(events, ["status.json"]);
+		assert.equal(timers.pendingCount(), 0);
+		timers.runAll();
+		assert.deepEqual(events, ["status.json"]);
+		assert.equal(coalescer.flush("status.json"), false);
+	});
+
 	it("clear cancels all pending handlers", () => {
 		const events: string[] = [];
 		const timers = createFakeTimers();

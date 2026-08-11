@@ -5,6 +5,7 @@ interface TimerApi {
 
 interface FileCoalescer {
 	schedule(file: string, delayMs?: number): boolean;
+	flush(file: string): boolean;
 	clear(): void;
 }
 
@@ -28,6 +29,14 @@ export function createFileCoalescer(
 				handler(file);
 			}, delayMs);
 			pending.set(file, timer);
+			return true;
+		},
+		flush(file: string): boolean {
+			const timer = pending.get(file);
+			if (timer === undefined) return false;
+			timerApi.clearTimeout(timer);
+			pending.delete(file);
+			handler(file);
 			return true;
 		},
 		clear(): void {
