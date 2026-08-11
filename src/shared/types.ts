@@ -1545,6 +1545,8 @@ export interface ForegroundRunControl {
 	parentWorkflowRunId?: string;
 	/** Stable workflow lane key for this live foreground child. */
 	workflowKey?: string;
+	/** Private control root used to steer a live workflow-owned child. */
+	workflowSteeringDir?: string;
 	/** Originating parent session; required for public fleet projection. */
 	sessionId?: string;
 	mode: SubagentRunMode;
@@ -1682,6 +1684,10 @@ export interface RunSyncOptions {
 	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
+	/** Private prompt-runtime steering transport for workflow-owned foreground children. */
+	steerInboxDir?: string;
+	steerCapabilityPath?: string;
+	steerAckDir?: string;
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;

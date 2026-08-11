@@ -385,6 +385,25 @@ export function consumeSteerCapabilities(asyncDir: string, fsImpl: Pick<typeof f
 	return capabilities;
 }
 
+export function consumeSteerAckFromDir(
+	dir: string,
+	requestId: string,
+	fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs,
+): SteerAck | undefined {
+	if (!fsImpl.existsSync(dir)) return undefined;
+	let entries: string[];
+	try { entries = fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort(); } catch { return undefined; }
+	for (const entry of entries) {
+		const target = path.join(dir, entry);
+		let ack: SteerAck | undefined;
+		try { ack = parseSteerAck(JSON.parse(fsImpl.readFileSync(target, "utf-8"))); } catch { ack = undefined; }
+		if (ack?.requestId !== requestId) continue;
+		try { fsImpl.rmSync(target, { force: true }); } catch { return undefined; }
+		return ack;
+	}
+	return undefined;
+}
+
 export function consumeSteerAcks(asyncDir: string, fsImpl: Pick<typeof fs, "existsSync" | "readdirSync" | "readFileSync" | "rmSync"> = fs): SteerAck[] {
 	const root = path.join(controlInboxDir(asyncDir), STEER_ACKS_DIR);
 	if (!fsImpl.existsSync(root)) return [];

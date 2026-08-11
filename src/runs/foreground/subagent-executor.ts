@@ -84,6 +84,13 @@ import { applySteeringRecoveryAgentConfig, buildRevivedAsyncTask, resolveAsyncRe
 import { deliverCheckpointDecisionRequest, deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, type SteerDeliveryMode } from "../background/control-channel.ts";
 import { updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
 import { steerAsyncRun } from "./async-steering-action.ts";
+import {
+	removeWorkflowForegroundSteeringRoute,
+	resolveWorkflowForegroundSteeringTarget,
+	steerWorkflowForegroundTarget,
+	workflowForegroundSteeringDir,
+	workflowForegroundSteeringLaunchOptions,
+} from "./workflow-foreground-steering.ts";
 import { stopAsyncRun } from "./async-stop-action.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
@@ -403,6 +410,7 @@ function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefine
 function removeForegroundControlIfIdle(state: SubagentState, runId: string): boolean {
 	const control = state.foregroundControls.get(runId);
 	if (control && (!foregroundSchedulingSettled(control) || (control.activeChildren?.size ?? 0) > 0)) return false;
+	if (control) removeWorkflowForegroundSteeringRoute(control);
 	state.foregroundControls.delete(runId);
 	if (state.lastForegroundControlId === runId) state.lastForegroundControlId = null;
 	return true;
@@ -3180,6 +3188,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskText, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: input.permissions,
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			...workflowForegroundSteeringLaunchOptions(input.foregroundControl, index),
 			context: input.contextPolicy.contextForAgent(task.agent),
 			cwd: taskCwd,
 			signal: input.signal,
@@ -3900,6 +3909,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		r = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: deps.config.permissions,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			...workflowForegroundSteeringLaunchOptions(foregroundControl, 0),
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			cwd: effectiveCwd,
 			signal,
@@ -5132,6 +5142,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
 						const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
+						const directoryStatus = location.asyncDir ? readStatus(location.asyncDir) : null;
+						if (directoryStatus?.mode === "workflow") {
+							const route = resolveWorkflowForegroundSteeringTarget({ state: deps.state, workflowRunId: directoryStatus.runId || runId, asyncDirRoot: DIRS.async });
+							if (!route.ok) return { content: [{ type: "text", text: route.message }], isError: true, details: { mode: "management", results: [] } };
+							return steerWorkflowForegroundTarget({ target: route.target, message, mode: paramsWithResolvedCwd.mode, index: paramsWithResolvedCwd.index, signal });
+						}
 						if (location.asyncDir) {
 							const unsupported = externalRunnerControlError(location.asyncDir, "steer");
 							if (unsupported) return unsupported;
@@ -5167,8 +5183,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
 				}
 				if (resolved?.kind === "nested") return steerNestedRun(omitUndefinedProperties({ target: resolved, message, mode: paramsWithResolvedCwd.mode, index: paramsWithResolvedCwd.index, signal }));
-				if (resolved?.kind === "foreground") return { content: [{ type: "text", text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs." }], isError: true, details: { mode: "management", results: [] } };
+				if (resolved?.kind === "foreground") {
+					const route = resolveWorkflowForegroundSteeringTarget({ state: deps.state, childRunId: resolved.id, asyncDirRoot: DIRS.async });
+					if (!route.ok) return { content: [{ type: "text", text: route.message }], isError: true, details: { mode: "management", results: [] } };
+					return steerWorkflowForegroundTarget({ target: route.target, message, mode: paramsWithResolvedCwd.mode, index: paramsWithResolvedCwd.index, signal });
+				}
 				if (resolved?.kind !== "async") return { content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }], isError: true, details: { mode: "management", results: [] } };
+				const resolvedStatus = resolved.location.asyncDir ? readStatus(resolved.location.asyncDir) : null;
+				if (resolvedStatus?.mode === "workflow") {
+					const route = resolveWorkflowForegroundSteeringTarget({ state: deps.state, workflowRunId: resolvedStatus.runId || resolved.id, asyncDirRoot: DIRS.async });
+					if (!route.ok) return { content: [{ type: "text", text: route.message }], isError: true, details: { mode: "management", results: [] } };
+					return steerWorkflowForegroundTarget({ target: route.target, message, mode: paramsWithResolvedCwd.mode, index: paramsWithResolvedCwd.index, signal });
+				}
 				if (resolved.location.asyncDir) {
 					const unsupported = externalRunnerControlError(resolved.location.asyncDir, "steer");
 					if (unsupported) return unsupported;
@@ -5627,6 +5653,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const foregroundDescription = effectiveParams.task?.trim()
 			|| effectiveParams.tasks?.[0]?.task?.trim()
 			|| (effectiveParams.chain ? firstRawChainTask(effectiveParams.chain)?.trim() : undefined);
+		const parentWorkflowStatus = effectiveParams.workflowParentRunId
+			? readStatus(path.join(DIRS.async, effectiveParams.workflowParentRunId))
+			: null;
+		const workflowSteeringDir = effectiveParams.workflowParentRunId
+			&& requestSessionId
+			&& deps.state.workflowControllers?.has(effectiveParams.workflowParentRunId)
+			&& parentWorkflowStatus?.mode === "workflow"
+			&& (parentWorkflowStatus.state === "running" || parentWorkflowStatus.state === "queued")
+			&& parentWorkflowStatus.sessionId === requestSessionId
+			? workflowForegroundSteeringDir(DIRS.async, effectiveParams.workflowParentRunId, runId)
+			: undefined;
 		const foregroundControl: ForegroundRunControl | undefined = effectiveAsync
 			? undefined
 			: compactOptional<ForegroundRunControl>({
@@ -5635,6 +5672,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				mode: foregroundMode,
 				...(effectiveParams.workflowParentRunId ? { parentWorkflowRunId: effectiveParams.workflowParentRunId } : {}),
 				...(effectiveParams.workflowKey ? { workflowKey: effectiveParams.workflowKey } : {}),
+				workflowSteeringDir,
 				startedAt: Date.now(),
 				updatedAt: Date.now(),
 				cwd: effectiveCwd,

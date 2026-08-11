@@ -43,6 +43,9 @@ import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
 	SUBAGENT_FANOUT_CHILD_ENV,
+	SUBAGENT_STEER_ACK_DIR_ENV,
+	SUBAGENT_STEER_CAPABILITY_ENV,
+	SUBAGENT_STEER_INBOX_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
 	SUBAGENT_PARENT_CONTROL_INBOX_ENV,
 	SUBAGENT_PARENT_DEPTH_ENV,
@@ -403,7 +406,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "async workflow child" });
+		mockPi.onCall({ echoEnv: [SUBAGENT_STEER_INBOX_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_ACK_DIR_ENV] });
 		const asyncJobs: SubagentState["asyncJobs"] = new Map();
 		const executor = makeExecutor([makeAgent("echo", { aliases: ["helper"] })], { missions: { globalIndex: false } }, false, undefined, true, asyncJobs);
 		const workflowCwd = path.join(tempDir, "workflow-cwd");
@@ -468,7 +471,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{ key: "work", state: "completed" },
 		]);
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
-		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown }; results?: Array<{ agent?: string; workflowKey?: string }> };
+		const persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { id?: string; runId?: string; toolCallId?: string; agent?: string; cwd?: string; summary?: string; workflow?: { value?: unknown }; results?: Array<{ agent?: string; workflowKey?: string; runId?: string; output?: string }> };
 		assert.equal(persistedResult.id, workflowRunId);
 		assert.equal(persistedResult.runId, workflowRunId);
 		assert.equal(persistedResult.toolCallId, toolCallId);
@@ -477,6 +480,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(persistedResult.results?.map(({ agent, workflowKey }) => ({ agent, workflowKey })), [
 			{ agent: "echo", workflowKey: "work" },
 		]);
+		const steeringEnv = JSON.parse(persistedResult.results?.[0]?.output ?? "null") as Record<string, string | null>;
+		assert.match(steeringEnv[SUBAGENT_STEER_INBOX_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-targets[/\\]0$/);
+		assert.match(steeringEnv[SUBAGENT_STEER_CAPABILITY_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-capabilities[/\\]0\.json$/);
+		assert.match(steeringEnv[SUBAGENT_STEER_ACK_DIR_ENV] ?? "", /control[/\\]workflow-foreground[/\\].+[/\\]control[/\\]steer-acks[/\\]0$/);
+		assert.equal(fs.existsSync(path.join(result.details.asyncDir!, "control", "workflow-foreground", persistedResult.results?.[0]?.runId ?? "missing")), false);
 		assert.match(persistedResult.summary ?? "", /Return: \{\n  "answer": 42\n\}/);
 		assert.deepEqual(persistedResult.workflow?.value, { answer: 42 });
 		assert.equal(fs.existsSync(path.join(DIRS.results, `${toolCallId}.json`)), false);

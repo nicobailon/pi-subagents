@@ -15,6 +15,7 @@
 - Keep timeout-sensitive async acceptance verification coverage off Windows CI where signal delivery is intermittent.
 - Retry transient Windows mission state lock creation failures and stabilize no-session steering recovery coverage.
 - Keep async widget running glyphs moving while children are quiet but active. Thanks to @bcanvural for #983.
+- Let active-session workflows live-steer their workflow-owned foreground children by child or unique workflow identity. Thanks to @youlikemodernart for #988.
 - Accept persisted async recovery descriptors that include internal turn-budget state fields (#985).
 - Add a 30-minute default wall-clock timeout to async children while keeping async composite parents unbounded by default. Thanks to @forrestbthomas for #978 and #979.
 - Keep tool argument previews on one physical terminal line so live widget updates do not leave stacked terminal frames. Thanks to @xz-dev for #972.
