@@ -469,10 +469,13 @@ function validateKey(value: unknown, owner = "runs.run"): string {
 	return value;
 }
 
-function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label"> {
+function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label" | "agent"> {
 	return {
 		...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
 		...(typeof params.label === "string" && params.label.trim() ? { label: params.label.trim() } : {}),
+		// Requested agent name, so a child is identifiable while it runs. Launch
+		// resolution overwrites this with the canonical name on the terminal entry.
+		...(typeof params.agent === "string" && params.agent.trim() ? { agent: params.agent.trim() } : {}),
 	};
 }
 
