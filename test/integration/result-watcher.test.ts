@@ -422,6 +422,68 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("drains durable results when an active fs.watch misses events", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) {
+						emitted.push({ event, data });
+					},
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			let scan: (() => void) | undefined;
+			const fakeWatcher = {
+				on() {
+					return fakeWatcher;
+				},
+				close() {},
+				unref() {},
+			} as fs.FSWatcher;
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+				fs: { ...fs, watch: () => fakeWatcher },
+				deliverIntercomResults: false,
+				timers: {
+					setTimeout,
+					clearTimeout,
+					setInterval(handler: () => void) {
+						scan = handler;
+						return { unref() {} } as NodeJS.Timeout;
+					},
+					clearInterval() {
+						scan = undefined;
+					},
+				},
+			});
+			try {
+				watcher.startResultWatcher();
+				assert.equal(state.watcher, fakeWatcher);
+				for (const id of ["missed-a", "missed-b"]) {
+					fs.writeFileSync(path.join(resultsDir, `${id}.json`), JSON.stringify({
+						id,
+						sessionId: "session-1",
+						success: true,
+						state: "complete",
+						summary: "done",
+					}), "utf-8");
+				}
+				scan?.();
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
+			assert.deepEqual(fs.readdirSync(resultsDir).filter((file) => file.endsWith(".json")), []);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("falls back to polling when fs.watch throws EMFILE and preserves grouped intercom delivery", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
 		try {

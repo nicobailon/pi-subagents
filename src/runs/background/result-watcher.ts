@@ -126,6 +126,7 @@ export function createResultWatcher(
 	const processing = new Set<string>();
 	let deliveryActive = true;
 	let deliveryEpoch = 0;
+	let resultScanTimer: ReturnType<typeof setInterval> | null = null;
 	// The sole in-memory ownership lease. It is acquired for one active session
 	// and revoked before the watcher, queues, or callbacks are torn down.
 	let activeSessionId: string | null = null;
@@ -343,9 +344,15 @@ export function createResultWatcher(
 		}
 	};
 
+	const clearResultScan = () => {
+		if (resultScanTimer) timers.clearInterval(resultScanTimer);
+		resultScanTimer = null;
+	};
+
 	const startPolling = (reason: unknown) => {
 		state.watcher?.close();
 		state.watcher = null;
+		clearResultScan();
 		if (state.watcherRestartTimer) return;
 		console.error(`Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${errorCode(reason) ?? "unknown error"}).`);
 		primeExistingResults();
@@ -354,6 +361,7 @@ export function createResultWatcher(
 	};
 
 	const scheduleRestart = () => {
+		clearResultScan();
 		if (state.watcherRestartTimer) return;
 		state.watcherRestartTimer = timers.setTimeout(() => {
 			state.watcherRestartTimer = null;
@@ -381,8 +389,11 @@ export function createResultWatcher(
 		}
 		try {
 			const watchDir = resolveWatchPath(resultsDir, fsApi.realpathSync.native);
-			state.watcher = fsApi.watch(watchDir, (event, file) => {
-				if (event !== "rename" || !file) return;
+			state.watcher = fsApi.watch(watchDir, (_event, file) => {
+				if (!file) {
+					primeExistingResults();
+					return;
+				}
 				const fileName = file.toString();
 				if (fileName.endsWith(".json")) scheduleResult(fileName, true);
 			});
@@ -394,6 +405,8 @@ export function createResultWatcher(
 				scheduleRestart();
 			});
 			state.watcher.unref?.();
+			resultScanTimer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
+			resultScanTimer.unref?.();
 		} catch (error) {
 			if (shouldPoll(error)) return startPolling(error);
 			console.error(`Failed to start subagent result watcher for '${resultsDir}':`, error);
@@ -413,6 +426,7 @@ export function createResultWatcher(
 			timers.clearInterval(state.watcherRestartTimer);
 		}
 		state.watcherRestartTimer = null;
+		clearResultScan();
 		state.resultFileCoalescer.clear();
 		pendingTriggerTurn.clear();
 		processing.clear();
