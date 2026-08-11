@@ -81,6 +81,11 @@ describe("checkModelScope", () => {
 		assert.equal(violation?.severity, "warn");
 	});
 
+	it("returns an error violation for an inherited model in strict mode", () => {
+		const violation = checkModelScope("deepseek/deepseek-v4", { ...scope, strict: true }, "inherited");
+		assert.equal(violation?.severity, "error");
+	});
+
 	it("defaults to inherited (warn) severity when source is omitted-ish via inherited", () => {
 		// Caller passes "inherited" for frontmatter/parent-inherited models.
 		assert.equal(checkModelScope("meta/llama-4", scope, "inherited")?.severity, "warn");
@@ -105,8 +110,8 @@ describe("parseModelScopeConfig", () => {
 
 	it("parses a well-formed config", () => {
 		assert.deepEqual(
-			parseModelScopeConfig({ enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] }, meta),
-			{ enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] },
+			parseModelScopeConfig({ enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"] }, meta),
+			{ enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"] },
 		);
 	});
 
@@ -128,6 +133,10 @@ describe("parseModelScopeConfig", () => {
 
 	it("rejects a non-boolean enforce", () => {
 		assert.throws(() => parseModelScopeConfig({ enforce: "yes" }, meta), /invalid 'modelScope.enforce'/);
+	});
+
+	it("rejects a non-boolean strict value", () => {
+		assert.throws(() => parseModelScopeConfig({ strict: "yes" }, meta), /invalid 'modelScope.strict'/);
 	});
 
 	it("rejects a non-array allow", () => {

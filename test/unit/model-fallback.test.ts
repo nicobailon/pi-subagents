@@ -335,6 +335,15 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		assert.equal(warnings.length, 1);
 	});
 
+	it("throws for an inherited parent-session model in strict mode", () => {
+		assert.throws(
+			() => resolveSubagentModelOverride(undefined, parentModel, availableModels, undefined, {
+				scope: { ...scope, strict: true },
+			}),
+			/deepseek\/deepseek-v4.*outside the configured subagent model scope/,
+		);
+	});
+
 	it("passes through an in-scope explicit model without warning or error", () => {
 		const warnings: string[] = [];
 		const resolved = resolveSubagentModelOverride("gpt-5-mini", parentModel, availableModels, undefined, {
@@ -378,5 +387,23 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		assert.deepEqual(candidates, ["openai/gpt-5-mini", "deepseek/deepseek-v4"]);
 		assert.equal(warnings.length, 1);
 		assert.match(warnings[0]!, /deepseek\/deepseek-v4/);
+	});
+
+	it("throws for an out-of-scope primary candidate in strict mode", () => {
+		assert.throws(
+			() => buildModelCandidates("deepseek/deepseek-v4", undefined, availableModels, undefined, {
+				scope: { ...scope, strict: true },
+			}),
+			/deepseek\/deepseek-v4.*outside the configured subagent model scope/,
+		);
+	});
+
+	it("throws instead of pruning an out-of-scope fallback in strict mode", () => {
+		assert.throws(
+			() => buildModelCandidates("gpt-5-mini", ["deepseek/deepseek-v4"], availableModels, undefined, {
+				scope: { ...scope, strict: true },
+			}),
+			/deepseek\/deepseek-v4.*outside the configured subagent model scope/,
+		);
 	});
 });

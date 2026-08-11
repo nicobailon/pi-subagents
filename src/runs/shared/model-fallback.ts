@@ -191,7 +191,8 @@ function defaultScopeWarn(violation: ModelScopeViolation): void {
  *
  * An explicitly requested model string is resolved via {@link resolveModelCandidate}.
  * When `options.scope.enforce` is on, an out-of-scope resolved model throws for
- * an explicit (`source: "explicit"`) request and warns for an inherited one.
+ * an explicit (`source: "explicit"`) request and warns for an inherited one,
+ * unless strict scope enforcement makes inherited violations hard errors.
  */
 export function resolveSubagentModelOverride(
 	requestedModel: string | boolean | undefined,
@@ -245,7 +246,7 @@ export function resolveEffectiveSubagentModel(
 }
 
 export interface BuildModelCandidatesOptions {
-	/** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
+	/** Fallback models warn by default and throw when strict scope enforcement is enabled. */
 	scope?: ModelScopeConfig;
 	onWarn?: (violation: ModelScopeViolation) => void;
 }
@@ -265,9 +266,12 @@ export function buildModelCandidates(
 		if (!raw) continue;
 		const normalized = resolveModelCandidate(raw.trim(), availableModels, preferredProvider);
 		if (!normalized || seen.has(normalized)) continue;
-		if (index > 0 && options?.scope?.enforce) {
+		if ((index > 0 || options?.scope?.strict === true) && options?.scope?.enforce) {
 			const violation = checkModelScope(normalized, options.scope, "inherited");
-			if (violation) (options.onWarn ?? defaultScopeWarn)(violation);
+			if (violation) {
+				if (violation.severity === "error") throw new Error(violation.message);
+				(options.onWarn ?? defaultScopeWarn)(violation);
+			}
 		}
 		seen.add(normalized);
 		candidates.push(normalized);

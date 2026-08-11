@@ -150,6 +150,7 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
   "subagents": {
     "modelScope": {
       "enforce": true,
+      "strict": true,
       "allow": ["anthropic/*", "openai/gpt-5-*"]
     }
   }
@@ -158,7 +159,8 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
 
 - `allow` is a list of glob patterns matched against the resolved `provider/id` (only `*` is special, case-insensitive). A resolved model that matches none of the patterns is rejected.
 - Models you pass explicitly — the tool-call `model`, `--model`, or a clarify pick — error and abort the run.
-- Models that come from agent frontmatter, `subagents.defaultModel`, or the inherited parent session model only warn, so existing configurations keep working while you tighten the scope.
+- By default, models from agent frontmatter, `subagents.defaultModel`, the inherited parent session model, or fallback chains only warn and remain available, so existing configurations keep working while you tighten the scope.
+- Set `strict: true` with `enforce: true` to reject every resolved out-of-scope model. This includes inherited models and fallback candidates. An invalid fallback fails the run instead of being removed from the candidate chain.
 - `enforce: true` requires a non-empty `allow` list; otherwise the config is rejected at load time.
 
 ## Profiles and provider model catalogs

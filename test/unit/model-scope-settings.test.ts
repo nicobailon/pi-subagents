@@ -42,10 +42,10 @@ describe("subagents.modelScope discovery", () => {
 
 	it("exposes a user modelScope from discoverAgents", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { modelScope: { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] } },
+			subagents: { modelScope: { enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"] } },
 		});
 		const result = discoverAgents(tempProject, "both");
-		assert.deepEqual(result.modelScope, { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] });
+		assert.deepEqual(result.modelScope, { enforce: true, strict: true, allow: ["anthropic/*", "openai/gpt-5-*"] });
 	});
 
 	it("returns undefined when no modelScope is configured", () => {

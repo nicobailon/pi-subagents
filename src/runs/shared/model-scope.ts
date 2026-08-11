@@ -6,7 +6,8 @@
  * where the model came from: an explicit caller-supplied model (`--model`,
  * tool-call `model`, or a TUI clarify pick) is a hard error, while a model
  * inherited from agent frontmatter / `defaultModel` / the parent session only
- * emits a warning so existing configurations keep working.
+ * emits a warning so existing configurations keep working. Optional strict
+ * enforcement makes inherited models hard errors too.
  *
  * The decision logic ({@link checkModelScope}) is a pure function of its
  * inputs so it can be unit-tested without touching the filesystem or config.
@@ -16,6 +17,8 @@ import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 
 export interface ModelScopeConfig {
 	enforce?: boolean;
+	/** Reject inherited and fallback models outside the allowlist instead of warning. */
+	strict?: boolean;
 	/** Glob-style allow patterns (only `*` is special), matched against `provider/id`. */
 	allow?: string[];
 }
@@ -67,7 +70,7 @@ export function checkModelScope(
 	if (allow.some((pattern) => matchesScopePattern(model, pattern))) return undefined;
 
 	const baseModel = stripThinkingSuffix(model);
-	const severity: ModelScopeViolation["severity"] = source === "explicit" ? "error" : "warn";
+	const severity: ModelScopeViolation["severity"] = source === "explicit" || scope.strict === true ? "error" : "warn";
 	return {
 		model: baseModel,
 		severity,
@@ -100,6 +103,13 @@ export function parseModelScopeConfig(
 			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.enforce'; expected a boolean.`);
 		}
 		config.enforce = input.enforce;
+	}
+
+	if ("strict" in input) {
+		if (typeof input.strict !== "boolean") {
+			throw new Error(`Subagent settings in '${meta.filePath}' have invalid 'modelScope.strict'; expected a boolean.`);
+		}
+		config.strict = input.strict;
 	}
 
 	if ("allow" in input) {
