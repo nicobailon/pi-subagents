@@ -21,14 +21,15 @@ import {
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
-import { syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
+import { MISSION_BINDING_FILE, syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
+const HEALTHY_SCAN_INTERVAL_MS = 60_000;
 const RETRY_DELAY_MS = 100;
 
-type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "watch">;
+type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "statSync" | "watch">;
 
 type ResultWatcherTimers = {
 	setTimeout: typeof setTimeout;
@@ -43,6 +44,10 @@ type ResultWatcherDeps = {
 	notifier?: Pick<CompletionNotifier, "deliver">;
 	/** Receives persisted completions before active-session delivery filtering. */
 	observeCompletion?: (result: CompletionNotification & { runId: string }) => void;
+	/** Returns cross-session run ids that the completion observer currently owns. */
+	observedCompletionRunIds?: () => Iterable<string>;
+	/** Parses a relevant result payload after its lightweight identity check. */
+	parseResult?: (raw: string) => ResultFileData;
 	/** External grouped-result transport. Disable when native completion notifications own delivery. */
 	deliverIntercomResults?: boolean;
 };
@@ -75,6 +80,33 @@ type ResultFileData = CompletionNotification & {
 	intercomTarget?: string;
 	parallelHandoff?: ParallelHandoffReference;
 };
+
+type ResultFileIdentity = {
+	sessionId?: string;
+	runId?: string;
+	asyncDir?: string;
+};
+
+function jsonStringProperty(raw: string, property: string): string | undefined {
+	const matches = raw.matchAll(new RegExp(`"${property}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`, "g"));
+	let encoded: string | undefined;
+	for (const match of matches) encoded = match[1];
+	if (!encoded) return undefined;
+	try {
+		const value = JSON.parse(encoded) as unknown;
+		return typeof value === "string" && value ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
+	return {
+		sessionId: jsonStringProperty(raw, "sessionId"),
+		runId: file.replace(/\.json$/i, ""),
+		asyncDir: jsonStringProperty(raw, "asyncDir"),
+	};
+}
 
 function sanitizeNestedResultChildren(value: unknown, resultPath: string, label: string): NestedRunSummary[] | undefined {
 	if (value === undefined) return undefined;
@@ -121,9 +153,11 @@ export function createResultWatcher(
 	const fsApi = deps.fs ?? fs;
 	const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
 	const notifier = deps.notifier ?? { deliver: async () => true };
+	const parseResult = deps.parseResult ?? ((raw: string) => JSON.parse(raw) as ResultFileData);
 	const deliverIntercomResults = deps.deliverIntercomResults !== false;
 	const pendingTriggerTurn = new Map<string, boolean>();
 	const processing = new Set<string>();
+	const identityCache = new Map<string, { signature: string; identity: ResultFileIdentity }>();
 	let deliveryActive = true;
 	let deliveryEpoch = 0;
 	let resultScanTimer: ReturnType<typeof setInterval> | null = null;
@@ -143,12 +177,51 @@ export function createResultWatcher(
 		state.resultFileCoalescer.schedule(file, delayMs);
 	};
 
+	const inspectResult = (file: string): ResultFileIdentity | undefined => {
+		const resultPath = path.join(resultsDir, file);
+		try {
+			const stat = fsApi.statSync(resultPath);
+			const signature = `${stat.size}:${stat.mtimeMs}`;
+			const cached = identityCache.get(file);
+			if (cached?.signature === signature) return cached.identity;
+			const identity = resultFileIdentity(fsApi.readFileSync(resultPath, "utf-8"), file);
+			identityCache.set(file, { signature, identity });
+			return identity;
+		} catch (error) {
+			identityCache.delete(file);
+			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
+			return undefined;
+		}
+	};
+
+	const observedRunIds = (): ReadonlySet<string> => {
+		try {
+			return new Set(deps.observedCompletionRunIds?.() ?? []);
+		} catch (error) {
+			console.error("Failed to inspect observed subagent completion ids:", error);
+			return new Set();
+		}
+	};
+
+	const shouldProcessResult = (file: string, observed?: ReadonlySet<string>): boolean => {
+		const identity = inspectResult(file);
+		if (!identity) return false;
+		// Missing identity stays on the normal parser path so malformed or legacy
+		// files keep their existing diagnostics and compatibility behavior.
+		if (!identity.sessionId) return true;
+		if (identity.sessionId === state.currentSessionId) return true;
+		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
+		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
+		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
+	};
+
 	const handleResult = async (file: string, triggerTurn: boolean) => {
 		const resultPath = path.join(resultsDir, file);
 		if (processing.has(file) || !fsApi.existsSync(resultPath)) return;
+		if (!shouldProcessResult(file)) return;
 		processing.add(file);
 		try {
-			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
+			const data = parseResult(fsApi.readFileSync(resultPath, "utf-8"));
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 			try {
@@ -189,6 +262,7 @@ export function createResultWatcher(
 				if (!ownsSession(data.sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
 				try {
 					fsApi.unlinkSync(resultPath);
+					identityCache.delete(file);
 				} catch (error) {
 					if (!isNotFound(error)) {
 						console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
@@ -314,6 +388,7 @@ export function createResultWatcher(
 			if (!ownsSession(data.sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
 			try {
 				fsApi.unlinkSync(resultPath);
+				identityCache.delete(file);
 			} catch (error) {
 				if (!isNotFound(error)) {
 					console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
@@ -338,7 +413,9 @@ export function createResultWatcher(
 			const triggerTurn = options.triggerTurn !== false;
 			fsApi.readdirSync(resultsDir)
 				.filter((f) => f.endsWith(".json"))
-				.forEach((file) => scheduleResult(file, triggerTurn));
+				.forEach((file) => {
+					if (shouldProcessResult(file)) scheduleResult(file, triggerTurn);
+				});
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to scan subagent result directory '${resultsDir}':`, error);
 		}
@@ -395,7 +472,10 @@ export function createResultWatcher(
 					return;
 				}
 				const fileName = file.toString();
-				if (fileName.endsWith(".json")) scheduleResult(fileName, true);
+				if (fileName.endsWith(".json")) {
+					identityCache.delete(fileName);
+					scheduleResult(fileName, true);
+				}
 			});
 			state.watcher.on("error", (error) => {
 				if (shouldPoll(error)) return startPolling(error);
@@ -405,7 +485,7 @@ export function createResultWatcher(
 				scheduleRestart();
 			});
 			state.watcher.unref?.();
-			resultScanTimer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
+			resultScanTimer = timers.setInterval(primeExistingResults, HEALTHY_SCAN_INTERVAL_MS);
 			resultScanTimer.unref?.();
 		} catch (error) {
 			if (shouldPoll(error)) return startPolling(error);
@@ -430,6 +510,7 @@ export function createResultWatcher(
 		state.resultFileCoalescer.clear();
 		pendingTriggerTurn.clear();
 		processing.clear();
+		identityCache.clear();
 	};
 
 	return { startResultWatcher, primeExistingResults, stopResultWatcher };

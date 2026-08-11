@@ -406,6 +406,29 @@ export class ScheduledRunManager {
 		}
 	}
 
+	observedCompletionRunIds(): Set<string> {
+		const runIds = new Set<string>();
+		for (const store of this.stores.values()) {
+			let ids: string[];
+			try {
+				ids = store.ids();
+			} catch (error) {
+				console.error(`Failed to inspect schedule store '${store.root}' during async completion discovery:`, error);
+				continue;
+			}
+			for (const id of ids) {
+				try {
+					for (const run of store.history(id)) {
+						if (run.state === "running" && run.asyncId) runIds.add(run.asyncId);
+					}
+				} catch (error) {
+					console.error(`Failed to inspect schedule '${id}' in '${store.root}' during async completion discovery:`, error);
+				}
+			}
+		}
+		return runIds;
+	}
+
 	handleAsyncCompletion(payload: unknown): void {
 		if (!payload || typeof payload !== "object") return;
 		const data = payload as { id?: unknown; runId?: unknown; success?: unknown; state?: unknown; summary?: unknown };

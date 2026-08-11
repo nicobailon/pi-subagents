@@ -84,6 +84,133 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("does not inspect scheduled observers while priming current-session results", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-current-prime-"));
+		try {
+			const state = createState();
+			state.currentSessionId = "session-current";
+			let observedRunIdScans = 0;
+			fs.writeFileSync(path.join(resultsDir, "current.json"), JSON.stringify({
+				id: "current",
+				sessionId: "session-current",
+				success: true,
+				summary: "done",
+			}), "utf-8");
+			const watcher = createResultWatcher({
+				events: {
+					on: () => () => {},
+					emit() {},
+				},
+			}, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				observedCompletionRunIds() {
+					observedRunIdScans += 1;
+					return [];
+				},
+			});
+			watcher.primeExistingResults();
+			assert.equal(observedRunIdScans, 0);
+			watcher.stopResultWatcher();
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("skips full parsing for unrelated sessions during priming, safety scans, and native watch events", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-filter-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const parsedIds: string[] = [];
+			const state = createState();
+			state.currentSessionId = "session-current";
+			let safetyScan: (() => void) | undefined;
+			let watchEvent: ((event: string, file: string | Buffer | null) => void) | undefined;
+			let safetyScanIntervalMs: number | undefined;
+			let observedRunIdScans = 0;
+			const fakeWatcher = {
+				on() { return fakeWatcher; },
+				close() {},
+				unref() {},
+			} as fs.FSWatcher;
+			const writeResult = (id: string, sessionId: string) => {
+				fs.writeFileSync(path.join(resultsDir, `${id}.json`), JSON.stringify({
+					id,
+					results: [{ structuredOutput: { sessionId: "nested-not-owner" } }],
+					sessionId,
+					success: true,
+					summary: "done",
+				}), "utf-8");
+			};
+			writeResult("startup-current", "session-current");
+			writeResult("startup-stale", "session-stale");
+			const watcher = createResultWatcher({
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) { emitted.push({ event, data }); },
+				},
+			}, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				observedCompletionRunIds() {
+					observedRunIdScans += 1;
+					return [];
+				},
+				parseResult(raw) {
+					const parsed = JSON.parse(raw) as { id: string };
+					parsedIds.push(parsed.id);
+					return parsed;
+				},
+				fs: {
+					...fs,
+					watch(_dir, listener) {
+						watchEvent = listener as typeof watchEvent;
+						return fakeWatcher;
+					},
+				},
+				timers: {
+					setTimeout,
+					clearTimeout,
+					setInterval(handler: () => void, delay?: number) {
+						safetyScan = handler;
+						safetyScanIntervalMs = delay;
+						return { unref() {} } as NodeJS.Timeout;
+					},
+					clearInterval() { safetyScan = undefined; },
+				},
+			});
+			try {
+				watcher.startResultWatcher();
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "startup-current.json"))), true);
+				assert.deepEqual(parsedIds, ["startup-current"]);
+				assert.equal(safetyScanIntervalMs, 60_000);
+
+				writeResult("scan-current", "session-current");
+				writeResult("scan-stale", "session-stale");
+				safetyScan?.();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "scan-current.json"))), true);
+				assert.deepEqual(parsedIds, ["startup-current", "scan-current"]);
+
+				const scansBeforeWatchEvents = observedRunIdScans;
+				watchEvent?.("rename", "watch-current.json");
+				writeResult("watch-current", "session-current");
+				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "watch-current.json"))), true);
+				assert.equal(observedRunIdScans, scansBeforeWatchEvents);
+
+				writeResult("watch-stale", "session-stale");
+				watchEvent?.("rename", "watch-stale.json");
+				assert.equal(await waitForPredicate(() => observedRunIdScans > scansBeforeWatchEvents), true);
+				assert.deepEqual(parsedIds, ["startup-current", "scan-current", "watch-current"]);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 3);
+			assert.deepEqual(fs.readdirSync(resultsDir).filter((file) => file.endsWith(".json")).sort(), ["scan-stale.json", "startup-stale.json", "watch-stale.json"]);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("syncs mission workflow child completion before result cleanup", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-mission-"));
 		const resultsDir = path.join(root, "results");

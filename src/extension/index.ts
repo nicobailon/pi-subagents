@@ -438,6 +438,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		{
 			notifier: completionNotifier,
 			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
+			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
 		},
 	);
