@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
@@ -223,6 +224,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 					message: "old notice",
 				},
 			})}\n`, "utf-8");
+			updateActiveRunIndex(runDir, "running");
 
 			const state = createState();
 			state.currentSessionId = "session-restored";
@@ -285,6 +287,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				steps: [{ agent: "scan", label: "scan", status: "running" }],
 				workflow: { trace: [{ operation: "run", key: "scan", state: "started" }], emits: [{ stage: "scan" }], console: [] },
 			}), "utf-8");
+			updateActiveRunIndex(runDir, "running");
 			const state = createState();
 			state.currentSessionId = "session-workflow";
 			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
@@ -324,6 +327,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				workflowKey: "review",
 				steps: [{ agent: "reviewer", status: "running" }],
 			}), "utf-8");
+			updateActiveRunIndex(runDir, "running");
 			const state = createState();
 			state.currentSessionId = "session-workflow";
 			const tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
@@ -359,6 +363,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				startedAt: 1000,
 				steps: [{ agent: "worker", status: "running" }],
 			}), "utf-8");
+			updateActiveRunIndex(ownerDir, "running");
+			updateActiveRunIndex(otherDir, "running");
 
 			const state = createState();
 			state.currentSessionId = "session-owner";
@@ -408,6 +414,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const runDir = path.join(asyncRoot, "run-bad-status");
 			fs.mkdirSync(runDir, { recursive: true });
 			fs.writeFileSync(path.join(runDir, "status.json"), "{bad json", "utf-8");
+			updateActiveRunIndex(runDir, "running");
 
 			const state = createState();
 			state.currentSessionId = "session-bad";

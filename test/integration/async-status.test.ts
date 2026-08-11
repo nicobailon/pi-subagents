@@ -4,11 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
 	const dir = path.join(root, id);
 	fs.mkdirSync(dir, { recursive: true });
 	fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify(status), "utf-8");
+	if (status.state === "queued" || status.state === "running") updateActiveRunIndex(dir, status.state);
 	return dir;
 }
 
@@ -566,32 +568,51 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("filters terminal runs to active states without scanning nested routes per run", () => {
-		// Regression guard: load-time restoration calls listAsyncRuns with a
-		// queued/running filter over every run dir on disk. The nested-route
-		// lookup must be skipped for runs that fail the state filter, otherwise
-		// session start freezes when many stale run dirs have accumulated.
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-filter-"));
+	it("lists indexed active runs without reading historical status files", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-indexed-"));
 		try {
 			for (let i = 0; i < 200; i++) {
-				createAsyncDir(root, `run-${i}`, {
-					runId: `run-${i}`,
+				createAsyncDir(root, `terminal-${i}`, {
+					runId: `terminal-${i}`,
 					mode: "single",
 					state: "complete",
 					startedAt: 100,
-					lastUpdate: 200,
 					steps: [{ agent: "reviewer", status: "complete" }],
 				});
 			}
+			fs.writeFileSync(path.join(root, "terminal-0", "status.json"), "{not-json", "utf-8");
+			createAsyncDir(root, "active", {
+				runId: "active",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
 
-			const start = Date.now();
-			const runs = listAsyncRuns(root, { states: ["queued", "running"] });
-			const elapsed = Date.now() - start;
+			const runs = listAsyncRuns(root, { states: ["queued", "running"], reconcile: false });
 
-			assert.equal(runs.length, 0);
-			// 200 terminal dirs filtered to active states should resolve in well
-			// under a second. The old per-run nested-route scan blew past this.
-			assert.ok(elapsed < 1000, `listAsyncRuns took ${elapsed}ms for 200 terminal runs`);
+			assert.deepEqual(runs.map((run) => run.id), ["active"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("prunes terminal active markers while preserving history listing", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-index-prune-"));
+		try {
+			const asyncDir = createAsyncDir(root, "finished", {
+				runId: "finished",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			updateActiveRunIndex(asyncDir, "running");
+
+			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false }), []);
+			assert.equal(fs.existsSync(path.join(root, ACTIVE_RUN_INDEX_DIR, "finished")), false);
+			assert.deepEqual(listAsyncRuns(root, { states: ["complete"], reconcile: false }).map((run) => run.id), ["finished"]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

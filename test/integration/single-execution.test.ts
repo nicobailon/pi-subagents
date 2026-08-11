@@ -36,6 +36,7 @@ import {
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
+import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
@@ -525,6 +526,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(asyncDir);
 		const statusPath = path.join(asyncDir, "status.json");
 		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		const activeMarkerPath = path.join(DIRS.async, ACTIVE_RUN_INDEX_DIR, workflowRunId);
+		assert.equal(fs.existsSync(activeMarkerPath), true);
 		let liveStatus: AsyncStatus | undefined;
 		const activityDeadline = Date.now() + 5_000;
 		while (Date.now() < activityDeadline && !fs.existsSync(resultPath)) {
@@ -557,6 +560,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (Date.now() > completionDeadline) assert.fail("Timed out waiting for async workflow completion");
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
+		assert.equal(fs.existsSync(activeMarkerPath), false);
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
 	});

@@ -5,12 +5,13 @@ import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-
 import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type ChainCheckpointState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { pruneStatusCacheForAsyncRoot, readStatus } from "../../shared/utils.ts";
-import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
+import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { contextModeLabel, summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
+import { ACTIVE_RUN_INDEX_DIR, isActiveAsyncState, readActiveRunIndex, updateActiveRunIndex } from "./active-run-index.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -160,7 +161,7 @@ type TargetedAsyncRunResolution =
  * accepting a path whose canonical location escaped the async root.
  */
 export function resolveTargetedAsyncRun(asyncDirRoot: string, id: string, sessionId?: string): TargetedAsyncRunResolution {
-	if (!id || id === "." || id === ".." || path.basename(id) !== id) return { kind: "reject" };
+	if (!id || id === "." || id === ".." || id === ACTIVE_RUN_INDEX_DIR || path.basename(id) !== id) return { kind: "reject" };
 	const asyncDir = path.join(asyncDirRoot, id);
 	let entryStat: fs.Stats;
 	try {
@@ -371,6 +372,12 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}): AsyncRunSummary[] {
 	let entries: string[];
 	let scannedCompleteRoot = false;
+	let usedActiveIndex = false;
+	const activeOnly = options.runId === undefined
+		&& options.entryLimit === undefined
+		&& options.states !== undefined
+		&& options.states.length > 0
+		&& options.states.every(isActiveAsyncState);
 	try {
 		if (options.runId !== undefined) {
 			const resolution = resolveTargetedAsyncRun(asyncDirRoot, options.runId, options.sessionId);
@@ -382,8 +389,15 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 						&& resolveTargetedAsyncRun(asyncDirRoot, entry, options.sessionId).kind === "exact"
 					)
 					: [];
+		} else if (activeOnly) {
+			entries = (readActiveRunIndex(asyncDirRoot) ?? []).filter((entry) => {
+				if (resolveTargetedAsyncRun(asyncDirRoot, entry).kind === "exact") return true;
+				updateActiveRunIndex(path.join(asyncDirRoot, entry), "failed");
+				return false;
+			});
+			usedActiveIndex = true;
 		} else {
-			entries = fs.readdirSync(asyncDirRoot).filter((entry) => isAsyncRunDir(asyncDirRoot, entry));
+			entries = fs.readdirSync(asyncDirRoot).filter((entry) => entry !== ACTIVE_RUN_INDEX_DIR && isAsyncRunDir(asyncDirRoot, entry));
 			scannedCompleteRoot = true;
 		}
 	} catch (error) {
@@ -424,6 +438,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	// entirely when no active runs match.
 	let nestedRouteIndex: Map<string, NestedRoute> | undefined;
 	const resolveNestedRoute = (rootRunId: string): NestedRoute | undefined => {
+		if (usedActiveIndex) return findNestedRouteForRootId(rootRunId);
 		if (!nestedRouteIndex) nestedRouteIndex = buildNestedRouteIndex();
 		return nestedRouteIndex.get(rootRunId);
 	};
@@ -433,7 +448,11 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			? undefined
 			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
 		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
-		if (!status) continue;
+		if (!status) {
+			if (usedActiveIndex) updateActiveRunIndex(asyncDir, "failed");
+			continue;
+		}
+		if (usedActiveIndex && !isActiveAsyncState(status.state)) updateActiveRunIndex(asyncDir, status.state);
 		// Filter before the nested-route lookup: the lookup builds an index over
 		// the nested-events directory, so deferring it for filtered-out runs keeps
 		// restoration at load from scanning that directory when no active runs

@@ -53,6 +53,7 @@ import {
 } from "../../shared/settings.ts";
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, workflowAwaitedAsyncResultPath } from "../background/async-execution.ts";
+import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { isScheduledRunAction, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
@@ -4464,9 +4465,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					workflow: { trace: [], emits: [], console: [] },
 				};
 				const appendWorkflowEvent = (event: Record<string, unknown>) => fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
+				let indexedState: AsyncStatus["state"] | undefined;
 				const persist = () => {
 					status.lastUpdate = Date.now();
 					writeAtomicJson(statusPath, status);
+					if (indexedState !== status.state) {
+						updateActiveRunIndex(asyncDir, status.state);
+						indexedState = status.state;
+					}
 					const job = deps.state.asyncJobs.get(workflowRunId);
 					if (job) {
 						job.status = status.state;

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
@@ -286,6 +287,7 @@ describe("async run status inspection", () => {
 					{ agent: "reviewer", status: "pending" },
 				],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 			const state = {
 				foregroundControls: new Map([["fg-run", {
 					runId: "fg-run",
@@ -346,6 +348,8 @@ describe("async run status inspection", () => {
 				lastUpdate: 200,
 				steps: [{ agent: "reviewer", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(currentDir, "running");
+			updateActiveRunIndex(otherDir, "running");
 			const state = {
 				currentSessionId: "session-current",
 				asyncJobs: new Map(),
@@ -459,6 +463,7 @@ describe("async run status inspection", () => {
 				steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] },
 				steps: [{ agent: "worker", status: "running", startedAt: 100, steering: { requested: 2, scheduled: 1, pending: 1, delivered: 2, failed: 0, recovered: 1, lastRequestedAt: 150, lastDeliveredAt: 150, recent: [{ id: "request", requestedAt: 150, message: "guidance", targets: [{ index: 0, state: "recovered", recoveredAt: 180, lateDeliveredAt: 190 }] }] } }],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 
 			const exact = inspectSubagentStatus({ id: "run-steered" }, {
 				asyncDirRoot: asyncRoot,
@@ -649,6 +654,7 @@ describe("async run status inspection", () => {
 				lastUpdate: 100,
 				steps: [{ agent: "orchestrator", status: "running", startedAt: 100 }],
 			}, null, 2), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 
 			const result = inspectSubagentStatus({}, { asyncDirRoot: asyncRoot, resultsDir, kill: () => true, now: () => 200 });
 

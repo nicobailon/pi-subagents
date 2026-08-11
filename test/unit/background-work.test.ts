@@ -11,8 +11,9 @@ import {
 	snapshotBackgroundWork,
 	type BackgroundWorkSnapshot,
 } from "../../src/api/background-work.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 
 function clearRegistry(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(BACKGROUND_WORK_REGISTRY_KEY)];
@@ -37,7 +38,7 @@ function makeState(sessionId = "session-a"): SubagentState {
 	} as SubagentState;
 }
 
-function writeStatus(root: string, id: string, state: string, sessionId = "session-a"): void {
+function writeStatus(root: string, id: string, state: AsyncStatus["state"], sessionId = "session-a"): void {
 	const dir = path.join(root, id);
 	fs.mkdirSync(dir, { recursive: true });
 	const now = Date.now();
@@ -51,6 +52,7 @@ function writeStatus(root: string, id: string, state: string, sessionId = "sessi
 		pid: 999999,
 		steps: [{ agent: "worker", status: state }],
 	}));
+	updateActiveRunIndex(dir, state);
 }
 
 function waitDeps(root: string, state: SubagentState, backgroundWork: SubagentWaitDeps["backgroundWork"], sleep: () => Promise<void>): SubagentWaitDeps {

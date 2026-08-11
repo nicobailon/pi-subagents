@@ -3,11 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 
-function writeStatus(asyncRoot: string, runId: string, state: string, extra: object = {}): void {
+function writeStatus(asyncRoot: string, runId: string, state: AsyncStatus["state"], extra: object = {}): void {
 	const dir = path.join(asyncRoot, runId);
 	fs.mkdirSync(dir, { recursive: true });
 	// Use a recent timestamp so the stale-run reconciler doesn't mark a live
@@ -26,6 +27,7 @@ function writeStatus(asyncRoot: string, runId: string, state: string, extra: obj
 		}),
 		"utf-8",
 	);
+	updateActiveRunIndex(dir, state);
 }
 
 function makeState(sessionId: string | null): SubagentState {

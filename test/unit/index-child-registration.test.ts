@@ -484,11 +484,12 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("restores disk-backed active status after a management tool result", () => {
+	it("restores indexed active status after a management tool result", () => {
 		const script = String.raw`
 			import * as fs from "node:fs";
 			import * as path from "node:path";
 			import registerSubagentExtension from "./index.ts";
+			import { updateActiveRunIndex } from "./src/runs/background/active-run-index.ts";
 			import { DIRS } from "./src/shared/types.ts";
 			const eventHandlers = new Map();
 			const handlers = new Map();
@@ -518,6 +519,7 @@ describe("subagent extension child mode", () => {
 				runId, sessionId, mode: "workflow", state: "running",
 				startedAt: Date.now(), lastUpdate: Date.now(), cwd: process.cwd(), pid: process.pid,
 			}), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 			handlers.get("tool_result")({ toolName: "subagent" }, ctx);
 			const fleetWidgets = widgets.filter((entry) => entry.key === "subagent-fleet-status");
 			if (!fleetWidgets.some((entry) => typeof entry.value === "function")) throw new Error("management result did not restore active fleet status: " + JSON.stringify(fleetWidgets));
