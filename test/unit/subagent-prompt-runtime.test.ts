@@ -235,6 +235,7 @@ describe("subagent prompt runtime", () => {
 			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
 			const handlers = new Map<string, (payload?: unknown) => unknown>();
 			let watchedDir: fs.PathLike | undefined;
+			const intervalDelays: number[] = [];
 			const fakeWatcher = { on() { return fakeWatcher; }, close() {} } as fs.FSWatcher;
 
 			registerSteeringInbox({
@@ -251,10 +252,18 @@ describe("subagent prompt runtime", () => {
 					watchedDir = target;
 					return fakeWatcher;
 				}) as typeof fs.watch,
+				timers: {
+					setInterval: ((_handler: Parameters<typeof setInterval>[0], delay?: number) => {
+						intervalDelays.push(delay ?? 0);
+						return { unref() {} };
+					}) as typeof setInterval,
+					clearInterval: (() => {}) as typeof clearInterval,
+				},
 			});
 
 			handlers.get("session_start")?.({});
 			assert.equal(watchedDir, nativeInbox);
+			assert.deepEqual(intervalDelays, [5000]);
 			handlers.get("session_shutdown")?.({});
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });

@@ -22,6 +22,7 @@ export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
+const CHANNEL_SAFETY_POLL_MS = 5000;
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 
@@ -67,6 +68,13 @@ interface IntercomParams {
 	to?: string;
 	message?: string;
 	replyTo?: string;
+}
+
+type SupervisorWatch = (filename: fs.PathLike, listener: fs.WatchListener<string>) => fs.FSWatcher;
+
+interface NativeSupervisorChannelDeps {
+	platform?: NodeJS.Platform;
+	watch?: SupervisorWatch;
 }
 
 const ContactSupervisorParamsSchema = Type.Object({
@@ -626,10 +634,16 @@ function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>,
 	};
 }
 
-export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState): { start: () => void; dispose: () => void; pending: Map<string, PendingSupervisorRequest> } {
+export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState, deps: NativeSupervisorChannelDeps = {}): { start: () => void; dispose: () => void; pending: Map<string, PendingSupervisorRequest> } {
+	const watch = deps.watch ?? fs.watch;
 	const pending = new Map<string, PendingSupervisorRequest>();
 	const seenFiles = new Set<string>();
+	const requestWatchers = new Map<string, fs.FSWatcher>();
+	let rootWatcher: fs.FSWatcher | undefined;
 	let poller: ReturnType<typeof setInterval> | undefined;
+	let safetyPoller: ReturnType<typeof setInterval> | undefined;
+	let deferredWatcherRefresh: ReturnType<typeof setImmediate> | undefined;
+	let started = false;
 	let lastStaleCleanupAt = 0;
 
 	const registerParentTools = (): void => {
@@ -696,17 +710,101 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		}
 	};
 
+	const startPolling = (): void => {
+		if (poller) return;
+		poller = setInterval(poll, CHANNEL_POLL_MS);
+		poller.unref?.();
+	};
+	const startSafetyPolling = (): void => {
+		if (safetyPoller) return;
+		safetyPoller = setInterval(() => {
+			watchExistingRequestDirs();
+			poll();
+		}, CHANNEL_SAFETY_POLL_MS);
+		safetyPoller.unref?.();
+	};
+	const watchRequestDir = (requestsDir: string): void => {
+		if (requestWatchers.has(requestsDir)) return;
+		try {
+			const watcher = watch(requestsDir, () => poll());
+			watcher.on("error", () => {
+				try { watcher.close(); } catch {}
+				requestWatchers.delete(requestsDir);
+				startPolling();
+			});
+			watcher.unref?.();
+			requestWatchers.set(requestsDir, watcher);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") startPolling();
+		}
+	};
+	const watchExistingRequestDirs = (): void => {
+		let channelEntries: fs.Dirent[];
+		try {
+			channelEntries = fs.readdirSync(SUPERVISOR_CHANNEL_ROOT, { withFileTypes: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			startPolling();
+			return;
+		}
+		for (const entry of channelEntries) {
+			if (entry.isDirectory()) watchRequestDir(path.join(SUPERVISOR_CHANNEL_ROOT, entry.name, REQUESTS_DIR));
+		}
+	};
+	const scheduleWatcherRefresh = (): void => {
+		if (deferredWatcherRefresh) return;
+		deferredWatcherRefresh = setImmediate(() => {
+			deferredWatcherRefresh = undefined;
+			if (!started) return;
+			watchExistingRequestDirs();
+			poll();
+		});
+		deferredWatcherRefresh.unref?.();
+	};
+
 	return {
 		start: () => {
-			if (poller) return;
+			if (started) return;
+			started = true;
 			registerParentTools();
 			poll();
-			poller = setInterval(poll, CHANNEL_POLL_MS);
-			poller.unref?.();
+			try {
+				fs.mkdirSync(SUPERVISOR_CHANNEL_ROOT, { recursive: true });
+				if ((deps.platform ?? process.platform) === "win32") {
+					startPolling();
+					return;
+				}
+				watchExistingRequestDirs();
+				rootWatcher = watch(SUPERVISOR_CHANNEL_ROOT, () => {
+					watchExistingRequestDirs();
+					poll();
+					scheduleWatcherRefresh();
+				});
+				rootWatcher.on("error", startPolling);
+				startSafetyPolling();
+				scheduleWatcherRefresh();
+			} catch {
+				startPolling();
+			}
 		},
 		dispose: () => {
+			started = false;
+			try {
+				rootWatcher?.close();
+			} catch {
+				// Best effort during shutdown.
+			}
+			rootWatcher = undefined;
+			for (const watcher of requestWatchers.values()) {
+				try { watcher.close(); } catch {}
+			}
+			requestWatchers.clear();
 			if (poller) clearInterval(poller);
 			poller = undefined;
+			if (safetyPoller) clearInterval(safetyPoller);
+			safetyPoller = undefined;
+			if (deferredWatcherRefresh) clearImmediate(deferredWatcherRefresh);
+			deferredWatcherRefresh = undefined;
 			pending.clear();
 			seenFiles.clear();
 		},

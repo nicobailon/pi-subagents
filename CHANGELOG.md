@@ -11,6 +11,7 @@
 - Clarify the accepted mission launch object contract for tool callers.
 - Reduce repeated async status parsing, workflow trace projection, and constrained widget rendering work.
 - Keep parsed async statuses cached beyond 50 runs while preserving per-read freshness checks. Thanks to @bcanvural for #982.
+- Prefer native control inbox watchers over per-process 250 ms polling, with polling retained as a fallback.
 
 ### Fixed
 - Omit missing configured read files from child task instructions.

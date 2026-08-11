@@ -313,14 +313,19 @@ describe("control channel: watchAsyncControlInbox", () => {
 	type WatchHarness = {
 		fsImpl: import("../../src/runs/background/control-channel.ts").ControlChannelFs;
 		timers: import("../../src/runs/background/control-channel.ts").ControlChannelTimers;
-		trigger: () => void;
+		trigger: (dir?: string) => void;
+		triggerError: (dir?: string) => void;
 		closed: () => boolean;
+		intervalCount: () => number;
+		intervalDelays: () => number[];
 		watchedDir: () => string | undefined;
 	};
 
 	function harness(nativeDir?: string): WatchHarness {
-		let listener: (() => void) | undefined;
+		const listeners = new Map<string, () => void>();
+		const errorListeners = new Map<string, () => void>();
 		let closed = false;
+		const intervalDelays: number[] = [];
 		let watchedDir: string | undefined;
 		const realpathSync = ((target: fs.PathLike, options?: unknown) => fs.realpathSync(target, options as BufferEncoding)) as typeof fs.realpathSync;
 		realpathSync.native = ((target: fs.PathLike) => nativeDir ?? fs.realpathSync.native(target)) as typeof fs.realpathSync.native;
@@ -333,15 +338,38 @@ describe("control channel: watchAsyncControlInbox", () => {
 			realpathSync,
 			watch: ((dir: string, cb: () => void) => {
 				watchedDir = dir;
-				listener = cb;
-				return { close: () => { closed = true; }, on: () => {} };
+				listeners.set(dir, cb);
+				return {
+					close: () => { closed = true; },
+					on: (event: string, handler: () => void) => {
+						if (event === "error") errorListeners.set(dir, handler);
+					},
+				};
 			}),
 		} as unknown as WatchHarness["fsImpl"];
 		const timers = {
-			setInterval: (() => ({ unref() {} })) as unknown as typeof setInterval,
+			setInterval: ((_handler: Parameters<typeof setInterval>[0], delay?: number) => {
+				intervalDelays.push(delay ?? 0);
+				return { unref() {} };
+			}) as unknown as typeof setInterval,
 			clearInterval: (() => {}) as unknown as typeof clearInterval,
 		};
-		return { fsImpl, timers, trigger: () => listener?.(), closed: () => closed, watchedDir: () => watchedDir };
+		return {
+			fsImpl,
+			timers,
+			trigger: (dir?: string) => {
+				if (dir) listeners.get(dir)?.();
+				else for (const listener of listeners.values()) listener();
+			},
+			triggerError: (dir?: string) => {
+				if (dir) errorListeners.get(dir)?.();
+				else for (const listener of errorListeners.values()) listener();
+			},
+			closed: () => closed,
+			intervalCount: () => intervalDelays.length,
+			intervalDelays: () => [...intervalDelays],
+			watchedDir: () => watchedDir,
+		};
 	}
 
 	it("registers the native canonical control inbox path", () => {
@@ -351,6 +379,32 @@ describe("control channel: watchAsyncControlInbox", () => {
 			const h = harness(nativeDir);
 			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers });
 			assert.equal(h.watchedDir(), nativeDir);
+			dispose();
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("does not start fast polling when native watch is available", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-no-poll-");
+		try {
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers });
+			assert.deepEqual(h.intervalDelays(), [5000]);
+			dispose();
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("starts portable polling once when the native watcher fails", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-fallback-");
+		try {
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers });
+			h.triggerError();
+			h.triggerError();
+			assert.deepEqual(h.intervalDelays(), [5000, 250]);
 			dispose();
 		} finally {
 			cleanup(asyncDir);
@@ -440,6 +494,32 @@ describe("control channel: watchAsyncControlInbox", () => {
 
 			assert.equal(interrupted, 0);
 			assert.deepEqual(steers, [{ message: "go narrower", targetIndex: 0 }]);
+			dispose();
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("delivers later steer files from the watched request directory without polling", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-steer-nested-");
+		try {
+			const steers: string[] = [];
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, {
+				onInterrupt() {},
+				onSteer: (request) => steers.push(request.message),
+				fs: h.fsImpl,
+				timers: h.timers,
+			});
+
+			const watchedSteerDir = fs.realpathSync.native(steerRequestsDir(asyncDir));
+			requestAsyncSteer(asyncDir, { message: "first", id: "s1", ts: 1 });
+			h.trigger(watchedSteerDir);
+			requestAsyncSteer(asyncDir, { message: "second", id: "s2", ts: 2 });
+			h.trigger(watchedSteerDir);
+
+			assert.deepEqual(steers, ["first", "second"]);
+			assert.deepEqual(h.intervalDelays(), [5000]);
 			dispose();
 		} finally {
 			cleanup(asyncDir);

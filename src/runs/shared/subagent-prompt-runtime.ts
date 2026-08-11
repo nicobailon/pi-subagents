@@ -31,6 +31,7 @@ const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEX
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
 export const SUBAGENT_INTERCOM_SESSION_NAME_ENV = "PI_SUBAGENT_INTERCOM_SESSION_NAME";
 const STEERING_LEGACY_SETTLE_FALLBACK_MS = 1000;
+const STEERING_SAFETY_POLL_INTERVAL_MS = 5000;
 
 const STRUCTURED_OUTPUT_INSTRUCTIONS = [
 	"This subagent step has a strict structured output contract.",
@@ -331,7 +332,13 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 
 export function registerSteeringInbox(
 	pi: ExtensionAPI,
-	deps: { watch?: typeof fs.watch; nativeRealpath?: (filePath: string) => string; legacySettleFallbackMs?: number } = {},
+	deps: {
+		watch?: typeof fs.watch;
+		nativeRealpath?: (filePath: string) => string;
+		legacySettleFallbackMs?: number;
+		safetyPollIntervalMs?: number;
+		timers?: Pick<typeof globalThis, "setInterval" | "clearInterval">;
+	} = {},
 ): void {
 	const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
 	if (!steerInbox) return;
@@ -350,6 +357,7 @@ export function registerSteeringInbox(
 	let canSteer = typeof sendUserMessage === "function";
 	let watcher: fs.FSWatcher | undefined;
 	let interval: NodeJS.Timeout | undefined;
+	let safetyInterval: NodeJS.Timeout | undefined;
 	let settleFallback: NodeJS.Timeout | undefined;
 	const legacySettleFallbackMs = deps.legacySettleFallbackMs ?? STEERING_LEGACY_SETTLE_FALLBACK_MS;
 	const acknowledge = (request: SteerRequest, state: "delivered" | "queued" | "failed", message: string, deliveryStatus?: SteerDeliveryStatus): void => {
@@ -431,14 +439,24 @@ export function registerSteeringInbox(
 			return;
 		}
 		started = true;
+		const startPolling = (): void => {
+			if (interval || disposed) return;
+			interval = (deps.timers?.setInterval ?? setInterval)(flush, 250) as NodeJS.Timeout;
+			interval.unref?.();
+		};
+		const startSafetyPolling = (): void => {
+			if (safetyInterval || disposed) return;
+			safetyInterval = (deps.timers?.setInterval ?? setInterval)(flush, deps.safetyPollIntervalMs ?? STEERING_SAFETY_POLL_INTERVAL_MS) as NodeJS.Timeout;
+			safetyInterval.unref?.();
+		};
 		try {
 			watcher = (deps.watch ?? fs.watch)(resolveWatchPath(steerInbox, deps.nativeRealpath), () => flush());
-			watcher.on("error", () => {});
+			watcher.on("error", startPolling);
+			startSafetyPolling();
 		} catch {
 			watcher = undefined;
+			startPolling();
 		}
-		interval = setInterval(flush, 250);
-		interval.unref?.();
 	};
 	const activate = (): undefined => {
 		start();
@@ -534,7 +552,8 @@ export function registerSteeringInbox(
 		disposed = true;
 		clearSettleFallback();
 		try { watcher?.close(); } catch {}
-		if (interval) clearInterval(interval);
+		if (interval) (deps.timers?.clearInterval ?? clearInterval)(interval);
+		if (safetyInterval) (deps.timers?.clearInterval ?? clearInterval)(safetyInterval);
 	});
 }
 

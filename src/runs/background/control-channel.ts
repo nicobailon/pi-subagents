@@ -32,6 +32,7 @@ function writeJsonToExistingDir(filePath: string, payload: object): void {
 	}
 }
 export type ControlChannelTimers = { setInterval: typeof setInterval; clearInterval: typeof clearInterval };
+const CONTROL_SAFETY_POLL_INTERVAL_MS = 5000;
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => unknown;
 
 export interface InterruptRequest {
@@ -621,9 +622,9 @@ export function deliverCheckpointDecisionRequest(input: {
 
 /**
  * Runner side: watch the control inbox and route interrupt requests into
- * `onInterrupt`. Uses `fs.watch` when available plus an interval poll as a
- * portable safety net (covers filesystems/platforms where `fs.watch` is
- * unreliable). Fires once per distinct request. Returns a disposer.
+ * `onInterrupt`. Uses `fs.watch` when available and starts interval polling
+ * only when native watching is unavailable or fails. Fires once per distinct
+ * request. Returns a disposer.
  */
 export function watchAsyncControlInbox(
 	asyncDir: string,
@@ -636,6 +637,7 @@ export function watchAsyncControlInbox(
 		onSteerCapability?: (capability: SteerCapability) => void;
 		onSteerAck?: (ack: SteerAck) => void;
 		pollIntervalMs?: number;
+		safetyPollIntervalMs?: number;
 		fs?: ControlChannelFs;
 		timers?: ControlChannelTimers;
 	},
@@ -669,27 +671,63 @@ export function watchAsyncControlInbox(
 	// Handle a request that may have arrived before the watcher started.
 	check();
 
-	let watcher: fs.FSWatcher | undefined;
-	try {
-		watcher = fsImpl.watch(resolveWatchPath(dir, fsImpl.realpathSync.native), () => check());
-		watcher.on?.("error", () => {
-			// fs.watch can emit on transient FS errors; the interval poll keeps us live.
+	const watchers: fs.FSWatcher[] = [];
+	const watchedDirs = new Set<string>();
+	let interval: ReturnType<typeof setInterval> | undefined;
+	let safetyInterval: ReturnType<typeof setInterval> | undefined;
+	const startPolling = (): void => {
+		if (interval || disposed) return;
+		interval = timers.setInterval(check, opts.pollIntervalMs ?? POLL_INTERVAL_MS);
+		interval.unref?.();
+	};
+	const startSafetyPolling = (): void => {
+		if (safetyInterval || disposed) return;
+		safetyInterval = timers.setInterval(check, opts.safetyPollIntervalMs ?? CONTROL_SAFETY_POLL_INTERVAL_MS);
+		safetyInterval.unref?.();
+	};
+	const watchDir = (target: string, create = false): void => {
+		if (disposed || watchedDirs.has(target)) return;
+		if (create) fsImpl.mkdirSync(target, { recursive: true });
+		const watcher = fsImpl.watch(resolveWatchPath(target, fsImpl.realpathSync.native), () => {
+			watchExistingSteerAckDirs();
+			check();
 		});
+		watcher.on?.("error", startPolling);
+		watchers.push(watcher);
+		watchedDirs.add(target);
+	};
+	const watchExistingSteerAckDirs = (): void => {
+		const ackRoot = path.join(dir, STEER_ACKS_DIR);
+		let entries: string[];
+		try {
+			entries = fsImpl.readdirSync(ackRoot).filter((name) => /^\d+$/.test(name));
+		} catch {
+			return;
+		}
+		for (const entry of entries) watchDir(path.join(ackRoot, entry));
+	};
+	try {
+		watchDir(dir);
+		watchDir(steerRequestsDir(asyncDir), true);
+		watchDir(steerCapabilitiesDir(asyncDir), true);
+		watchDir(path.join(dir, STEER_ACKS_DIR), true);
+		watchExistingSteerAckDirs();
+		startSafetyPolling();
 	} catch {
-		watcher = undefined;
+		startPolling();
 	}
-
-	const interval = timers.setInterval(check, opts.pollIntervalMs ?? POLL_INTERVAL_MS);
-	interval.unref?.();
 
 	return () => {
 		if (disposed) return;
 		disposed = true;
-		try {
-			watcher?.close();
-		} catch {
-			// ignore
+		for (const watcher of watchers) {
+			try {
+				watcher.close();
+			} catch {
+				// ignore
+			}
 		}
-		timers.clearInterval(interval);
+		if (interval) timers.clearInterval(interval);
+		if (safetyInterval) timers.clearInterval(safetyInterval);
 	};
 }

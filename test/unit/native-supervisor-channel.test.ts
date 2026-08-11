@@ -94,6 +94,14 @@ function ageChannel(channelDir: string, ageMs: number): void {
 	}
 }
 
+async function waitForCondition(condition: () => boolean, description: string): Promise<void> {
+	const deadline = Date.now() + 1000;
+	while (!condition()) {
+		if (Date.now() > deadline) assert.fail(`Timed out waiting for ${description}`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
 function restoreEnv(): void {
 	for (const [key, value] of Object.entries(savedEnv)) {
 		if (value === undefined) delete process.env[key];
@@ -147,6 +155,72 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
 		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
+	});
+
+	it("uses polling instead of native watchers on Windows", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId: `run-${randomUUID()}` });
+		const sent: Array<{ details?: { id?: string } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		let watchCalls = 0;
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), {
+			platform: "win32",
+			watch: (() => {
+				watchCalls += 1;
+				throw new Error("Windows supervisor channel must not call fs.watch.");
+			}) as never,
+		});
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(watchCalls, 0);
+		assert.deepEqual(sent.map((message) => message.details?.id), [requestId]);
+	});
+
+	it("delivers requests written under an existing request directory by watch event", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		makeEmptyChannel(runId);
+		const sent: Array<{ details?: { id?: string } }> = [];
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		try {
+			channel.start();
+			const requestId = writeRequest({ sessionId: currentSessionId, runId });
+			await waitForCondition(() => sent.some((message) => message.details?.id === requestId), "supervisor request watch delivery");
+		} finally {
+			channel.dispose();
+		}
 	});
 
 	it("prunes stale empty supervisor channel directories before polling", () => {
