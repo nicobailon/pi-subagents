@@ -21,6 +21,8 @@ Behavior:
 - Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.
 - A workflow with a mission can use `await state.get(key)` and `await state.set(key, value)` for durable JSON state. Missing keys return `undefined`. Keys use the same format as `runs.run` keys. Each set takes the state-file lock, reads the latest file, merges the key, and atomically writes `<cwd>/.pi-subagents/missions/<mission-id>/state.json`. The complete file cannot exceed 256 KiB. Each workflow caches the file on its first `get`. A `mission:false` workflow has no `state` global.
 
+An explicit `mission` object must have exactly one non-empty `title` or `summary`. `objective` and `labels` are optional. When supplied, `goal` must be `true` and requires `budget: { tokens: <positive integer> }`.
+
 ```ts
 const created = subagent({
   action: "mission.create",

@@ -380,6 +380,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(acceptanceDescription, /changed-files/);
 		assert.match(acceptanceDescription, /manual-notes/);
 		assert.match(acceptanceDescription, /\{ level: "checked", evidence: \["commands-run", "changed-files"\] \}/);
+		const missionDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.mission?.description ?? "");
+		assert.match(missionDescription, /exactly one non-empty title or summary/);
+		assert.match(missionDescription, /goal may only be true/);
+		assert.match(missionDescription, /requires budget\.tokens/);
 
 		const nestedDescriptionPaths: string[] = [];
 		const stack: Array<{ path: string; value: unknown }> = [{ path: "SubagentParams", value: schema }];

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Clarify the accepted mission launch object contract for tool callers.
 - Reduce repeated async status parsing and workflow trace projection work.
 
 ### Fixed

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { validateMissionLaunch } from "../../src/missions/actions.ts";
 import {
 	attachMissionToLaunchResult,
 	prepareMissionLaunch,
@@ -19,6 +20,27 @@ function projectFixture() {
 }
 
 describe("mission launch lifecycle", () => {
+	it("validates the public mission launch shape", () => {
+		assert.deepEqual(validateMissionLaunch({
+			summary: "Review the active backlog",
+			objective: "Find ready work",
+			goal: true,
+			budget: { tokens: 400000 },
+			labels: ["review"],
+		}), {
+			title: "Review the active backlog",
+			objective: "Find ready work",
+			goal: true,
+			budget: { tokens: 400000 },
+			labels: ["review"],
+		});
+		assert.throws(() => validateMissionLaunch({}), /title or mission\.summary/);
+		assert.throws(() => validateMissionLaunch({ title: "Title", summary: "Summary" }), /cannot both be set/);
+		assert.throws(() => validateMissionLaunch({ title: " " }), /non-empty string/);
+		assert.throws(() => validateMissionLaunch({ title: "Title", goal: false }), /must be true/);
+		assert.throws(() => validateMissionLaunch({ title: "Title", goal: true }), /budget is required/);
+	});
+
 	it("creates missions by default for task launches and honors explicit opt-out", () => {
 		const test = projectFixture();
 		try {
