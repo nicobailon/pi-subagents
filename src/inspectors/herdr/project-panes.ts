@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getPiSpawnCommand } from "../../runs/shared/pi-spawn.ts";
+import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { Details } from "../../shared/types.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode } from "./client.ts";
@@ -153,7 +154,7 @@ function formatProjectPaneError(input: { code: ProjectPaneErrorCode; message: st
 }
 
 function projectPaneDir(projectRoot: string): string {
-	return path.join(projectRoot, ".pi-subagents", "project-panes");
+	return path.join(getProjectSubagentsDir(projectRoot), "project-panes");
 }
 
 export function projectPaneBindingPath(projectRoot: string): string {

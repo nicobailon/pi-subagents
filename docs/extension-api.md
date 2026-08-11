@@ -268,7 +268,7 @@ subagent({ action: "project.status", cwd: "/path/to/repo" })
 subagent({ action: "project.close", cwd: "/path/to/repo" })
 ```
 
-A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority; existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi-subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
+A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority; existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi/subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
 
 Other Pi extensions should use the versioned public TypeScript surface instead of invoking the model-facing tool or importing inspector internals:
 

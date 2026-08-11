@@ -158,7 +158,7 @@ A cooperating terminal runtime can register read-only external records through `
 
 ### Scheduled subagent runs
 
-Schedules are durable project records under `.pi-subagents/schedules/`. They are enabled by default; set `{ "scheduledRuns": { "enabled": false } }` in `~/.pi/agent/extensions/subagent/config.json` to disable them. Only schedule explicit work the user asked for.
+Schedules are durable project records under `.pi/subagents/schedules/`. They are enabled by default; set `{ "scheduledRuns": { "enabled": false } }` in `~/.pi/agent/extensions/subagent/config.json` to disable them. Only schedule explicit work the user asked for.
 
 ```typescript
 // One-shot reviewer
@@ -235,7 +235,7 @@ The subagent watchdog is an **opt-in** adversarial change reviewer. It is not th
 
 When enabled, it reviews actual repo edits at safe `agent_end` boundaries only if
 the final worktree state changed during that turn. Unchanged or reverted diffs and
-generated `.pi-subagents/` / temp artifacts do not trigger review. Writing children
+generated `.pi/subagents/` / temp artifacts do not trigger review. Writing children
 can review their own worktree; the parent can still review the aggregate diff after
 child changes land. Enabled watchdogs also run changed-file TypeScript/JavaScript
 LSP diagnostics before the model pass when `typescript-language-server` is available.
@@ -298,7 +298,7 @@ Routing rule:
 - Several projects with independent work: one async `workflowScript` whose child keys include repo slugs and whose child calls set explicit `cwd`; keep publication and merge decisions serial per repo.
 - Different project, substantial or long-running work: open a project-owned Herdr pane rooted there when a separate visible project session is useful, then give that project Pi session a narrow mission/result contract. Do not model it as ordinary child nesting, and do not expect existing headless runs to move into the pane.
 
-Project panes run a separate Pi session from the target directory. Subagents launched inside that pane use that project's config, agents, skills, files, git state, and mission records. The pane binding lives under `<projectRoot>/.pi-subagents/project-panes/herdr.json`. For ordinary headless delegation to another repo, prefer explicit `cwd` first; reserve project panes for visible or persistent project ownership.
+Project panes run a separate Pi session from the target directory. Subagents launched inside that pane use that project's config, agents, skills, files, git state, and mission records. The pane binding lives under `<projectRoot>/.pi/subagents/project-panes/herdr.json`. For ordinary headless delegation to another repo, prefer explicit `cwd` first; reserve project panes for visible or persistent project ownership.
 
 ```typescript
 subagent({ action: "mission.create", mission: { title: "Ship auth refresh", objective: "Implement and validate refresh handling" } })
@@ -340,7 +340,7 @@ single-writer pattern instead.
 
 Git worktrees start from tracked files, so ignored or untracked build state
 such as `node_modules` may be absent. The clean-check ignores pi-subagents'
-own `.pi-subagents/` runtime state, including default mission records, but still
+own `.pi/subagents/` runtime state, including default mission records, but still
 rejects ordinary source/config changes. `pi-subagents` attempts to symlink the
 root checkout's `node_modules` into each managed worktree when it exists, but
 agents should still treat dependency setup as an explicit bootstrap step before

@@ -342,7 +342,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			config,
 			asyncByDefault,
 			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => path.join(tempDir, ".pi-subagents", "sessions"),
+			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
 			discoverAgents: () => ({ agents }),
 			allowMutatingManagementActions,
@@ -773,7 +773,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.results.length, 2);
 		assert.equal(result.details.workflow?.value && (result.details.workflow.value as { stateType?: unknown }).stateType, "object");
 		assert.ok(result.details.missionId);
-		const missionDir = path.join(tempDir, ".pi-subagents", "missions");
+		const missionDir = path.join(tempDir, ".pi/subagents", "missions");
 		const missionFiles = fs.readdirSync(missionDir).filter((entry) => entry.endsWith(".json"));
 		assert.equal(missionFiles.length, 1);
 		const mission = JSON.parse(fs.readFileSync(path.join(missionDir, missionFiles[0]!), "utf-8")) as { objective?: string };
@@ -807,7 +807,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.missionId, undefined);
 		assert.match(result.details.missionWarning ?? "", /Mission tracking unavailable/);
 		assert.equal(result.details.results.length, 2);
-		const missionDir = path.join(tempDir, ".pi-subagents", "missions");
+		const missionDir = path.join(tempDir, ".pi/subagents", "missions");
 		const missionFiles = fs.existsSync(missionDir) ? fs.readdirSync(missionDir).filter((entry) => entry.endsWith(".json")) : [];
 		assert.equal(missionFiles.length, 1);
 	});
@@ -828,7 +828,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(first.isError, undefined, first.content[0]?.text ?? "first workflow failed");
 		assert.ok(first.details.missionId);
 		assert.deepEqual(first.details.workflow?.value, { count: 1 });
-		const statePath = path.join(tempDir, ".pi-subagents", "missions", first.details.missionId, "state.json");
+		const statePath = path.join(tempDir, ".pi/subagents", "missions", first.details.missionId, "state.json");
 		assert.equal(fs.existsSync(statePath), true);
 
 		const second = await executor.execute(
@@ -1989,7 +1989,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			config: { control: { enabled: true, activeNoticeAfterTurns: 2, activeNoticeAfterMs: 999_999, activeNoticeAfterTokens: 999_999, notifyOn: ["active_long_running"], notifyChannels: ["event"] } },
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => path.join(tempDir, ".pi-subagents", "sessions"),
+			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
 			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
 			allowMutatingManagementActions: true,
@@ -3353,7 +3353,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details?.artifacts?.dir, expectedDir);
 		assert.ok(result.details?.artifacts?.files[0]?.outputPath.startsWith(`${expectedDir}${path.sep}`));
 		assert.equal(fs.readFileSync(result.details.artifacts.files[0].outputPath, "utf-8"), "session artifact result");
-		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
 	});
 
 	for (const artifactDir of ["session", "temp"] as const) {
@@ -3375,8 +3375,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const taskArg = readCallArgs().at(-1) ?? "";
 			assert.equal(result.isError, undefined);
 			assert.ok(taskArg.includes(`${CHAIN_RUNS_DIR}${path.sep}`), taskArg);
-			assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "chain-runs")), false);
-			assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
+			assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "chain-runs")), false);
+			assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
 		});
 	}
 
@@ -3476,7 +3476,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const taskArg = readCallArgs().at(-1) ?? "";
 		assert.equal(result.isError, undefined);
-		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(path.join(tempDir, ".pi-subagents", "artifacts", "outputs"))}.*context\\.md`));
+		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(path.join(tempDir, ".pi/subagents", "artifacts", "outputs"))}.*context\\.md`));
 		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 	});
 

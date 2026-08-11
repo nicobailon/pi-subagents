@@ -3,19 +3,19 @@ import * as path from "node:path";
 import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
-const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
+export const PROJECT_SUBAGENTS_RELATIVE_DIR = ".pi/subagents";
 
 const PROJECT_ARTIFACT_PATHS = [
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_input.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker.jsonl`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_transcript.jsonl`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_meta.json`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/progress/run/progress.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/outputs/output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/outputs/run/output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/chain-runs/run.json`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/output.md`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/run_worker_input.md`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/run_worker_output.md`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/run_worker.jsonl`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/run_worker_transcript.jsonl`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/run_worker_meta.json`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/progress/run/progress.md`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/outputs/output.md`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/artifacts/outputs/run/output.md`,
+	`${PROJECT_SUBAGENTS_RELATIVE_DIR}/chain-runs/run.json`,
 ];
 
 function globMatchesPath(pattern: string, filePath: string): boolean {
@@ -59,7 +59,7 @@ function normalizePattern(pattern: string): string {
 
 function patternMatchesArtifactPath(pattern: string, artifactPath: string): boolean {
 	const normalized = normalizePattern(pattern);
-	return normalized === PROJECT_ARTIFACT_ROOT
+	return normalized === PROJECT_SUBAGENTS_RELATIVE_DIR
 		|| normalized === "*"
 		|| artifactPath.startsWith(`${normalized}/`)
 		|| globMatchesPath(normalized, artifactPath);
@@ -127,11 +127,11 @@ export function getProjectArtifactPackagingWarning(cwd: string): string | undefi
 	const ignorePath = fs.existsSync(npmIgnorePath) ? npmIgnorePath : path.join(cwd, ".gitignore");
 	if (filesIncludeArtifacts === undefined && ignoreFileExcludesProjectArtifacts(ignorePath)) return undefined;
 
-	return "Project-scoped subagent artifacts can be included when this package is published. Add '.pi-subagents/' to .npmignore, restrict package.json files, or set artifactDir to 'session' or 'temp'.";
+	return "Project-scoped subagent artifacts can be included when this package is published. Add '.pi/subagents/' to .npmignore, restrict package.json files, or set artifactDir to 'session' or 'temp'.";
 }
 
 export function getProjectSubagentsDir(cwd: string): string {
-	return path.join(cwd, PROJECT_ARTIFACT_ROOT);
+	return path.join(cwd, PROJECT_SUBAGENTS_RELATIVE_DIR);
 }
 
 export function getProjectArtifactsDir(cwd: string): string {

@@ -152,8 +152,8 @@ describe("workflow chat progress rendering", () => {
 		try {
 			const location = {
 				projectRoot: root,
-				missionDir: path.join(root, ".pi-subagents", "missions"),
-				globalIndexDir: path.join(root, ".pi-subagents", "mission-index"),
+				missionDir: path.join(root, ".pi/subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi/subagents", "mission-index"),
 				writeGlobalIndex: false,
 			};
 			const mission = createMission(location, { title: "Workflow", objective: "Track child" });
@@ -177,8 +177,8 @@ describe("workflow chat progress rendering", () => {
 		try {
 			const location = {
 				projectRoot: root,
-				missionDir: path.join(root, ".pi-subagents", "missions"),
-				globalIndexDir: path.join(root, ".pi-subagents", "mission-index"),
+				missionDir: path.join(root, ".pi/subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi/subagents", "mission-index"),
 				writeGlobalIndex: false,
 			};
 			const mission = createMission(location, { title: "Workflow", objective: "Track child" });

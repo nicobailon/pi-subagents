@@ -107,7 +107,7 @@ describe("schedule helpers", () => {
 		const root = path.join("tmp", "schedules");
 		assert.equal(scheduledRunStorePath("project", "a", root), scheduledRunStorePath("project", "b", root));
 		assert.notEqual(scheduledRunStorePath("project", "a", root), scheduledRunStorePath("other", "a", root));
-		assert.equal(scheduledRunStorePath("/project"), path.join(path.resolve("/project"), ".pi-subagents", "schedules"));
+		assert.equal(scheduledRunStorePath("/project"), path.join(path.resolve("/project"), ".pi/subagents", "schedules"));
 	});
 
 	it("parses one-shot and fixed interval forms strictly", () => {
@@ -261,7 +261,7 @@ describe("project schedule management", () => {
 		assert.equal(fs.existsSync(path.join(outside, "schedule.json")), false);
 	});
 
-	it("rejects a default project schedule root that escapes through .pi-subagents", async () => {
+	it("rejects a default project schedule root that escapes through .pi/subagents", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-root-link-"));
 		roots.push(root);
 		const project = path.join(root, "project");
@@ -274,7 +274,8 @@ describe("project schedule management", () => {
 			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
 		});
 		manager.bindSession(ctx);
-		fs.symlinkSync(outside, path.join(project, ".pi-subagents"), process.platform === "win32" ? "junction" : "dir");
+		fs.mkdirSync(path.join(project, ".pi"));
+		fs.symlinkSync(outside, path.join(project, ".pi/subagents"), process.platform === "win32" ? "junction" : "dir");
 
 		const result = await manager.handleToolCall({ action: "schedule.create", id: "escaped-root", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
 		assert.equal(result.isError, true);

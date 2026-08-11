@@ -126,7 +126,7 @@ Foreground and async runners share bounded child-protocol handling:
 
 ## Chain and debug artifacts
 
-Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "project"`, that root is `<cwd>/.pi-subagents/chain-runs/`. With `artifactDir: "session"` or `"temp"`, it is user-scoped temp storage:
+Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "project"`, that root is `<cwd>/.pi/subagents/chain-runs/`. With `artifactDir: "session"` or `"temp"`, it is user-scoped temp storage:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/
@@ -134,7 +134,7 @@ Each chain run creates a scratch directory under its resolved chain root. With t
 
 A run directory may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. User-scoped temp chain directories older than 24 hours are cleaned up on extension startup; project-local and explicit persistent roots are not age-scanned.
 
-Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. Per task you may see:
+Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi/subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. Per task you may see:
 
 - `{runId}_{agent}_input.md`
 - `{runId}_{agent}_output.md`
@@ -143,7 +143,7 @@ Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi-subagents/ar
 
 Metadata records timing, usage, exit code, final model, attempted models, fallback attempt outcomes, and the resolved acceptance ledger with its parsed child report.
 
-For npm package projects, project-scoped artifacts need a `.npmignore` rule (or `.gitignore` when no `.npmignore` exists) or a `files` allowlist that does not include `.pi-subagents/`. pi-subagents warns at launch when these package settings can include the artifacts. Use `artifactDir: "session"` or `"temp"` to keep them outside the package worktree.
+For npm package projects, project-scoped artifacts need a `.npmignore` rule (or `.gitignore` when no `.npmignore` exists) or a `files` allowlist that does not include `.pi/subagents/`. pi-subagents warns at launch when these package settings can include the artifacts. Use `artifactDir: "session"` or `"temp"` to keep them outside the package worktree.
 
 ## Sessions
 

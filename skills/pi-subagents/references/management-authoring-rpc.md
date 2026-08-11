@@ -28,7 +28,7 @@ subagent({ action: "refine.show", agent: "reviewer" })
 subagent({ action: "refine.rollback", agent: "reviewer" })
 ```
 
-`refine` builds a bounded project-local guidance overlay for one agent from recent run evidence, using a fresh read-only proposal child; validated guidance is stored under `.pi-subagents/refinements/<agent>.md` with revision snapshots and is injected into that agent's child system prompt for this project. `refine.show` prints the current overlay and history; `refine.rollback` restores the previous revision. Guidance that tries to override safety, policy, tool, output, acceptance, developer, or system instructions is rejected. `/subagents-refine <agent>` is the slash equivalent.
+`refine` builds a bounded project-local guidance overlay for one agent from recent run evidence, using a fresh read-only proposal child; validated guidance is stored under `.pi/subagents/refinements/<agent>.md` with revision snapshots and is injected into that agent's child system prompt for this project. `refine.show` prints the current overlay and history; `refine.rollback` restores the previous revision. Guidance that tries to override safety, policy, tool, output, acceptance, developer, or system instructions is rejected. `/subagents-refine <agent>` is the slash equivalent.
 
 ### Create an agent
 

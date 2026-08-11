@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
+import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
 
 export interface WorktreeSetup {
 	cwd: string;
@@ -135,9 +136,9 @@ function resolveRepoState(cwd: string): RepoState {
 	const cwdRelative = resolveRepoCwdRelative(cwd);
 	const toplevel = runGitChecked(cwd, ["rev-parse", "--show-toplevel"]).trim();
 
-	// pi-subagents writes durable runtime state under .pi-subagents/ by default;
+	// pi-subagents writes durable runtime state under .pi/subagents/ by default;
 	// that state must not make managed isolation unusable for later runs.
-	const status = runGitChecked(toplevel, ["status", "--porcelain", "--", ":!.pi-subagents"]);
+	const status = runGitChecked(toplevel, ["status", "--porcelain", "--", `:!${PROJECT_SUBAGENTS_RELATIVE_DIR}`]);
 	if (status.trim().length > 0) {
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}

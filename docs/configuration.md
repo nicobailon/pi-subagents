@@ -133,7 +133,7 @@ A user may explicitly call `subagent({ action: "grant-spawn-budget", additional:
 { "scheduledRuns": { "enabled": false, "maxPending": 20 } }
 ```
 
-Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
+Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
 
 Set `storeRoot` to keep durable schedules outside project repositories. It must be an absolute path or a `~/` path, which expands from the user home directory. Each project is stored under a hash of its resolved working directory, so projects do not share schedules.
 
@@ -141,7 +141,7 @@ Set `storeRoot` to keep durable schedules outside project repositories. It must 
 { "scheduledRuns": { "storeRoot": "~/.local/share/pi-subagents/schedules" } }
 ```
 
-When `storeRoot` is omitted, schedules remain at `<cwd>/.pi-subagents/schedules`.
+When `storeRoot` is omitted, schedules remain at `<cwd>/.pi/subagents/schedules`.
 
 ## `parallel`
 
@@ -245,7 +245,7 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 {
   "missions": {
     "enabled": true,
-    "directory": ".pi-subagents/missions",
+    "directory": ".pi/subagents/missions",
     "globalIndex": true,
     "retainTerminal": 200
   }
@@ -283,15 +283,15 @@ Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is inte
 
 Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored:
 
-- `"project"` (default): writes to `<cwd>/.pi-subagents/artifacts/`.
+- `"project"` (default): writes to `<cwd>/.pi/subagents/artifacts/`.
 - `"session"`: stores artifacts under pi's session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean.
 - `"temp"`: uses the OS temp directory.
 
-This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory.
+This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi/subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory.
 
 The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
 
-When a project-scoped launch runs from an npm package directory, pi-subagents warns if package settings can include `.pi-subagents/` in the published package. Add `.pi-subagents/` to `.npmignore` (or `.gitignore` when no `.npmignore` exists), use a `files` allowlist that does not include `.pi-subagents/`, or select `"session"` or `"temp"`.
+When a project-scoped launch runs from an npm package directory, pi-subagents warns if package settings can include `.pi/subagents/` in the published package. Add `.pi/subagents/` to `.npmignore` (or `.gitignore` when no `.npmignore` exists), use a `files` allowlist that does not include `.pi/subagents/`, or select `"session"` or `"temp"`.
 
 ## `completionBatch`
 

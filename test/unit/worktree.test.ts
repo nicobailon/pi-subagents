@@ -163,8 +163,8 @@ describe("worktree", () => {
 		const repoDir = createRepo("pi-worktree-runtime-artifacts-");
 		let setup: WorktreeSetup | undefined;
 		try {
-			fs.mkdirSync(path.join(repoDir, ".pi-subagents", "missions"), { recursive: true });
-			fs.writeFileSync(path.join(repoDir, ".pi-subagents", "missions", "mission.json"), "{}\n", "utf-8");
+			fs.mkdirSync(path.join(repoDir, ".pi/subagents", "missions"), { recursive: true });
+			fs.writeFileSync(path.join(repoDir, ".pi/subagents", "missions", "mission.json"), "{}\n", "utf-8");
 			setup = createWorktrees(repoDir, "runtime-artifacts", 1);
 			assert.equal(setup.worktrees.length, 1);
 		} finally {

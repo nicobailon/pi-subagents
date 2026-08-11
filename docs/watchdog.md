@@ -11,7 +11,7 @@ It reviews repo edits, not ordinary conversation:
 - It runs at the safe `agent_end` boundary, only when the current agent or child writer changed the final repo state since the start of that turn.
 - Multiple edits in one turn are coalesced into one review of the final changed state.
 - Unchanged/reverted diffs are skipped.
-- Generated `.pi-subagents/` or `tmp/` artifacts do not trigger review.
+- Generated `.pi/subagents/` or `tmp/` artifacts do not trigger review.
 - In orchestrated runs, each writing child can review its own edited worktree, and the parent can still review the aggregate repo diff after child changes are applied.
 
 ## Choosing a model

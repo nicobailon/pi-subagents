@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Move project-scoped pi-subagents storage from `.pi-subagents/` to `.pi/subagents/` for cleaner project roots. Thanks to @yceachan for #971.
 - Clarify the accepted mission launch object contract for tool callers.
 - Reduce repeated async status parsing and workflow trace projection work.
 

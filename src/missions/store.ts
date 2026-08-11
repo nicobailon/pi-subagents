@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { getProjectSubagentsDir } from "../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import {
@@ -290,7 +291,7 @@ export function resolveMissionStoreLocation(input: {
 	const projectRoot = path.resolve(input.projectRoot);
 	const missionDir = input.config?.directory
 		? expandConfiguredPath(input.config.directory, projectRoot)
-		: path.join(projectRoot, ".pi-subagents", "missions");
+		: path.join(getProjectSubagentsDir(projectRoot), "missions");
 	const globalIndexDir = input.config?.globalIndexDir
 		? expandConfiguredPath(input.config.globalIndexDir, projectRoot)
 		: path.join(input.agentDir ?? getAgentDir(), "missions", "index");

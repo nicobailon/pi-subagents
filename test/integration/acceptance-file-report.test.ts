@@ -325,7 +325,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 				agentConfig: makeAgent("worker", { completionGuard: false }),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-file-report" },
 				artifactConfig,
-				artifactsDir: path.join(tempDir, ".pi-subagents", "artifacts"),
+				artifactsDir: path.join(tempDir, ".pi/subagents", "artifacts"),
 				shareEnabled: false,
 				maxSubagentDepth: 2,
 				output: outputPath,

@@ -76,7 +76,7 @@ describe("Herdr inspector", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-inspector-"));
 		try {
 			const { asyncDir } = writeRun(root);
-			const missionDir = path.join(root, "other-project", ".pi-subagents", "missions");
+			const missionDir = path.join(root, "other-project", ".pi/subagents", "missions");
 			fs.writeFileSync(path.join(asyncDir, "mission.json"), JSON.stringify({
 				schemaVersion: 1,
 				missionId: "mission-cross-project",
@@ -296,7 +296,7 @@ describe("Herdr inspector", () => {
 			assert.equal(status.isError, undefined, text(status));
 			assert.match(text(status), /w1:p32 is open/);
 			const legacyBinding = readHerdrProjectPaneBinding(root)!;
-			fs.writeFileSync(path.join(root, ".pi-subagents", "project-panes", "herdr.json"), JSON.stringify({ ...legacyBinding, startupMessage: 42 }));
+			fs.writeFileSync(path.join(root, ".pi/subagents", "project-panes", "herdr.json"), JSON.stringify({ ...legacyBinding, startupMessage: 42 }));
 			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: root, client });
 			assert.equal(closed.isError, undefined, text(closed));
 			assert.equal(readHerdrProjectPaneBinding(root), undefined);

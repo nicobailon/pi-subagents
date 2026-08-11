@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { shortenPath } from "../../shared/formatters.ts";
 import type { AsyncStatus, Details, ExtensionConfig } from "../../shared/types.ts";
@@ -87,7 +88,7 @@ export function scheduledRunsEnabled(config: ExtensionConfig): boolean {
 }
 
 export function scheduledRunStorePath(cwd: string, _sessionId?: string, root?: string): string {
-	if (!root) return path.join(path.resolve(cwd), ".pi-subagents", "schedules");
+	if (!root) return path.join(getProjectSubagentsDir(path.resolve(cwd)), "schedules");
 	const projectKey = createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 20);
 	return path.join(root, projectKey);
 }

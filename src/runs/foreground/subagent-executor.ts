@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveAgentName, type AgentConfig, type AgentScope } from "../../agents/agents.ts";
-import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning } from "../../shared/artifacts.ts";
+import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
@@ -1450,7 +1450,7 @@ async function resumeAsyncRun(input: {
 		inheritProjectContext: recoveryDescriptor.inheritProjectContext,
 		inheritSkills: recoveryDescriptor.inheritSkills,
 		source: "project",
-		filePath: recoveryDescriptor.agentFilePath ?? path.join(recoveryDescriptor.cwd, ".pi-subagents-recovery-agent"),
+		filePath: recoveryDescriptor.agentFilePath ?? path.join(getProjectSubagentsDir(recoveryDescriptor.cwd), "recovery-agent"),
 	} : undefined);
 	if (!agentConfig) {
 		return {

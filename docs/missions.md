@@ -11,7 +11,7 @@ Missions are durable wrappers around runs. The noun map:
 - **Run** — one actual subagent execution.
 - **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
 
-Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `<cwd>/.pi-subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Workflow children do not create separate missions. Each workflow child attempt is stored in the enclosing mission with its stable workflow key, run id when known, agent, task metadata, timestamps, session and artifact paths, and latest status heartbeat.
+Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `<cwd>/.pi/subagents/missions/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Workflow children do not create separate missions. Each workflow child attempt is stored in the enclosing mission with its stable workflow key, run id when known, agent, task metadata, timestamps, session and artifact paths, and latest status heartbeat.
 
 Behavior:
 
@@ -19,7 +19,7 @@ Behavior:
 - Human receipts end with `Mission: <id> (<status>)`, while JSON/structured output text stays unchanged and `details.missionId` is authoritative.
 - Pass `mission: false` for an intentionally ephemeral workflow. It creates no mission for the workflow or its children and has no `state` global.
 - Set `missions.enabled: false` to disable automatic mission creation; explicit mission fields and actions still work.
-- A workflow with a mission can use `await state.get(key)` and `await state.set(key, value)` for durable JSON state. Missing keys return `undefined`. Keys use the same format as `runs.run` keys. Each set takes the state-file lock, reads the latest file, merges the key, and atomically writes `<cwd>/.pi-subagents/missions/<mission-id>/state.json`. The complete file cannot exceed 256 KiB. Each workflow caches the file on its first `get`. A `mission:false` workflow has no `state` global.
+- A workflow with a mission can use `await state.get(key)` and `await state.set(key, value)` for durable JSON state. Missing keys return `undefined`. Keys use the same format as `runs.run` keys. Each set takes the state-file lock, reads the latest file, merges the key, and atomically writes `<cwd>/.pi/subagents/missions/<mission-id>/state.json`. The complete file cannot exceed 256 KiB. Each workflow caches the file on its first `get`. A `mission:false` workflow has no `state` global.
 
 An explicit `mission` object must have exactly one non-empty `title` or `summary`. `objective` and `labels` are optional. When supplied, `goal` must be `true` and requires `budget: { tokens: <positive integer> }`.
 
@@ -83,7 +83,7 @@ Mission storage configuration (`missions.directory`, `retainTerminal`, `globalIn
 
 ## Schedules
 
-Durable schedules are enabled by default and stored per project under `.pi-subagents/schedules/<id>/`.
+Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`.
 
 Create a one-shot schedule:
 
