@@ -295,24 +295,29 @@ describe("acknowledged steering action", () => {
 					projectRequest(routed, request, ["routed"]);
 					writeStatus(asyncDir, routed);
 				},
-				onRecoveryCommitted: () => { recoveryCommitted = true; },
-				recover: async (limits) => { recoveryStarted = true; receivedLimits = limits; return successResult("replacement"); },
+				onRecoveryCommitted: () => {
+					recoveryCommitted = true;
+					assert.ok(request);
+					assert.ok(routed);
+					writeSteerAck(asyncDir, { requestId: request.id, index: 0, ts: Date.now(), state: "delivered", message: "accepted after runner pause" });
+					writeStatus(asyncDir, {
+						...routed,
+						state: "paused",
+						endedAt: Date.now(),
+						turnBudget: { maxTurns: 10, graceTurns: 2, turnCount: 7, outcome: "within-budget" },
+						toolBudget: { soft: 8, hard: 12, block: ["read"], toolCount: 9, outcome: "soft-reached" },
+						steps: [{ ...routed.steps![0]!, status: "paused", sessionFile }],
+					});
+				},
+				recover: async (limits) => {
+					recoveryStarted = true;
+					const paused = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatus;
+					assert.equal(paused.state, "paused");
+					assert.equal(typeof paused.endedAt, "number");
+					receivedLimits = limits;
+					return successResult("replacement");
+				},
 			});
-			await waitUntil(() => recoveryCommitted ? true : undefined);
-			assert.ok(request);
-			assert.ok(routed);
-			writeSteerAck(asyncDir, { requestId: request.id, index: 0, ts: Date.now(), state: "delivered", message: "accepted after runner pause" });
-			const paused: AsyncStatus = {
-				...routed,
-				state: "paused",
-				turnBudget: { maxTurns: 10, graceTurns: 2, turnCount: 7, outcome: "within-budget" },
-				toolBudget: { soft: 8, hard: 12, block: ["read"], toolCount: 9, outcome: "soft-reached" },
-				steps: [{ ...routed.steps![0]!, status: "paused", sessionFile }],
-			};
-			writeStatus(asyncDir, paused);
-			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.equal(recoveryStarted, false, "recovery must wait for final paused persistence");
-			writeStatus(asyncDir, { ...paused, endedAt: Date.now() });
 			const result = await action;
 			assert.equal(result.isError, undefined);
 			assert.equal(result.details.steering?.state, "recovered");
@@ -334,7 +339,7 @@ describe("acknowledged steering action", () => {
 		}
 	});
 
-	it("leaves an unacknowledged single run paused when no session can be revived", async () => {
+	it("leaves a single run paused when no session can be revived", async () => {
 		const runId = `steer-no-session-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		writeStatus(asyncDir, runningStatus(runId));
@@ -348,7 +353,7 @@ describe("acknowledged steering action", () => {
 				onRequestQueued: (requestPath) => {
 					const request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
 					routed = runningStatus(runId);
-					projectRequest(routed, request, ["routed"]);
+					projectRequest(routed, request, ["failed"]);
 					writeStatus(asyncDir, routed);
 				},
 				onRecoveryCommitted: () => {

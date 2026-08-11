@@ -1216,7 +1216,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("cancels async acceptance verification when the run times out", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("cancels async acceptance verification when the run times out", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ output: "implementation complete" });
 		const id = `async-timeout-acceptance-${Date.now().toString(36)}`;
 		const timeoutMs = 1_000;

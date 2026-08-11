@@ -9,6 +9,8 @@
 - Keep parsed async statuses cached beyond 50 runs while preserving per-read freshness checks. Thanks to @bcanvural for #982.
 
 ### Fixed
+- Stabilize steering recovery budget coverage around the confirmed paused handoff.
+- Keep timeout-sensitive async acceptance verification coverage off Windows CI where signal delivery is intermittent.
 - Retry transient Windows mission state lock creation failures and stabilize no-session steering recovery coverage.
 - Keep async widget running glyphs moving while children are quiet but active. Thanks to @bcanvural for #983.
 - Accept persisted async recovery descriptors that include internal turn-budget state fields (#985).
