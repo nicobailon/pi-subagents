@@ -4,7 +4,7 @@
 
 ### Changed
 - Add optional strict model-scope enforcement that rejects inherited and fallback models outside the configured allowlist. Thanks to @antonioc-cl for #995.
-- Trim legacy chain-control schema fields and guidance by default, with `legacyChainControls: true` available for direct legacy chain management. Thanks to @tajquitgenius for #977.
+- Trim legacy chain-control schema fields and guidance by default, saving 1,319 `o200k_base` tokens from the serialized default tool schema plus description versus `legacyChainControls: true`. Thanks to @tajquitgenius for #977.
 - Move project-scoped pi-subagents storage from `.pi-subagents/` to `.pi/subagents/` for cleaner project roots. Thanks to @yceachan for #971.
 - Clarify the accepted mission launch object contract for tool callers.
 - Reduce repeated async status parsing, workflow trace projection, and constrained widget rendering work.
