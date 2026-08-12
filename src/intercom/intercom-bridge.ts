@@ -63,7 +63,10 @@ export function resolveIntercomSessionTarget(sessionName: string | undefined, se
 	if (trimmedName) return trimmedName;
 	const fallbackSessionId = intercomSessionId?.trim() || sessionId;
 	const normalizedSessionId = fallbackSessionId.startsWith("session-") ? fallbackSessionId.slice("session-".length) : fallbackSessionId;
-	return `${DEFAULT_INTERCOM_TARGET_PREFIX}-${normalizedSessionId.slice(0, 8)}`;
+	// NOTE: keep slice length in sync with pi-intercom's resolveIntercomPresenceName
+	// (index.ts: DEFAULT_UNNAMED_SESSION_ALIAS_PREFIX + slice(0, 18)); mismatched lengths
+	// make fallback orchestrator targets unresolvable ("Session not found").
+	return `${DEFAULT_INTERCOM_TARGET_PREFIX}-${normalizedSessionId.slice(0, 18)}`;
 }
 
 function sanitizeIntercomTargetPart(value: string): string {
