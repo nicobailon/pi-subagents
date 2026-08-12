@@ -328,6 +328,7 @@ export interface FileMutationEffect {
 	expected: boolean;
 	attempted: boolean;
 	message?: string;
+	resolvedBy?: "llm-intent-arbiter";
 }
 
 export interface EffectsProjection {
