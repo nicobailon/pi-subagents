@@ -3805,6 +3805,32 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(invalidResult.details?.timeoutMs, executorMod?.DEFAULT_FOREGROUND_TIMEOUT_MS);
 	});
 
+	it("applies the global config timeout default to foreground workflow scripts", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ delay: 5_000, output: "too late" });
+		mockPi.onCall({ delay: 5_000, output: "too late" });
+		const executor = makeExecutor([makeAgent("echo")], { timeoutMs: 250 });
+
+		const configResult = await executor.execute(
+			"workflow-config-timeout-default",
+			{ async: false, workflowScript: `return await runs.run("slow", { agent: "echo", task: "Wait" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(configResult.isError, true);
+		assert.match(configResult.content[0]?.text ?? "", /Workflow script timed out after 250ms/);
+
+		const explicitResult = await executor.execute(
+			"workflow-config-timeout-explicit",
+			{ async: false, timeoutMs: 150, workflowScript: `return await runs.run("slow", { agent: "echo", task: "Wait" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(explicitResult.isError, true);
+		assert.match(explicitResult.content[0]?.text ?? "", /Workflow script timed out after 150ms/);
+	});
+
 	it("runs omitted async launches in the background when the global default is enabled", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")], {}, true);
 
