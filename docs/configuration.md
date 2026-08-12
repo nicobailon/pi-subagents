@@ -125,7 +125,7 @@ Global default runtime deadline, in milliseconds, for subagent runs. It replaces
 
 This is the knob a per-agent frontmatter `timeoutMs` cannot reach: parallel (`tasks: [...]`) and chain launches never adopt an agent's frontmatter timeout — that default applies to single-agent launches only — so a long fan-out otherwise falls back to the 30-minute default and is killed mid-run. Set `timeoutMs` to give every run mode the same generous default from one place.
 
-Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design — their runner children are bounded individually — so this value does not cap them. Must be a positive integer; invalid values are ignored and the built-in defaults apply.
+Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design — their runner children are bounded individually — so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
 ## `globalConcurrencyLimit`
 

@@ -2118,12 +2118,23 @@ export const DEFAULT_FOREGROUND_TIMEOUT_MS = 30 * 60 * 1000;
 export { DEFAULT_ASYNC_TIMEOUT_MS };
 
 /**
+ * Maximum delay a Node.js timer accepts. Values above the 32-bit signed integer
+ * ceiling overflow `setTimeout`, which silently clamps the delay to ~1ms and
+ * fires almost immediately — so a run configured with a larger deadline would
+ * terminate right away while reporting the long duration. Any timeout destined
+ * for a timer must stay within this bound.
+ */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
  * Resolve the optional global default runtime deadline from extension config
- * (`config.timeoutMs`). Returns undefined for unset or invalid (non-positive-integer)
- * values so callers fall back to the built-in defaults.
+ * (`config.timeoutMs`). Returns undefined for unset or invalid values so callers
+ * fall back to the built-in defaults. "Invalid" covers non-positive-integer
+ * values and values above `MAX_TIMER_DELAY_MS`; the latter would overflow the
+ * Node.js timer and expire the run almost immediately instead of running long.
  */
 export function resolveConfigDefaultTimeoutMs(raw: unknown): number | undefined {
-	if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) return undefined;
+	if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0 || raw > MAX_TIMER_DELAY_MS) return undefined;
 	return raw;
 }
 
