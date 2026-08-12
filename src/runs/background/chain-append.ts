@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
 import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, readStatus } from "../../shared/utils.ts";
 import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep, RunnerCheckpointStep } from "../shared/parallel-utils.ts";
 import { isCheckpointRunnerStep, isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
 
@@ -135,8 +135,8 @@ const MAX_STATUS_STEP_DESCRIPTION_CHARS = 160;
 
 /** Bounded one-line per-step task description persisted into status.json for fleet display. */
 export function statusStepDescription(task: string | undefined): string | undefined {
-	const description = task?.replace(/\s+/g, " ").trim();
-	if (!description) return undefined;
+	if (!task?.trim()) return undefined;
+	const description = PROMPT_REDACTED;
 	return description.length > MAX_STATUS_STEP_DESCRIPTION_CHARS
 		? `${description.slice(0, MAX_STATUS_STEP_DESCRIPTION_CHARS - 1)}…`
 		: description;

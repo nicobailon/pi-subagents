@@ -667,10 +667,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError);
-		const step2Task = result.details.results[1].task;
+		assert.equal(result.details.results[1].task, "[prompt redacted]");
+		const step2Task = readCallArgs(1).at(-1) ?? "";
 		assert.ok(
 			step2Task.includes("MARKER_ABC_123"),
-			`step 2 task should contain step 1 output via {previous}: ${step2Task.slice(0, 200)}`,
+			`step 2 invocation should contain step 1 output via {previous}: ${step2Task.slice(0, 200)}`,
 		);
 	});
 
@@ -1164,10 +1165,11 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		);
 
 		assert.ok(!result.isError);
-		const workerTask = result.details.results[0].task;
+		assert.equal(result.details.results[0].task, "[prompt redacted]");
+		const workerTask = readCallArgs(0).at(-1) ?? "";
 		assert.ok(
 			workerTask.includes("the authentication module"),
-			`should substitute {task}: ${workerTask.slice(0, 200)}`,
+			`should substitute {task} in the child invocation: ${workerTask.slice(0, 200)}`,
 		);
 	});
 
@@ -1566,7 +1568,8 @@ describe("chain execution — parallel steps", { skip: !available ? "pi packages
 
 		assert.ok(!result.isError);
 		assert.equal(result.details.results.length, 3);
-		const synthTask = result.details.results[2].task;
+		assert.equal(result.details.results[2].task, "[prompt redacted]");
+		const synthTask = readCallArgs(2).at(-1) ?? "";
 		assert.ok(
 			synthTask.includes("=== Parallel Task 1 (reviewer-a) ==="),
 			"synthesizer should include reviewer-a output block",

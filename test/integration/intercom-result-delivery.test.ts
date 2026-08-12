@@ -744,7 +744,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.deepEqual(startedEvent?.agents, ["worker", "reviewer"]);
 			assert.deepEqual(startedEvent?.chain, ["worker", "reviewer"]);
 			assert.equal(startedEvent?.chainStepCount, 2);
-			assert.equal(startedEvent?.goal, "Review this root result: {previous}");
+			assert.equal(startedEvent?.goal, "[prompt redacted]");
 			const attachedId = result.details?.asyncId;
 			assert.ok(attachedId, "expected attached chain async id");
 			assert.match(result.details?.asyncDir ?? "", new RegExp(`${attachedId}$`));
@@ -907,7 +907,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.ok(revivedId, "expected revived async id");
 			assert.equal(result.details?.sourceLaunchContractDigest, "source-launch-contract-digest");
 			const startedEvent = events.emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT && (entry.payload as { id?: string }).id === revivedId)?.payload as { goal?: string } | undefined;
-			assert.equal(startedEvent?.goal, "What changed?");
+			assert.equal(startedEvent?.goal, "[prompt redacted]");
 			const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
 			const deadline = Date.now() + 10_000;
 			while (!fs.existsSync(resultPath)) {

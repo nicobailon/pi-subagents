@@ -17,6 +17,7 @@ import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, Neste
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
 const PI_CODING_AGENT_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 export const PI_CODING_AGENT_PACKAGE_ROOT_ENV = "PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT";
+export const PROMPT_REDACTED = "[prompt redacted]";
 
 export function resolveWatchPath(
 	watchPath: string,
@@ -354,7 +355,7 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 		agent: progress.agent,
 		status: progress.status,
 		activityState: progress.activityState,
-		task: progress.task,
+		task: "[prompt redacted]",
 		skills: progress.skills,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
@@ -428,6 +429,7 @@ export function compactForegroundResult(result: SingleResult): SingleResult {
 	const toolCalls = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages);
 	return {
 		...result,
+		task: "[prompt redacted]",
 		messages: undefined,
 		progress: undefined,
 		toolCalls: toolCalls.length ? toolCalls : undefined,

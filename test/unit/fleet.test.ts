@@ -7,8 +7,11 @@ import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { collectFleetSnapshot, openSubagentFleet, SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
+import { registerLivePromptAudit, rewritePromptWithGuidance } from "../../src/runs/foreground/prompt-audit.ts";
 import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 
 function stateForTest(): SubagentState {
 	return {
@@ -92,6 +95,35 @@ const markdownTheme: MarkdownTheme = {
 };
 
 describe("native subagent fleet", () => {
+	it("rewrites an authored prompt from guidance without persistence", async () => {
+		const calls: unknown[] = [];
+		const streamFn = (_model: never, context: unknown) => {
+			calls.push(context);
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => stream.push({ type: "done", reason: "stop", message: fauxAssistantMessage("Rewritten task", { stopReason: "stop" }) }));
+			return stream;
+		};
+		const model = { provider: "faux", id: "rewrite", api: "faux", input: ["text"], reasoning: false, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 };
+		const ctx = {
+			model,
+			signal: undefined,
+			modelRegistry: {
+				async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
+				getRegisteredProviderConfig() { return { api: "faux", streamSimple: streamFn }; },
+			},
+		} as never;
+		const rewritten = await rewritePromptWithGuidance({
+			ctx,
+			authoredTask: "Original task",
+			runtimeAdditions: "Runtime context",
+			finalEffectivePrompt: "Runtime context\n\nOriginal task",
+			guidance: "Make it narrower",
+		});
+		assert.equal(rewritten, "Rewritten task");
+		assert.match(JSON.stringify(calls), /Original task/);
+		assert.match(JSON.stringify(calls), /Make it narrower/);
+	});
+
 	it("collects current-session foreground and flattened async children", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-collect-"));
 		try {
@@ -133,6 +165,117 @@ describe("native subagent fleet", () => {
 			assert.equal(snapshot.error, undefined);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reveals live prompts only inside Prompt Audit for the owning session", async () => {
+		const sentinel = "PROMPT_AUDIT_SENTINEL_1021";
+		const secondSentinel = "PROMPT_AUDIT_SECOND_CHILD";
+		const state = stateForTest();
+		const control = {
+			runId: "prompt-run",
+			sessionId: "session-current",
+			mode: "parallel" as const,
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([
+				[0, { index: 0, agent: "worker", startedAt: 10, updatedAt: 20 }],
+				[1, { index: 1, agent: "reviewer", startedAt: 11, updatedAt: 21 }],
+			]),
+		};
+		state.foregroundControls.set(control.runId, control);
+		registerLivePromptAudit(control, 0, sentinel, `[Read from: context.md]\n\n${sentinel}\n\n---\nRuntime acceptance`, { rerun: { params: { agent: "worker", task: sentinel } } });
+		registerLivePromptAudit(control, 1, secondSentinel, secondSentinel);
+		assert.doesNotMatch(JSON.stringify(control), new RegExp(sentinel), "live prompts must not enter serializable Fleet state");
+		const clipboardWrites: string[] = [];
+		const redoCalls: Array<{ runId: string; index: number; guidance: string }> = [];
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{
+				refreshMs: 60_000,
+				markdownTheme,
+				copyText: (text) => { clipboardWrites.push(text); },
+				actions: {
+					async steer() { return { text: "unused" }; },
+					stop() { return { text: "unused" }; },
+					async redoPrompt(input) {
+						redoCalls.push(input);
+						return { text: "Prompt redo started redo-run." };
+					},
+				},
+			},
+		);
+		try {
+			const initialRender = component.render(100).join("\n");
+			assert.doesNotMatch(initialRender, new RegExp(sentinel));
+			assert.match(initialRender, /Prompt audit: 2 live, hidden/);
+			component.handleInput("p");
+			assert.match(component.render(100).join("\n"), /Prompt text hidden/);
+			component.handleInput("\r");
+			assert.match(component.render(100).join("\n"), new RegExp(sentinel));
+			component.handleInput("2");
+			assert.match(component.render(100).join("\n"), /Read from: context\.md/);
+			component.handleInput("3");
+			assert.match(component.render(100).join("\n"), /Runtime acceptance/);
+			component.handleInput("c");
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.deepEqual(clipboardWrites, [`[Read from: context.md]\n\n${sentinel}\n\n---\nRuntime acceptance`]);
+			assert.match(component.render(100).join("\n"), /Copied visible prompt view/);
+			component.handleInput("g");
+			for (const char of "make narrower") component.handleInput(char);
+			component.handleInput("\r");
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.deepEqual(redoCalls, [{ runId: "prompt-run", index: 0, guidance: "make narrower", control }]);
+			assert.match(component.render(100).join("\n"), /Prompt redo started redo-run/);
+			component.handleInput("j");
+			assert.match(component.render(100).join("\n"), /Selected: 2\/2/);
+			assert.match(component.render(100).join("\n"), /Agent: reviewer/);
+			assert.doesNotMatch(component.render(100).join("\n"), new RegExp(secondSentinel));
+			component.handleInput("\r");
+			assert.match(component.render(100).join("\n"), new RegExp(secondSentinel));
+			component.handleInput("k");
+			component.handleInput("1");
+			assert.match(component.render(100).join("\n"), /Selected: 1\/2/);
+			assert.match(component.render(100).join("\n"), /Agent: worker/);
+			assert.doesNotMatch(component.render(100).join("\n"), new RegExp(sentinel));
+			component.handleInput("r");
+			assert.doesNotMatch(component.render(100).join("\n"), new RegExp(sentinel));
+			component.handleInput("\x1b");
+			assert.match(component.render(100).join("\n"), /Prompt audit: 2 live, hidden/);
+		} finally {
+			component.dispose();
+		}
+	});
+
+	it("rejects Prompt Audit for a child owned by another session", () => {
+		const state = stateForTest();
+		const control = {
+			runId: "other-run",
+			sessionId: "session-other",
+			mode: "single" as const,
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "worker", startedAt: 10, updatedAt: 20 }]]),
+		};
+		state.foregroundControls.set(control.runId, control);
+		registerLivePromptAudit(control, 0, "SECRET", "SECRET");
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{ refreshMs: 60_000, markdownTheme },
+		);
+		try {
+			component.handleInput("p");
+			const rendered = component.render(100).join("\n");
+			assert.match(rendered, /Prompt Audit is available only/);
+			assert.doesNotMatch(rendered, /SECRET/);
+		} finally {
+			component.dispose();
 		}
 	});
 
@@ -778,7 +921,7 @@ describe("native subagent fleet", () => {
 				assert.ok(lines.some((line) => line.includes("reviewer")));
 				assert.ok(lines.some((line) => line.includes("foreground · live")));
 				assert.ok(lines.some((line) => line.includes("live-model · thinking high")));
-				assert.ok(lines.some((line) => line.includes("Task") && line.includes("Implement the active task")));
+				assert.ok(lines.every((line) => !line.includes("Implement the active task") && !line.includes("Review the active task")));
 				assert.ok(lines.some((line) => line.includes("Conversation") && line.includes("assistant response")));
 				assert.ok(lines.some((line) => line.includes("Worker live result")));
 			} finally {

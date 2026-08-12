@@ -21,7 +21,7 @@ import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
-import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, resolveModelCandidate, resolveSubagentModelOverride, type AvailableModelInfo, type ParentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -1166,8 +1166,8 @@ export function executeAsyncChain(
 			mode: resultMode,
 			agent: firstAgents[0],
 			agents: flatAgents,
-			task: firstTask?.slice(0, 50),
-			goal: workflowGoal?.slice(0, 120),
+			task: firstTask?.trim() ? PROMPT_REDACTED : undefined,
+			goal: workflowGoal?.trim() ? PROMPT_REDACTED : undefined,
 			chain: eventChain.map((s) =>
 				isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : isDynamicParallelStep(s) ? `expand:${s.parallel.agent}` : (s as SequentialStep).agent,
 			),
@@ -1562,8 +1562,8 @@ export function executeAsyncSingle(
 			sessionId: ctx.currentSessionId,
 			mode: "single",
 			agent,
-			task: task?.slice(0, 50),
-			goal: (params.goal ?? task).slice(0, 120),
+			task: task?.trim() ? PROMPT_REDACTED : undefined,
+			goal: (params.goal ?? task).trim() ? PROMPT_REDACTED : undefined,
 			cwd: runnerCwd,
 			asyncDir,
 			launchContractDigest,

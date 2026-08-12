@@ -9,6 +9,7 @@ import {
 	settleForegroundSchedulingOwner,
 	updateForegroundChild,
 } from "../../src/runs/foreground/foreground-control.ts";
+import { getLivePromptAudit } from "../../src/runs/foreground/prompt-audit.ts";
 
 function progress(index: number, agent: string, tokens: number): AgentProgress {
 	return {
@@ -43,6 +44,8 @@ describe("foreground child control", () => {
 		beginForegroundChild(control, {
 			index: 0,
 			agent: "reviewer",
+			authoredTask: "review",
+			effectivePrompt: "review",
 			description: "Review correctness",
 			interrupt: () => { firstInterrupts++; return true; },
 			detach: () => { firstDetaches++; return true; },
@@ -50,11 +53,17 @@ describe("foreground child control", () => {
 		beginForegroundChild(control, {
 			index: 1,
 			agent: "reviewer",
+			authoredTask: "review next",
+			effectivePrompt: "review next",
 			description: "Review quality",
+			rerun: { params: { agent: "reviewer", task: "review next" } },
 			interrupt: () => { secondInterrupts++; return true; },
 		});
 
 		assert.equal(control.activeChildren?.size, 2);
+		assert.equal(getLivePromptAudit(control, 1)?.authoredTask, "review next");
+		assert.deepEqual(getLivePromptAudit(control, 1)?.rerun?.params, { agent: "reviewer", task: "review next" });
+		assert.doesNotMatch(JSON.stringify(control), /review next/);
 		assert.equal(control.currentIndex, 1);
 		updateForegroundChild(control, 0, progress(0, "reviewer", 120));
 		assert.equal(control.currentIndex, 0);
@@ -72,6 +81,7 @@ describe("foreground child control", () => {
 
 		updateForegroundChild(control, 1, progress(1, "reviewer", 240));
 		finishForegroundChild(control, 1);
+		assert.equal(getLivePromptAudit(control, 1), undefined);
 		assert.equal(control.currentIndex, 0);
 		assert.equal(control.tokens, 120);
 		assert.deepEqual([...control.activeChildren!.keys()], [0]);

@@ -17,6 +17,7 @@ import {
 	settleForegroundSchedulingOwner,
 	updateForegroundChild,
 } from "./foreground-control.ts";
+import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { persistForegroundRunHistory, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
@@ -431,6 +432,17 @@ function getForegroundControl(state: SubagentState, runId: string | undefined) {
 		if (!newest || control.updatedAt > newest.updatedAt) newest = control;
 	}
 	return newest;
+}
+
+function promptAuditRedoParams(value: unknown, rewrittenTask: string): SubagentParamsLike {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Prompt redo is missing a safe live launch contract.");
+	const params = { ...(value as SubagentParamsLike), task: rewrittenTask, async: false };
+	delete params.workflowParentRunId;
+	delete params.workflowKey;
+	delete params.workflowChildAsyncId;
+	delete params.suppressRoutineResultIntercom;
+	if (params.worktree === true && Array.isArray(params.tasks)) delete params.cwd;
+	return params;
 }
 
 function formatForegroundActivity(control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never): string | undefined {
@@ -3205,7 +3217,33 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			beginForegroundChild(input.foregroundControl, {
 				index,
 				agent: task.agent,
-				...(input.taskDescriptions[index] === undefined ? {} : { description: input.taskDescriptions[index] }),
+				authoredTask: input.taskDescriptions[index] ?? "",
+				effectivePrompt: taskText,
+				cwd: taskCwd,
+				...(outputPath ? { outputPath } : {}),
+				rerun: { params: compactOptional<Record<string, unknown>>({
+					agent: task.agent,
+					task: input.taskDescriptions[index] ?? "",
+					async: false,
+					cwd: input.worktreeSetup ? undefined : taskCwd,
+					worktree: input.worktreeSetup ? true : false,
+					context: input.contextPolicy.contextForAgent(task.agent),
+					share: input.shareEnabled || undefined,
+					maxOutput: input.maxOutput,
+					timeoutMs: input.timeoutMs,
+					turnBudget: input.turnBudget,
+					...(model ? { model } : {}),
+					...(effectiveSkills !== undefined ? { skill: effectiveSkills } : {}),
+					...(outputPath ? { output: outputPath } : {}),
+					...(behavior?.outputMode !== undefined ? { outputMode: behavior.outputMode } : {}),
+					...(behavior?.reads !== undefined ? { reads: behavior.reads } : {}),
+					...(behavior?.progress !== undefined ? { progress: behavior.progress } : {}),
+					...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
+					...(task.outputSchema !== undefined ? { outputSchema: task.outputSchema } : {}),
+					...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
+					...(task.agentContract !== undefined || input.agentContract !== undefined ? { agentContract: task.agentContract ?? input.agentContract } : {}),
+				}) },
+				description: `${task.agent} child`,
 				...(model ? { model } : {}),
 				...(thinking ? { thinking } : {}),
 				interrupt: () => {
@@ -3269,6 +3307,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			agentContract: task.agentContract ?? input.agentContract,
 			acceptance: task.acceptance,
 			acceptanceContext: { mode: "parallel" },
+			onEffectivePrompt: input.foregroundControl ? (prompt) => updateLiveEffectivePrompt(input.foregroundControl!, index, prompt) : undefined,
 			timeoutMs: input.timeoutMs,
 			deadlineAt: input.deadlineAt,
 			turnBudget: input.turnBudget,
@@ -3884,6 +3923,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 	}
 
+	const authoredTask = task;
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
 		task = wrapForkTask(task);
 	}
@@ -3920,6 +3960,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		beginForegroundChild(foregroundControl, omitUndefinedProperties({
 			index: 0,
 			agent: params.agent!,
+			authoredTask,
+			effectivePrompt: task,
+			cwd: effectiveCwd,
+			outputPath,
+			rerun: { params: { ...params, task: authoredTask, async: params.async ?? false } },
 			description: foregroundControl.description,
 			...(modelOverride ? { model: modelOverride } : {}),
 			...(thinking ? { thinking } : {}),
@@ -3981,6 +4026,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			agentContract: params.agentContract,
 			acceptance: params.acceptance,
 			acceptanceContext: { mode: "single" },
+			onEffectivePrompt: foregroundControl ? (prompt) => updateLiveEffectivePrompt(foregroundControl, 0, prompt) : undefined,
 			onDetachReady: (detach) => {
 				detachForeground = detach;
 			},
@@ -4136,8 +4182,9 @@ function recordMissionWorkflowChild(
 	update: Omit<MissionWorkflowChildUpdate, "workflowRunId" | "key">,
 ): void {
 	if (!binding) return;
+	const { task: _task, ...durableUpdate } = update;
 	try {
-		updateMission(binding.location, binding.missionId, { upsertWorkflowChildren: [{ workflowRunId, key, ...update }] });
+		updateMission(binding.location, binding.missionId, { upsertWorkflowChildren: [{ workflowRunId, key, ...durableUpdate }] });
 	} catch (error) {
 		console.warn(`[pi-subagents] Failed to record mission workflow child '${key}': ${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -4428,11 +4475,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const explicitMission = requestParams.missionId !== undefined || requestParams.mission !== undefined;
 			const autoMission = !explicitMission;
 			const workflowPreview = autoMission ? previewSimpleWorkflowRun(requestParams.workflowScript) : undefined;
-			const previewTask = workflowPreview?.task?.trim() || undefined;
 			const previewAgent = workflowPreview?.agent?.trim() || undefined;
 			const scriptFirstLine = requestParams.workflowScript.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "Workflow";
 			const boundedScriptPreview = scriptFirstLine.length > 100 ? `${scriptFirstLine.slice(0, 97)}...` : scriptFirstLine;
-			const derivedObjective = previewTask || (previewAgent ? `Workflow: ${previewAgent}` : boundedScriptPreview);
+			const derivedObjective = previewAgent ? `Workflow: ${previewAgent}` : boundedScriptPreview;
 			let missionBinding: MissionLaunchBinding | undefined;
 			let missionWarning: string | undefined;
 			try {
@@ -4446,19 +4492,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (explicitMission) return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "workflow", results: [] } };
 				missionWarning = `Mission tracking unavailable: ${error instanceof Error ? error.message : String(error)}`;
 			}
-			let shouldPatchMissionObjective = autoMission && previewTask === undefined && missionBinding !== undefined;
-			const patchMissionObjective = (task: unknown): void => {
-				if (!shouldPatchMissionObjective || !missionBinding || typeof task !== "string" || !task.trim()) return;
-				shouldPatchMissionObjective = false;
-				const objective = task.trim();
-				const firstLine = objective.split(/\r?\n/, 1)[0]?.trim() || objective;
-				const title = firstLine.length > 100 ? `${firstLine.slice(0, 97)}...` : firstLine;
-				try {
-					updateMission(missionBinding.location, missionBinding.missionId, { title, objective });
-				} catch (error) {
-					console.warn(`[pi-subagents] Failed to update automatic mission objective: ${error instanceof Error ? error.message : String(error)}`);
-				}
-			};
 			const detachWorkflowChildMissions = autoMission || missionBinding !== undefined || requestParams.mission === false;
 			const workflowState = missionBinding ? createMissionWorkflowState(missionBinding.location, missionBinding.missionId) : undefined;
 			const attachWorkflowMission = (result: AgentToolResult<Details>): AgentToolResult<Details> => {
@@ -4619,13 +4652,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-								patchMissionObjective(childParams.task);
 								const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
 								const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
 								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
 									status: "running",
 									...(typeof childParams.agent === "string" && childParams.agent.trim() ? { agent: childParams.agent.trim() } : {}),
-									...(typeof childParams.task === "string" && childParams.task.trim() ? { task: childParams.task.trim() } : {}),
 									...(childLabel ? { label: childLabel } : {}),
 									...(childPhase ? { phase: childPhase } : {}),
 									heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
@@ -4742,13 +4773,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
-						patchMissionObjective(childParams.task);
 						const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
 						const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
 						recordMissionWorkflowChild(missionBinding, _id, key, {
 							status: "running",
 							...(typeof childParams.agent === "string" && childParams.agent.trim() ? { agent: childParams.agent.trim() } : {}),
-							...(typeof childParams.task === "string" && childParams.task.trim() ? { task: childParams.task.trim() } : {}),
 							...(childLabel ? { label: childLabel } : {}),
 							...(childPhase ? { phase: childPhase } : {}),
 							heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
@@ -5714,9 +5743,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(requestSessionId),
 		});
 
-		const foregroundDescription = effectiveParams.task?.trim()
-			|| effectiveParams.tasks?.[0]?.task?.trim()
-			|| (effectiveParams.chain ? firstRawChainTask(effectiveParams.chain)?.trim() : undefined);
+		const foregroundDescription = selectedAgentNames.length === 1
+			? `${selectedAgentNames[0]} child`
+			: `${selectedAgentNames.length} live children`;
 		const parentWorkflowStatus = effectiveParams.workflowParentRunId
 			? readStatus(path.join(DIRS.async, effectiveParams.workflowParentRunId))
 			: null;
@@ -5751,6 +5780,37 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				interrupt: undefined,
 			});
 		if (foregroundControl) {
+			foregroundControl.promptAuditRedo = async (index, guidance) => {
+				const audit = getLivePromptAudit(foregroundControl, index);
+				if (!audit?.rerun) return { text: "Redo is not safe for this prompt in this slice.", isError: true };
+				const rewrittenTask = await rewritePromptWithGuidance({
+					ctx,
+					authoredTask: audit.authoredTask,
+					runtimeAdditions: audit.runtimeAdditions,
+					finalEffectivePrompt: audit.finalEffectivePrompt,
+					guidance,
+					signal,
+				});
+				const redoParams = promptAuditRedoParams(audit.rerun.params, rewrittenTask);
+				const previousForegroundId = deps.state.lastForegroundControlId;
+				const launch = execute(randomUUID(), redoParams, signal, undefined, ctx, true);
+				const newRunId = deps.state.lastForegroundControlId && deps.state.lastForegroundControlId !== previousForegroundId
+					? deps.state.lastForegroundControlId
+					: undefined;
+				if (!newRunId) {
+					const result = await launch;
+					return { text: result.content.find((item) => item.type === "text")?.text ?? "Prompt redo could not start.", isError: true };
+				}
+				foregroundControl.supersededByRunId = newRunId;
+				const replacement = deps.state.foregroundControls.get(newRunId);
+				if (replacement) replacement.sourceRunId = foregroundControl.runId;
+				void launch.then((result) => {
+					if (result.isError) console.warn(`[pi-subagents] Prompt redo ${newRunId} failed: ${result.content.find((item) => item.type === "text")?.text ?? "unknown error"}`);
+				}).catch((error) => {
+					console.warn(`[pi-subagents] Prompt redo ${newRunId} failed: ${error instanceof Error ? error.message : String(error)}`);
+				});
+				return { text: `Prompt redo started ${newRunId}.` };
+			};
 			deps.state.foregroundControls.set(runId, foregroundControl);
 			deps.state.lastForegroundControlId = runId;
 		}

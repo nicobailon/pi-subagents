@@ -596,7 +596,7 @@ describe("below-editor subagent FleetView", () => {
 		assert.deepEqual(statusKeys, inspectorKeys);
 	});
 
-	it("uses tracked async task descriptions and per-child token totals", () => {
+	it("hides tracked async task descriptions and shows per-child token totals", () => {
 		const state = stateForTest();
 		state.asyncJobs.set("async-run", {
 			asyncId: "async-run",
@@ -630,9 +630,9 @@ describe("below-editor subagent FleetView", () => {
 			const component = widgetFactory!(tui, theme);
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
 			const lines = component.render(180);
-			assert.ok(lines.some((line) => line.includes("reviewer (gpt-5 · thinking medium)") && line.includes("Review only authentication")));
-			assert.ok(lines.some((line) => line.includes("worker") && line.includes("Implement only billing")));
-			assert.ok(lines.every((line) => !line.includes("Review the authentication changes")), "per-child descriptions should replace the run-level fallback when present");
+			assert.ok(lines.some((line) => line.includes("reviewer (gpt-5 · thinking medium)")));
+			assert.ok(lines.some((line) => line.includes("worker")));
+			assert.ok(lines.every((line) => !line.includes("Review only authentication") && !line.includes("Implement only billing") && !line.includes("Review the authentication changes")));
 			assert.ok(lines.some((line) => line.includes("↓ 4.2k tokens")));
 		} finally {
 			fleet.dispose();

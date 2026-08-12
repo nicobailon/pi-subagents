@@ -174,8 +174,9 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal((fleet as { omitted?: number }).omitted, 0);
 		assert.deepEqual(fleet.entries[0], {
 			key: "fleet-1", agent: "reviewer", role: "opaque label", model: "anthropic/claude-opus-4-8:high", effort: "high",
-			startedAt: 120, tokens: { input: 12, output: 34, total: 46 }, goal: "Review the diff",
+			startedAt: 120, tokens: { input: 12, output: 34, total: 46 },
 		});
+		assert.equal(JSON.stringify(fleet).includes("Review the diff"), false);
 		assert.equal(JSON.stringify(fleet).includes("async-private-id"), false);
 		bridge.dispose();
 	});
@@ -200,15 +201,13 @@ describe("subagent extension RPC bridge", () => {
 		const malformedSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u;
 
 		assert.doesNotMatch(entry.agent, malformedSurrogate);
-		assert.doesNotMatch(entry.goal, malformedSurrogate);
-		assert.doesNotMatch(entry.goal, /[\r\n]/);
+		assert.equal(entry.goal, undefined);
 		assert.ok(entry.agent.length <= 96);
-		assert.ok(entry.goal.length <= 512);
 		assert.match(entry.agent, /^worker broken/);
 		bridge.dispose();
 	});
 
-	it("projects resolved foreground model, effort, split usage, and goal", async () => {
+	it("projects resolved foreground model, effort, and split usage without prompt goals", async () => {
 		const events = new FakeEvents();
 		const state = {
 			currentSessionId: "session-123",
@@ -258,7 +257,6 @@ describe("subagent extension RPC bridge", () => {
 				effort: "high",
 				startedAt: 100,
 				tokens: { input: 321, output: 45, total: 366 },
-				goal: "Implement the fix",
 			}],
 		});
 		assert.equal(JSON.stringify((reply as any).data.fleet).includes("private-run"), false);

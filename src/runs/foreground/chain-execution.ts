@@ -43,6 +43,7 @@ import {
 	settleForegroundSchedulingOwner,
 	updateForegroundChild,
 } from "./foreground-control.ts";
+import { updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { buildChainSummary } from "../../shared/formatters.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -369,7 +370,11 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				beginForegroundChild(input.foregroundControl, {
 					index: childIndex,
 					agent: task.agent,
-					description: cleanTask.trim(),
+					authoredTask: cleanTask,
+					effectivePrompt: taskStr,
+					cwd: taskCwd,
+					...(outputPath ? { outputPath } : {}),
+					description: `${task.agent} child`,
 					...(effectiveModel ? { model: effectiveModel } : {}),
 					...(thinking ? { thinking } : {}),
 					interrupt: () => {
@@ -424,6 +429,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				agentContract,
 				acceptance: task.acceptance,
 				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined },
+				onEffectivePrompt: input.foregroundControl ? (prompt) => updateLiveEffectivePrompt(input.foregroundControl!, childIndex, prompt) : undefined,
 				timeoutMs: input.timeoutMs,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
@@ -1334,7 +1340,11 @@ ${step.message}` : ""}` }],
 				beginForegroundChild(foregroundControl, {
 					index: childIndex,
 					agent: seqStep.agent,
-					description: cleanTask.trim(),
+					authoredTask: cleanTask,
+					effectivePrompt: stepTask,
+					cwd,
+					...(outputPath ? { outputPath } : {}),
+					description: `${seqStep.agent} child`,
 					...(effectiveModel ? { model: effectiveModel } : {}),
 					...(thinking ? { thinking } : {}),
 					interrupt: () => {
@@ -1406,6 +1416,7 @@ ${step.message}` : ""}` }],
 				agentContract,
 				acceptance: seqStep.acceptance,
 				acceptanceContext: { mode: "chain" },
+				onEffectivePrompt: foregroundControl ? (prompt) => updateLiveEffectivePrompt(foregroundControl, childIndex, prompt) : undefined,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				turnBudget: params.turnBudget,

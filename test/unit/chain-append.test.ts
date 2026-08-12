@@ -12,6 +12,7 @@ import {
 } from "../../src/runs/background/chain-append.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
 import type { RunnerStep } from "../../src/runs/shared/parallel-utils.ts";
+import { PROMPT_REDACTED } from "../../src/shared/utils.ts";
 import { createTempDir, removeTempDir } from "../support/helpers.ts";
 
 function writeStatus(asyncDir: string, status: Partial<AsyncStatus> & Pick<AsyncStatus, "runId" | "mode" | "state" | "startedAt">): void {
@@ -198,11 +199,11 @@ describe("chain append requests", () => {
 			"reviewer:pending",
 			"auditor:pending",
 		]);
-		// Appended steps must carry their own bounded task description for fleet display.
+		// Appended steps must not carry raw task text into durable status.
 		assert.deepEqual(status.steps?.slice(1).map((step) => step.description), [
-			"Use {previous}",
-			"Use {previous}",
-			"Use {previous}",
+			PROMPT_REDACTED,
+			PROMPT_REDACTED,
+			PROMPT_REDACTED,
 		]);
 		assert.deepEqual(status.parallelGroups, [{ start: 2, count: 2, stepIndex: 2 }]);
 		assert.equal(status.workflowGraph?.nodes[1]?.id, "step-1");

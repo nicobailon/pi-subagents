@@ -1,9 +1,15 @@
 import type { AgentProgress, ForegroundChildControl, ForegroundRunControl } from "../../shared/types.ts";
+import { registerLivePromptAudit, removeLivePromptAudit, type PromptAuditRerunContract } from "./prompt-audit.ts";
 
 interface BeginForegroundChildInput {
 	index: number;
 	agent: string;
 	description?: string;
+	authoredTask: string;
+	effectivePrompt: string;
+	cwd?: string;
+	outputPath?: string;
+	rerun?: PromptAuditRerunContract;
 	model?: string;
 	thinking?: string;
 	interrupt: () => boolean;
@@ -109,6 +115,11 @@ export function beginForegroundChild(control: ForegroundRunControl, input: Begin
 	}
 	control.activeChildren ??= new Map();
 	control.activeChildren.set(input.index, child);
+	registerLivePromptAudit(control, input.index, input.authoredTask, input.effectivePrompt, {
+		...(input.cwd ? { cwd: input.cwd } : {}),
+		...(input.outputPath ? { outputPath: input.outputPath } : {}),
+		...(input.rerun ? { rerun: input.rerun } : {}),
+	});
 	syncCurrentChild(control, child);
 }
 
@@ -121,6 +132,7 @@ export function updateForegroundChild(control: ForegroundRunControl, index: numb
 }
 
 export function finishForegroundChild(control: ForegroundRunControl, index: number): void {
+	removeLivePromptAudit(control, index);
 	control.activeChildren?.delete(index);
 	if (control.currentIndex === index) {
 		const next = [...(control.activeChildren?.values() ?? [])]

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
+import { PROMPT_REDACTED } from "../shared/utils.ts";
 import type { Details, SubagentRunMode } from "../shared/types.ts";
 import { validateMissionLaunch } from "./actions.ts";
 import type { MissionArtifact, MissionRecord, MissionRunLink, MissionRunMode, MissionStatus, MissionStoreConfig, MissionStoreLocation } from "./types.ts";
@@ -47,11 +48,6 @@ function workflowObjective(params: MissionLaunchParams): string | undefined {
 	return undefined;
 }
 
-function conciseTitle(objective: string): string {
-	const firstLine = objective.split(/\r?\n/, 1)[0]?.trim() || objective.trim();
-	return firstLine.length > 100 ? `${firstLine.slice(0, 97)}...` : firstLine;
-}
-
 export function prepareMissionLaunch(input: {
 	params: MissionLaunchParams;
 	projectRoot: string;
@@ -73,10 +69,11 @@ export function prepareMissionLaunch(input: {
 		return { missionId, location, autoCreated: false, announceInContent: true };
 	}
 	const mission = input.params.mission !== undefined ? validateMissionLaunch(input.params.mission) : undefined;
-	const title = mission?.title || conciseTitle(objective!);
+	const promptDerivedObjective = mission?.objective ?? (mission ? mission.title : objective ? PROMPT_REDACTED : undefined);
+	const title = mission?.title || PROMPT_REDACTED;
 	const record = createMission(location, {
 		title,
-		objective: mission?.objective || objective || title,
+		objective: promptDerivedObjective || title,
 		...(mission?.goal === true ? { goal: true as const } : {}),
 		...(mission?.budget ? { budget: mission.budget } : {}),
 		status: "active",

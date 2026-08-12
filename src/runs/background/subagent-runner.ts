@@ -87,7 +87,7 @@ import {
 import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
-import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import {
 	createMutatingFailureState,
@@ -1206,7 +1206,7 @@ async function runSingleStep(
 		artifactPaths = getArtifactPaths(ctx.artifactsDir, ctx.id, step.agent, index);
 		fs.mkdirSync(ctx.artifactsDir, { recursive: true });
 		if (ctx.artifactConfig?.includeInput !== false) {
-			fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
+			fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${PROMPT_REDACTED}; live Prompt Audit only.\n`, "utf-8");
 		}
 		if (ctx.artifactConfig?.includeTranscript !== false) {
 			transcriptWriter = createChildTranscriptWriter({
@@ -1219,7 +1219,7 @@ async function runSingleStep(
 			});
 		}
 	}
-	transcriptWriter?.writeInitialUserMessage(task);
+	transcriptWriter?.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 
 	if (step.runner?.type === "external-cli") {
 		const runner: ExternalCliRunnerStatus = {
@@ -1262,7 +1262,7 @@ async function runSingleStep(
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
 				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task, runner, externalProcess: external.externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: external.externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -1708,7 +1708,7 @@ async function runSingleStep(
 			metadata: {
 				runId: ctx.id,
 				agent: step.agent,
-				task,
+				task: PROMPT_REDACTED,
 				exitCode: effectiveFinalExitCode,
 				model: finalResult?.model,
 				attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,

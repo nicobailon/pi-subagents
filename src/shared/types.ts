@@ -1575,6 +1575,12 @@ export interface ForegroundRunControl {
 	toolCount?: number;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;
+	/** Live Prompt Audit redo callback. It is current-session memory only. */
+	promptAuditRedo?: (index: number, guidance: string) => Promise<{ text: string; isError?: boolean }>;
+	/** Memory-only source run for Prompt Audit redo. */
+	sourceRunId?: string;
+	/** Memory-only replacement run started by Prompt Audit redo. */
+	supersededByRunId?: string;
 	/** Scheduling owners that may still launch another child. Removal is safe only at zero. */
 	schedulingOwners?: number;
 	nestedRoute?: NestedRouteInfo;
@@ -1759,6 +1765,8 @@ export interface RunSyncOptions {
 		dynamic?: boolean;
 		dynamicGroup?: boolean;
 	};
+	/** Private live callback for the exact child prompt after runtime acceptance injection. */
+	onEffectivePrompt?: (prompt: string) => void;
 }
 
 export type IntercomBridgeMode = "off" | "fork-only" | "always";

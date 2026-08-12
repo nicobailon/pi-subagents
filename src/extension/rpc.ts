@@ -19,7 +19,6 @@ import {
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
-import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
@@ -173,7 +172,6 @@ function buildFleetStatus(
 				effort: child.thinking,
 				startedAt: child.startedAt,
 				tokens: { input: child.inputTokens ?? 0, output: child.outputTokens ?? 0, total: child.tokens ?? 0 },
-				goal: child.description ?? control.description,
 			});
 		} else {
 			addCandidate({
@@ -183,7 +181,6 @@ function buildFleetStatus(
 				effort: control.thinking,
 				startedAt: control.startedAt,
 				tokens: { input: control.inputTokens ?? 0, output: control.outputTokens ?? 0, total: control.tokens ?? 0 },
-				goal: control.description,
 			});
 		}
 	}
@@ -191,13 +188,11 @@ function buildFleetStatus(
 		if (job.sessionId !== authoritativeSessionId || !activeState(job.status)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt;
 		if (job.mode === "workflow") {
-			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			addCandidate({
 				internalKey: `async:${job.asyncId}`,
 				agent: "workflow",
 				startedAt,
 				tokens: job.totalTokens,
-				goal: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
 			});
 			continue;
 		}
@@ -214,7 +209,6 @@ function buildFleetStatus(
 				agent: job.mode ?? "subagent",
 				startedAt,
 				tokens: job.totalTokens,
-				goal: job.description,
 			});
 			continue;
 		}
@@ -230,7 +224,6 @@ function buildFleetStatus(
 				effort: step.thinking,
 				startedAt: step.startedAt ?? startedAt,
 				tokens: step.tokens ?? (steps.length === 1 ? job.totalTokens : undefined),
-				goal: job.description,
 			});
 		}
 	}

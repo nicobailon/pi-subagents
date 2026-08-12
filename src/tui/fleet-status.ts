@@ -444,9 +444,8 @@ export class SubagentFleetStatus {
 	}
 
 	private renderEntry(rosterIndex: number, selectedIndex: number, entry: FleetStatusEntry, width: number, theme: Theme): string {
-		const description = entry.description?.replace(/\s+/g, " ").trim();
 		const agent = entry.modelThinking ? `${entry.agent} (${entry.modelThinking})` : entry.agent;
-		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}${description ? `  ${description}` : ""}`;
+		const left = `  ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}`;
 		const elapsed = Date.now() - entry.startedAt;
 		const right = theme.fg("dim", `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
 		return rightAlign(left, right, width);

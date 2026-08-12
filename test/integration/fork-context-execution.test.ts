@@ -1523,6 +1523,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const rawParallelChainGoal = "Parallel chain first child raw goal";
 		const paddedWorkflowGoal = "  preserve this workflow padding  ";
 		const literalPreambleGoal = `${DEFAULT_FORK_PREAMBLE}\n\nTask:\nliteral fresh-context text`;
+		const redactedGoal = "[prompt redacted]";
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
 				{ name: "echo", description: "Echo", defaultContext: "fork" },
@@ -1576,9 +1577,10 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			assert.ok(result.details?.asyncId, `${testCase.name}: expected an async id`);
 			const event = started.find((entry) => entry.id === result.details?.asyncId);
 			assert.ok(event, `${testCase.name}: missing async-started event for ${result.details?.asyncId}`);
-			assert.equal(event.goal, testCase.goal, testCase.name);
+			assert.equal(event.goal, redactedGoal, testCase.name);
 			if (!("allowsLiteralPreamble" in testCase)) {
 				assert.doesNotMatch(event.goal ?? "", /delegated subagent running from a fork/, testCase.name);
+				assert.notEqual(event.goal, testCase.goal, testCase.name);
 			}
 		}
 	});
@@ -1640,7 +1642,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 			assert.equal(result.isError, undefined, testCase.name);
 			assert.ok(result.details?.asyncId, `${testCase.name}: expected an async id`);
 			const event = started.find((entry) => entry.id === result.details?.asyncId);
-			assert.equal(event?.goal, testCase.goal, testCase.name);
+			assert.equal(event?.goal, "[prompt redacted]", testCase.name);
+			assert.notEqual(event?.goal, testCase.goal, testCase.name);
 			assert.doesNotMatch(event?.goal ?? "", /delegated subagent running from a fork/, testCase.name);
 		}
 	});

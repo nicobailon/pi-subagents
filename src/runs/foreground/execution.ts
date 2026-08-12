@@ -91,6 +91,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
+import { PROMPT_REDACTED } from "./prompt-audit.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -118,6 +119,12 @@ function withRunContext<T extends SingleResult>(result: T, context: RunSyncOptio
 	return result;
 }
 
+function redactResultPrompt<T extends SingleResult>(result: T): T {
+	result.task = PROMPT_REDACTED;
+	if (result.progress) result.progress.task = PROMPT_REDACTED;
+	return result;
+}
+
 function sumUsage(target: Usage, source: Usage): void {
 	target.input += source.input;
 	target.output += source.output;
@@ -140,7 +147,7 @@ function persistSingleResultMetadata(input: {
 	writeMetadata(input.metadataPath, {
 		runId: input.runId,
 		agent: input.agent,
-		task: input.task,
+		task: PROMPT_REDACTED,
 		exitCode: target.exitCode,
 		processSignal: target.processSignal,
 		usage: target.usage,
@@ -232,6 +239,7 @@ function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): vo
 function snapshotProgress(progress: AgentProgress): AgentProgress {
 	return {
 		...progress,
+		task: PROMPT_REDACTED,
 		skills: progress.skills ? [...progress.skills] : undefined,
 		recentTools: boundStreamedRecentTools(progress.recentTools),
 		recentOutput: boundStreamedRecentOutput(progress.recentOutput),
@@ -241,6 +249,7 @@ function snapshotProgress(progress: AgentProgress): AgentProgress {
 function snapshotResult(result: SingleResult, progress: AgentProgress): SingleResult {
 	return {
 		...result,
+		task: PROMPT_REDACTED,
 		messages: result.outputMode === "file-only" && result.savedOutputPath ? undefined : result.messages ? [...result.messages] : undefined,
 		usage: { ...result.usage },
 		skills: result.skills ? [...result.skills] : undefined,
@@ -1381,7 +1390,7 @@ async function runSyncCompletion(
 	};
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1389,12 +1398,12 @@ async function runSyncCompletion(
 			messages: [],
 			usage: emptyUsage(),
 			error: `Unknown agent: ${agentName}`,
-		}, options.context);
+		}, options.context));
 	}
 	try {
 		assertAgentAllowedByCapabilityCeiling(agent.name, options.capabilityCeiling);
 	} catch (error) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agent.name,
 			task,
@@ -1403,11 +1412,11 @@ async function runSyncCompletion(
 			usage: emptyUsage(),
 			error: error instanceof Error ? error.message : String(error),
 			...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
-		}, options.context);
+		}, options.context));
 	}
 	const acceptanceErrors = validateAcceptanceInput(options.acceptance);
 	if (acceptanceErrors.length > 0) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1415,11 +1424,11 @@ async function runSyncCompletion(
 			messages: [],
 			usage: emptyUsage(),
 			error: acceptanceErrors.join(" "),
-		}, options.context);
+		}, options.context));
 	}
 	const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
 	if (outputModeValidationError) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1428,7 +1437,7 @@ async function runSyncCompletion(
 			usage: emptyUsage(),
 			outputMode: options.outputMode,
 			error: outputModeValidationError,
-		}, options.context);
+		}, options.context));
 	}
 
 	const shareEnabled = options.share === true;
@@ -1445,6 +1454,7 @@ async function runSyncCompletion(
 	});
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
+	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
 	if (options.context === "fork" && options.sessionFile && existsSync(options.sessionFile)) {
 		alignForkedSessionCwd(options.sessionFile, options.cwd ?? runtimeCwd);
@@ -1459,7 +1469,7 @@ async function runSyncCompletion(
 		agent.filePath ? path.dirname(agent.filePath) : skillCwd,
 	);
 	if (skillNames.some((skill) => skill.trim() === "pi-subagents") && missingSkills.includes("pi-subagents")) {
-		return withRunContext({
+		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
 			agent: agentName,
 			task,
@@ -1467,7 +1477,7 @@ async function runSyncCompletion(
 			messages: [],
 			usage: emptyUsage(),
 			error: "Skills not found: pi-subagents",
-		}, options.context);
+		}, options.context));
 	}
 	let systemPrompt = agent.systemPrompt?.trim() || "";
 	if (resolvedSkills.length > 0) {
@@ -1502,7 +1512,7 @@ async function runSyncCompletion(
 		artifactPathsResult = getArtifactPaths(options.artifactsDir, options.runId, agentName, options.index);
 		ensureArtifactsDir(options.artifactsDir);
 		if (options.artifactConfig?.includeInput !== false) {
-				writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${taskWithAcceptance}`);
+			writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${PROMPT_REDACTED}; live Prompt Audit only.\n`);
 		}
 		if (options.artifactConfig?.includeJsonl !== false) {
 			jsonlPath = artifactPathsResult.jsonlPath;
@@ -1516,7 +1526,7 @@ async function runSyncCompletion(
 				childIndex: options.index,
 				cwd: options.cwd ?? runtimeCwd,
 			});
-			transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
+			transcriptWriter.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 		}
 	}
 
@@ -1792,6 +1802,7 @@ async function runSyncCompletion(
 		}
 	}
 	if (isAgentContractV1(options.agentContract)) attachContractProjections(result);
+	redactResultPrompt(result);
 	try {
 		persistResultMetadata(result);
 	} catch (error) {
@@ -1876,7 +1887,7 @@ export async function runSync(
 				durationMs: publishedReceipt.progressSummary?.durationMs ?? 0,
 				error: failureMessage,
 			};
-		const failedResult: SingleResult = {
+		const failedResult: SingleResult = redactResultPrompt({
 			...publishedReceipt,
 			detached: undefined,
 			detachedReason,
@@ -1892,7 +1903,7 @@ export async function runSync(
 			acceptance: publishedReceipt.acceptance
 				? buildSkippedAcceptanceLedger(publishedReceipt.acceptance.effectiveAcceptance, { id: "completion-pipeline", message: failureMessage })
 				: undefined,
-		};
+		});
 		if (strictContract) attachContractProjections(failedResult);
 		try {
 			// Replace the provisional detach receipt metadata with the authoritative

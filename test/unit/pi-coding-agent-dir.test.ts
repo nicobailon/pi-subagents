@@ -182,14 +182,14 @@ Package skill content.
 	});
 
 	it("records private redacted run history and cleans session artifacts under the configured agent dir", () => {
-		const task = "Inspect customer ACME token=SECRET";
+		const task = "PROMPT_AUDIT_SENTINEL_1021 Inspect customer ACME token=SECRET";
 		recordRun("env-agent", task, 0, 42);
 		const historyPath = path.join(agentDir, "run-history.jsonl");
 		assert.equal(fs.existsSync(historyPath), true);
 		assertPrivateHistoryModes(historyPath);
 
 		const rawHistory = fs.readFileSync(historyPath, "utf-8");
-		assert.doesNotMatch(rawHistory, /Inspect customer|ACME|SECRET/);
+		assert.doesNotMatch(rawHistory, /PROMPT_AUDIT_SENTINEL_1021|Inspect customer|ACME|SECRET/);
 		assert.match(rawHistory, /"task":"\[redacted\]"/);
 		assert.match(rawHistory, /"taskHash":"[a-f0-9]{64}"/);
 

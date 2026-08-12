@@ -66,6 +66,7 @@ interface ProgressSummary {
 	agent: string;
 	index: number;
 	status: string;
+	task?: string;
 	activityState?: string;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -79,6 +80,7 @@ interface ProgressSummary {
 }
 
 interface ArtifactPaths {
+	inputPath?: string;
 	outputPath: string;
 	transcriptPath?: string;
 	metadataPath?: string;
@@ -103,6 +105,7 @@ interface RuntimeAcknowledgedExtensions {
 interface RunSyncResult {
 	exitCode: number;
 	agent: string;
+	task?: string;
 	messages: unknown[];
 	error?: string;
 	protocolError?: { code?: string; stream?: string; limitBytes?: number; observedBytes?: number };
@@ -927,7 +930,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const missionFiles = fs.readdirSync(missionDir).filter((entry) => entry.endsWith(".json"));
 		assert.equal(missionFiles.length, 1);
 		const mission = JSON.parse(fs.readFileSync(path.join(missionDir, missionFiles[0]!), "utf-8")) as { objective?: string };
-		assert.equal(mission.objective, "Scan auth");
+		assert.equal(mission.objective, utils.PROMPT_REDACTED);
 		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
 	});
 
@@ -2563,12 +2566,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Implemented/);
 	});
 
-	it("returns error for unknown agent", async () => {
+	it("returns error for unknown agent without retaining the prompt", async () => {
 		const agents = makeAgentConfigs(["echo"]);
-		const result = await runSync(tempDir, agents, "nonexistent", "Do something", {});
+		const sentinel = "PROMPT_AUDIT_SENTINEL_UNKNOWN";
+		const result = await runSync(tempDir, agents, "nonexistent", sentinel, {});
 
 		assert.equal(result.exitCode, 1);
 		assert.ok(result.error?.includes("Unknown agent"));
+		assert.equal(result.task, "[prompt redacted]");
+		assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 	});
 
 
@@ -3470,7 +3476,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("writes artifacts when configured", async () => {
+	it("writes artifacts without retaining the effective prompt", async () => {
 		mockPi.onCall({
 			output: "Result text",
 			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", ids: ["ext.ok"], omitted: 0 },
@@ -3478,8 +3484,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const privateExtension = path.join(tempDir, "extensions", "private-extension.ts");
 		const agents = [makeAgent("echo", { extensions: [privateExtension] })];
 		const artifactsDir = path.join(tempDir, "artifacts");
+		const sentinel = "PROMPT_AUDIT_SENTINEL_1021";
 
-		const result = await runSync(tempDir, agents, "echo", "Task", {
+		const result = await runSync(tempDir, agents, "echo", sentinel, {
 			runId: "test-run",
 			artifactsDir,
 			artifactConfig: { enabled: true, includeInput: true, includeOutput: true, includeMetadata: true },
@@ -3487,16 +3494,27 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.exitCode, 0);
 		assert.ok(result.artifactPaths, "should have artifact paths");
+		assert.ok(result.artifactPaths.inputPath, "should have a redacted input artifact");
+		assert.doesNotMatch(fs.readFileSync(result.artifactPaths.inputPath, "utf-8"), new RegExp(sentinel));
+		assert.match(fs.readFileSync(result.artifactPaths.inputPath, "utf-8"), /live Prompt Audit only/);
 		assert.ok(result.transcriptPath, "should expose transcript path on the result");
 		assert.equal(result.transcriptPath, result.artifactPaths.transcriptPath);
 		assert.ok(fs.existsSync(result.transcriptPath), "transcript should be written");
 		const transcript = fs.readFileSync(result.transcriptPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { recordType?: string; source?: string; text?: string });
 		assert.equal(transcript[0]?.recordType, "message");
 		assert.equal(transcript[0]?.source, "foreground");
+		assert.match(transcript[0]?.text ?? "", /live Prompt Audit only/);
+		assert.doesNotMatch(fs.readFileSync(result.transcriptPath, "utf-8"), new RegExp(sentinel));
 		assert.match(transcript.at(-1)?.text ?? "", /^Result text/);
 		assert.equal(result.transcriptError, undefined);
 		assert.ok(fs.existsSync(artifactsDir), "artifacts dir should exist");
-		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions };
+		const metadataText = fs.readFileSync(result.artifactPaths.metadataPath, "utf-8");
+		const metadata = JSON.parse(metadataText) as { task?: string; launchContractDigest?: string; launchResolvedExtensions?: LaunchResolvedExtensions; runtimeAcknowledgedExtensions?: RuntimeAcknowledgedExtensions };
+		assert.doesNotMatch(metadataText, new RegExp(sentinel));
+		assert.equal(metadata.task, "[prompt redacted]");
+		assert.equal(result.task, "[prompt redacted]");
+		assert.equal(result.progress.task, "[prompt redacted]");
+		assert.match(readCallArgs().join("\n"), new RegExp(sentinel));
 		assert.equal(metadata.launchContractDigest, result.launchContractDigest);
 		assert.equal(result.launchResolvedExtensions?.source, "launch-resolved");
 		assert.equal(result.launchResolvedExtensions?.disableAmbientExtensions, true);
