@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import {
 	createEventBus,
 	createMockPi,
@@ -585,6 +586,28 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		assert.equal(result.isError, undefined);
 		assert.equal(mockPi.callCount(), 2);
 		assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+	});
+
+	it("top-level parallel reviewer runs do not inherit bundled chain artifact reads", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "plan.md"), "chain plan");
+		fs.writeFileSync(path.join(tempDir, "progress.md"), "chain progress");
+		mockPi.onCall({ output: "Review done" });
+		const reviewer = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "reviewer");
+		assert.ok(reviewer, "expected bundled reviewer");
+		assert.equal(reviewer.defaultReads, undefined);
+		const executor = makeExecutor([reviewer]);
+
+		await executor.execute(
+			"parallel-reviewer-without-chain-artifacts",
+			{ tasks: [{ agent: "reviewer", task: "Review the supplied files." }] },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const taskArg = readLastCallArgs().at(-1) ?? "";
+		assert.doesNotMatch(taskArg, /\[Read from:/);
+		assert.doesNotMatch(taskArg, /plan\.md|progress\.md/);
 	});
 
 	it("top-level parallel reads include existing files and omit missing files", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

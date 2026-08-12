@@ -616,6 +616,27 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
 	});
 
+	it("foreground chains resolve explicit reads inside the chain directory", async () => {
+		mockPi.onCall({ output: "Review done" });
+		const chainDir = path.join(tempDir, "chain-reads");
+		const runId = "chain-reads-run";
+		const runDir = path.join(chainDir, runId);
+		fs.mkdirSync(runDir, { recursive: true });
+		fs.writeFileSync(path.join(runDir, "plan.md"), "chain plan");
+		fs.writeFileSync(path.join(runDir, "progress.md"), "chain progress");
+
+		await executeChain!(makeChainParams(
+			[{ agent: "reviewer", task: "Review the chain artifacts.", reads: ["plan.md", "progress.md"] }],
+			[makeAgent("reviewer")],
+			{ chainDir, runId },
+		));
+
+		const taskArg = readCallArgs(0).at(-1) ?? "";
+		assert.ok(taskArg.includes("[Read from: "));
+		assert.ok(taskArg.includes(path.join(runDir, "plan.md")));
+		assert.ok(taskArg.includes(path.join(runDir, "progress.md")));
+	});
+
 	it("foreground chains still resolve defaultProgress inside the chain directory", async () => {
 		mockPi.onCall({ output: "Progress done" });
 		const agents = [makeAgent("reviewer", { defaultProgress: true })];

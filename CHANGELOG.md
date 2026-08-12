@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- Stop the bundled reviewer from inheriting chain-only plan/progress reads in ad-hoc review runs. Thanks to @Ostii for #1000.
+- Remove mutation-capable tools from the bundled reviewer so read-only review lanes have a hard launch-time tool boundary (#1007).
+
 ## [0.47.0] - 2026-08-11
 
 ### Changed

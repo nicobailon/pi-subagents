@@ -27,6 +27,7 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
@@ -3503,6 +3504,28 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.finalOutput, "fresh assistant output");
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "fresh assistant output");
+	});
+
+	it("top-level reviewer runs do not inherit bundled chain artifact reads", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		fs.writeFileSync(path.join(tempDir, "plan.md"), "chain plan");
+		fs.writeFileSync(path.join(tempDir, "progress.md"), "chain progress");
+		mockPi.onCall({ output: "Review done" });
+		const reviewer = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "reviewer");
+		assert.ok(reviewer, "expected bundled reviewer");
+		assert.equal(reviewer.defaultReads, undefined);
+		const executor = makeExecutor([reviewer]);
+
+		await executor.execute(
+			"single-reviewer-without-chain-artifacts",
+			{ agent: "reviewer", task: "Review the supplied files." },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const taskArg = readCallArgs().at(-1) ?? "";
+		assert.doesNotMatch(taskArg, /\[Read from:/);
+		assert.doesNotMatch(taskArg, /plan\.md|progress\.md/);
 	});
 
 	it("routes foreground single relative outputs to the run output artifact directory by default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

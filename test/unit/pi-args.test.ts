@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 import {
 	TOOL_BUDGET_ENV,
@@ -727,6 +728,22 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			toolsArg.split(","),
 		);
 		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
+	});
+
+	it("launches the bundled reviewer without mutation-capable tools", () => {
+		const reviewer = discoverAgents(process.cwd(), "project").agents.find((agent) => agent.name === "reviewer");
+		assert.ok(reviewer, "expected bundled reviewer");
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "Review this change.",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: reviewer.tools,
+		});
+
+		assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls,intercom");
+		assert.doesNotMatch(args[args.indexOf("--tools") + 1] ?? "", /\b(?:bash|edit|write)\b/);
 	});
 
 	it("keeps structured_output available under explicit tool allowlists", () => {
