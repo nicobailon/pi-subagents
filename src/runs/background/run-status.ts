@@ -7,6 +7,7 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import { DIRS, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
+import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
@@ -315,6 +316,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	}
 
 	if (asyncDir) {
+		const diskStatus = readStatus(asyncDir);
 		let reconciliation;
 		try {
 			reconciliation = reconcileAsyncRun(asyncDir, { resultsDir, kill: deps.kill, now: deps.now });
@@ -327,6 +329,22 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			};
 		}
 		const status = reconciliation.status;
+		if (!status && diskStatus?.displayDismissedAt !== undefined) {
+			if (params.view === "transcript") {
+				if (currentSessionId && diskStatus.sessionId !== currentSessionId) {
+					return {
+						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
+						isError: true,
+						details: { mode: "single", results: [] },
+					};
+				}
+				return { content: [{ type: "text", text: formatAsyncRunTranscript(diskStatus, asyncDir, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+			}
+			return {
+				content: [{ type: "text", text: `Run: ${diskStatus.runId}\nState: display-dismissed\nDismissed: ${new Date(diskStatus.displayDismissedAt).toISOString()}\nNo running work was terminated.` }],
+				details: { mode: "single", results: [] },
+			};
+		}
 		const effectiveRunId = status?.runId ?? resolvedId ?? "unknown";
 		const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
 		const eventsPath = path.join(asyncDir, "events.jsonl");

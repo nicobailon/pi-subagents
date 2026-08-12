@@ -627,6 +627,52 @@ describe("subagent extension RPC bridge", () => {
 		}
 	});
 
+	it("rejects stop requests for reload-recovered workflows", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-workflow-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "workflow-run");
+			let killCalls = 0;
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-run",
+				sessionId: "/sessions/parent.jsonl",
+				mode: "workflow",
+				state: "running",
+				pid: 4242,
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx(),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir,
+				kill: () => {
+					killCalls++;
+					return true;
+				},
+				now: () => 150,
+			});
+
+			const reply = await request(events, "stop-workflow", "stop", { id: "workflow-run" });
+
+			assert.equal(reply.success, false);
+			assert.equal((reply as { error: { code: string; message: string } }).error.code, "invalid_state");
+			assert.match((reply as { error: { message: string } }).error.message, /reload recovery cannot stop it safely/);
+			assert.equal(fs.existsSync(stopRequestPath(asyncDir)), false);
+			assert.equal(killCalls, 0);
+
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects stop requests for async runs from a different session", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-session-"));
 		try {

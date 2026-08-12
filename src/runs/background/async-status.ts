@@ -452,6 +452,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			if (usedActiveIndex) updateActiveRunIndex(asyncDir, "failed");
 			continue;
 		}
+		if (status.displayDismissedAt !== undefined) {
+			if (usedActiveIndex) updateActiveRunIndex(asyncDir, "complete");
+			continue;
+		}
 		if (usedActiveIndex && !isActiveAsyncState(status.state)) updateActiveRunIndex(asyncDir, status.state);
 		// Filter before the nested-route lookup: the lookup builds an index over
 		// the nested-events directory, so deferring it for filtered-out runs keeps

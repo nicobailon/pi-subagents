@@ -490,6 +490,10 @@ function stopAsyncRun(
 		throw new SubagentRpcError("not_found", `Async run '${initialRunId}' was not found in the active session.`);
 	}
 
+	if (initialStatus.mode === "workflow" && initialStatus.state === "running") {
+		throw new SubagentRpcError("invalid_state", `Workflow ${initialRunId} is not controlled by this extension runtime; reload recovery cannot stop it safely.`);
+	}
+
 	let status;
 	try {
 		status = reconcileAsyncRun(location.asyncDir, { resultsDir, kill: options.kill, now: options.now }).status;

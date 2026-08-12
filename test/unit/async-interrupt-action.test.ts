@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { consumeSteerRequests, consumeSteerRequestsFromDir, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
+import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { steerWorkflowForegroundTarget, workflowForegroundSteeringDir } from "../../src/runs/foreground/workflow-foreground-steering.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
@@ -94,7 +96,7 @@ async function waitUntil<T>(read: () => T | undefined, timeoutMs = 5_000): Promi
 	throw new Error("Timed out waiting for async control test condition.");
 }
 
-function executorWithKill(state: SubagentState, kill: (pid: number, signal?: NodeJS.Signals | 0) => boolean) {
+function executorWithKill(state: SubagentState, kill: (pid: number, signal?: NodeJS.Signals | 0) => boolean, options: { allowMutatingManagementActions?: boolean } = {}) {
 	return createSubagentExecutor({
 		pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as any,
 		state,
@@ -105,6 +107,7 @@ function executorWithKill(state: SubagentState, kill: (pid: number, signal?: Nod
 		expandTilde: (value) => value,
 		discoverAgents: () => ({ agents: [] }),
 		kill,
+		...options,
 	});
 }
 
@@ -117,8 +120,8 @@ function ctx() {
 	} as any;
 }
 
-function text(result: Awaited<ReturnType<ReturnType<typeof executorWithKill>["execute"]>>): string {
-	return result.content[0]?.type === "text" ? result.content[0].text : "";
+function text(result: { content: Array<{ type: string; text?: string }> }): string {
+	return result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
 }
 
 describe("async interrupt action", () => {
@@ -457,6 +460,163 @@ describe("async interrupt action", () => {
 			assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
 		} finally {
 			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("dismisses only a reload-recovered running workflow without terminating work", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `dismiss-workflow-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session", mode: "workflow" });
+		try {
+			const result = await executorWithKill(state, () => {
+				throw new Error("dismiss must not inspect or signal the workflow pid");
+			}).execute("dismiss", { action: "dismiss", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, undefined);
+			assert.match(text(result), /Dismissed recovered workflow/);
+			assert.match(text(result), /No running work was terminated/);
+			const dismissed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			assert.equal(dismissed.state, "running");
+			assert.equal(typeof dismissed.displayDismissedAt, "number");
+			assert.equal(listAsyncRuns(ASYNC_DIR, { states: ["running"], sessionId: "session", kill: () => {
+				throw new Error("dismissed workflow listing must not inspect the pid");
+			} }).some((run) => run.id === runId), false);
+			const statusResult = inspectSubagentStatus({ action: "status", id: runId }, { state, kill: () => {
+				throw new Error("dismissed workflow status must not inspect the pid");
+			} });
+			const statusText = text(statusResult);
+			assert.match(statusText, /State: display-dismissed/);
+			assert.match(statusText, /No running work was terminated/);
+			assert.doesNotMatch(statusText, /Steer/);
+			const transcriptResult = inspectSubagentStatus({ action: "status", id: runId, view: "transcript" }, { state, kill: () => {
+				throw new Error("dismissed workflow transcript must not inspect the pid");
+			} });
+			assert.doesNotMatch(text(transcriptResult), /Status file not found/);
+			const stopResult = await executorWithKill(state, () => {
+				throw new Error("dismissed workflow stop must not inspect or signal the pid");
+			}).execute("stop-dismissed", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
+			assert.equal(stopResult.isError, true);
+			assert.doesNotMatch(text(stopResult), /Stop requested/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), false);
+			const stopDirResult = await executorWithKill(state, () => {
+				throw new Error("dismissed workflow stop by dir must not inspect or signal the pid");
+			}).execute("stop-dismissed-dir", { action: "stop", dir: asyncDir }, new AbortController().signal, undefined, ctx());
+			assert.equal(stopDirResult.isError, true);
+			assert.doesNotMatch(text(stopDirResult), /Stop requested/);
+			assert.equal(fs.existsSync(path.join(asyncDir, "control", "stop.json")), false);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects transcript view for display-dismissed workflows from another session", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `dismiss-other-session-transcript-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "other-session", mode: "workflow" });
+		try {
+			const statusPath = path.join(asyncDir, "status.json");
+			writeJson(statusPath, { ...JSON.parse(fs.readFileSync(statusPath, "utf-8")), displayDismissedAt: Date.now() });
+			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "SECRET_OTHER_SESSION_OUTPUT", "utf-8");
+
+			const result = inspectSubagentStatus({ action: "status", id: runId, view: "transcript", index: 0 }, { state, kill: () => true });
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /owned by the current session/);
+			assert.doesNotMatch(text(result), /SECRET_OTHER_SESSION_OUTPUT/);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("shows terminal status when a result appears after display dismissal", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `dismiss-then-complete-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session", mode: "workflow" });
+		try {
+			const dismissResult = await executorWithKill(state, () => true).execute("dismiss", { action: "dismiss", id: runId }, new AbortController().signal, undefined, ctx());
+			assert.equal(dismissResult.isError, undefined);
+			writeJson(path.join(RESULTS_DIR, `${runId}.json`), { runId, mode: "workflow", success: true, results: [] });
+
+			const statusResult = inspectSubagentStatus({ action: "status", id: runId }, { state, kill: () => true });
+			const statusText = text(statusResult);
+			assert.match(statusText, /State: complete/);
+			assert.doesNotMatch(statusText, /State: display-dismissed/);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			assert.equal(status.state, "complete");
+			assert.equal(status.displayDismissedAt, undefined);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects dismiss when a stale running workflow has a terminal result", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `dismiss-terminal-result-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session", mode: "workflow" });
+		writeJson(path.join(RESULTS_DIR, `${runId}.json`), { runId, mode: "workflow", success: true, results: [] });
+		try {
+			const result = await executorWithKill(state, () => {
+				throw new Error("terminal workflow dismiss must not inspect or signal the pid");
+			}).execute("dismiss-terminal-result", { action: "dismiss", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /complete, not running/);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			assert.equal(status.state, "complete");
+			assert.equal(status.displayDismissedAt, undefined);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects dismiss from child-safe fanout mode", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `dismiss-child-safe-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session", mode: "workflow" });
+		try {
+			const result = await executorWithKill(state, () => true, { allowMutatingManagementActions: false })
+				.execute("dismiss-child-safe", { action: "dismiss", id: runId }, new AbortController().signal, undefined, ctx());
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /child-safe subagent fanout mode/);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).displayDismissedAt, undefined);
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
+	it("rejects dismiss for live-controller, non-workflow, terminal, and other-session runs", async () => {
+		const cases = [
+			{ name: "live", mode: "workflow" as const, sessionId: "session", state: "running" as const, controller: true, pattern: /live controller/ },
+			{ name: "non-workflow", mode: "single" as const, sessionId: "session", state: "running" as const, pattern: /not a recovered workflow/ },
+			{ name: "terminal", mode: "workflow" as const, sessionId: "session", state: "running" as const, terminal: true, pattern: /complete, not running/ },
+			{ name: "other-session", mode: "workflow" as const, sessionId: "other", state: "running" as const, pattern: /active session/ },
+		];
+		for (const candidate of cases) {
+			const state = createState();
+			state.currentSessionId = "session";
+			const runId = `dismiss-${candidate.name}-${Date.now().toString(36)}`;
+			const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: candidate.sessionId, mode: candidate.mode });
+			if (candidate.controller) state.workflowControllers = new Map([[runId, new AbortController()]]);
+			if (candidate.terminal) {
+				const statusPath = path.join(asyncDir, "status.json");
+				writeJson(statusPath, { ...JSON.parse(fs.readFileSync(statusPath, "utf-8")), state: "complete" });
+			}
+			try {
+				const result = await executorWithKill(state, () => {
+					throw new Error("dismiss rejection must not inspect or signal pids");
+				}).execute("dismiss", { action: "dismiss", id: runId }, new AbortController().signal, undefined, ctx());
+				assert.equal(result.isError, true, candidate.name);
+				assert.match(text(result), candidate.pattern, candidate.name);
+				assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).displayDismissedAt, undefined, candidate.name);
+			} finally {
+				cleanup(runId, asyncDir);
+			}
 		}
 	});
 

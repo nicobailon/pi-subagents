@@ -263,10 +263,10 @@ const SubagentParamProperties = {
 	})),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for status, interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, mission.attach-run, or the decision id for mission.resolve-decision."
+		description: "Run id or prefix for status, interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, mission.attach-run, or the decision id for mission.resolve-decision."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for interrupt, stop, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."
+		description: "Target run ID for interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."

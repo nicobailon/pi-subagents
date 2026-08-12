@@ -94,6 +94,7 @@ import {
 	workflowForegroundSteeringLaunchOptions,
 } from "./workflow-foreground-steering.ts";
 import { stopAsyncRun } from "./async-stop-action.ts";
+import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedRunResolutionScope } from "../shared/nested-events.ts";
@@ -163,7 +164,7 @@ import {
 	wrapForkTask,
 } from "../../shared/types.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "reject-checkpoint", "schedule.delete"]);
 
 function editDistance(left: string, right: string): number {
@@ -5255,6 +5256,28 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				return deps.handleScheduledRunAction(paramsWithResolvedCwd, ctx);
 			}
+			if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
+				return {
+					content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
+					isError: true,
+					details: { mode: "management" as const, results: [] },
+				};
+			}
+			if (action === "dismiss") {
+				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				if (!targetRunId) return { content: [{ type: "text", text: "action='dismiss' requires id." }], isError: true, details: { mode: "management", results: [] } };
+				let resolved: ResolvedSubagentRunId | undefined;
+				try {
+					resolved = resolveSubagentRunId(targetRunId, omitUndefinedProperties({ state: deps.state, nested: nestedResolutionScopeForExecutor(deps) }));
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+				}
+				if (resolved?.kind !== "async") {
+					return { content: [{ type: "text", text: `Run '${targetRunId}' is not a recovered workflow.` }], isError: true, details: { mode: "management", results: [] } };
+				}
+				return dismissRecoveredWorkflow(deps.state, resolved.location);
+			}
 			if (action === "stop") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
 				const workflowController = targetRunId ? deps.state.workflowControllers?.get(targetRunId) : undefined;
@@ -5266,6 +5289,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
+						const existingStatus = readStatus(location.asyncDir ?? "");
+						if (existingStatus?.mode === "workflow" && existingStatus.state === "running") {
+							return { content: [{ type: "text", text: `Workflow ${existingStatus.runId} is not controlled by this extension runtime; reload recovery cannot stop it safely.` }], isError: true, details: { mode: "management", results: [] } };
+						}
 						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
 						return stopResult ?? { content: [{ type: "text", text: `No running or queued async run was found for '${targetRunId ?? paramsWithResolvedCwd.dir}'.` }], isError: true, details: { mode: "management", results: [] } };
 					} catch (error) {
@@ -5346,13 +5373,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
 				return {
 					content: [{ type: "text", text: unknownSubagentActionMessage(action) }],
-					isError: true,
-					details: { mode: "management" as const, results: [] },
-				};
-			}
-			if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
-				return {
-					content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
 					isError: true,
 					details: { mode: "management" as const, results: [] },
 				};

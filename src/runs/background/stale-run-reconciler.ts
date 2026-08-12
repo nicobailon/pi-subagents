@@ -154,7 +154,7 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			modelAttempts: child?.modelAttempts ?? step.modelAttempts,
 		};
 	});
-	return {
+	const terminalStatus: AsyncStatus = {
 		...status,
 		state: repair.state,
 		...(status.lifecycleArtifactVersion === 3 && (!status.processTerminal || status.processTerminal.state === "pending") ? {
@@ -166,6 +166,8 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 		endedAt: status.endedAt ?? now,
 		steps,
 	};
+	delete terminalStatus.displayDismissedAt;
+	return terminalStatus;
 }
 
 function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, now: number): AsyncStatus {
@@ -341,7 +343,6 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status file '${statusPath}': steps[${index}].model must be a string.`);
 		if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status file '${statusPath}': steps[${index}].thinking must be a string.`);
 	}
-
 	const runId = effectiveStatus.runId || path.basename(asyncDir);
 	const resultPath = path.join(options.resultsDir ?? DIRS.results, `${runId}.json`);
 	if (fs.existsSync(resultPath)) {
@@ -353,7 +354,10 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 			updateActiveRunIndex(asyncDir, terminalStatus.state);
 			return { status: terminalStatus, repaired: true, resultPath, message: "Existing async result file was used to repair stale running status." };
 		}
-		return { status: effectiveStatus, repaired: false, resultPath };
+		if (effectiveStatus.displayDismissedAt === undefined) return { status: effectiveStatus, repaired: false, resultPath };
+	}
+	if (effectiveStatus.displayDismissedAt !== undefined) {
+		return { status: null, repaired: false, resultPath };
 	}
 
 	if (effectiveStatus.state !== "running" || typeof effectiveStatus.pid !== "number") {

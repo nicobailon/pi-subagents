@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Add a display-only dismiss action for reload-recovered running workflows without claiming or attempting to stop their work (#1010).
 - Stop the bundled reviewer from inheriting chain-only plan/progress reads in ad-hoc review runs. Thanks to @Ostii for #1000.
 - Remove mutation-capable tools from the bundled reviewer so read-only review lanes have a hard launch-time tool boundary (#1007).
 - Show the requested child agent in workflow started trace entries. Thanks to @albertgwo for #1001.
