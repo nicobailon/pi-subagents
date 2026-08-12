@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Add a global `timeoutMs` config option that sets the default run deadline for single, parallel, and chain launches (foreground, plus plain single-agent async) when neither the call nor the selected agent provides a timeout. It reaches parallel (`tasks: [...]`) and chain launches, which never adopt an agent's frontmatter `timeoutMs` (that default applies to single-agent launches only), so a long fan-out no longer falls back to the built-in 30-minute default and gets killed mid-run. Explicit call `timeoutMs`/`maxRuntimeMs` and agent frontmatter defaults still win; composite async runs stay unbounded at the top level by design.
+- Add a global `timeoutMs` config option that sets the default run deadline for single, parallel, and chain launches (foreground, plus plain single-agent async) when neither the call nor the selected agent provides a timeout. It reaches parallel (`tasks: [...]`) and chain launches, which never adopt an agent's frontmatter `timeoutMs` (that default applies to single-agent launches only), so a long fan-out no longer falls back to the built-in 30-minute default and gets killed mid-run. Explicit call `timeoutMs`/`maxRuntimeMs` and agent frontmatter defaults still win; composite async runs stay unbounded at the top level by design. Thanks to @shaharmor for #1018.
 
 ### Fixed
 - Align unnamed intercom fallback orchestrator targets with pi-intercom's 18-character registered presence names so subagents without an explicit session name can reach their orchestrator. Thanks to @mystery4f for #1017.
