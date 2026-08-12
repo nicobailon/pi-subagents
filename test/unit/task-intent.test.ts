@@ -61,6 +61,45 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Create a summary").kind, "unknown");
 	});
 
+	it("does not read hyphenated fix adjectives as the fix verb", () => {
+		// Core regression: "must-fix items" in review output specs (fails on old code).
+		assert.equal(classifyTaskMutationIntent("worker", "Return a review with the top 2-3 must-fix items").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Return a review with the top 2-3 must-fix items.").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Review and report MUST-FIX items").kind, "unknown");
+		// should-fix with a noun from the pattern's alternation (also fails on old code).
+		assert.equal(classifyTaskMutationIntent("worker", "List should-fix tests with severity labels").kind, "unknown");
+		// Same class for other verbs: hyphenated adjective + verb.
+		assert.equal(classifyTaskMutationIntent("worker", "Return must-edit findings").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Return must-update items").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "List should-add files").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Return must-apply changes").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "List should-make changes").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "must-do those fixes").kind, "unknown");
+		// Dash coverage: U+2010 hyphen, U+2011 non-breaking hyphen, en/em dashes.
+		assert.equal(classifyTaskMutationIntent("worker", "Return the must\u2010fix items").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Return the must\u2011fix items").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Return the must\u2013fix items").kind, "unknown");
+		assert.equal(classifyTaskMutationIntent("worker", "Return the must\u2014fix items").kind, "unknown");
+		// Clause-level em/en dashes are punctuation, not compounds: "branch—fix it".
+		assert.equal(classifyTaskMutationIntent("worker", "Inspect the failing branch\u2014fix it.").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "Inspect the failing branch\u2013fix it.").kind, "implementation");
+		assert.equal(taskMayMutate("Inspect the failing branch\u2014fix it."), true);
+		// Hyphenated genuine imperatives stay write-capable.
+		assert.equal(taskMayMutate("hot-fix the bug"), true);
+		assert.equal(taskMayMutate("quick-fix that bug"), true);
+		// Genuine imperative usage keeps classifying as implementation.
+		assert.equal(classifyTaskMutationIntent("worker", "Go through the list and fix items one by one").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("worker", "fix items on the sprint board").kind, "implementation");
+		// CLI flags keep write intent: "--fix" / "-w" are not hyphenated adjectives.
+		assert.equal(classifyTaskMutationIntent("worker", "Run eslint --fix code").kind, "implementation");
+		assert.equal(taskMayMutate("Run eslint --fix code"), true);
+		// "--write" was never a classifier verb (pre-existing unknown); the
+		// regression guard is that write-capability survives for acceptance.
+		assert.equal(taskMayMutate("Run prettier --write files"), true);
+		// Guard-facing mirror: the completion guard must not expect mutation.
+		assert.equal(expectsImplementationMutation("worker", "Return a review with the top 2-3 must-fix items"), false);
+	});
+
 	it("expectsImplementationMutation mirrors the classifier", () => {
 		assert.equal(expectsImplementationMutation("worker", "Do not modify tests; implement the fix"), true);
 		assert.equal(expectsImplementationMutation("worker", "Review the diff and suggest fixes only. Do not edit files."), false);

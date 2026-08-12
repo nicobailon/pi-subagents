@@ -70,6 +70,18 @@ const RESEARCH_AGENT_PATTERNS = [
 	/\bresearch(?:er)?\b/i,
 ];
 
+// Review/severity vocabulary like "must-fix items" or "should-fix tests" is not
+// the verb. Rather than dash-guarding every pattern (which would also suppress
+// CLI flags like "--fix" and genuine clause-level dashes like "branch—fix it"),
+// strip the known severity compounds (must|should|needs + dash + verb) from the
+// task text before matching. Dash coverage: ASCII hyphen + U+2010..U+2015.
+const SEVERITY_COMPOUND_PATTERN = /\b(?:must|should|needs)[\-\u2010-\u2015](?:fix|edit|update|add|remove|replace|create|apply|make|do|implement|modify|delete|patch)\b/gi;
+
+function stripSeverityCompounds(task: string): string {
+	return task.replace(SEVERITY_COMPOUND_PATTERN, " ");
+}
+export { stripSeverityCompounds };
+
 const FIX_OR_PATCH_IMPLEMENTATION_PATTERN = /\b(?:fix|patch)\s+(?:(?:it|this|that|them|each|any|all|these|those)\b|(?:(?:a|an|the|any|all)\s+)?(?:(?:failing|failed|broken|flaky|red|cold|start|current|existing|reported|approved|known|regression|unit|integration|e2e|source|typescript|type-?script|ts|type-?check|compiler)\s+)*(?:bug|defect|issues?|problems?|failures?|regressions?|tests?|errors?|items?|typos?|code|source|implementation|component|function|module|class|method|logic|file|files|readme|docs?|changelog|package\.json|config|manifest|extension|prompt|command|lint(?:ing)?|build|ci|type-?check|type\s+checking)\b)/i;
 
 const WORKER_IMPLEMENTATION_PATTERNS = [
@@ -146,7 +158,7 @@ function hasImplementationIntent(agent: string, taskText: string): boolean {
 }
 
 export function classifyTaskMutationIntent(agent: string, task: string): TaskMutationIntent {
-	const taskText = stripFrameworkInstructions(task);
+	const taskText = stripSeverityCompounds(stripFrameworkInstructions(task));
 	const taskTextWithoutScopedConstraints = stripPatterns(taskText, SCOPED_NO_EDIT_CONSTRAINT_PATTERNS);
 	const prohibitions = analyzeNoEditProhibitions(taskTextWithoutScopedConstraints);
 	if (prohibitions.present) {
@@ -164,7 +176,11 @@ export function expectsImplementationMutation(agent: string, task: string): bool
 	return classifyTaskMutationIntent(agent, task).kind === "implementation";
 }
 
-/** Bare write verbs that make a task write-capable for acceptance inference. */
+/** Bare write verbs that make a task write-capable for acceptance inference.
+ * Severity compounds ("must-fix items") are stripped before matching, so they
+ * are not write imperatives, while CLI flags ("--fix", "-w"), clause-level
+ * dashes ("branch—fix it"), and hyphenated imperatives ("hot-fix the bug")
+ * all stay write-capable. */
 const MAY_MUTATE_VERB_PATTERN = /\b(?:fix|implement|update|write|edit|modify|migrate|delete|remove|refactor|commit)\b/i;
 
 /**
@@ -174,7 +190,7 @@ const MAY_MUTATE_VERB_PATTERN = /\b(?:fix|implement|update|write|edit|modify|mig
  * does.
  */
 export function taskMayMutate(task: string): boolean {
-	const taskText = stripPatterns(stripFrameworkInstructions(task), SCOPED_NO_EDIT_CONSTRAINT_PATTERNS);
+	const taskText = stripPatterns(stripSeverityCompounds(stripFrameworkInstructions(task)), SCOPED_NO_EDIT_CONSTRAINT_PATTERNS);
 	const prohibitions = analyzeNoEditProhibitions(taskText);
 	if (prohibitions.blanket) return false;
 	return MAY_MUTATE_VERB_PATTERN.test(stripPatterns(prohibitions.strippedText, READ_ONLY_DELIVERABLE_PATTERNS));

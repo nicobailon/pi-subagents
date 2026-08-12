@@ -71,6 +71,7 @@ import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
+import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
 import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
@@ -3216,6 +3217,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 		const result = await runSync(input.ctx.cwd, input.agents, task.agent, taskText, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: input.permissions,
 			parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+			llmIntentArbiter: createTaskMutationArbiter(input.ctx),
 			...workflowForegroundSteeringLaunchOptions(input.foregroundControl, index),
 			context: input.contextPolicy.contextForAgent(task.agent),
 			cwd: taskCwd,
@@ -3938,6 +3940,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		r = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			permissions: deps.config.permissions,
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+			llmIntentArbiter: createTaskMutationArbiter(ctx),
 			...workflowForegroundSteeringLaunchOptions(foregroundControl, 0),
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			cwd: effectiveCwd,

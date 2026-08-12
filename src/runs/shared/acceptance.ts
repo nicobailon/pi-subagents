@@ -23,7 +23,7 @@ import type {
 	SubagentRunMode,
 } from "../../shared/types.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
-import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
+import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
 	none: 0,
@@ -93,7 +93,7 @@ function inferLevel(input: {
 	const rolePatchTask = input.acceptanceRole !== undefined
 		&& intent.kind !== "read-only"
 		&& !/\b(?:do not|don't|must not)\s+patch\b/.test(task)
-		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(task);
+		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(stripSeverityCompounds(task));
 	const taskMayWrite = readOnlyTask ? false : taskMayMutate(input.task ?? "") || intent.kind === "implementation" || rolePatchTask;
 	const readOnlyAgent = input.acceptanceRole === "read-only"
 		|| (input.acceptanceRole === undefined && /\b(?:reviewer|oracle|scout|researcher|analyst)\b/.test(agent));

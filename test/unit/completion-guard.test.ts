@@ -53,6 +53,24 @@ test("declared read-only builtin tools suppress implementation-word false positi
 	});
 });
 
+test("hyphenated fix adjectives in review tasks do not trigger the completion guard", () => {
+	const result = evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: "Return a review with the top 2-3 must-fix items.",
+		messages: [assistantText("Review: findings with severity labels.")],
+	});
+
+	assert.deepEqual(result, {
+		expectedMutation: false,
+		attemptedMutation: false,
+		triggered: false,
+	});
+	assert.equal(
+		expectsImplementationMutation("worker", "Return a review with the top 2-3 must-fix items."),
+		false,
+	);
+});
+
 test("read-only issue drafting tasks do not trigger on suggested fix wording", () => {
 	const task = "Draft GitHub issue for pi-subagents bug from current conversation. Include title, environment/context, reproduction steps, actual/expected, logs excerpt, suspected cause, suggested fix. Terse but complete. No tools needed.";
 	const result = evaluateCompletionMutationGuard({

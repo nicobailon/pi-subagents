@@ -54,6 +54,7 @@ import {
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
@@ -1277,15 +1278,38 @@ async function runSingleAttempt(
 			mcpDirectTools: agent.mcpDirectTools,
 		})
 		: undefined;
-	const completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	let completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
+	// The classifier is deliberately narrow, so a read-only review task can
+	// still be misread as implementation. Arbitrate BEFORE any failure side
+	// effect is published (effects, exit code, progress, notifications,
+	// acceptance, output persistence): only a confident read-only verdict
+	// rescues, and the task text alone is evidence — never the child's own
+	// final message.
+	let arbiterRescued = false;
+	if (completionGuardTriggered) {
+		const arbitration = await arbitrateCompletionGuardRescue({
+			guardTriggered: true,
+			task: shared.originalTask ?? task,
+			arbiter: options.llmIntentArbiter,
+		});
+		completionGuardTriggered = arbitration.triggered;
+		arbiterRescued = arbitration.rescued;
+	}
 	if (completionGuard) {
 		result.effects = {
 			...(result.effects ?? {}),
 			fileMutation: {
-				status: completionGuard.expectedMutation ? completionGuardTriggered ? "missing" : "observed" : "not-applicable",
+				status: completionGuard.expectedMutation
+					? completionGuardTriggered
+						? "missing"
+						: arbiterRescued
+							? "not-applicable"
+							: "observed"
+					: "not-applicable",
 				expected: completionGuard.expectedMutation,
 				attempted: completionGuard.attemptedMutation || observedMutationAttempt,
 				...(completionGuardTriggered ? { message: "Subagent completed without making edits for an implementation task." } : {}),
+				...(arbiterRescued ? { resolvedBy: "llm-intent-arbiter" } : {}),
 			},
 		};
 	}

@@ -34,6 +34,7 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { INTERCOM_BRIDGE_MARKER } from "../../intercom/intercom-bridge.ts";
 import { runSync } from "./execution.ts";
+import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
 import { workflowForegroundSteeringLaunchOptions } from "./workflow-foreground-steering.ts";
 import {
 	beginForegroundChild,
@@ -388,6 +389,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				result = await runSync(input.ctx.cwd, input.agents, task.agent, taskStr, {
 				permissions: input.permissions,
 				parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
+				llmIntentArbiter: createTaskMutationArbiter(input.ctx),
 				...workflowForegroundSteeringLaunchOptions(input.foregroundControl, childIndex),
 				capabilityCeiling: input.capabilityCeiling,
 				context: input.contextForAgent?.(task.agent),
@@ -1369,6 +1371,7 @@ ${step.message}` : ""}` }],
 				r = await runSync(ctx.cwd, agents, seqStep.agent, stepTask, {
 				permissions: params.permissions,
 				parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+				llmIntentArbiter: createTaskMutationArbiter(ctx),
 				...workflowForegroundSteeringLaunchOptions(params.foregroundControl, childIndex),
 				capabilityCeiling: params.capabilityCeiling,
 				context: params.contextForAgent?.(seqStep.agent),

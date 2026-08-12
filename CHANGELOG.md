@@ -8,6 +8,9 @@
 ### Fixed
 - Reject configured worktree base directories inside the agent extensions directory, including symlink aliases (#1014).
 - Align unnamed intercom fallback orchestrator targets with pi-intercom's 18-character registered presence names so subagents without an explicit session name can reach their orchestrator. Thanks to @mystery4f for #1017.
+- Stop reading hyphenated adjectives like "must-fix items" or "should-fix tests" as implementation intent, which made the completion mutation guard hard-fail read-only review runs with a false "completed without making edits" error. Severity compounds (must|should|needs + dash + verb) are stripped before verb matching across every mutation pattern (incl. update/add/apply/make/do siblings), the acceptance-level write-capability check, and the patch-scope pattern, while CLI flags ("eslint --fix", "prettier --write") and clause-level dashes ("branch—fix it") keep their write intent. Thanks to @MarcusNeufeldt for #1020.
+- Add an optional LLM intent arbiter: when the completion guard is about to hard-fail a run that made no edits, a model decides — from the task text alone, never the child's own report — whether the task actually instructed file changes; only a confident read-only verdict rescues the run, before any failure state is published. Covers single, parallel, and chain foreground runs; enabled by default; set `PI_SUBAGENTS_LLM_INTENT_ARBITER=0` to disable. Thanks to @MarcusNeufeldt for #1020.
+
 ## [0.47.1] - 2026-08-12
 
 ### Fixed
