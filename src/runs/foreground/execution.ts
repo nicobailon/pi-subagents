@@ -59,7 +59,7 @@ import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -292,6 +292,7 @@ async function runSingleAttempt(
 		attemptNotes: string[];
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
+		taskDelivery?: SubagentTaskDelivery;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
@@ -313,6 +314,7 @@ async function runSingleAttempt(
 	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
+		taskDelivery: shared.taskDelivery,
 		sessionEnabled: shared.sessionEnabled,
 		sessionDir: options.sessionDir,
 		sessionFile: options.sessionFile,
@@ -1550,6 +1552,9 @@ async function runSyncCompletion(
 	};
 	let lastResult: SingleResult | undefined;
 	const modelsToTry = candidates.length > 0 ? candidates : [undefined];
+	// Escalated to "file" after an unexplained zero-activity startup failure so
+	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
+	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
@@ -1568,6 +1573,7 @@ async function runSyncCompletion(
 					.filter((modelCandidate): modelCandidate is string => Boolean(modelCandidate)),
 				outputSnapshot,
 				originalTask: task,
+				taskDelivery: taskDeliveryOverride,
 			});
 			lastResult = result;
 			if (startupAttemptIndex === 0) {
@@ -1635,6 +1641,10 @@ async function runSyncCompletion(
 						if (result.progress) result.progress.error = cancellationError;
 					}
 					break modelAttemptsLoop;
+				}
+				if (!taskDeliveryOverride && result.processSignal === "SIGKILL") {
+					taskDeliveryOverride = "file";
+					attemptNotes.push("[startup-retry] retrying with file task delivery to keep the task text out of the child process argv.");
 				}
 				attempt.error = retryNote;
 				attemptNotes.push(retryNote);

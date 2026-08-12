@@ -4,6 +4,8 @@
 
 ### Added
 - Add a global `timeoutMs` config option that sets the default run deadline for single, parallel, and chain launches (foreground, plus plain single-agent async) when neither the call nor the selected agent provides a timeout. It reaches parallel (`tasks: [...]`) and chain launches, which never adopt an agent's frontmatter `timeoutMs` (that default applies to single-agent launches only), so a long fan-out no longer falls back to the built-in 30-minute default and gets killed mid-run. Explicit call `timeoutMs`/`maxRuntimeMs` and agent frontmatter defaults still win; composite async runs stay unbounded at the top level by design. Thanks to @shaharmor for #1018.
+- Add a `PI_SUBAGENT_TASK_DELIVERY` environment setting (`auto` | `file`, default `auto`) controlling how the task text reaches child Pi processes. `file` writes the task to a temp `task.md` referenced as `@<path>` instead of embedding it in argv, for hosts where endpoint protection (EDR) pre-execution command-line scanning denies children whose argv embeds a long natural-language task. Thanks to @yanqianglu for #1028.
+- Escalate startup retries to file task delivery after an unexplained zero-activity `SIGKILL` child exit, so EDR-denied launches self-heal on retry in both foreground and background runs. Thanks to @yanqianglu for #1028.
 
 ### Fixed
 - Explain when a requested mission is scoped to another worktree by naming the current project root and mission directory (#1024).

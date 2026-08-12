@@ -68,6 +68,7 @@ const originalEnv = {
 	[PI_INTERCOM_SESSION_ID_ENV]: process.env[PI_INTERCOM_SESSION_ID_ENV],
 	MCP_HASH_ROOT: process.env.MCP_HASH_ROOT,
 	MCP_HASH_TOKEN: process.env.MCP_HASH_TOKEN,
+	PI_SUBAGENT_TASK_DELIVERY: process.env.PI_SUBAGENT_TASK_DELIVERY,
 };
 const originalCwd = process.cwd();
 const tempRoots: string[] = [];
@@ -478,6 +479,88 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(args.includes("--model"));
 		assert.ok(args.includes(model));
 		assert.ok(!args.includes(`${model}:high`));
+	});
+});
+
+describe("buildPiArgs task delivery", () => {
+	const longTask = "x".repeat(8001);
+
+	function taskFileFromArgs(args: string[]): string | undefined {
+		const ref = args.find((arg) => arg.startsWith("@") && arg.endsWith("task.md"));
+		return ref ? ref.slice(1) : undefined;
+	}
+
+	it("delivers short tasks inline by default", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(args.includes("Task: hello"));
+		assert.equal(taskFileFromArgs(args), undefined);
+	});
+
+	it("delivers tasks over the argv limit via a temp file by default", () => {
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: longTask,
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		const taskFile = taskFileFromArgs(args);
+		assert.ok(taskFile, "expected an @task.md argv reference");
+		assert.equal(fs.readFileSync(taskFile, "utf-8"), `Task: ${longTask}`);
+		assert.ok(!args.includes(`Task: ${longTask}`));
+	});
+
+	it("delivers short tasks via file when PI_SUBAGENT_TASK_DELIVERY=file", () => {
+		process.env.PI_SUBAGENT_TASK_DELIVERY = "file";
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		const taskFile = taskFileFromArgs(args);
+		assert.ok(taskFile, "expected an @task.md argv reference");
+		assert.equal(fs.readFileSync(taskFile, "utf-8"), "Task: hello");
+		assert.ok(!args.includes("Task: hello"));
+	});
+
+
+	it("falls back to auto when PI_SUBAGENT_TASK_DELIVERY is invalid", () => {
+		process.env.PI_SUBAGENT_TASK_DELIVERY = "carrier-pigeon";
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: longTask,
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(taskFileFromArgs(args), "expected file delivery for over-limit task");
+	});
+
+	it("lets the per-launch taskDelivery override beat the env setting", () => {
+		delete process.env.PI_SUBAGENT_TASK_DELIVERY;
+		const { args } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			taskDelivery: "file",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+		});
+
+		assert.ok(taskFileFromArgs(args), "expected an @task.md argv reference");
+		assert.ok(!args.includes("Task: hello"));
 	});
 });
 

@@ -322,6 +322,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		return readCall().args;
 	}
 
+	function readAllCallArgs(): string[][] {
+		return fs.readdirSync(mockPi.dir)
+			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.sort()
+			.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args);
+	}
+
 	function makeExecutor(
 		agents = [makeAgent("echo")],
 		config: Record<string, unknown> = {},
@@ -2675,6 +2682,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.progress.recentOutput.join("\n"), /\[startup-retry\].*same model/i);
 		assert.equal(result.progress.recentOutput.filter((line) => line.startsWith("[startup-retry]")).length, 1);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("escalates to file task delivery after a zero-activity SIGKILL startup exit", { skip: process.platform === "win32" ? "POSIX child signal reporting is unavailable on Windows" : false }, async () => {
+		mockPi.onCall({ signal: "SIGKILL" });
+		mockPi.onCall({ output: "Recovered via file delivery" });
+		const agents = [makeAgent("worker", { model: "openai/gpt-5-mini" })];
+
+		const result = await runSync(tempDir, agents, "worker", "Do work", {
+			runId: "startup-sigkill-file-delivery-sync",
+			acceptance: false,
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.finalOutput, "Recovered via file delivery");
+		assert.equal(mockPi.callCount(), 2);
+		const [firstArgs, retryArgs] = readAllCallArgs();
+		assert.ok(firstArgs?.includes("Task: Do work"), "first attempt should deliver the task inline");
+		const retryTaskArg = retryArgs?.at(-1) ?? "";
+		assert.ok(
+			retryTaskArg.startsWith("@") && retryTaskArg.endsWith("task.md"),
+			`retry should reference a task file instead of inline argv, got: ${retryTaskArg}`,
+		);
+		assert.match(result.progress.recentOutput.join("\n"), /\[startup-retry\].*file task delivery/i);
 	});
 
 	it("does not retry a non-zero exit after tool activity", async () => {

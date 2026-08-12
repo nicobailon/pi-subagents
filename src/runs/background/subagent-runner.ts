@@ -68,7 +68,7 @@ import {
 	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
@@ -1306,6 +1306,9 @@ async function runSingleStep(
 
 	let modelIndex = 0;
 	let startupAttemptIndex = 0;
+	// Escalated to "file" after an unexplained zero-activity startup failure so
+	// retries keep the task text out of argv (endpoint pre-exec scans may deny it).
+	let taskDeliveryOverride: SubagentTaskDelivery | undefined;
 	modelAttemptsLoop: while (modelIndex < candidates.length) {
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
@@ -1331,6 +1334,7 @@ async function runSingleStep(
 			parentSessionId: step.parentSessionId,
 			baseArgs: ["--mode", "json", "-p"],
 			task,
+			taskDelivery: taskDeliveryOverride,
 			sessionEnabled,
 			sessionDir,
 			sessionFile: step.sessionFile,
@@ -1583,6 +1587,10 @@ async function runSingleStep(
 			});
 			const shouldRetry = await waitForSubagentStartupRetry(retryDelayMs, [ctx.timeoutSignal, ctx.stopSignal]);
 			if (!shouldRetry || ctx.skipAcceptance?.()) break modelAttemptsLoop;
+			if (!taskDeliveryOverride && run.processSignal === "SIGKILL") {
+				taskDeliveryOverride = "file";
+				attemptNotes.push("[startup-retry] retrying with file task delivery to keep the task text out of the child process argv.");
+			}
 			attempt.error = retryNote;
 			attemptNotes.push(retryNote);
 			startupAttemptIndex += 1;

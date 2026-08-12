@@ -208,6 +208,16 @@ export PI_SUBAGENT_PI_BINARY=/path/to/pi-or-wrapper
 
 Overrides the command used to launch child Pi processes. Package wrappers can set this to their own `pi`/agent binary so subagents inherit wrapper flags, environment setup, and bundled resources without relying on `PATH` ordering. Empty or whitespace-only values are ignored.
 
+## `PI_SUBAGENT_TASK_DELIVERY`
+
+```bash
+export PI_SUBAGENT_TASK_DELIVERY=file   # auto | file (default: auto)
+```
+
+Controls how the task text reaches the child Pi process. `auto` (default) passes short tasks as an inline argv token and writes tasks longer than 8000 characters to a temp `task.md` referenced as `@<path>`. `file` always uses a temp file, keeping the task out of argv entirely.
+
+Use `file` on hosts where endpoint protection (EDR) pre-execution scanning denies child processes whose command line embeds a long natural-language task — that denial surfaces as an immediate zero-activity `SIGKILL`. Independently of this setting, startup retries automatically escalate to file delivery after an unexplained zero-activity `SIGKILL`. Empty, whitespace-only, or unrecognized values fall back to `auto`.
+
 ## `intercomBridge`
 
 ```json

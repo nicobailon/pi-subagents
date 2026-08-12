@@ -63,6 +63,32 @@ import {
 } from "./capability-ceiling.ts";
 
 const TASK_ARG_LIMIT = 8000;
+
+/**
+ * Env override for how the task text reaches the child process. Endpoint
+ * protection (EDR) pre-execution command-line scanning may deny exec of
+ * children whose argv embeds a long natural-language task, which surfaces
+ * as an immediate zero-activity SIGKILL. File delivery keeps the task out
+ * of argv entirely.
+ */
+export const SUBAGENT_TASK_DELIVERY_ENV = "PI_SUBAGENT_TASK_DELIVERY";
+
+export type SubagentTaskDelivery = "auto" | "file";
+
+export function resolveSubagentTaskDelivery(
+	env: NodeJS.ProcessEnv = process.env,
+): SubagentTaskDelivery {
+	return env[SUBAGENT_TASK_DELIVERY_ENV]?.trim().toLowerCase() === "file"
+		? "file"
+		: "auto";
+}
+
+function shouldDeliverTaskViaFile(
+	task: string,
+	delivery: SubagentTaskDelivery,
+): boolean {
+	return delivery === "file" || task.length > TASK_ARG_LIMIT;
+}
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -149,6 +175,12 @@ export interface BuildPiArgsInput {
 	permissionRules?: PermissionRules;
 	permissionAuditPath?: string;
 	childWatchdog?: ChildWatchdogConfig;
+	/**
+	 * Per-launch override of the task delivery mode. Startup-retry paths set
+	 * this to "file" after an unexplained zero-activity SIGKILL so the retry
+	 * keeps the task text out of the child's argv.
+	 */
+	taskDelivery?: SubagentTaskDelivery;
 	waitToolEnabled?: boolean;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 }
@@ -585,7 +617,12 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		);
 	}
 
-	if (input.task.length > TASK_ARG_LIMIT) {
+	if (
+		shouldDeliverTaskViaFile(
+			input.task,
+			input.taskDelivery ?? resolveSubagentTaskDelivery(),
+		)
+	) {
 		if (!tempDir) {
 			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 		}
