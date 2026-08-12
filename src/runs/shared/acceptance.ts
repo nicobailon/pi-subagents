@@ -433,6 +433,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 		"",
 		"Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
+		"Empty-string entries (`[\"\"]`) are ignored; use `[]` when nothing applies.",
 		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
 		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
 		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
@@ -612,9 +613,17 @@ function normalizeAcceptanceReportValue(value: unknown, pathLabel = ""): { value
 			case "testsAddedOrUpdated":
 			case "validationOutput":
 			case "residualRisks":
-			case "reviewFindings":
-				normalized[canonical] = typeof fieldValue === "string" ? [fieldValue] : fieldValue;
+			case "reviewFindings": {
+				// Tolerate empty-string entries ("[\"\"]"): models write them for "no items"
+				// and a single empty entry must not reject the whole report. Drop them at
+				// parse time; non-string entries are kept so validateStringArrayField still
+				// flags structural garbage.
+				const items = typeof fieldValue === "string" ? [fieldValue] : fieldValue;
+				normalized[canonical] = Array.isArray(items)
+					? items.filter((item) => typeof item !== "string" || item.trim().length > 0)
+					: items;
 				break;
+			}
 			case "noStagedFiles": {
 				const token = typeof fieldValue === "string" ? fieldValue.trim().toLowerCase() : undefined;
 				normalized[canonical] = token === "true" ? true : token === "false" ? false : fieldValue;

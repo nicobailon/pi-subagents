@@ -245,6 +245,7 @@ describe("acceptance gates", () => {
 		assert.match(prompt, /Patch the bug/);
 		assert.match(prompt, /```acceptance-report/);
 		assert.match(prompt, /array fields contain strings/);
+		assert.match(prompt, /empty-string entr(?:y|ies).*\[\s*""\s*\]/i);
 		assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied, not-satisfied, not-applicable/);
 		assert.match(prompt, /commandsRun\[\]\.result.*passed, failed, not-run/);
 		assert.match(prompt, /manualNotes.*optional strings.*empty string.*does not satisfy.*manual-notes/);
@@ -482,13 +483,42 @@ describe("acceptance gates", () => {
 			[{ criteriaSatisfied: [{ id: "criterion-1", status: "maybe", evidence: "proof" }] }, /criteriaSatisfied\[0\]\.status.*got "maybe"/],
 			[{ criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "proof", confidence: 1 }] }, /criteriaSatisfied\[0\]\.confidence: unsupported acceptance criterion field/],
 			[{ criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "proof" }, { id: "Criterion_1", status: "satisfied", evidence: "proof" }] }, /duplicate normalized criterion id 'criterion-1'/],
-			[{ reviewFindings: [""] }, /reviewFindings\[0\]: expected non-empty string; got ""/],
+			[{ reviewFindings: [{}] }, /reviewFindings\[0\]: expected non-empty string; got object/],
 			[{ noStagedFiles: "yes" }, /noStagedFiles: expected boolean; got "yes"/],
 		] as const) {
 			const parsed = parseAcceptanceReport(report(overrides));
 			assert.equal(parsed.report, undefined);
 			assert.match(parsed.error ?? "", expected);
 		}
+	});
+
+	it("tolerates empty-string entries in string-array fields by dropping them at parse time", () => {
+		// A model writing ["\"\""] for "no items" must not fail the whole report.
+		for (const field of ["changedFiles", "testsAddedOrUpdated", "validationOutput", "residualRisks", "reviewFindings"] as const) {
+			const parsed = parseAcceptanceReport(report({ [field]: [""] }));
+			assert.equal(parsed.error, undefined, `${field}: ["\"\""] should parse`);
+			assert.deepEqual(parsed.report?.[field], [], `${field}: empty-string entries dropped`);
+		}
+
+		// Mixed arrays keep only meaningful entries.
+		const mixed = parseAcceptanceReport(report({ reviewFindings: ["blocker: file.ts:12", ""] }));
+		assert.equal(mixed.error, undefined);
+		assert.deepEqual(mixed.report?.reviewFindings, ["blocker: file.ts:12"]);
+
+		// Whitespace-only entries are treated as empty.
+		const whitespace = parseAcceptanceReport(report({ validationOutput: ["  "] }));
+		assert.equal(whitespace.error, undefined);
+		assert.deepEqual(whitespace.report?.validationOutput, []);
+
+		// A single string is still coerced to a one-item array.
+		const coerced = parseAcceptanceReport(report({ changedFiles: "src/file.ts" }));
+		assert.equal(coerced.error, undefined);
+		assert.deepEqual(coerced.report?.changedFiles, ["src/file.ts"]);
+
+		// Structural garbage (non-string entries) is still rejected.
+		const invalid = parseAcceptanceReport(report({ reviewFindings: [{}] }));
+		assert.equal(invalid.report, undefined);
+		assert.match(invalid.error ?? "", /reviewFindings\[0\]: expected non-empty string; got object/);
 	});
 
 	it("accepts empty optional note strings without treating them as evidence", async () => {
