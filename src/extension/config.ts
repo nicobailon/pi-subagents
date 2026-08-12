@@ -37,6 +37,15 @@ function validateFleetKeybindingsConfig(value: unknown): void {
 	}
 }
 
+function validateArtifactConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.artifactConfig must be a JSON object");
+	const cleanupDays = (value as Record<string, unknown>).cleanupDays;
+	if (cleanupDays !== undefined && (typeof cleanupDays !== "number" || !Number.isInteger(cleanupDays) || cleanupDays < 0)) {
+		throw new Error("config.artifactConfig.cleanupDays must be a non-negative integer");
+	}
+}
+
 function validateConfig(config: Record<string, unknown>): void {
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
@@ -49,6 +58,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validatePermissionConfig(config.permissions);
 	validateScheduledRunsConfig(config.scheduledRuns);
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
+	validateArtifactConfig(config.artifactConfig);
 }
 
 export function getConfigPath(): string {

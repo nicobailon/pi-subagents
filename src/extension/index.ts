@@ -366,7 +366,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const asyncWidgetEnabled = config.asyncWidget !== false;
 	const summaryInlineToolDisplay = config.inlineToolDisplay === "summary";
 	const tempArtifactsDir = getArtifactsDir(null);
-	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
+	cleanupAllArtifactDirs(artifactCleanupDays);
 
 	const state: SubagentState = {
 		baseCwd: "",
@@ -706,7 +707,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		try {
 			const sessionFile = ctx.sessionManager.getSessionFile();
 			if (sessionFile) {
-				cleanupOldArtifacts(getArtifactsDir(sessionFile), DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+				cleanupOldArtifacts(getArtifactsDir(sessionFile), artifactCleanupDays);
 			}
 		} catch {
 			// Cleanup failures should not block session lifecycle events.
