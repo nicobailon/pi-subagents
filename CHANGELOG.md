@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+### Fixed
+- Align unnamed intercom fallback orchestrator targets with pi-intercom's 18-character registered presence names so subagents without an explicit session name can reach their orchestrator. Thanks to @mystery4f for #1017.
 ## [0.47.1] - 2026-08-12
 
 ### Fixed

@@ -52,7 +52,8 @@ describe("resolveIntercomSessionTarget", () => {
 	});
 
 	it("uses the current pi-intercom runtime id for unnamed fallback when present", () => {
-		assert.equal(resolveIntercomSessionTarget(undefined, "session-12345678", "session-stableabcdef"), "subagent-chat-stableab");
+		assert.equal(resolveIntercomSessionTarget(undefined, "session-12345678", "session-stableabcdef"), "subagent-chat-stableabcdef");
+		assert.equal(resolveIntercomSessionTarget(undefined, "session-12345678", "session-abcdefghijklmnopqrst"), "subagent-chat-abcdefghijklmnopqr");
 	});
 });
 
