@@ -115,6 +115,18 @@ This is different from `waitTool.enabled=false`, which returns immediately witho
 
 Forces depth-0 internal single, parallel, and chain runs into background mode and bypasses launch UI by forcing `clarify: false`. Nested calls keep their own inherited settings.
 
+## `timeoutMs`
+
+```json
+{ "timeoutMs": 3600000 }
+```
+
+Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute backstop for single, parallel, and chain launches — foreground runs, plus plain single-agent async runs — whenever neither the call (`timeoutMs`/`maxRuntimeMs`) nor the selected agent (frontmatter `timeoutMs`) sets one. Explicit call values and agent frontmatter defaults always win, so this only moves the *default*.
+
+This is the knob a per-agent frontmatter `timeoutMs` cannot reach: parallel (`tasks: [...]`) and chain launches never adopt an agent's frontmatter timeout — that default applies to single-agent launches only — so a long fan-out otherwise falls back to the 30-minute default and is killed mid-run. Set `timeoutMs` to give every run mode the same generous default from one place.
+
+Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design — their runner children are bounded individually — so this value does not cap them. Must be a positive integer; invalid values are ignored and the built-in defaults apply.
+
 ## `globalConcurrencyLimit`
 
 ```json

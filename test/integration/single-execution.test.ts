@@ -3756,6 +3756,55 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(agentResult.details?.timeoutMs, 4_000);
 	});
 
+	it("threads the global config timeout default from deps.config, without overriding explicit or agent values", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const NINETY_MIN = 90 * 60 * 1000;
+		mockPi.onCall({ output: "config default" });
+		mockPi.onCall({ output: "explicit over config" });
+		mockPi.onCall({ output: "agent over config" });
+		mockPi.onCall({ output: "invalid config ignored" });
+
+		// A global config.timeoutMs replaces the built-in 30-minute foreground backstop.
+		const configExecutor = makeExecutor([makeAgent("echo")], { timeoutMs: NINETY_MIN });
+		const configResult = await configExecutor.execute(
+			"config-timeout-default",
+			{ agent: "echo", task: "Task", async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(configResult.details?.timeoutMs, NINETY_MIN);
+
+		// An explicit call value still wins over the global config default.
+		const explicitResult = await configExecutor.execute(
+			"config-timeout-explicit",
+			{ agent: "echo", task: "Task", async: false, timeoutMs: 2_000 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(explicitResult.details?.timeoutMs, 2_000);
+
+		// An agent frontmatter default still wins over the global config default (single launches).
+		const agentResult = await makeExecutor([makeAgent("echo", { defaultTimeoutMs: 4_000 })], { timeoutMs: NINETY_MIN }).execute(
+			"config-timeout-agent-default",
+			{ agent: "echo", task: "Task", async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(agentResult.details?.timeoutMs, 4_000);
+
+		// An invalid config value is ignored -> falls back to the built-in 30-minute default.
+		const invalidResult = await makeExecutor([makeAgent("echo")], { timeoutMs: -1 }).execute(
+			"config-timeout-invalid",
+			{ agent: "echo", task: "Task", async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(invalidResult.details?.timeoutMs, executorMod?.DEFAULT_FOREGROUND_TIMEOUT_MS);
+	});
+
 	it("runs omitted async launches in the background when the global default is enabled", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")], {}, true);
 

@@ -4,7 +4,7 @@ Where running subagents show up, how to inspect them, and the files and events t
 
 ## Foreground runs
 
-Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
+Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; a global [`timeoutMs`](configuration.md#timeoutms) config replaces that default, and explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
 
 Live progress shows compact detail for single, chain, and parallel modes: current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available.
 

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
 	DEFAULT_ASYNC_TIMEOUT_MS,
 	DEFAULT_FOREGROUND_TIMEOUT_MS,
+	resolveConfigDefaultTimeoutMs,
 	resolveSingleAgentLaunchTimeout,
 } from "../../src/runs/foreground/subagent-executor.ts";
 
@@ -69,5 +70,61 @@ describe("single-agent launch timeout wiring", () => {
 			resolveSingleAgentLaunchTimeout({ agent: "worker", task: "x", chain: [{ agent: "worker", task: "y" }], timeoutMs: 5_000 }, true),
 			{ timeoutMs: 5_000 },
 		);
+	});
+
+	const NINETY_MIN = 90 * 60 * 1000;
+
+	it("applies the global config default in place of the foreground backstop", () => {
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, false, NINETY_MIN), {
+			timeoutMs: NINETY_MIN,
+		});
+	});
+
+	it("applies the global config default to composite foreground runs (parallel/chain)", () => {
+		assert.deepEqual(
+			resolveSingleAgentLaunchTimeout({ agent: "worker", task: "x", tasks: [{ agent: "worker", task: "y" }] }, false, NINETY_MIN),
+			{ timeoutMs: NINETY_MIN },
+		);
+		assert.deepEqual(
+			resolveSingleAgentLaunchTimeout({ agent: "worker", task: "x", chain: [{ agent: "worker", task: "y" }] }, false, NINETY_MIN),
+			{ timeoutMs: NINETY_MIN },
+		);
+	});
+
+	it("applies the global config default in place of the single-agent async backstop", () => {
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, true, NINETY_MIN), {
+			timeoutMs: NINETY_MIN,
+		});
+	});
+
+	it("lets an explicit call timeout win over the global config default", () => {
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({ timeoutMs: 5_000 }, false, NINETY_MIN), {
+			timeoutMs: 5_000,
+		});
+	});
+
+	it("keeps composite async runs unbounded even with a global config default", () => {
+		assert.deepEqual(
+			resolveSingleAgentLaunchTimeout({ agent: "worker", task: "x", tasks: [{ agent: "worker", task: "y" }] }, true, NINETY_MIN),
+			{},
+		);
+	});
+});
+
+describe("resolveConfigDefaultTimeoutMs", () => {
+	it("returns a positive integer unchanged", () => {
+		assert.equal(resolveConfigDefaultTimeoutMs(90 * 60 * 1000), 90 * 60 * 1000);
+	});
+
+	it("treats unset config as no default", () => {
+		assert.equal(resolveConfigDefaultTimeoutMs(undefined), undefined);
+	});
+
+	it("ignores non-positive, non-integer, and non-numeric values", () => {
+		assert.equal(resolveConfigDefaultTimeoutMs(0), undefined);
+		assert.equal(resolveConfigDefaultTimeoutMs(-1), undefined);
+		assert.equal(resolveConfigDefaultTimeoutMs(1.5), undefined);
+		assert.equal(resolveConfigDefaultTimeoutMs("600000" as unknown), undefined);
+		assert.equal(resolveConfigDefaultTimeoutMs(Number.NaN), undefined);
 	});
 });
