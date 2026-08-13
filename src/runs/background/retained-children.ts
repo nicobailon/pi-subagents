@@ -69,6 +69,7 @@ export function formatRetainedChildren(children: RetainedChild[]): string {
 			...(child.parentRunId ? [`  workflow: ${child.parentRunId}${child.workflowKey ? ` (${child.workflowKey})` : ""}`] : []),
 			`  task: ${child.taskSummary || "(no task summary)"}`,
 			`  session: ${child.sessionPath}`,
+			`  resume: subagent({ action: "resume", id: "${child.runId}", message: "..." })`,
 			...(child.tokenTotals ? [`  tokens: input ${child.tokenTotals.input}, output ${child.tokenTotals.output}, total ${child.tokenTotals.total}`] : []),
 		]),
 	].join("\n");

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { listRetainedChildren } from "../../src/runs/background/retained-children.ts";
+import { formatRetainedChildren, listRetainedChildren } from "../../src/runs/background/retained-children.ts";
 
 function writeRetainedRun(root: string, index: number, sessionId = "parent-a", parentWorkflowRunId: string | null = "workflow-a", state: "complete" | "failed" | "paused" = "complete"): void {
 	const runId = `child-${index}`;
@@ -53,6 +53,7 @@ describe("retained child roster", () => {
 			assert.ok((children[0]?.taskSummary.length ?? 0) <= 120);
 			assert.equal(children[0]?.taskSummary.startsWith("Task 52 with spacing"), true);
 			assert.deepEqual(children[0]?.tokenTotals, { input: 52, output: 53, total: 105 });
+			assert.match(formatRetainedChildren(children), /resume: subagent\(\{ action: "resume", id: "child-52", message: "\.\.\." \}\)/);
 			assert.equal(children.some((child) => child.runId === "child-50" || child.runId === "child-51"), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

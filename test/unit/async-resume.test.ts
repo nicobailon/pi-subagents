@@ -95,7 +95,6 @@ describe("async resume lookup", () => {
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-descriptor", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
-				parentWorkflowRunId: "workflow-parent", workflowKey: "review",
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			const descriptor = {
@@ -114,17 +113,10 @@ describe("async resume lookup", () => {
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				launchContractDigest: "launch-contract-digest",
-				parentWorkflowRunId: "workflow-parent",
-				workflowKey: "review",
 			});
 			const valid = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.equal(valid.launchContractDigest, "launch-contract-digest");
 			assert.equal(valid.recoveryDescriptor?.launchContractDigest, "launch-contract-digest");
-			assert.equal(valid.recoveryDescriptor?.parentWorkflowRunId, "workflow-parent");
-			assert.equal(valid.recoveryDescriptor?.workflowKey, "review");
-
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, parentWorkflowRunId: "another-workflow", workflowKey: "review" });
-			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different workflow child/);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
