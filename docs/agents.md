@@ -90,7 +90,7 @@ To let every builtin role use Pi's normal tools and ambient extensions instead o
 }
 ```
 
-An explicit `agentOverrides.<name>.tools` entry still wins for that role. Project settings take precedence over user settings.
+An explicit `agentOverrides.<name>.tools` entry in the winning configuration scope still wins for that role. Project settings take precedence over user settings, including `inheritBuiltinTools`.
 
 Disable and restore:
 

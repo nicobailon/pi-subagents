@@ -4,6 +4,7 @@
 
 ### Added
 - Add `debug.run` for async run lifecycle diagnostics without exposing prompts, secrets, or transcripts (#1037).
+- Add `subagents.inheritBuiltinTools` to let builtin roles inherit Pi's ambient tools and extensions. Thanks to @davidarny for #1049.
 
 ## [0.48.0] - 2026-08-13
 
