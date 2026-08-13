@@ -748,6 +748,49 @@ describe("scripted workflow runtime", () => {
 		assert.equal(childAborted, true);
 	});
 
+	it("ignores a queued child launch message after workflow abort", async () => {
+		const originalOn = Worker.prototype.on;
+		const controller = new AbortController();
+		let launchCount = 0;
+		let deliverCapturedRunMessage: (() => void) | undefined;
+		let markRunMessageCaptured!: () => void;
+		const runMessageCaptured = new Promise<void>((resolve) => { markRunMessageCaptured = resolve; });
+
+		(Worker.prototype as unknown as { on: typeof Worker.prototype.on }).on = function (event: string | symbol, listener: (...args: unknown[]) => void) {
+			if (event !== "message") return originalOn.call(this, event, listener);
+			const wrapped = (message: Record<string, unknown>) => {
+				if (message.type === "call" && message.method === "run") {
+					deliverCapturedRunMessage = () => listener.call(this, message);
+					markRunMessageCaptured();
+					return;
+				}
+				listener.call(this, message);
+			};
+			return originalOn.call(this, event, wrapped);
+		};
+
+		try {
+			const workflow = runWorkflowScript({
+				script: `await runs.run("late", { agent: "worker", task: "wait" });`,
+				signal: controller.signal,
+				async launch(key) {
+					launchCount += 1;
+					return { key, ok: true, output: "too late", artifactPaths: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			});
+
+			await runMessageCaptured;
+			controller.abort(new Error("Workflow stopped by user."));
+			await assert.rejects(workflow, (error: unknown) => error instanceof WorkflowScriptError && error.message === "Workflow stopped by user.");
+			deliverCapturedRunMessage?.();
+			await new Promise((resolve) => queueMicrotask(resolve));
+			assert.equal(launchCount, 0);
+		} finally {
+			Worker.prototype.on = originalOn;
+		}
+	});
+
 	it("drops a child response that settles after the workflow aborts", async () => {
 		const workerPrototype = Worker.prototype as unknown as { postMessage(value: unknown, ...args: unknown[]): void };
 		const originalPostMessage = workerPrototype.postMessage;

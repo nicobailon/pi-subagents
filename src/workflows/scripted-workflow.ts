@@ -555,6 +555,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (!settled && code !== 0) finish({ error: new Error(`Workflow worker exited with code ${code}.`) });
 		});
 		worker.on("message", (message: Record<string, unknown>) => {
+			if (settled) return;
 			if (message.type === "emit") {
 				try {
 					assertWorkflowJsonValue(message.value, "emit");
