@@ -3273,9 +3273,10 @@ function resolveWorkflowChildOutputPath(input: {
 	key: string;
 	params: Record<string, unknown>;
 }): string | undefined {
-	const hasExplicitOutput = typeof input.params.output === "string" || typeof input.params.output === "boolean";
+	const rawOutput = input.params.output;
+	const hasExplicitOutput = typeof rawOutput === "string" || typeof rawOutput === "boolean";
 	const output = hasExplicitOutput
-		? input.params.output
+		? rawOutput
 		: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, input.key);
 	if (typeof output === "string" && !path.isAbsolute(output) && !input.configuredOutputBaseDir && hasExplicitOutput) return undefined;
 	const childCwd = typeof input.params.cwd === "string" ? resolveChildCwd(input.workflowCwd, input.params.cwd) : input.workflowCwd;
