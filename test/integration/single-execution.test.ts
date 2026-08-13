@@ -1167,6 +1167,30 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(mockPi.callCount(), 0);
 
+		const relativeDuplicateOutput = "relative-shared.md";
+		const relativeDuplicate = await executor.execute(
+			"scripted-workflow-relative-duplicate-child-output",
+			{
+				async: false,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(relativeDuplicateOutput)} },
+					{ key: "monitor", agent: "echo", task: "Monitor", output: ${JSON.stringify(relativeDuplicateOutput)} }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(relativeDuplicate.isError, undefined, relativeDuplicate.content[0]?.text ?? "workflow failed");
+		const relativeDuplicateChildren = relativeDuplicate.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(relativeDuplicateChildren.map(({ ok }) => ok), [false, false]);
+		for (const child of relativeDuplicateChildren) {
+			assert.match(child.error ?? "", /Workflow children 'review' and 'monitor' resolve output to the same path/);
+			assert.match(child.error ?? "", new RegExp(escapeRegExp(path.join(tempDir, relativeDuplicateOutput))));
+		}
+		assert.equal(mockPi.callCount(), 0);
+
 		const aggregate = await executor.execute(
 			"scripted-workflow-aggregate-child-output",
 			{
@@ -1188,6 +1212,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		for (const child of aggregateChildren) {
 			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
 			assert.match(child.error ?? "", new RegExp(escapeRegExp(sharedOutput)));
+		}
+		assert.equal(mockPi.callCount(), 0);
+
+		const relativeAggregateOutput = "relative-aggregate.md";
+		const relativeAggregate = await executor.execute(
+			"scripted-workflow-relative-aggregate-child-output",
+			{
+				async: false,
+				output: relativeAggregateOutput,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(relativeAggregateOutput)} },
+					{ key: "monitor", agent: "echo", task: "Monitor" }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(relativeAggregate.isError, undefined, relativeAggregate.content[0]?.text ?? "workflow failed");
+		const relativeAggregateChildren = relativeAggregate.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(relativeAggregateChildren.map(({ ok }) => ok), [false, false]);
+		for (const child of relativeAggregateChildren) {
+			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
+			assert.match(child.error ?? "", new RegExp(escapeRegExp(path.join(tempDir, relativeAggregateOutput))));
 		}
 		assert.equal(mockPi.callCount(), 0);
 	});

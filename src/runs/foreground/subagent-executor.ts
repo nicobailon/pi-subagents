@@ -3249,6 +3249,17 @@ function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string,
 	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", runId);
 }
 
+function resolveWorkflowAggregateOutputPath(
+	output: string | boolean | undefined,
+	ctxCwd: string,
+	workflowCwd: string,
+	outputBaseDir: string,
+	configuredOutputBaseDir: string | undefined,
+): string | undefined {
+	if (typeof output === "string" && output && !path.isAbsolute(output) && !configuredOutputBaseDir) return path.resolve(workflowCwd, output);
+	return resolveSingleOutputPath(output, ctxCwd, workflowCwd, outputBaseDir);
+}
+
 function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, artifactsDir: string, workflowRunId: string, workflowKey: string): string {
 	if (aggregateOutputPath) {
 		const parsed = path.parse(aggregateOutputPath);
@@ -3283,7 +3294,6 @@ function resolveWorkflowChildOutputPath(input: {
 		: hasExplicitOutput
 			? rawOutput
 			: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, input.key);
-	if (typeof output === "string" && !path.isAbsolute(output) && !input.configuredOutputBaseDir && hasExplicitOutput) return undefined;
 	const childCwd = typeof input.params.cwd === "string" ? resolveChildCwd(input.workflowCwd, input.params.cwd) : input.workflowCwd;
 	return resolveSingleOutputPath(output, input.ctxCwd, childCwd, input.configuredOutputBaseDir);
 }
@@ -3321,13 +3331,21 @@ function prepareWorkflowChildLaunchParams(input: {
 	childParams: Record<string, unknown>;
 	parentWorkflowRunId: string;
 	workflowKey: string;
+	ctxCwd: string;
+	workflowCwd: string;
 	artifactsDir: string;
 	aggregateOutputPath?: string;
+	configuredOutputBaseDir?: string;
+	agents: AgentConfig[];
 	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor };
 }): SubagentParamsLike {
-	const childParams = input.childParams.output === undefined && input.childParams.resume === undefined
-		? { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) }
-		: input.childParams;
+	let childParams = input.childParams;
+	if (input.childParams.output === undefined && input.childParams.resume === undefined) {
+		childParams = { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) };
+	} else if (input.childParams.resume === undefined) {
+		const resolvedOutput = resolveWorkflowChildOutputPath({ ctxCwd: input.ctxCwd, workflowCwd: input.workflowCwd, artifactsDir: input.artifactsDir, workflowRunId: input.parentWorkflowRunId, aggregateOutputPath: input.aggregateOutputPath, configuredOutputBaseDir: input.configuredOutputBaseDir, agents: input.agents, key: input.workflowKey, params: input.childParams });
+		if (resolvedOutput) childParams = { ...input.childParams, output: resolvedOutput };
+	}
 	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, input.options);
 }
 
@@ -4938,7 +4956,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
-					const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
+					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId), configuredOutputBaseDir);
 					const claimedOutputPaths = new Map<string, string>();
 					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 					let projectedTraceLength = 0;
@@ -5026,7 +5044,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, agents: workflowAgents, options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -5124,7 +5142,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
-			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id));
+			const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id), configuredOutputBaseDir);
 			const claimedOutputPaths = new Map<string, string>();
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
@@ -5168,7 +5186,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, agents: workflowAgents, options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
