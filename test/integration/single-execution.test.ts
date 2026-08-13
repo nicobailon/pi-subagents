@@ -996,39 +996,55 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 	});
 
-	it("routes workflow children through one automatic mission", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("keeps a git worktree clean while routing workflow children through one automatic mission", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "scanned auth" });
 		mockPi.onCall({ output: "reviewed auth" });
-		const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
+		const projectDir = path.join(tempDir, "project");
+		const agentDir = path.join(tempDir, "agent");
+		fs.mkdirSync(projectDir);
+		execFileSync("git", ["init"], { cwd: projectDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: projectDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: projectDir });
+		fs.writeFileSync(path.join(projectDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: projectDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: projectDir, stdio: "ignore" });
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
+			const result = await executor.execute(
+				"scripted-workflow",
+				{
+					async: false,
+					workflowScript: `
+						const stateType = typeof state;
+						const scan = await runs.run("scan", { agent: "echo", task: "Scan auth" });
+						const review = await runs.run("review", { agent: "echo", task: "Review: " + scan.output });
+						return { output: review.output, stateType };
+					`,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(projectDir),
+			);
 
-		const result = await executor.execute(
-			"scripted-workflow",
-			{
-				async: false,
-				workflowScript: `
-					const stateType = typeof state;
-					const scan = await runs.run("scan", { agent: "echo", task: "Scan auth" });
-					const review = await runs.run("review", { agent: "echo", task: "Review: " + scan.output });
-					return { output: review.output, stateType };
-				`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /reviewed auth/);
-		assert.equal(result.details.mode, "workflow");
-		assert.equal(result.details.results.length, 2);
-		assert.equal(result.details.workflow?.value && (result.details.workflow.value as { stateType?: unknown }).stateType, "object");
-		assert.ok(result.details.missionId);
-		const missionDir = path.join(tempDir, ".pi/subagents", "missions");
-		const missionFiles = fs.readdirSync(missionDir).filter((entry) => entry.endsWith(".json"));
-		assert.equal(missionFiles.length, 1);
-		const mission = JSON.parse(fs.readFileSync(path.join(missionDir, missionFiles[0]!), "utf-8")) as { objective?: string };
-		assert.equal(mission.objective, utils.PROMPT_REDACTED);
-		assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
+			assert.equal(result.isError, undefined);
+			assert.match(result.content[0]?.text ?? "", /reviewed auth/);
+			assert.equal(result.details.mode, "workflow");
+			assert.equal(result.details.results.length, 2);
+			assert.equal(result.details.workflow?.value && (result.details.workflow.value as { stateType?: unknown }).stateType, "object");
+			assert.ok(result.details.missionId);
+			const missionFiles = fs.readdirSync(path.join(agentDir, "missions", "projects"), { recursive: true })
+				.filter((entry) => typeof entry === "string" && entry.endsWith(".json"));
+			assert.equal(missionFiles.length, 1);
+			const mission = JSON.parse(fs.readFileSync(path.join(agentDir, "missions", "projects", missionFiles[0]!), "utf-8")) as { objective?: string };
+			assert.equal(mission.objective, utils.PROMPT_REDACTED);
+			assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
+			assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: projectDir, encoding: "utf-8" }), "");
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
 	});
 
 	it("keeps workflow children mission-detached when automatic mission persistence fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1036,7 +1052,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		mockPi.onCall({ output: "reviewed auth" });
 		const blockedIndex = path.join(tempDir, "blocked-mission-index");
 		fs.writeFileSync(blockedIndex, "not a directory", "utf-8");
-		const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndexDir: blockedIndex } });
+		const executor = makeExecutor([makeAgent("echo")], { missions: { directory: ".pi/subagents/missions", globalIndexDir: blockedIndex } });
 
 		const result = await executor.execute(
 			"scripted-workflow-mission-warning",

@@ -150,7 +150,7 @@ Foreground and async runners share bounded child-protocol handling:
 
 ## Chain and debug artifacts
 
-Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "project"`, that root is `<cwd>/.pi/subagents/chain-runs/`. With `artifactDir: "session"` or `"temp"`, it is user-scoped temp storage:
+Each chain run creates a scratch directory under its resolved chain root. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi/subagents/chain-runs/`:
 
 ```text
 <tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/

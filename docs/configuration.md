@@ -320,7 +320,6 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 {
   "missions": {
     "enabled": true,
-    "directory": ".pi/subagents/missions",
     "globalIndex": true,
     "retainTerminal": 200
   }
@@ -329,7 +328,8 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 Automatic missions are enabled by default for ordinary launches with a task. Use per-launch `mission: false` for intentionally ephemeral work, or set `enabled: false` to disable automatic creation globally; explicit mission actions and `missionId`/`mission` launch fields still work.
 
-- `directory` may be absolute, `~/...`, or project-relative.
+- Mission records default to a project-keyed directory under pi's agent directory (`~/.pi/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
+- `directory` may be absolute, `~/...`, or project-relative. Set it to `.pi/subagents/missions` to opt in to project-scoped records.
 - `retainTerminal` is a positive count (default `200`); pruning removes only the oldest completed, failed, or cancelled records and their pointers, never planned, active, waiting, needs-decision, or corrupt records.
 - The user-global index contains pointers only; missing-record pointers self-heal when globally listed. Set `globalIndex: false` to disable writes or `globalIndexDir` to redirect it.
 
@@ -358,11 +358,11 @@ Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is inte
 
 Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored:
 
-- `"project"` (default): writes to `<cwd>/.pi/subagents/artifacts/`.
-- `"session"`: stores artifacts under pi's session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean.
+- `"project"`: writes to `<cwd>/.pi/subagents/artifacts/`.
+- `"session"` (default): stores artifacts under pi's session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. It falls back to the OS temp directory when no session file exists.
 - `"temp"`: uses the OS temp directory.
 
-This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi/subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory.
+This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi/subagents/chain-runs/`, while the default `"session"` and `"temp"` use the user-scoped temp chain directory.
 
 The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
 

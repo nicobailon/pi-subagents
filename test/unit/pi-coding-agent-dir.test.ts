@@ -214,7 +214,7 @@ Package skill content.
 	it("resolves configured artifact directory preferences", () => {
 		const sessionFile = path.join(agentDir, "sessions", "session-1", "session.jsonl");
 
-		assert.equal(getArtifactsDir(sessionFile, cwd), getProjectArtifactsDir(cwd));
+		assert.equal(getArtifactsDir(sessionFile, cwd), path.join(path.dirname(sessionFile), "subagent-artifacts"));
 		assert.equal(getArtifactsDir(sessionFile, cwd, "project"), getProjectArtifactsDir(cwd));
 		assert.equal(getArtifactsDir(sessionFile, cwd, "session"), path.join(path.dirname(sessionFile), "subagent-artifacts"));
 		assert.equal(getArtifactsDir(sessionFile, cwd, "temp"), TEMP_ARTIFACTS_DIR);

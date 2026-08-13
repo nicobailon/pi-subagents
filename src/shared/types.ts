@@ -1942,7 +1942,7 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
-	/** Where to store subagent artifact files. Defaults to "project" (cwd/.pi/subagents). Set to "session" for pi session dir, or "temp" for OS temp. */
+	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for cwd/.pi/subagents. */
 	artifactDir?: ArtifactDirPreference;
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
 	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;
@@ -1966,7 +1966,7 @@ export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 
 export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
 	enabled: true,
-	dir: "project",
+	dir: "session",
 	includeInput: true,
 	includeOutput: true,
 	includeJsonl: false,

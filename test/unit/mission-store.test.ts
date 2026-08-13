@@ -34,6 +34,20 @@ async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> 
 }
 
 describe("mission store", () => {
+	it("stores default missions outside the project and preserves configured project storage", () => {
+		const test = fixture();
+		try {
+			assert.equal(path.relative(test.projectRoot, test.location.missionDir).startsWith(".."), true);
+			assert.equal(test.location.missionDir.startsWith(path.join(test.agentDir, "missions", "projects")), true);
+			assert.equal(
+				resolveMissionStoreLocation({ projectRoot: test.projectRoot, agentDir: test.agentDir, config: { directory: ".pi/subagents/missions" } }).missionDir,
+				path.join(test.projectRoot, ".pi/subagents", "missions"),
+			);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
 	it("creates, reads, updates, lists, and globally indexes project missions", () => {
 		const test = fixture();
 		try {

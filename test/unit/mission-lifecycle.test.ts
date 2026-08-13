@@ -17,7 +17,7 @@ function projectFixture() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-mission-lifecycle-"));
 	const projectRoot = path.join(root, "project");
 	fs.mkdirSync(projectRoot, { recursive: true });
-	return { root, projectRoot, missionConfig: { globalIndexDir: path.join(root, "global-index") } };
+	return { root, projectRoot, missionConfig: { directory: ".pi/subagents/missions", globalIndexDir: path.join(root, "global-index") } };
 }
 
 describe("mission launch lifecycle", () => {

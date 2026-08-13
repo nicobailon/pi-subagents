@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getProjectSubagentsDir } from "../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import {
@@ -259,6 +258,11 @@ function expandConfiguredPath(value: string, projectRoot: string): string {
 	return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(projectRoot, expanded);
 }
 
+function projectMissionDirectory(agentDir: string, projectRoot: string): string {
+	const projectKey = createHash("sha256").update(projectRoot).digest("hex");
+	return path.join(agentDir, "missions", "projects", projectKey);
+}
+
 export function validateMissionStoreConfig(value: unknown, label = "config.missions"): MissionStoreConfig | undefined {
 	if (value === undefined) return undefined;
 	const input = asObject(value, label);
@@ -289,12 +293,13 @@ export function resolveMissionStoreLocation(input: {
 	agentDir?: string;
 }): MissionStoreLocation {
 	const projectRoot = path.resolve(input.projectRoot);
+	const agentDir = input.agentDir ?? getAgentDir();
 	const missionDir = input.config?.directory
 		? expandConfiguredPath(input.config.directory, projectRoot)
-		: path.join(getProjectSubagentsDir(projectRoot), "missions");
+		: projectMissionDirectory(agentDir, projectRoot);
 	const globalIndexDir = input.config?.globalIndexDir
 		? expandConfiguredPath(input.config.globalIndexDir, projectRoot)
-		: path.join(input.agentDir ?? getAgentDir(), "missions", "index");
+		: path.join(agentDir, "missions", "index");
 	return {
 		projectRoot,
 		missionDir,

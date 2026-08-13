@@ -536,6 +536,7 @@ describe("native subagent fleet", () => {
 			fs.writeFileSync(outputPath, "restored foreground output", "utf-8");
 
 			const state = stateForTest();
+			state.artifactDirPreference = "project";
 			state.foregroundRuns!.set("restored", {
 				runId: "restored",
 				mode: "single",
@@ -556,6 +557,7 @@ describe("native subagent fleet", () => {
 
 			const restored = stateForTest();
 			restored.baseCwd = cwd;
+			restored.artifactDirPreference = "project";
 			assert.equal(restoreForegroundRunHistory(restored, { resultsDir }), 1);
 			const snapshot = collectFleetSnapshot(restored);
 			assert.deepEqual(snapshot.items.map((item) => item.key), ["foreground-recent:restored:0"]);
@@ -636,6 +638,7 @@ describe("native subagent fleet", () => {
 			const cwd = path.join(root, "project");
 			const artifactsRoot = getProjectArtifactsDir(cwd);
 			const state = stateForTest();
+			state.artifactDirPreference = "project";
 			for (let index = 0; index < 3; index++) {
 				const outputPath = path.join(artifactsRoot, "outputs", `run-${index}`, "output.md");
 				fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -654,6 +657,7 @@ describe("native subagent fleet", () => {
 
 			const restored = stateForTest();
 			restored.baseCwd = cwd;
+			restored.artifactDirPreference = "project";
 			assert.equal(restoreForegroundRunHistory(restored, { resultsDir, limit: 2 }), 2);
 			assert.deepEqual([...restored.foregroundRuns!.keys()], ["run-2", "run-1"]);
 
@@ -802,6 +806,7 @@ describe("native subagent fleet", () => {
 			fs.writeFileSync(path.join(asyncDir, "status.json"), "{in-flight status", "utf-8");
 			const state = stateForTest();
 			state.baseCwd = path.join(root, "parent-cwd");
+			state.artifactDirPreference = "project";
 			state.asyncJobs.set("async-custom-cwd", {
 				asyncId: "async-custom-cwd",
 				asyncDir,
@@ -883,6 +888,7 @@ describe("native subagent fleet", () => {
 		try {
 			const state = stateForTest();
 			state.baseCwd = path.join(root, "parent-cwd");
+			state.artifactDirPreference = "project";
 			const effectiveCwd = path.join(root, "effective-cwd");
 			const now = Date.now();
 			state.foregroundControls.set("foreground-live", {

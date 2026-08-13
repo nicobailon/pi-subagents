@@ -144,7 +144,7 @@ export function getProjectChainRunsDir(cwd: string): string {
 
 export function getChainRunsDir(
 	projectCwd: string,
-	dirPreference: ArtifactDirPreference = "project",
+	dirPreference: ArtifactDirPreference = "session",
 ): string {
 	switch (dirPreference) {
 		case "project":
@@ -160,7 +160,7 @@ export function getChainRunsDir(
 export function getArtifactsDir(
 	sessionFile: string | null,
 	projectCwd?: string,
-	dirPreference: ArtifactDirPreference = "project",
+	dirPreference: ArtifactDirPreference = "session",
 ): string {
 	switch (dirPreference) {
 		case "session":

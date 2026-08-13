@@ -473,7 +473,7 @@ function fleetArtifactsRoot(state: SubagentState, cwd: string): string {
 	return getArtifactsDir(
 		state.parentSessionFile ?? null,
 		cwd,
-		state.artifactDirPreference ?? "project",
+		state.artifactDirPreference,
 	);
 }
 
