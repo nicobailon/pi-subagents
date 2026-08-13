@@ -2,59 +2,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getLanguageFromPath, highlightCode, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { safeTerminalText as safeDisplayText } from "../shared/display-text.ts";
 
 const DEFAULT_MAX_RECORDS = 240;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 64 * 1024;
 const TOOL_PREVIEW_LINES = 7;
-const BINARY_CONTENT_PLACEHOLDER = "[binary content omitted for safe display]";
-
-function isUnsafeDisplayCodePoint(codePoint: number): boolean {
-	const terminalControl = (codePoint <= 0x1f && codePoint !== 0x09 && codePoint !== 0x0a)
-		|| (codePoint >= 0x7f && codePoint <= 0x9f);
-	const bidiControl = codePoint === 0x061c
-		|| codePoint === 0x200e
-		|| codePoint === 0x200f
-		|| (codePoint >= 0x202a && codePoint <= 0x202e)
-		|| (codePoint >= 0x2066 && codePoint <= 0x2069);
-	const privateUse = (codePoint >= 0xe000 && codePoint <= 0xf8ff)
-		|| (codePoint >= 0xf0000 && codePoint <= 0xffffd)
-		|| (codePoint >= 0x100000 && codePoint <= 0x10fffd);
-	const invalidScalar = codePoint >= 0xd800 && codePoint <= 0xdfff;
-	const nonCharacter = (codePoint >= 0xfdd0 && codePoint <= 0xfdef)
-		|| (codePoint & 0xffff) === 0xfffe
-		|| (codePoint & 0xffff) === 0xffff;
-	return terminalControl || bidiControl || privateUse || invalidScalar || nonCharacter;
-}
-
-function looksLikeBinaryContent(text: string): boolean {
-	if (text.includes("\0")) return true;
-	let suspiciousControls = 0;
-	let replacementCharacters = 0;
-	let codePoints = 0;
-	for (const character of text) {
-		codePoints++;
-		const codePoint = character.codePointAt(0) ?? 0;
-		if ((codePoint <= 0x08) || (codePoint >= 0x0e && codePoint <= 0x1f)) suspiciousControls++;
-		if (codePoint === 0xfffd) replacementCharacters++;
-	}
-	if (codePoints === 0) return false;
-	return (suspiciousControls >= 4 && suspiciousControls / codePoints >= 0.1)
-		|| (replacementCharacters >= 3 && replacementCharacters / codePoints >= 0.1);
-}
-
-function safeDisplayText(text: string): string {
-	const normalized = text.replace(/\r\n/g, "\n");
-	if (looksLikeBinaryContent(normalized)) return BINARY_CONTENT_PLACEHOLDER;
-	let safe = "";
-	for (const character of normalized) {
-		const codePoint = character.codePointAt(0) ?? 0;
-		safe += isUnsafeDisplayCodePoint(codePoint)
-			? `[U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}]`
-			: character;
-	}
-	return safe;
-}
 
 function sanitizeJsonDisplayValue(value: unknown): { value: unknown; changed: boolean } {
 	if (typeof value === "string") {
