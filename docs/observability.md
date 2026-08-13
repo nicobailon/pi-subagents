@@ -27,9 +27,10 @@ The under-editor async widget gives a short view while work runs. Its expand key
 
 ```text
 async subagent worker · background
-● worker · running
-  ⎿  reading src/auth.ts
-  Press configured-expand-key for live detail
+● worker
+  ● Step 1/1: worker · running
+    ⎿  reading src/auth.ts
+    Press configured-expand-key for live detail
 ```
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
