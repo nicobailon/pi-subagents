@@ -23,12 +23,13 @@ subagent({ action: "status", id: "..." })      // one run
 
 Or ask naturally: "Show me the current async runs."
 
-The under-editor async widget gives a short view while work runs:
+The under-editor async widget gives a short view while work runs. Its expand key follows your Pi keybinding:
 
 ```text
-● scout
+async subagent worker · background
+● worker · running
   ⎿  reading src/auth.ts
-  Ctrl+O to expand
+  Press configured-expand-key for live detail
 ```
 
 To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
