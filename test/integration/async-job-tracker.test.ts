@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
+import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
@@ -204,10 +204,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		try {
 			const runDir = path.join(asyncRoot, "run-restored");
 			const customCwd = path.join(asyncRoot, "custom-cwd");
-			const artifactsRoot = getProjectArtifactsDir(customCwd);
+			const sessionFile = path.join(asyncRoot, "sessions", "session-restored.jsonl");
+			const artifactsRoot = getArtifactsDir(sessionFile, customCwd);
 			const transcriptPath = path.join(artifactsRoot, "run-restored_reviewer_transcript.jsonl");
 			fs.mkdirSync(runDir, { recursive: true });
 			fs.mkdirSync(artifactsRoot, { recursive: true });
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 			fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", text: "Restored custom cwd transcript" })}\n`, "utf-8");
 			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
 				runId: "run-restored",
@@ -215,6 +217,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				state: "running",
 				sessionId: "session-restored",
 				cwd: customCwd,
+				sessionFile,
 				startedAt: 1000,
 				lastUpdate: 2000,
 				currentStep: 1,

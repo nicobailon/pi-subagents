@@ -36,7 +36,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
@@ -4144,7 +4144,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const taskArg = readCallArgs().at(-1) ?? "";
 		assert.equal(result.isError, undefined);
-		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(path.join(tempDir, ".pi/subagents", "artifacts", "outputs"))}.*context\\.md`));
+		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(path.join(TEMP_ARTIFACTS_DIR, "outputs"))}.*context\\.md`));
 		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 	});
 

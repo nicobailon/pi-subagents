@@ -510,6 +510,7 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 			item.run.asyncDir,
 			fleetArtifactsRoot(state, state.baseCwd),
 			trackedJob?.cwd ? fleetArtifactsRoot(state, trackedJob.cwd) : undefined,
+			item.run.sessionFile ? getArtifactsDir(item.run.sessionFile, item.run.cwd ?? state.baseCwd, state.artifactDirPreference) : undefined,
 		]),
 	};
 }

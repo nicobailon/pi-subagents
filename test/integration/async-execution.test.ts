@@ -20,7 +20,7 @@ import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
-import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
@@ -1771,7 +1771,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.sessionId, "session-123");
 		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
 		assert.equal(status.steps?.[0]?.acceptance?.evidenceStatus, "checked");
-		const outputPath = path.join(tempDir, ".pi/subagents", "artifacts", "outputs", asyncId, "async-top-output.md");
+		const outputPath = path.join(TEMP_ARTIFACTS_DIR, "outputs", asyncId, "async-top-output.md");
 		const outputDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(outputPath)) {
 			if (Date.now() > outputDeadline) {
@@ -1784,7 +1784,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(callFile, "expected a recorded mock pi call");
 		const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
 		const taskArg = args.at(-1) ?? "";
-		const progressPath = path.join(tempDir, ".pi/subagents", "artifacts", "progress", asyncId, "progress.md");
+		const progressPath = path.join(TEMP_ARTIFACTS_DIR, "progress", asyncId, "progress.md");
 		assert.ok(taskArg.includes(`[Read from: ${path.join(tempDir, "input.md")}]`));
 		assert.ok(taskArg.includes(`Update progress at: ${progressPath}`));
 		assert.ok(taskArg.includes(`Write your findings to exactly this path: ${outputPath}`));
@@ -1815,7 +1815,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output?.split("\n\nOutput saved to:")[0], "first async report");
 			assert.equal(payload.results[1]?.output?.split("\n\nOutput saved to:")[0], "second async report");
-			const outputDir = path.join(tempDir, ".pi/subagents", "artifacts", "outputs", launch.details?.asyncId as string);
+			const outputDir = path.join(TEMP_ARTIFACTS_DIR, "outputs", launch.details?.asyncId as string);
 			const authoritativePaths = [
 				path.join(outputDir, "parallel-0", "0-worker", "context.md"),
 				path.join(outputDir, "parallel-0", "1-worker", "context.md"),
@@ -1884,7 +1884,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = await readAsyncPayload(launch.details?.asyncId as string);
 		assert.equal(payload.success, true);
-		const outputDir = path.join(tempDir, ".pi/subagents", "artifacts", "outputs", launch.details?.asyncId as string);
+		const outputDir = path.join(TEMP_ARTIFACTS_DIR, "outputs", launch.details?.asyncId as string);
 		assert.equal(fs.readFileSync(path.join(outputDir, "first.md"), "utf-8"), "first explicit report");
 		assert.equal(fs.readFileSync(path.join(outputDir, "second.md"), "utf-8"), "second explicit report");
 		assert.ok(payload.results[0]?.artifactPaths?.outputPath?.endsWith("_worker_0_output.md"));
