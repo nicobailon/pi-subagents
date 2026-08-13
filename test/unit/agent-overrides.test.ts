@@ -88,6 +88,65 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer?.modelSource, undefined);
 	});
 
+	it("lets builtin agents inherit Pi's normal tools when configured", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: {
+				inheritBuiltinTools: true,
+				agentOverrides: {
+					reviewer: { tools: ["read", "mcp:github/search"] },
+				},
+			},
+		});
+
+		const builtins = discoverAgentsAll(tempProject).builtin;
+		for (const agent of builtins.filter((agent) => agent.name !== "reviewer")) {
+			assert.equal(agent.tools, undefined, `${agent.name} should inherit normal tools`);
+			assert.equal(agent.mcpDirectTools, undefined, `${agent.name} should inherit normal MCP tools`);
+		}
+		const reviewer = builtins.find((agent) => agent.name === "reviewer");
+		assert.deepEqual(reviewer?.tools, ["read"]);
+		assert.deepEqual(reviewer?.mcpDirectTools, ["github/search"]);
+	});
+
+	it("prefers project inheritBuiltinTools over the user setting", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { inheritBuiltinTools: true },
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { inheritBuiltinTools: false },
+		});
+
+		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
+		assert.deepEqual(researcher?.tools, ["read", "write", "web_search", "fetch_content", "get_search_content", "intercom"]);
+	});
+
+	it("lets project inheritBuiltinTools override a user role allowlist", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { researcher: { tools: ["read"] } } },
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { inheritBuiltinTools: true },
+		});
+
+		const researcher = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "researcher");
+		assert.equal(researcher?.tools, undefined);
+		assert.equal(researcher?.mcpDirectTools, undefined);
+	});
+
+	it("surfaces malformed inheritBuiltinTools settings", () => {
+		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+		writeJson(settingsPath, {
+			subagents: { inheritBuiltinTools: "true" },
+		});
+
+		assert.throws(
+			() => discoverAgents(tempProject, "both"),
+			(error: unknown) => error instanceof Error
+				&& error.message.includes(settingsPath)
+				&& error.message.includes("inheritBuiltinTools"),
+		);
+	});
+
 	it("clears subagents.defaultModel provenance for same-value agent model overrides", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {

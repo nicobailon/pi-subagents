@@ -80,6 +80,18 @@ Supported override fields: `description`, `model`, `fallbackModels`, `thinking`,
 - Project overrides beat user overrides.
 - Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
 
+To let every builtin role use Pi's normal tools and ambient extensions instead of its bundled tool allowlist, set `subagents.inheritBuiltinTools: true`:
+
+```json
+{
+  "subagents": {
+    "inheritBuiltinTools": true
+  }
+}
+```
+
+An explicit `agentOverrides.<name>.tools` entry still wins for that role. Project settings take precedence over user settings.
+
 Disable and restore:
 
 - `disabled: true` hides a builtin from runtime discovery and agent-facing `subagent({ action: "list" })` output.

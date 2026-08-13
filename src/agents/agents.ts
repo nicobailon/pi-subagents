@@ -163,6 +163,7 @@ interface SubagentSettings {
 	defaultModel?: string;
 	defaultThinking?: string;
 	defaultExtensions?: string[];
+	inheritBuiltinTools?: boolean;
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
 	modelScope?: ModelScopeConfig;
@@ -904,6 +905,13 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		}
 		defaultExtensions = subagentsObject.defaultExtensions.map((item) => item.trim());
 	}
+	let inheritBuiltinTools: boolean | undefined;
+	if ("inheritBuiltinTools" in subagentsObject) {
+		if (typeof subagentsObject.inheritBuiltinTools !== "boolean") {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'inheritBuiltinTools'; expected a boolean.`);
+		}
+		inheritBuiltinTools = subagentsObject.inheritBuiltinTools;
+	}
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
@@ -913,6 +921,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(defaultModel !== undefined ? { defaultModel } : {}),
 		...(defaultThinking !== undefined ? { defaultThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
+		...(inheritBuiltinTools !== undefined ? { inheritBuiltinTools } : {}),
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
 		...(disableThinking !== undefined ? { disableThinking } : {}),
 		...(modelScope !== undefined ? { modelScope } : {}),
@@ -1048,6 +1057,11 @@ function clearBuiltinThinking(agent: AgentConfig, meta: { scope: "user" | "proje
 	return { ...next, override: agent.override ?? { ...meta, base: cloneOverrideBase(agent) } };
 }
 
+function clearBuiltinToolAllowlist(agent: AgentConfig): AgentConfig {
+	const { tools: _tools, mcpDirectTools: _mcpDirectTools, ...next } = agent;
+	return next;
+}
+
 function applyBuiltinOverrides(
 	builtinAgents: AgentConfig[],
 	userSettings: SubagentSettings,
@@ -1059,6 +1073,10 @@ function applyBuiltinOverrides(
 	const userBulkDisabled = projectSettings.disableBuiltins === undefined && userSettings.disableBuiltins === true;
 	const projectThinkingConfigured = projectSettings.disableThinking !== undefined && projectSettingsPath !== null;
 	const disableThinking = projectThinkingConfigured ? projectSettings.disableThinking === true : userSettings.disableThinking === true;
+	const projectToolInheritanceConfigured = projectSettings.inheritBuiltinTools !== undefined && projectSettingsPath !== null;
+	const inheritBuiltinTools = projectToolInheritanceConfigured
+		? projectSettings.inheritBuiltinTools === true
+		: userSettings.inheritBuiltinTools === true;
 	const disableThinkingMeta = projectThinkingConfigured
 		? { scope: "project" as const, path: projectSettingsPath! }
 		: { scope: "user" as const, path: userSettingsPath };
@@ -1067,39 +1085,49 @@ function applyBuiltinOverrides(
 		if (!disableThinking || hasExplicitThinkingOverride) return agent;
 		return clearBuiltinThinking(agent, disableThinkingMeta);
 	};
+	const applyGlobalToolInheritance = (agent: AgentConfig, hasExplicitToolsOverride: boolean): AgentConfig => {
+		if (!inheritBuiltinTools || hasExplicitToolsOverride) return agent;
+		return clearBuiltinToolAllowlist(agent);
+	};
+	const applyGlobals = (agent: AgentConfig, hasExplicitThinkingOverride: boolean, hasExplicitToolsOverride: boolean): AgentConfig =>
+		applyGlobalThinking(applyGlobalToolInheritance(agent, hasExplicitToolsOverride), hasExplicitThinkingOverride);
 
 	return builtinAgents.map((agent) => {
 		const projectOverride = projectSettings.overrides[agent.name];
 		if (projectOverride && projectSettingsPath) {
-			return applyGlobalThinking(
+			return applyGlobals(
 				applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath }),
 				projectOverride.thinking !== undefined,
+				projectOverride.tools !== undefined,
 			);
 		}
 
 		if (projectBulkDisabled && projectSettingsPath) {
-			return applyGlobalThinking(
+			return applyGlobals(
 				applyBuiltinOverride(agent, { disabled: true }, { scope: "project", path: projectSettingsPath }),
+				false,
 				false,
 			);
 		}
 
 		const userOverride = userSettings.overrides[agent.name];
 		if (userOverride) {
-			return applyGlobalThinking(
+			return applyGlobals(
 				applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath }),
 				!projectThinkingConfigured && userOverride.thinking !== undefined,
+				!projectToolInheritanceConfigured && userOverride.tools !== undefined,
 			);
 		}
 
 		if (userBulkDisabled) {
-			return applyGlobalThinking(
+			return applyGlobals(
 				applyBuiltinOverride(agent, { disabled: true }, { scope: "user", path: userSettingsPath }),
+				false,
 				false,
 			);
 		}
 
-		return applyGlobalThinking(agent, false);
+		return applyGlobals(agent, false, false);
 	});
 }
 
