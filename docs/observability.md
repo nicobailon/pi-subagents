@@ -29,7 +29,7 @@ The under-editor async widget gives a short view while work runs. Its expand key
 async subagent worker · background
 ● worker
   ● Step 1/1: worker · running
-    ⎿  reading src/auth.ts
+    ⎿  read: src/auth.ts | 2.0s
     Press configured-expand-key for live detail
 ```
 
