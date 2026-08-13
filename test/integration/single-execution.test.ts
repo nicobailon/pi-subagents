@@ -56,6 +56,8 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
+import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
+import { missionStatePath } from "../../src/missions/workflow-state.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -1094,8 +1096,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(first.isError, undefined, first.content[0]?.text ?? "first workflow failed");
 		assert.ok(first.details.missionId);
 		assert.deepEqual(first.details.workflow?.value, { count: 1 });
-		const statePath = path.join(tempDir, ".pi/subagents", "missions", first.details.missionId, "state.json");
+		const location = resolveMissionStoreLocation({ projectRoot: tempDir });
+		const statePath = missionStatePath(location, first.details.missionId);
 		assert.equal(fs.existsSync(statePath), true);
+		assert.equal(path.relative(tempDir, statePath).startsWith(".."), true);
 
 		const second = await executor.execute(
 			"mission-state-second",
