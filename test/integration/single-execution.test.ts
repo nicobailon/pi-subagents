@@ -1192,6 +1192,66 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("rejects sequential workflow child output collisions before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first report" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const sharedOutput = path.join(tempDir, "sequential-shared.md");
+
+		const result = await executor.execute(
+			"scripted-workflow-sequential-output-collision",
+			{
+				async: false,
+				workflowScript: `
+					const first = await runs.run("review", { agent: "echo", task: "Review", output: ${JSON.stringify(sharedOutput)} });
+					const second = await runs.run("monitor", { agent: "echo", task: "Monitor", output: ${JSON.stringify(sharedOutput)} })
+						.catch((error) => ({ ok: false, error: error.message }));
+					return [first, second];
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const children = result.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(children.map(({ ok }) => ok), [true, false]);
+		assert.match(children[1]?.error ?? "", /Workflow children 'review' and 'monitor' resolve output to the same path/);
+		assert.match(children[1]?.error ?? "", new RegExp(escapeRegExp(sharedOutput)));
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("checks workflow child output collisions against configured output base", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const configuredBase = path.join(tempDir, "configured-outputs");
+		const executor = makeExecutor([makeAgent("echo")], { singleRunOutputBaseDir: configuredBase });
+		const workflowOutput = "shared.md";
+
+		const result = await executor.execute(
+			"scripted-workflow-configured-output-base-collision",
+			{
+				async: false,
+				output: workflowOutput,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(workflowOutput)} },
+					{ key: "monitor", agent: "echo", task: "Monitor" }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const children = result.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(children.map(({ ok }) => ok), [false, false]);
+		const resolvedSharedOutput = path.join(configuredBase, workflowOutput);
+		for (const child of children) {
+			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
+			assert.match(child.error ?? "", new RegExp(escapeRegExp(resolvedSharedOutput)));
+		}
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("lets runs.all siblings settle when one child fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ exitCode: 1, stderr: "first child failed" });
 		mockPi.onCall({ output: "second child completed" });

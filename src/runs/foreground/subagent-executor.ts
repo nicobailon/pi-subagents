@@ -3239,10 +3239,14 @@ function buildParallelWorktreeTaskCwdError(
 	return formatWorktreeTaskCwdConflict(conflict, sharedCwd);
 }
 
-function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
+function resolveConfiguredSingleRunOutputBaseDir(deps: ExecutorDeps): string | undefined {
 	return deps.config.singleRunOutputBaseDir
 		? path.resolve(deps.expandTilde(deps.config.singleRunOutputBaseDir))
-		: path.join(artifactsDir, "outputs", runId);
+		: undefined;
+}
+
+function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
+	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", runId);
 }
 
 function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, artifactsDir: string, workflowRunId: string, workflowKey: string): string {
@@ -3259,28 +3263,50 @@ function writeWorkflowAggregateOutput(outputPath: string | undefined, text: stri
 	fs.writeFileSync(outputPath, text, "utf-8");
 }
 
-function workflowChildOutputCollisionError(input: {
+function resolveWorkflowChildOutputPath(input: {
 	ctxCwd: string;
 	workflowCwd: string;
 	artifactsDir: string;
 	workflowRunId: string;
 	aggregateOutputPath?: string;
-	entries: Array<{ key: string; params: Record<string, unknown> }>;
+	configuredOutputBaseDir?: string;
+	key: string;
+	params: Record<string, unknown>;
 }): string | undefined {
-	const seen = new Map<string, string>();
+	const hasExplicitOutput = typeof input.params.output === "string" || typeof input.params.output === "boolean";
+	const output = hasExplicitOutput
+		? input.params.output
+		: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, input.key);
+	if (typeof output === "string" && !path.isAbsolute(output) && !input.configuredOutputBaseDir && hasExplicitOutput) return undefined;
+	const childCwd = typeof input.params.cwd === "string" ? resolveChildCwd(input.workflowCwd, input.params.cwd) : input.workflowCwd;
+	return resolveSingleOutputPath(output, input.ctxCwd, childCwd, input.configuredOutputBaseDir);
+}
+
+function workflowChildOutputClaims(input: {
+	ctxCwd: string;
+	workflowCwd: string;
+	artifactsDir: string;
+	workflowRunId: string;
+	aggregateOutputPath?: string;
+	configuredOutputBaseDir?: string;
+	claimedOutputPaths: Map<string, string>;
+	entries: Array<{ key: string; params: Record<string, unknown> }>;
+}): { error?: string; claims?: Map<string, string> } {
+	const claims = new Map(input.claimedOutputPaths);
 	for (const { key, params } of input.entries) {
-		const output = typeof params.output === "string" || typeof params.output === "boolean"
-			? params.output
-			: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, key);
-		const childCwd = typeof params.cwd === "string" ? resolveChildCwd(input.workflowCwd, params.cwd) : input.workflowCwd;
-		const resolved = resolveSingleOutputPath(output, input.ctxCwd, childCwd, path.join(input.artifactsDir, "outputs", input.workflowRunId));
+		const resolved = resolveWorkflowChildOutputPath({ ...input, key, params });
 		if (!resolved) continue;
-		if (input.aggregateOutputPath && resolved === input.aggregateOutputPath) return `Workflow child '${key}' output resolves to the workflow aggregate output path: ${resolved}. Use a distinct child output path.`;
-		const previous = seen.get(resolved);
-		if (previous) return `Workflow children '${previous}' and '${key}' resolve output to the same path: ${resolved}. Use distinct child output paths.`;
-		seen.set(resolved, key);
+		if (input.aggregateOutputPath && resolved === input.aggregateOutputPath) return { error: `Workflow child '${key}' output resolves to the workflow aggregate output path: ${resolved}. Use a distinct child output path.` };
+		const previous = claims.get(resolved);
+		if (previous) return { error: `Workflow children '${previous}' and '${key}' resolve output to the same path: ${resolved}. Use distinct child output paths.` };
+		claims.set(resolved, key);
 	}
-	return undefined;
+	return { claims };
+}
+
+function applyWorkflowChildOutputClaims(target: Map<string, string>, claims: Map<string, string>): void {
+	target.clear();
+	for (const [resolved, key] of claims) target.set(resolved, key);
 }
 
 function prepareWorkflowChildLaunchParams(input: {
@@ -4903,7 +4929,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const workflowResults: SingleResult[] = [];
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
+					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 					const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
+					const claimedOutputPaths = new Map<string, string>();
 					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 					let projectedTraceLength = 0;
 					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
@@ -4963,9 +4991,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							admit: (calls) => {
-								const collisionError = workflowChildOutputCollisionError({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, entries: calls });
-								if (collisionError) throw new Error(collisionError);
+								const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, claimedOutputPaths, entries: calls });
+								if (outputClaims.error) throw new Error(outputClaims.error);
 								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
+								if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
 								persist();
 							},
 							onEmit: (emits) => {
@@ -5086,7 +5115,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
+			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id));
+			const claimedOutputPaths = new Map<string, string>();
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const sendWorkflowProgress = () => {
@@ -5105,9 +5136,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						sendWorkflowProgress();
 					},
 					admit: (calls) => {
-						const collisionError = workflowChildOutputCollisionError({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, entries: calls });
-						if (collisionError) throw new Error(collisionError);
+						const outputClaims = workflowChildOutputClaims({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, claimedOutputPaths, entries: calls });
+						if (outputClaims.error) throw new Error(outputClaims.error);
 						claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
+						if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
 					},
 					onEmit: (emits) => {
 						liveWorkflow = { ...liveWorkflow, emits };
