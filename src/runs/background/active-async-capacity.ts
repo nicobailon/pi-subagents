@@ -39,6 +39,18 @@ interface CapacityOptions {
 	afterSlotRename?: (releasedDir: string) => void;
 }
 
+export type ActiveAsyncCapacityReleaseVerdict =
+	| { state: "releasable"; reason: string }
+	| { state: "retained"; reason: string }
+	| { state: "not-owned"; reason: string };
+
+export interface ActiveAsyncCapacityInspection {
+	owner?: ActiveAsyncCapacityOwnerV1;
+	relation: "current" | "source" | "none";
+	slotDir?: string;
+	release: ActiveAsyncCapacityReleaseVerdict;
+}
+
 export class ActiveAsyncCapacityError extends Error {
 	readonly snapshot: ActiveAsyncCapacitySnapshot;
 
@@ -160,47 +172,62 @@ function terminalState(state: AsyncStatus["state"]): boolean {
 	return state !== "queued" && state !== "running" && state !== "paused";
 }
 
-function runnerCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus): boolean {
-	if (!owner.runnerProcessInstanceId
-		|| status.sessionId !== owner.ownerSessionId
-		|| status.runId !== owner.runId
-		|| !terminalState(status.state)) return false;
+function runnerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus | null): ActiveAsyncCapacityReleaseVerdict {
+	if (!status) return { state: "retained", reason: "status file is missing or unreadable" };
+	if (!owner.runnerProcessInstanceId) return { state: "retained", reason: "runner process identity has not been recorded" };
+	if (status.sessionId !== owner.ownerSessionId) return { state: "retained", reason: `status session ${status.sessionId ?? "unknown"} does not match owner session ${owner.ownerSessionId}` };
+	if (status.runId !== owner.runId) return { state: "retained", reason: `status run ${status.runId} does not match owner run ${owner.runId}` };
+	if (!terminalState(status.state)) return { state: "retained", reason: `run is still ${status.state}` };
 	if (status.processTerminal?.state === "not-started"
 		&& status.processTerminal.runId === owner.runId
 		&& status.processTerminal.runnerProcessInstanceId === owner.runnerProcessInstanceId
 		&& typeof status.error === "string"
-		&& status.error) return true;
+		&& status.error) return { state: "releasable", reason: "run failed before child startup completed" };
 	const proof = readProcessTerminal(owner.asyncDir, {
 		runId: owner.runId,
 		runnerProcessInstanceId: owner.runnerProcessInstanceId,
 	});
 	return proof?.state === "observed"
 		&& proof.runId === owner.runId
-		&& proof.runnerProcessInstanceId === owner.runnerProcessInstanceId;
+		&& proof.runnerProcessInstanceId === owner.runnerProcessInstanceId
+		? { state: "releasable", reason: "matching observed process-terminal proof is present" }
+		: { state: "retained", reason: `process-terminal proof is ${proof?.state ?? "missing"}` };
 }
 
-function workflowCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus, liveWorkflowRunIds: ReadonlySet<string>): boolean {
-	if (status.sessionId !== owner.ownerSessionId
-		|| status.runId !== owner.runId
-		|| status.mode !== "workflow"
-		|| !terminalState(status.state)
-		|| liveWorkflowRunIds.has(owner.runId)) return false;
+function runnerCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus): boolean {
+	return runnerReleaseVerdict(owner, status).state === "releasable";
+}
+
+function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus | null, liveWorkflowRunIds: ReadonlySet<string>): ActiveAsyncCapacityReleaseVerdict {
+	if (!status) return { state: "retained", reason: "status file is missing or unreadable" };
+	if (status.sessionId !== owner.ownerSessionId) return { state: "retained", reason: `status session ${status.sessionId ?? "unknown"} does not match owner session ${owner.ownerSessionId}` };
+	if (status.runId !== owner.runId) return { state: "retained", reason: `status run ${status.runId} does not match owner run ${owner.runId}` };
+	if (status.mode !== "workflow") return { state: "retained", reason: `status mode is ${status.mode}, not workflow` };
+	if (!terminalState(status.state)) return { state: "retained", reason: `workflow is still ${status.state}` };
+	if (liveWorkflowRunIds.has(owner.runId)) return { state: "retained", reason: "workflow controller is still live" };
 	for (const step of status.steps ?? []) {
-		if (step.status === "pending" || step.status === "running" || step.status === "paused") return false;
-		if (typeof step.async !== "boolean") return false;
+		const label = step.workflowKey ?? step.agent;
+		if (step.status === "pending" || step.status === "running" || step.status === "paused") return { state: "retained", reason: `workflow child ${label} is still ${step.status}` };
+		if (typeof step.async !== "boolean") return { state: "retained", reason: `workflow child ${label} is missing async classification` };
 		if (!step.async) continue;
-		if (!step.runId) return false;
+		if (!step.runId) return { state: "retained", reason: `async workflow child ${label} is missing run id` };
 		const childDir = path.join(path.dirname(owner.asyncDir), step.runId);
-		if (!fs.existsSync(childDir)) return false;
+		if (!fs.existsSync(childDir)) return { state: "retained", reason: `async workflow child ${label} directory is missing` };
 		const childStatus = readStatus(childDir);
-		if (!childStatus || !terminalState(childStatus.state) || !childStatus.processTerminal?.runnerProcessInstanceId) return false;
+		if (!childStatus) return { state: "retained", reason: `async workflow child ${label} status is missing or unreadable` };
+		if (!terminalState(childStatus.state)) return { state: "retained", reason: `async workflow child ${label} is still ${childStatus.state}` };
+		if (!childStatus.processTerminal?.runnerProcessInstanceId) return { state: "retained", reason: `async workflow child ${label} has no runner process identity` };
 		const proof = readProcessTerminal(childDir, {
 			runId: step.runId,
 			runnerProcessInstanceId: childStatus.processTerminal.runnerProcessInstanceId,
 		});
-		if (proof?.state !== "observed" || proof.runId !== step.runId) return false;
+		if (proof?.state !== "observed" || proof.runId !== step.runId) return { state: "retained", reason: `async workflow child ${label} process-terminal proof is ${proof?.state ?? "missing"}` };
 	}
-	return true;
+	return { state: "releasable", reason: "workflow is terminal, controller is gone, and async children have observed proof" };
+}
+
+function workflowCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus, liveWorkflowRunIds: ReadonlySet<string>): boolean {
+	return workflowReleaseVerdict(owner, status, liveWorkflowRunIds).state === "releasable";
 }
 
 function ownerCanRelease(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: ReadonlySet<string>): boolean {
@@ -209,6 +236,52 @@ function ownerCanRelease(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: 
 	return owner.kind === "runner"
 		? runnerCanRelease(owner, status)
 		: workflowCanRelease(owner, status, liveWorkflowRunIds);
+}
+
+function ownerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: ReadonlySet<string>): ActiveAsyncCapacityReleaseVerdict {
+	const status = readStatus(owner.asyncDir);
+	return owner.kind === "runner"
+		? runnerReleaseVerdict(owner, status)
+		: workflowReleaseVerdict(owner, status, liveWorkflowRunIds);
+}
+
+function capacitySessionDirs(rootDir: string, sessionId?: string): string[] {
+	if (sessionId) return [sessionDir(sessionId, rootDir)];
+	try {
+		return fs.readdirSync(rootDir, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => path.join(rootDir, entry.name));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+}
+
+export function inspectActiveAsyncCapacityOwner(
+	input: { runId: string; sessionId?: string; asyncDir?: string },
+	options: CapacityOptions & { liveWorkflowRunIds?: ReadonlySet<string> } = {},
+): ActiveAsyncCapacityInspection {
+	const rootDir = options.rootDir ?? ACTIVE_ASYNC_CAPACITY_DIR;
+	const liveWorkflowRunIds = options.liveWorkflowRunIds ?? new Set<string>();
+	for (const poolDir of capacitySessionDirs(rootDir, input.sessionId)) {
+		for (const dir of occupiedSlots(poolDir)) {
+			const owner = readOwner(dir);
+			if (!owner) continue;
+			const sameRun = owner.runId === input.runId || (input.asyncDir !== undefined && path.resolve(owner.asyncDir) === path.resolve(input.asyncDir));
+			const sourceRun = owner.sourceRunId === input.runId;
+			if (!sameRun && !sourceRun) continue;
+			if (sourceRun && !sameRun) {
+				return {
+					owner,
+					relation: "source",
+					slotDir: dir,
+					release: { state: "not-owned", reason: `slot was transferred to ${owner.runId}` },
+				};
+			}
+			return { owner, relation: "current", slotDir: dir, release: ownerReleaseVerdict(owner, liveWorkflowRunIds) };
+		}
+	}
+	return { relation: "none", release: { state: "not-owned", reason: "no active-capacity slot records this run" } };
 }
 
 export function reconcileActiveAsyncCapacity(

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { acquireActiveAsyncCapacity } from "../../src/runs/background/active-async-capacity.ts";
 import { consumeSteerRequests, consumeSteerRequestsFromDir, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
@@ -125,6 +126,42 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 }
 
 describe("async interrupt action", () => {
+	it("renders run lifecycle debug without transcript content", () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `debug-run-${Date.now().toString(36)}`;
+		const activeCapacityRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-debug-capacity-"));
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		try {
+			const capacity = acquireActiveAsyncCapacity({ sessionId: "session", limit: 1, runId, kind: "workflow", asyncDir }, { rootDir: activeCapacityRoot });
+			assert.ok(capacity);
+			capacity.markWorkflowStarted();
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId,
+				sessionId: "session",
+				mode: "workflow",
+				state: "complete",
+				startedAt: 100,
+				processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: "workflow-runner" },
+				steps: [{ agent: "worker", workflowKey: "review", status: "completed", async: false }],
+			});
+			fs.writeFileSync(path.join(asyncDir, "output-0.log"), "SECRET_TRANSCRIPT_TEXT", "utf-8");
+
+			const result = inspectSubagentStatus({ action: "debug.run", id: runId }, { state, activeCapacityRoot });
+			const output = text(result);
+
+			assert.match(output, /Run lifecycle debug/);
+			assert.match(output, new RegExp(`Run: ${runId}`));
+			assert.match(output, /Active capacity: releasable/);
+			assert.match(output, /Workflow children: 1/);
+			assert.match(output, /key review · worker · completed · async no/);
+			assert.doesNotMatch(output, /SECRET_TRANSCRIPT_TEXT/);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(activeCapacityRoot, { recursive: true, force: true });
+		}
+	});
+
 	it("steers a live workflow-owned foreground child by child id", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-child-${Date.now().toString(36)}`;

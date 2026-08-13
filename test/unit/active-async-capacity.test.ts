@@ -7,6 +7,7 @@ import {
 	acquireActiveAsyncCapacity,
 	ActiveAsyncCapacityError,
 	getActiveAsyncCapacitySnapshot,
+	inspectActiveAsyncCapacityOwner,
 	transferActiveAsyncCapacity,
 } from "../../src/runs/background/active-async-capacity.ts";
 
@@ -99,6 +100,32 @@ describe("active async capacity", () => {
 
 			assert.equal(handle.rollback(), false);
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("explains runner release verdicts without mutating slots", () => {
+		const rootDir = tempRoot();
+		const asyncDir = path.join(rootDir, "runs", "run-a");
+		try {
+			const handle = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 2, runId: "run-a", kind: "runner", asyncDir }, { rootDir });
+			assert.ok(handle);
+			handle.markStarted("runner-a");
+			writeJson(path.join(asyncDir, "status.json"), { runId: "run-a", sessionId: "session-a", mode: "single", state: "complete", startedAt: 100, processTerminal: { version: 1, state: "unknown", runId: "run-a", runnerProcessInstanceId: "runner-a", reason: "process-tree-unverified" } });
+
+			const retained = inspectActiveAsyncCapacityOwner({ runId: "run-a", sessionId: "session-a", asyncDir }, { rootDir });
+
+			assert.equal(retained.relation, "current");
+			assert.equal(retained.release.state, "retained");
+			assert.match(retained.release.reason, /process-terminal proof is missing/);
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 2, { rootDir }), { used: 1, limit: 2 });
+
+			writeJson(path.join(asyncDir, "process-terminal.json"), observedProof("run-a", "runner-a"));
+			const releasable = inspectActiveAsyncCapacityOwner({ runId: "run-a", sessionId: "session-a", asyncDir }, { rootDir });
+			assert.equal(releasable.release.state, "releasable");
+			assert.match(releasable.release.reason, /observed process-terminal proof/);
+			assert.equal(releasable.slotDir ? fs.existsSync(releasable.slotDir) : false, true);
 		} finally {
 			fs.rmSync(rootDir, { recursive: true, force: true });
 		}
@@ -206,6 +233,29 @@ describe("active async capacity", () => {
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 1, limit: 1 });
 			writeJson(path.join(revivedDir, "process-terminal.json"), observedProof("revived", "revived-runner"));
 			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports transferred source runs as not owned", () => {
+		const rootDir = tempRoot();
+		const sourceDir = path.join(rootDir, "runs", "source");
+		const nextDir = path.join(rootDir, "runs", "next");
+		try {
+			const source = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "source", kind: "runner", asyncDir: sourceDir }, { rootDir });
+			assert.ok(source);
+			source.markStarted("runner-source");
+			writeJson(path.join(sourceDir, "status.json"), { runId: "source", sessionId: "session-a", mode: "single", state: "paused", startedAt: 100 });
+			const next = transferActiveAsyncCapacity({ sessionId: "session-a", limit: 1, sourceRunId: "source", runId: "next", asyncDir: nextDir }, { rootDir });
+			assert.ok(next);
+
+			const inspection = inspectActiveAsyncCapacityOwner({ runId: "source", sessionId: "session-a", asyncDir: sourceDir }, { rootDir });
+
+			assert.equal(inspection.relation, "source");
+			assert.equal(inspection.owner?.runId, "next");
+			assert.equal(inspection.release.state, "not-owned");
+			assert.match(inspection.release.reason, /transferred to next/);
 		} finally {
 			fs.rmSync(rootDir, { recursive: true, force: true });
 		}

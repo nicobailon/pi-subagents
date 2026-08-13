@@ -5372,11 +5372,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "management", results: [], spawnBudget, activeAsyncCapacity },
 				};
 			}
-			if (action === "status") {
+			if (action === "status" || action === "debug.run") {
 				if (!preserveActiveSession) deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
 				const hasDirectoryTarget = Boolean(paramsWithResolvedCwd.dir);
-				const targetLabel = formatStatusTargetLabel(paramsWithResolvedCwd, targetRunId);
+				const targetLabel = action === "debug.run" ? "Debug run" : formatStatusTargetLabel(paramsWithResolvedCwd, targetRunId);
 				const withBudget = (result: AgentToolResult<Details>) => {
 					const budgeted = withSpawnBudgetStatus(result, deps.state, deps.config, deps.state.currentSessionId);
 					return {
@@ -5388,6 +5388,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
+				if (action === "debug.run" && !targetRunId && !hasDirectoryTarget) {
+					return withBudget({ content: [{ type: "text", text: "action='debug.run' requires id, runId, or dir." }], isError: true, details: { mode: "management", results: [] } });
+				}
 				if (paramsWithResolvedCwd.view === "fleet") {
 					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
 				}

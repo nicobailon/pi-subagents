@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Add `debug.run` for async run lifecycle diagnostics without exposing prompts, secrets, or transcripts (#1037).
+
 ## [0.48.0] - 2026-08-13
 
 ### Added

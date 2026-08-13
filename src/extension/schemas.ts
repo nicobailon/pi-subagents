@@ -263,13 +263,13 @@ const SubagentParamProperties = {
 	})),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for status, interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, mission.attach-run, or the decision id for mission.resolve-decision."
+		description: "Run id or prefix for status, debug.run, interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, mission.attach-run, or the decision id for mission.resolve-decision."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."
+		description: "Target run ID for debug.run, interrupt, stop, dismiss, resume, steer, append-step, approve-checkpoint, reject-checkpoint, or mission.attach-run. Prefer id for new calls."
 	})),
 	dir: Type.Optional(Type.String({
-		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."
+		description: "Async run directory for action='status', action='debug.run', action='stop', action='resume', or action='steer'."
 	})),
 	handoffPath: Type.Optional(Type.String({ description: "worktree.discard manifest." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
@@ -359,10 +359,10 @@ const { step: _legacyChainStep, ...subagentParamPropertiesWithoutStep } = Subage
 const trimmedSubagentParamProperties = {
 	...subagentParamPropertiesWithoutStep,
 	id: Type.Optional(Type.String({
-		description: "Run id or prefix for status, interrupt, stop, resume, steer, mission.attach-run, or the decision id for mission.resolve-decision."
+		description: "Run id or prefix for status, debug.run, interrupt, stop, resume, steer, mission.attach-run, or the decision id for mission.resolve-decision."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for interrupt, stop, resume, steer, or mission.attach-run. Prefer id for new calls."
+		description: "Target run ID for debug.run, interrupt, stop, resume, steer, or mission.attach-run. Prefer id for new calls."
 	})),
 };
 const SubagentParamsSchema = Type.Object(SubagentParamProperties);

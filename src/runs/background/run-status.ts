@@ -7,6 +7,7 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import { DIRS, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
+import { inspectActiveAsyncCapacityOwner, type ActiveAsyncCapacityInspection } from "./active-async-capacity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
@@ -31,6 +32,58 @@ interface RunStatusParams {
 	lines?: number;
 }
 
+function formatProcessTerminal(value: AsyncStatus["processTerminal"] | undefined): string {
+	if (!value) return "missing";
+	return `${value.state}${value.reason ? ` (${value.reason})` : ""}${value.runnerProcessInstanceId ? ` · runner ${value.runnerProcessInstanceId}` : ""}`;
+}
+
+function formatCapacityOwner(inspect: ActiveAsyncCapacityInspection): string[] {
+	if (!inspect.owner) return [`Active capacity: ${inspect.release.state} — ${inspect.release.reason}`];
+	const owner = inspect.owner;
+	return [
+		`Active capacity: ${inspect.release.state} — ${inspect.release.reason}`,
+		`Capacity owner: ${inspect.relation} slot ${owner.slot}, ${owner.kind}, generation ${owner.generation}`,
+		`Capacity session: ${owner.ownerSessionId}`,
+		owner.sourceRunId ? `Capacity source run: ${owner.sourceRunId}` : undefined,
+		`Capacity async dir: ${owner.asyncDir}`,
+		owner.runnerProcessInstanceId ? `Capacity runner: ${owner.runnerProcessInstanceId}` : undefined,
+		owner.runnerStartedAt !== undefined ? `Capacity runner started: ${new Date(owner.runnerStartedAt).toISOString()}` : undefined,
+	].filter((line): line is string => line !== undefined);
+}
+
+function formatWorkflowDebug(status: AsyncStatus): string[] {
+	if (status.mode !== "workflow" && !status.parentWorkflowRunId && !status.workflowKey) return [];
+	const lines = [
+		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}${status.workflowKey ? ` (${status.workflowKey})` : ""}` : undefined,
+		status.mode === "workflow" ? `Workflow children: ${(status.steps ?? []).length}` : undefined,
+	].filter((line): line is string => line !== undefined);
+	for (const [index, step] of (status.steps ?? []).entries()) {
+		lines.push(`  ${index + 1}. key ${step.workflowKey ?? "n/a"} · ${step.agent} · ${step.status} · async ${step.async === undefined ? "unknown" : step.async ? "yes" : "no"}${step.runId ? ` · run ${step.runId}` : ""}`);
+	}
+	return lines;
+}
+
+function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string; processTerminal: AsyncStatus["processTerminal"] | undefined; capacity: ActiveAsyncCapacityInspection }): string {
+	const { status, asyncDir, processTerminal, capacity } = input;
+	const lines = [
+		"Run lifecycle debug",
+		`Run: ${status.runId}`,
+		`Dir: ${asyncDir}`,
+		`Status file: ${path.join(asyncDir, "status.json")}`,
+		`Process terminal file: ${path.join(asyncDir, "process-terminal.json")}`,
+		`Session: ${status.sessionId ?? "unknown"}`,
+		`State: ${status.state}`,
+		`Mode: ${status.mode}`,
+		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}` : undefined,
+		status.workflowKey ? `Workflow key: ${status.workflowKey}` : undefined,
+		`Status process terminal: ${formatProcessTerminal(status.processTerminal)}`,
+		`Sidecar process terminal: ${formatProcessTerminal(processTerminal)}`,
+		...formatCapacityOwner(capacity),
+		...formatWorkflowDebug(status),
+	].filter((line): line is string => line !== undefined);
+	return lines.join("\n");
+}
+
 interface RunStatusDeps {
 	asyncDirRoot?: string;
 	resultsDir?: string;
@@ -39,6 +92,7 @@ interface RunStatusDeps {
 	state?: SubagentState;
 	nested?: NestedRunResolutionScope;
 	sessionRoots?: string[];
+	activeCapacityRoot?: string;
 }
 
 function hasExistingSessionFile(value: unknown): value is string {
@@ -263,7 +317,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	let location;
 	try {
 		const requestedId = params.id ?? params.runId;
-		if (!params.dir && requestedId) {
+		if (params.action === "debug.run") {
+			location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
+		} else if (!params.dir && requestedId) {
 			const resolved = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
 			if (resolved?.kind === "foreground") {
 				const run = deps.state?.foregroundRuns?.get(resolved.id);
@@ -350,6 +406,15 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
+			if (params.action === "debug.run") {
+				const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
+					?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
+				return {
+					content: [{ type: "text", text: formatRunLifecycleDebug({ status, asyncDir, processTerminal, capacity }) }],
+					details: { mode: "single", results: [], ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) },
+				};
+			}
 			if (params.view === "transcript") {
 				if (currentSessionId && status.sessionId !== currentSessionId) {
 					return {
@@ -475,6 +540,13 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	}
 
 	if (resultPath) {
+		if (params.action === "debug.run") {
+			return {
+				content: [{ type: "text", text: "Run lifecycle debug needs an async run directory with status.json." }],
+				isError: true,
+				details: { mode: "single", results: [] },
+			};
+		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
 			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
