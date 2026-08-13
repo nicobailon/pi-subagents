@@ -100,11 +100,12 @@ async function waitForCondition(
 	}
 }
 
-function createUiContext() {
+function createUiContext(mode?: "rpc") {
 	const widgets: unknown[] = [];
 	let renderRequests = 0;
 	const ctx = {
 		hasUI: true,
+		...(mode ? { mode } : {}),
 		ui: {
 			theme: {
 				fg: (_theme: string, text: string) => text,
@@ -225,6 +226,27 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			removeTempDir(asyncRoot);
 		}
 	});
+
+it("emits a terminal RPC snapshot before retention clears the widget", async () => {
+	const asyncRoot = createTempDir("pi-async-job-tracker-rpc-terminal-");
+	try {
+		const state = createState();
+		const ui = createUiContext("rpc");
+		const recorder = createEventRecorder();
+		const tracker = createTracker(recorder.pi, state as never, asyncRoot, { completionRetentionMs: 5 });
+		tracker.resetJobs(ui.ctx as never);
+		tracker.handleStarted({ id: "run-rpc", asyncDir: path.join(asyncRoot, "run-rpc"), agent: "worker" });
+		tracker.handleComplete({ id: "run-rpc", success: true });
+		const terminalLines = [...ui.widgets].reverse().find((widget) => Array.isArray(widget)) as string[] | undefined;
+		assert.ok(terminalLines?.[0]?.startsWith("PI_SUBAGENT_ASYNC_JSON:"));
+		const snapshot = JSON.parse(terminalLines[0]!.slice("PI_SUBAGENT_ASYNC_JSON:".length)) as { runs: Array<{ status: string }> };
+		assert.equal(snapshot.runs[0]?.status, "complete");
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		assert.equal(ui.widgets.at(-1), undefined);
+	} finally {
+		removeTempDir(asyncRoot);
+	}
+});
 
 	it("keeps the async widget cleared when it is disabled", () => {
 		const asyncRoot = createTempDir("pi-async-job-widget-disabled-");

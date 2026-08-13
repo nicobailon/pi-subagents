@@ -16,6 +16,7 @@
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./pi-args": "./src/api/pi-args.ts",
     "./shared-types": "./src/api/shared-types.ts",
+    "./async-rpc-snapshot": "./src/api/async-rpc-snapshot.ts",
     "./project-panes": "./src/api/project-panes.ts"
   },
   "repository": {

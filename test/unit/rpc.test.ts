@@ -99,6 +99,10 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
 			{ version: 1 },
 		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { rpcAsyncSnapshot?: unknown } } }).data.capabilities?.rpcAsyncSnapshot,
+			{ version: 1, transport: "extension-ui-widget", widgetKey: "subagent-async", prefix: "PI_SUBAGENT_ASYNC_JSON:" },
+		);
 
 		bridge.dispose();
 	});

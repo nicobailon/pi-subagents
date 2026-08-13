@@ -20,6 +20,7 @@ import {
 	POLL_INTERVAL_MS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
+import { encodeAsyncRpcWidgetLines } from "../runs/background/async-rpc-snapshot.ts";
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
@@ -1585,6 +1586,10 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 		return;
 	}
 	if (!ctx.hasUI) return;
+	if (ctx.mode === "rpc") {
+		ctx.ui.setWidget(WIDGET_KEY, encodeAsyncRpcWidgetLines(jobs));
+		return;
+	}
 	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
 }
 

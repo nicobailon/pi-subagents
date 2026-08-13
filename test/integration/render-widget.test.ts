@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { extractToolArgsPreview } from "../../src/shared/utils.ts";
+import { ASYNC_RPC_WIDGET_PREFIX } from "../../src/runs/background/async-rpc-snapshot.ts";
 
 const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = await import("../../src/tui/render.ts") as {
 	buildWidgetLines: (jobs: Array<Record<string, unknown>>, theme: { fg(name: string, text: string): string; bold(text: string): string }, width?: number, expanded?: boolean, frame?: number) => string[];
@@ -208,6 +209,26 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /widget truncated/);
 		assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
 	});
+
+it("publishes structured string lines instead of a component factory in RPC mode", () => {
+	const ui = createUiContext();
+	renderWidget({ ...ui.ctx, mode: "rpc" } as never, [{
+		asyncId: "workflow-1",
+		asyncDir: "/tmp/workflow-1",
+		status: "running",
+		mode: "workflow",
+		steps: [
+			{ index: 0, workflowKey: "a", agent: "worker", description: "dynamic a", status: "running" },
+			{ index: 1, workflowKey: "b", agent: "worker", description: "dynamic b", status: "completed" },
+			{ index: 2, workflowKey: "c", agent: "worker", description: "dynamic c", status: "running" },
+		],
+	}]);
+	const widget = ui.widgets.at(-1);
+	assert.ok(Array.isArray(widget));
+	assert.ok((widget as string[])[0]?.startsWith(ASYNC_RPC_WIDGET_PREFIX));
+	const payload = JSON.parse((widget as string[])[0]!.slice(ASYNC_RPC_WIDGET_PREFIX.length)) as { runs: Array<{ children: Array<{ key: string }> }> };
+	assert.deepEqual(payload.runs[0]?.children.map((child) => child.key), ["a", "b", "c"]);
+});
 
 	it("honors the component render width instead of the terminal width", () => {
 		resetWidgetLayout();

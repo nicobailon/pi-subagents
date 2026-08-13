@@ -63,8 +63,11 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./intercom-bridge": "./src/api/intercom-bridge.ts",
 		"./pi-args": "./src/api/pi-args.ts",
 		"./shared-types": "./src/api/shared-types.ts",
+		"./async-rpc-snapshot": "./src/api/async-rpc-snapshot.ts",
 		"./project-panes": "./src/api/project-panes.ts",
 	});
+	const asyncRpcSnapshot = await import("pi-subagents/async-rpc-snapshot");
+	assert.equal(asyncRpcSnapshot.ASYNC_RPC_WIDGET_PREFIX, "PI_SUBAGENT_ASYNC_JSON:");
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");

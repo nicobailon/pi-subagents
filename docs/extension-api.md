@@ -56,6 +56,16 @@ The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore
 
 `pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
+### External Pi RPC async snapshot
+
+The in-process request/reply bus above is available only to extensions in the same Pi process. Host applications running Pi in `--mode rpc` receive async job state through Pi's standard fire-and-forget extension UI protocol instead.
+
+When `ping.capabilities.rpcAsyncSnapshot` is advertised, it identifies the transport, widget key, payload prefix, and schema version. Version 1 uses `setWidget("subagent-async", string[])`; the first line starts with `PI_SUBAGENT_ASYNC_JSON:` followed by a bounded JSON snapshot.
+
+The snapshot is derived from the same `AsyncJobState` used by the TUI widget. It contains exact `asyncId` run identity, stable workflow keys or step indexes, lifecycle status, agent/task/model metadata, and bounded nested descendants. It omits working directories, artifact/session paths, tool arguments, recent output, and error text. Terminal snapshots are also attached to hidden `subagent-notify` message details for session replay.
+
+DTO types and the prefix constant are exported from `pi-subagents/async-rpc-snapshot`. Consumers must check `version`, ignore unknown fields, and treat the live widget as replace-by-snapshot state rather than appending rows.
+
 ## Launch contract preflight
 
 Use `pi-subagents/preflight` when an extension needs to inspect the resolved child launch contract before deciding whether to run anything:

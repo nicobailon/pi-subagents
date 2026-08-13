@@ -134,6 +134,16 @@ describe("registerSubagentNotify", () => {
 		});
 	});
 
+it("attaches a bounded terminal async snapshot to the durable notification", async () => {
+	const { notifier, sent } = createPi("session-a", {
+		getAsyncRpcRun: () => ({ asyncId: "run-1", status: "complete", mode: "workflow", children: [{ key: "a", index: 0, status: "complete", task: "task a" }] }),
+	});
+	assert.equal(await notifier.deliver(completionResult({ id: "run-1" })), true);
+	const message = sent[0]?.message as { details?: { asyncSnapshot?: { version?: number; runs?: Array<{ asyncId?: string }> } } };
+	assert.equal(message.details?.asyncSnapshot?.version, 1);
+	assert.equal(message.details?.asyncSnapshot?.runs?.[0]?.asyncId, "run-1");
+});
+
 	it("acknowledges direct delivery only after sendMessage accepts it", async () => {
 		const { notifier, sent } = createPi("session-a");
 		assert.equal(await notifier.deliver(completionResult({ id: "direct-accepted" })), true);

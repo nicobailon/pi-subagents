@@ -16,6 +16,7 @@ import {
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ParallelHandoffReference, type SubagentState } from "../../shared/types.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
+import { buildAsyncRpcSnapshotFromRuns, type AsyncRpcRunSnapshot } from "./async-rpc-snapshot.ts";
 
 export interface SubagentNotifyDetails {
 	agent: string;
@@ -78,6 +79,7 @@ export interface RegisterSubagentNotifyOptions {
 	batchConfig?: CompletionBatchConfig;
 	timers?: NotifyTimerApi;
 	now?: () => number;
+	getAsyncRpcRun?: (result: CompletionNotification) => AsyncRpcRunSnapshot | undefined;
 }
 
 export interface CompletionNotifier {
@@ -164,6 +166,7 @@ interface PendingCompletion {
 	details: SubagentNotifyDetails;
 	triggerTurn: boolean;
 	resolve(accepted: boolean): void;
+	asyncRun?: AsyncRpcRunSnapshot;
 }
 
 function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[]): boolean {
@@ -171,12 +174,14 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCom
 	const details = items.map((item) => item.details);
 	const content = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
 	const display = details.some((detail) => detail.source === "foreground" || detail.status !== "completed");
+	const asyncRuns = items.flatMap((item) => item.asyncRun ? [item.asyncRun] : []);
 	try {
 		pi.sendMessage(
 			{
 				customType: "subagent-notify",
 				content,
 				display,
+				...(asyncRuns.length ? { details: { asyncSnapshot: buildAsyncRpcSnapshotFromRuns(asyncRuns) } } : {}),
 			},
 			{ triggerTurn: items.some((item) => item.triggerTurn) },
 		);
@@ -291,6 +296,7 @@ export default function registerSubagentNotify(
 			details,
 			triggerTurn: result.triggerTurn !== false,
 			resolve,
+			asyncRun: options.getAsyncRpcRun?.(result),
 		};
 		if (details.source === "foreground") {
 			emit([item]);

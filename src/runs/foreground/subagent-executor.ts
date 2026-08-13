@@ -5073,6 +5073,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 								const childPhase = typeof childParams.phase === "string" && childParams.phase.trim() ? childParams.phase.trim() : undefined;
 								const childLabel = typeof childParams.label === "string" && childParams.label.trim() ? childParams.label.trim() : undefined;
+								const workflowStep = workflowSteps.get(key);
+								if (workflowStep) {
+									if (typeof childParams.task === "string") workflowStep.description = childParams.task;
+									if (childLabel) workflowStep.label = childLabel;
+									if (childPhase) workflowStep.phase = childPhase;
+									persist();
+								}
 								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
 									status: "running",
 									...(typeof childParams.agent === "string" && childParams.agent.trim() ? { agent: childParams.agent.trim() } : {}),

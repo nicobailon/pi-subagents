@@ -32,6 +32,7 @@ import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foregro
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
+import { buildAsyncRpcRunSnapshot } from "../runs/background/async-rpc-snapshot.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
@@ -46,7 +47,7 @@ import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
-import registerSubagentNotify, { parseSubagentNotifyContent, type SubagentNotifyDetails } from "../runs/background/notify.ts";
+import registerSubagentNotify, { parseSubagentNotifyContent, type CompletionNotification, type SubagentNotifyDetails } from "../runs/background/notify.ts";
 import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_MESSAGE_TYPE, type SubagentSteeringMessageDetails } from "./steering-notices.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
@@ -412,7 +413,28 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
-	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	const completionNotifier = registerSubagentNotify(pi, state, {
+		batchConfig: config.completionBatch,
+		getAsyncRpcRun: (result: CompletionNotification) => {
+			const id = typeof result.runId === "string" ? result.runId : typeof result.id === "string" ? result.id : undefined;
+			if (!id) return undefined;
+			const job = state.asyncJobs.get(id) ?? state.fleetJobs?.get(id);
+			if (!job) return undefined;
+			const run = buildAsyncRpcRunSnapshot(job);
+			const status = result.state === "paused" || result.state === "stopped" || result.state === "rejected"
+				? result.state
+				: result.success ? "complete" : "failed";
+			const children = run.children.map((child, index) => {
+				const outcome = result.results?.[index];
+				if (!outcome) return child;
+				const childStatus = outcome.status === "stopped" || outcome.stopped
+					? "stopped"
+					: outcome.status === "paused" ? "paused" : outcome.success === false ? "failed" : "complete";
+				return { ...child, status: childStatus };
+			});
+			return { ...run, status, children };
+		},
+	});
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
 			const ctx = state.lastUiContext;

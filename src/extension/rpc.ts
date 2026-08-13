@@ -15,7 +15,9 @@ import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_PROCESS_TERMINAL_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+	WIDGET_KEY,
 } from "../shared/types.ts";
+import { ASYNC_RPC_WIDGET_PREFIX } from "../runs/background/async-rpc-snapshot.ts";
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
@@ -375,6 +377,7 @@ function pingData(ctx: ExtensionContext | null) {
 		capabilities: {
 			status: true,
 			fleetStatus: { version: 1 },
+			rpcAsyncSnapshot: { version: 1, transport: "extension-ui-widget", widgetKey: WIDGET_KEY, prefix: ASYNC_RPC_WIDGET_PREFIX },
 			asyncSpawn: true,
 			steer: true,
 			nonRecoveringSteer: true,
