@@ -54,6 +54,38 @@ describe("Herdr inspector bootstrap", () => {
 		}
 	});
 
+	it("uses PATH node when Pi is a standalone executable", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-bootstrap-standalone-"));
+		const originalExecPath = process.execPath;
+		try {
+			writeCompletedRun(root);
+			process.execPath = path.join(root, process.platform === "win32" ? "pi.exe" : "pi");
+			const calls: string[][] = [];
+			const client: HerdrClient = {
+				run: async <T>(args: string[]) => {
+					calls.push(args);
+					if (args[0] === "--version") return { ok: true, data: "herdr 0.7.5" as T };
+					if (args[0] === "pane" && args[1] === "split") return { ok: true, data: { pane: { pane_id: "w1:p9" } } as T };
+					return { ok: true, data: {} as T };
+				},
+			};
+			const opened = await handleHerdrInspectorAction("inspector.open", { id: "run-123" }, {
+				cwd: root,
+				asyncDirRoot: root,
+				resultsDir: path.join(root, "results"),
+				client,
+			});
+			assert.equal(opened.isError, undefined);
+			const command = calls.find((args) => args[0] === "pane" && args[1] === "run")?.[3] ?? "";
+			assert.equal(command.startsWith("& "), process.platform === "win32");
+			assert.match(command, process.platform === "win32" ? /'node\.exe'/ : /^'node' /);
+			assert.doesNotMatch(command, /(?:^|[\\/])pi(?:\.exe)?'/);
+		} finally {
+			process.execPath = originalExecPath;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("starts the packaged bootstrap with ordinary Node", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-bootstrap-run-"));
 		try {

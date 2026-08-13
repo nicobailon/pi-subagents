@@ -11,6 +11,7 @@
 
 ### Fixed
 - Harden the LLM intent arbiter: the model decision now carries a confidence level and only a high-confidence read_only rescues a failed run (read_only without high confidence is treated as implementation, keeping the guard fail-closed); tasks over 8000 characters are never arbitrated from partial evidence; and registry credentials are resolved as a method call on the model registry rather than a detached reference, so OAuth/header/environment authentication reaches the stream. Thanks to @MarcusNeufeldt for #1044.
+- Launch Herdr inspector panes with Node when Pi runs as a standalone executable. Thanks to @kevinpita for #1051.
 
 ## [0.48.0] - 2026-08-13
 

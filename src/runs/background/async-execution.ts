@@ -19,6 +19,7 @@ import { buildChainInstructions, isCheckpointStep, isDynamicParallelStep, isPara
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
@@ -299,27 +300,6 @@ export function isAsyncAvailable(): boolean {
 	return jitiCliPath !== undefined;
 }
 
-function isNodeExecutableName(execPath: string): boolean {
-	const basename = path.basename(execPath).toLowerCase();
-	return basename === "node" || basename === "node.exe" || basename === "nodejs" || basename === "nodejs.exe";
-}
-
-function canUseCurrentNodeExecutable(execPath: string): boolean {
-	try {
-		fs.accessSync(execPath, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function resolveAsyncRunnerNodeCommand(): string {
-	if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
-		return process.execPath;
-	}
-	return process.platform === "win32" ? "node.exe" : "node";
-}
-
 export function resolveAsyncRunnerLogPaths(cfg: object): { stdoutPath: string; stderrPath: string } | undefined {
 	const asyncDir = typeof (cfg as { asyncDir?: unknown }).asyncDir === "string"
 		? (cfg as { asyncDir: string }).asyncDir
@@ -486,7 +466,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	const launchConfig = { ...cfg, runnerProcessInstanceId };
 	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
-	const nodeCommand = resolveAsyncRunnerNodeCommand();
+	const nodeCommand = resolveNodeExecutable();
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; revivalLease?: unknown };
 	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;
 	const launchRunId = typeof launchForStartup.id === "string" ? launchForStartup.id : suffix;

@@ -10,6 +10,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { DIRS, type Details, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentRunId } from "../../runs/background/run-id-resolver.ts";
+import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode, type HerdrResult } from "./client.ts";
 
 export const HERDR_INSPECTOR_ACTIONS = ["inspector.open", "inspector.status", "inspector.close"] as const;
@@ -90,7 +91,7 @@ function shellQuote(value: string): string {
 }
 
 function inspectorCommand(input: { runnerPath: string; asyncDir: string; runId: string; index?: number; missionPath?: string; allowSteer: boolean; allowStop: boolean }): string {
-	const args = [process.execPath, input.runnerPath, "--async-dir", input.asyncDir, "--run-id", input.runId, "--allow-steer", String(input.allowSteer), "--allow-stop", String(input.allowStop)];
+	const args = [resolveNodeExecutable(), input.runnerPath, "--async-dir", input.asyncDir, "--run-id", input.runId, "--allow-steer", String(input.allowSteer), "--allow-stop", String(input.allowStop)];
 	if (input.index !== undefined) args.push("--index", String(input.index));
 	if (input.missionPath) args.push("--mission-path", input.missionPath);
 	return `${process.platform === "win32" ? "& " : ""}${args.map(shellQuote).join(" ")}`;
