@@ -829,4 +829,34 @@ describe("scripted workflow runtime", () => {
 			workerPrototype.postMessage = originalPostMessage;
 		}
 	});
+
+	it("drops a status response that settles after the workflow aborts", async () => {
+		const controller = new AbortController();
+		let traceLengths: number[] = [];
+		let resolveStatus!: (result: { key: string; ok: true; output: string; artifactPaths: string[] }) => void;
+		let markStatusStarted!: () => void;
+		const statusStarted = new Promise<void>((resolve) => { markStatusStarted = resolve; });
+
+		const workflow = runWorkflowScript({
+			script: `await runs.status("probe");`,
+			signal: controller.signal,
+			onTrace(trace) { traceLengths.push(trace.length); },
+			async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			status(key) {
+				markStatusStarted();
+				return new Promise((resolve) => { resolveStatus = resolve; });
+			},
+		});
+
+		await statusStarted;
+		controller.abort(new Error("Workflow stopped by user."));
+		await assert.rejects(workflow, (error: unknown) => error instanceof WorkflowScriptError
+			&& error.message === "Workflow stopped by user."
+			&& error.partial.trace.some((entry) => entry.operation === "status" && entry.key === "probe" && entry.state === "started")
+			&& !error.partial.trace.some((entry) => entry.operation === "status" && entry.key === "probe" && entry.state === "completed"));
+		const finalTraceLength = traceLengths.at(-1);
+		resolveStatus({ key: "probe", ok: true, output: "done", artifactPaths: [] });
+		await new Promise((resolve) => queueMicrotask(resolve));
+		assert.equal(traceLengths.at(-1), finalTraceLength);
+	});
 });

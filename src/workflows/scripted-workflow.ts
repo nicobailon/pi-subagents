@@ -643,6 +643,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				trace.push({ operation: "status", key: keyOrRunId, state: "started", ...(known?.runId ? { runId: known.runId } : {}) });
 				traceChanged();
 				respond(options.status(target, childController.signal).then((result) => {
+					if (settled) return result;
 					trace.push({ operation: "status", key: keyOrRunId, state: result.ok ? "completed" : "failed", ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
 					traceChanged();
 					if (!result.ok) throw new Error(`Status '${keyOrRunId}' failed: ${result.output}`);
