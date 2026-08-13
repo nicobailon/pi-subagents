@@ -718,7 +718,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					seenKeys.add(call.key);
 					return true;
 				});
-				admission = Promise.resolve().then(() => options.admit?.(calls));
+				admission = Promise.resolve().then(() => {
+					if (settled) return;
+					return options.admit?.(calls);
+				});
 				if (batch) batchAdmissions.set(batch.id, admission);
 			}
 			const promise = admission.then(() => {
