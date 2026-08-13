@@ -293,6 +293,7 @@ function writePackageSkill(packageRoot: string, skillName: string): void {
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
+	let agentDir: string;
 	let mockPi: MockPi;
 	let previousAgentDir: string | undefined;
 
@@ -307,14 +308,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	beforeEach(() => {
 		tempDir = createTempDir();
+		agentDir = createTempDir("pi-subagent-agent-");
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = path.join(tempDir, "agent");
+		process.env.PI_CODING_AGENT_DIR = agentDir;
 		mockPi.reset();
 	});
 
 	afterEach(() => {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		removeTempDir(agentDir);
 		removeTempDir(tempDir);
 	});
 
