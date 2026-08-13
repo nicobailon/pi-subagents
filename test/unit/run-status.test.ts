@@ -445,6 +445,40 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("escapes terminal control sequences in remembered foreground transcripts", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-foreground-transcript-unsafe-"));
+		try {
+			const state = {
+				currentSessionId: "session-current",
+				asyncJobs: new Map(),
+				foregroundControls: new Map(),
+				foregroundRuns: new Map([["foreground-unsafe", {
+					runId: "foreground-unsafe",
+					mode: "single",
+					cwd: root,
+					sessionId: "session-current",
+					updatedAt: 100,
+					children: [{ agent: "worker", index: 0, status: "completed", finalOutput: "safe \u001b]8;;https://attacker.invalid\u0007link\u001b]8;;\u0007 bidi \u202e" }],
+				}]]),
+			} as unknown as SubagentState;
+
+			const result = inspectSubagentStatus({ id: "foreground-unsafe", view: "transcript" }, {
+				asyncDirRoot: path.join(root, "runs"),
+				resultsDir: path.join(root, "results"),
+				state,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.doesNotMatch(text, /[\u001b\u0007\u202e]/u);
+			assert.match(text, /U\+001B/);
+			assert.match(text, /U\+0007/);
+			assert.match(text, /U\+202E/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses transcript reads for async runs owned by another session", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-session-scope-"));
 		try {

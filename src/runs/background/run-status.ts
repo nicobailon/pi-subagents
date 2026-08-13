@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { safeTerminalText } from "../../shared/display-text.ts";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -240,7 +241,7 @@ function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options:
 	lines.push("Result transcript tail:");
 	if (outputLines.length === 0) lines.push("  (no recovered final output available yet)");
 	else for (const line of outputLines) lines.push(`  ${line}`);
-	return lines.join("\n");
+	return lines.map((line) => safeTerminalText(line)).join("\n");
 }
 
 function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): string {
