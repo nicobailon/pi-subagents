@@ -5,6 +5,9 @@
 ### Added
 - Add `debug.run` for async run lifecycle diagnostics without exposing prompts, secrets, or transcripts (#1037).
 
+### Fixed
+- Derive default `workflowScript` child report paths from the workflow output path while keeping the workflow aggregate report separate, and reject child output path collisions before launch (#1038).
+
 ## [0.48.0] - 2026-08-13
 
 ### Added

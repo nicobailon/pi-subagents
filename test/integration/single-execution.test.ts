@@ -1104,6 +1104,94 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(path.basename(sessionHeader.cwd), path.basename(callCwd));
 	});
 
+	it("derives workflow child output paths from the workflow output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first report" });
+		mockPi.onCall({ output: "second report" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const workflowOutput = path.join(tempDir, "workflow-report.md");
+
+		const result = await executor.execute(
+			"scripted-workflow-child-output-defaults",
+			{
+				async: false,
+				output: workflowOutput,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "review", agent: "echo", task: "Review" },
+						{ key: "monitor", agent: "echo", task: "Monitor" }
+					]);
+					return children.map(({ key, artifactPaths }) => ({ key, artifactPaths }));
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.match(fs.readFileSync(workflowOutput, "utf-8"), /Workflow completed\./);
+		const value = result.details.workflow?.value as Array<{ key: string; artifactPaths: string[] }>;
+		const childOutputs = value.map((child) => child.artifactPaths.find((candidate) => candidate.endsWith(".md")) ?? "").sort();
+		assert.deepEqual(childOutputs, [
+			path.join(tempDir, "workflow-report.monitor.md"),
+			path.join(tempDir, "workflow-report.review.md"),
+		]);
+		assert.equal(fs.readFileSync(path.join(tempDir, "workflow-report.review.md"), "utf-8"), "first report");
+		assert.equal(fs.readFileSync(path.join(tempDir, "workflow-report.monitor.md"), "utf-8"), "second report");
+	});
+
+	it("rejects workflow child output collisions before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const sharedOutput = path.join(tempDir, "shared.md");
+
+		const duplicate = await executor.execute(
+			"scripted-workflow-duplicate-child-output",
+			{
+				async: false,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(sharedOutput)} },
+					{ key: "monitor", agent: "echo", task: "Monitor", output: ${JSON.stringify(sharedOutput)} }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(duplicate.isError, undefined, duplicate.content[0]?.text ?? "workflow failed");
+		const duplicateChildren = duplicate.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(duplicateChildren.map(({ ok }) => ok), [false, false]);
+		for (const child of duplicateChildren) {
+			assert.match(child.error ?? "", /Workflow children 'review' and 'monitor' resolve output to the same path/);
+			assert.match(child.error ?? "", new RegExp(escapeRegExp(sharedOutput)));
+		}
+		assert.equal(mockPi.callCount(), 0);
+
+		const aggregate = await executor.execute(
+			"scripted-workflow-aggregate-child-output",
+			{
+				async: false,
+				output: sharedOutput,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(sharedOutput)} },
+					{ key: "monitor", agent: "echo", task: "Monitor" }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(aggregate.isError, undefined, aggregate.content[0]?.text ?? "workflow failed");
+		const aggregateChildren = aggregate.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(aggregateChildren.map(({ ok }) => ok), [false, false]);
+		for (const child of aggregateChildren) {
+			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
+			assert.match(child.error ?? "", new RegExp(escapeRegExp(sharedOutput)));
+		}
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("lets runs.all siblings settle when one child fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ exitCode: 1, stderr: "first child failed" });
 		mockPi.onCall({ output: "second child completed" });

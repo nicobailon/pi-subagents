@@ -3245,6 +3245,59 @@ function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string,
 		: path.join(artifactsDir, "outputs", runId);
 }
 
+function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, artifactsDir: string, workflowRunId: string, workflowKey: string): string {
+	if (aggregateOutputPath) {
+		const parsed = path.parse(aggregateOutputPath);
+		return path.join(parsed.dir, `${parsed.name}.${workflowKey}${parsed.ext || ".md"}`);
+	}
+	return path.join(artifactsDir, "outputs", workflowRunId, `${workflowKey}.md`);
+}
+
+function writeWorkflowAggregateOutput(outputPath: string | undefined, text: string): void {
+	if (!outputPath) return;
+	fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+	fs.writeFileSync(outputPath, text, "utf-8");
+}
+
+function workflowChildOutputCollisionError(input: {
+	ctxCwd: string;
+	workflowCwd: string;
+	artifactsDir: string;
+	workflowRunId: string;
+	aggregateOutputPath?: string;
+	entries: Array<{ key: string; params: Record<string, unknown> }>;
+}): string | undefined {
+	const seen = new Map<string, string>();
+	for (const { key, params } of input.entries) {
+		const output = typeof params.output === "string" || typeof params.output === "boolean"
+			? params.output
+			: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, key);
+		const childCwd = typeof params.cwd === "string" ? resolveChildCwd(input.workflowCwd, params.cwd) : input.workflowCwd;
+		const resolved = resolveSingleOutputPath(output, input.ctxCwd, childCwd, path.join(input.artifactsDir, "outputs", input.workflowRunId));
+		if (!resolved) continue;
+		if (input.aggregateOutputPath && resolved === input.aggregateOutputPath) return `Workflow child '${key}' output resolves to the workflow aggregate output path: ${resolved}. Use a distinct child output path.`;
+		const previous = seen.get(resolved);
+		if (previous) return `Workflow children '${previous}' and '${key}' resolve output to the same path: ${resolved}. Use distinct child output paths.`;
+		seen.set(resolved, key);
+	}
+	return undefined;
+}
+
+function prepareWorkflowChildLaunchParams(input: {
+	workflowDefaults: SubagentParamsLike;
+	childParams: Record<string, unknown>;
+	parentWorkflowRunId: string;
+	workflowKey: string;
+	artifactsDir: string;
+	aggregateOutputPath?: string;
+	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor };
+}): SubagentParamsLike {
+	const childParams = input.childParams.output === undefined && input.childParams.resume === undefined
+		? { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) }
+		: input.childParams;
+	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, input.options);
+}
+
 function buildChainWorktreeTaskCwdError(chain: ChainStep[], sharedCwd: string): string | undefined {
 	for (let stepIndex = 0; stepIndex < chain.length; stepIndex++) {
 		const step = chain[stepIndex]!;
@@ -4665,6 +4718,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
+			const workflowArtifactConfig: ArtifactConfig = omitUndefinedProperties({
+				...DEFAULT_ARTIFACT_CONFIG,
+				enabled: requestParams.artifacts !== false,
+				dir: deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
+			});
+			const workflowArtifactsDir = getArtifactsDir(ctx.sessionManager.getSessionFile() ?? null, workflowCwd, workflowArtifactConfig.dir);
+			if (workflowArtifactConfig.dir === "project" && !warnedArtifactPackageDirs.has(workflowCwd)) {
+				warnedArtifactPackageDirs.add(workflowCwd);
+				const warning = getProjectArtifactPackagingWarning(workflowCwd);
+				if (warning) console.warn(`[pi-subagents] ${warning}`);
+			}
 			const workflowPrompts = { render: (ref: string, vars?: unknown) => renderWorkflowPrompt(ref, vars, workflowCwd) };
 			const chatProgressResult = resolveWorkflowChatProgress({ requested: requestParams.chatProgress, parentCwd, workflowCwd, background: requestParams.async !== false });
 			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
@@ -4838,6 +4902,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
+					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
+					const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
 					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 					let projectedTraceLength = 0;
 					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
@@ -4897,6 +4963,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							admit: (calls) => {
+								const collisionError = workflowChildOutputCollisionError({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId, aggregateOutputPath: workflowAggregateOutputPath, entries: calls });
+								if (collisionError) throw new Error(collisionError);
 								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 								persist();
 							},
@@ -4921,7 +4989,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -4991,6 +5059,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
 						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
+						writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary);
 						const workflowUsage = sumResultsUsage(workflowResults);
 						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
 						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
@@ -5000,6 +5069,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
 						const stopped = controller.signal.aborted;
 						status = compactOptional<AsyncStatus>({ ...status, state: stopped ? "stopped" : "failed", stopped: stopped || undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
+						writeWorkflowAggregateOutput(workflowAggregateOutputPath, status.error ?? "Workflow failed.");
 						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: status.state, summary: status.error, error: status.error, stopped: status.stopped, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, error: status.error });
@@ -5015,6 +5085,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}, workflowFanoutBudget));
 			}
 			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
+			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
+			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id));
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const sendWorkflowProgress = () => {
@@ -5033,6 +5105,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						sendWorkflowProgress();
 					},
 					admit: (calls) => {
+						const collisionError = workflowChildOutputCollisionError({ ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, workflowRunId: _id, aggregateOutputPath: workflowAggregateOutputPath, entries: calls });
+						if (collisionError) throw new Error(collisionError);
 						claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 					},
 					onEmit: (emits) => {
@@ -5054,7 +5128,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
@@ -5095,8 +5169,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (workflow.emits.length > 0) sections.push(`Emitted:\n${workflow.emits.map(formatWorkflowValue).join("\n")}`);
 				if (workflow.console.length > 0) sections.push(`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
+				const workflowText = sections.join("\n\n");
+				writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText);
 				return attachWorkflowMission(withRunFanoutBudget({
-					content: [{ type: "text", text: sections.join("\n\n") }],
+					content: [{ type: "text", text: workflowText }],
 					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, chatProgress }),
 				}, workflowFanoutBudget));
 			} catch (error) {
@@ -5107,8 +5183,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (partial.emits.length > 0) sections.push(`Emitted:\n${partial.emits.map(formatWorkflowValue).join("\n")}`);
 				if (partial.console.length > 0) sections.push(`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
+				const workflowText = sections.join("\n\n");
+				writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText);
 				return attachWorkflowMission(withRunFanoutBudget({
-					content: [{ type: "text", text: sections.join("\n\n") }],
+					content: [{ type: "text", text: workflowText }],
 					isError: true,
 					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console }, chatProgress }),
 				}, workflowFanoutBudget));
