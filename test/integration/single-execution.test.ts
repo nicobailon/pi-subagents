@@ -1081,46 +1081,56 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("shares durable workflow state across a mission and omits it for mission:false", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
-		const first = await executor.execute(
-			"mission-state-first",
-			{
-				async: false,
-				mission: { title: "Stateful workflow" },
-				workflowScript: `await state.set("review.stage", { count: 1 }); return await state.get("review.stage");`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		assert.equal(first.isError, undefined, first.content[0]?.text ?? "first workflow failed");
-		assert.ok(first.details.missionId);
-		assert.deepEqual(first.details.workflow?.value, { count: 1 });
-		const location = resolveMissionStoreLocation({ projectRoot: tempDir });
-		const statePath = missionStatePath(location, first.details.missionId);
-		assert.equal(fs.existsSync(statePath), true);
-		assert.equal(path.relative(tempDir, statePath).startsWith(".."), true);
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const projectDir = path.join(tempDir, "project");
+		const agentDir = path.join(tempDir, "agent");
+		fs.mkdirSync(projectDir);
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
+			const first = await executor.execute(
+				"mission-state-first",
+				{
+					async: false,
+					mission: { title: "Stateful workflow" },
+					workflowScript: `await state.set("review.stage", { count: 1 }); return await state.get("review.stage");`,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(projectDir),
+			);
+			assert.equal(first.isError, undefined, first.content[0]?.text ?? "first workflow failed");
+			assert.ok(first.details.missionId);
+			assert.deepEqual(first.details.workflow?.value, { count: 1 });
+			const location = resolveMissionStoreLocation({ projectRoot: projectDir, agentDir });
+			const statePath = missionStatePath(location, first.details.missionId);
+			assert.equal(fs.existsSync(statePath), true);
+			assert.equal(path.relative(projectDir, statePath).startsWith(".."), true);
 
-		const second = await executor.execute(
-			"mission-state-second",
-			{ async: false, missionId: first.details.missionId, workflowScript: `return await state.get("review.stage");` },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		assert.equal(second.isError, undefined, second.content[0]?.text ?? "second workflow failed");
-		assert.deepEqual(second.details.workflow?.value, { count: 1 });
+			const second = await executor.execute(
+				"mission-state-second",
+				{ async: false, missionId: first.details.missionId, workflowScript: `return await state.get("review.stage");` },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(projectDir),
+			);
+			assert.equal(second.isError, undefined, second.content[0]?.text ?? "second workflow failed");
+			assert.deepEqual(second.details.workflow?.value, { count: 1 });
 
-		const ephemeral = await executor.execute(
-			"mission-state-off",
-			{ async: false, mission: false, workflowScript: `return typeof state;` },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-		assert.equal(ephemeral.isError, undefined, ephemeral.content[0]?.text ?? "ephemeral workflow failed");
-		assert.equal(ephemeral.details.workflow?.value, "undefined");
-		assert.equal(ephemeral.details.missionId, undefined);
+			const ephemeral = await executor.execute(
+				"mission-state-off",
+				{ async: false, mission: false, workflowScript: `return typeof state;` },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(projectDir),
+			);
+			assert.equal(ephemeral.isError, undefined, ephemeral.content[0]?.text ?? "ephemeral workflow failed");
+			assert.equal(ephemeral.details.workflow?.value, "undefined");
+			assert.equal(ephemeral.details.missionId, undefined);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
 	});
 
 	it("runs a direct single child in a managed worktree", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
