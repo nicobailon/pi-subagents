@@ -224,7 +224,7 @@ describe("result watcher", () => {
 			const binding = prepareMissionLaunch({
 				params: { mission: { title: "Workflow mission" }, task: "Run async child" },
 				projectRoot: project,
-				config: { globalIndexDir: path.join(root, "global-index") },
+				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
 				ownerSessionId: "session-current",
 			});
 			assert.ok(binding);
