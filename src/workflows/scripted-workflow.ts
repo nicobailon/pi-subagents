@@ -723,7 +723,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				admission = Promise.resolve().then(() => options.admit?.(calls));
 				if (batch) batchAdmissions.set(batch.id, admission);
 			}
-			const promise = admission.then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true })).then((result) => {
+			const promise = admission.then(() => {
+				if (settled || stoppedLaunches.has(key)) {
+					const reason = childController.signal.reason;
+					const text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.";
+					return { key, ok: false, output: text, error: text, artifactPaths: [] };
+				}
+				return options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true });
+			}).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (stoppedLaunches.has(key)) return normalized;
 				children.set(key, normalized);
