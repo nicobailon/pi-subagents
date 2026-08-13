@@ -5,25 +5,25 @@
 ## [0.48.0] - 2026-08-13
 
 ### Added
-- Add a durable per-run child fan-out budget with a default cap of 64 across static, dynamic, workflow, and nested child admissions. Thanks to @asjer for #1031.
-- Add an opt-in per-session cap for concurrently active top-level async runs, with atomic admission, resume transfer, status/Fleet/RPC/doctor visibility, and release gated by the verified process-terminal behavior from #1030. Thanks to @asjer for #1029.
-- Add a live Prompt Audit drawer to Fleet for current-session foreground children. Prompt text is visible in the drawer, kept outside serializable Fleet state, and redacted from foreground input, transcript, metadata, result, progress, and run-history artifacts (#1021).
-- Add a global `timeoutMs` config option that sets the default run deadline for single, parallel, and chain launches (foreground, plus plain single-agent async) when neither the call nor the selected agent provides a timeout. It reaches parallel (`tasks: [...]`) and chain launches, which never adopt an agent's frontmatter `timeoutMs` (that default applies to single-agent launches only), so a long fan-out no longer falls back to the built-in 30-minute default and gets killed mid-run. Explicit call `timeoutMs`/`maxRuntimeMs` and agent frontmatter defaults still win; composite async runs stay unbounded at the top level by design. Thanks to @shaharmor for #1018.
-- Add a `PI_SUBAGENT_TASK_DELIVERY` environment setting (`auto` | `file`, default `auto`) controlling how the task text reaches child Pi processes. `file` writes the task to a temp `task.md` referenced as `@<path>` instead of embedding it in argv, for hosts where endpoint protection (EDR) pre-execution command-line scanning denies children whose argv embeds a long natural-language task. Thanks to @yanqianglu for #1028.
-- Escalate startup retries to file task delivery after an unexplained zero-activity `SIGKILL` child exit, so EDR-denied launches self-heal on retry in both foreground and background runs. Thanks to @yanqianglu for #1028.
+- Limit each run to 64 child launches by default, so accidental fan-out loops stop before they create too many children. Thanks to @asjer for #1031.
+- Add an optional limit for how many top-level async runs one session can have active at the same time. Fleet, status, RPC, and doctor now show the limit and current usage. Thanks to @asjer for #1029.
+- Add a live Prompt Audit drawer to Fleet for children owned by the current session. It shows the prompt on screen without saving it to status files, history, transcripts, metadata, results, progress, or run artifacts (#1021).
+- Add a global `timeoutMs` setting for default run deadlines. It applies when a launch or agent does not set its own timeout, and it prevents long foreground fan-outs from falling back to the built-in 30-minute limit. Thanks to @shaharmor for #1018.
+- Add `PI_SUBAGENT_TASK_DELIVERY=auto|file` for hosts that block child processes when the task text appears in the command line. File mode writes the task to a temporary `task.md` and passes that path instead. Thanks to @yanqianglu for #1028.
+- Retry with file-based task delivery after a child exits with no activity, which helps recover from endpoint protection tools that block long command lines. Thanks to @yanqianglu for #1028.
 
 ### Fixed
-- Open Fleet Prompt Audit with the authored task visible by default and show a short live task summary in the normal Fleet detail pane (#1021).
-- Use full task-text hashes for LLM intent arbiter memoization so same-prefix review and implementation tasks cannot share a cached verdict.
-- Terminate async Pi writers as owned POSIX process groups on stop and timeout, and keep terminal process proof unknown until process-tree exit is verified. Thanks to @asjer for #1030.
-- Explain when a requested mission is scoped to another worktree by naming the current project root and mission directory (#1024).
-- Preserve the configured output reference when explicit acceptance rejects an otherwise completed foreground child, so useful reports remain available (#1023).
-- Reject configured worktree base directories inside the agent extensions directory, including symlink aliases (#1014).
-- Align unnamed intercom fallback orchestrator targets with pi-intercom's 18-character registered presence names so subagents without an explicit session name can reach their orchestrator. Thanks to @mystery4f for #1017.
-- Stop reading hyphenated adjectives like "must-fix items" or "should-fix tests" as implementation intent, which made the completion mutation guard hard-fail read-only review runs with a false "completed without making edits" error. Severity compounds (must|should|needs + dash + verb) are stripped before verb matching across every mutation pattern (incl. update/add/apply/make/do siblings), the acceptance-level write-capability check, and the patch-scope pattern, while CLI flags ("eslint --fix", "prettier --write") and clause-level dashes ("branch—fix it") keep their write intent. Thanks to @MarcusNeufeldt for #1020.
-- Add an optional LLM intent arbiter: when the completion guard is about to hard-fail a run that made no edits, a model decides — from the task text alone, never the child's own report — whether the task actually instructed file changes; only a confident read-only verdict rescues the run, before any failure state is published. Covers single, parallel, and chain foreground runs; enabled by default; set `PI_SUBAGENTS_LLM_INTENT_ARBITER=0` to disable. Thanks to @MarcusNeufeldt for #1020.
-- Tolerate empty-string entries in acceptance-report string-array fields instead of rejecting the whole report. Thanks to @hjiang for #1015.
-- Let single external-cli workflow children ignore inherited Pi models so model-less external runners start instead of failing preflight. Thanks to @twosunnus for #1016.
+- Open Fleet Prompt Audit with the original task visible by default, and show a short task summary in the normal Fleet detail pane (#1021).
+- Use the full task text when caching LLM intent decisions, so similar tasks with the same prefix cannot share the wrong answer.
+- Stop async Pi writer processes as full process groups, and only mark process cleanup as proven after the process tree has actually exited. Thanks to @asjer for #1030.
+- Explain when a mission belongs to another worktree, including both the current project root and the mission directory (#1024).
+- Keep the configured output reference when explicit acceptance rejects a foreground child, so useful reports remain available (#1023).
+- Reject worktree base directories inside the agent extensions directory, including symlinked paths (#1014).
+- Make unnamed intercom fallback targets match pi-intercom's registered name length, so subagents without a custom session name can still reach their parent. Thanks to @mystery4f for #1017.
+- Stop treating phrases like "must-fix items" or "should-fix tests" as instructions to edit files during read-only review tasks. Thanks to @MarcusNeufeldt for #1020.
+- Add an optional LLM check before the mutation guard fails a child that made no edits. If the task was actually read-only, the run now completes instead of failing. Thanks to @MarcusNeufeldt for #1020.
+- Accept empty strings inside acceptance-report string arrays instead of rejecting the full report. Thanks to @hjiang for #1015.
+- Let single external-CLI workflow children start without inheriting a Pi model, so model-less external runners do not fail preflight. Thanks to @twosunnus for #1016.
 
 ## [0.47.1] - 2026-08-12
 
