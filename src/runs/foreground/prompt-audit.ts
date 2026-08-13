@@ -1,7 +1,8 @@
 import { Agent, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
 import type { ForegroundRunControl } from "../../shared/types.ts";
 export type PromptAuditView = "authored" | "runtime" | "effective";
 
@@ -42,7 +43,7 @@ function finalAssistantText(agent: Agent): string {
 	return "";
 }
 
-async function resolveRewriteAuth(ctx: ExtensionContext, model: RegistryModel): Promise<{ apiKey?: string; headers?: Record<string, string>; env?: Record<string, string> }> {
+async function resolveRewriteAuth(ctx: ExtensionContext, model: RegistryModel): Promise<{ apiKey?: string; headers?: ProviderHeaders; env?: Record<string, string> }> {
 	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 	if (auth.ok === false) throw new Error(`Prompt redo model auth failed for ${fullModelId(model)}: ${auth.error}`);
 	return {
@@ -91,7 +92,7 @@ export async function rewritePromptWithGuidance(input: {
 			tools: [],
 		},
 		convertToLlm,
-		streamFunction: streamFn,
+		...agentStreamOptions(streamFn),
 		getApiKey: (providerName) => providerName === model.provider ? auth.apiKey : undefined,
 		toolExecution: "sequential",
 	});

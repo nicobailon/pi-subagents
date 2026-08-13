@@ -3,6 +3,7 @@ import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-a
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { Type, type Static } from "typebox";
 import { appendPermissionAudit, permissionArgsPreview } from "../runs/shared/permissions.ts";
+import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { decodeChildWatchdogConfig } from "./child-status.ts";
 import { childResolvedConfig } from "./register-child.ts";
 import { resolveWatchdogReviewModel } from "./review.ts";
@@ -112,7 +113,7 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 					tools: [tool],
 				},
 				convertToLlm,
-				streamFunction: streamFn,
+				...agentStreamOptions(streamFn),
 				getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
 				beforeToolCall: async ({ toolCall }) => toolCall.name === tool.name ? undefined : { block: true, reason: `Permission arbiter tool '${toolCall.name}' is not allowed.` },
 				toolExecution: "sequential",

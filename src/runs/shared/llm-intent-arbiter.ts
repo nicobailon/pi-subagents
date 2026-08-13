@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { Agent, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import { convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
+import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
+import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
 
 /**
  * LLM intent arbiter for the completion mutation guard.
@@ -56,7 +58,7 @@ interface ArbiterRuntime {
 
 interface ArbiterAuth {
 	apiKey?: string;
-	headers?: Record<string, string>;
+	headers?: ProviderHeaders;
 	env?: Record<string, string>;
 }
 
@@ -122,7 +124,7 @@ async function resolveArbiterAuth(
 		getApiKeyAndHeaders?: (m: RegistryModel) => Promise<{
 			ok: boolean;
 			apiKey?: string;
-			headers?: Record<string, string>;
+			headers?: ProviderHeaders;
 			env?: Record<string, string>;
 			error?: string;
 		}>;
@@ -188,7 +190,7 @@ async function runArbitration(
 			tools: [tool],
 		},
 		convertToLlm,
-		streamFunction: authWrappedStreamFn(runtime.baseStreamFn, auth),
+		...agentStreamOptions(authWrappedStreamFn(runtime.baseStreamFn, auth)),
 		getApiKey: (providerName) =>
 			providerName === runtime.model.provider ? auth.apiKey : undefined,
 		beforeToolCall: async ({ toolCall }) =>

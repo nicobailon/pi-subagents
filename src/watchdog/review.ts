@@ -1,9 +1,10 @@
 import { Agent, type AgentTool, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createReadOnlyTools, convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { resolveModelCandidate } from "../runs/shared/model-fallback.ts";
+import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
 import type { WatchdogReviewFunction, WatchdogReviewRequest } from "./runtime.ts";
 import {
@@ -36,7 +37,7 @@ type RegistryModel = Model<any>;
 
 interface WatchdogReviewAuth {
 	apiKey?: string;
-	headers?: Record<string, string>;
+	headers?: ProviderHeaders;
 	env?: Record<string, string>;
 }
 
@@ -280,7 +281,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 				tools,
 			},
 			convertToLlm,
-			streamFunction: streamFn,
+			...agentStreamOptions(streamFn),
 			getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
 			beforeToolCall: async ({ toolCall }) => WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name)
 				? undefined
