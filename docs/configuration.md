@@ -61,6 +61,12 @@ Controls only the main chat `subagent` call/result renderer. It does not change 
 
 `compactResultMaxLines` is a positive integer. It caps only collapsed rich-result rows and adds an expand hint when rows are hidden. Expanded output remains uncapped.
 
+With `"summary"`, a tool result looks like this:
+
+```text
+✓ reviewer · completed
+```
+
 ## `asyncByDefault`
 
 ```json
