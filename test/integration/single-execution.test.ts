@@ -343,6 +343,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		workflowControllers?: Map<string, AbortController>,
 		handleScheduledRunAction?: Parameters<typeof createSubagentExecutor>[0]["handleScheduledRunAction"],
 		piEvents = createEventBus(),
+		discoverAgentsForCwd?: (cwd: string) => typeof agents,
 	) {
 		return createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined },
@@ -360,7 +361,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents }),
+			discoverAgents: (cwd: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd) : agents }),
 			allowMutatingManagementActions,
 			...(handleScheduledRunAction ? { handleScheduledRunAction } : {}),
 		});
@@ -1138,6 +1139,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		]);
 		assert.equal(fs.readFileSync(path.join(tempDir, "workflow-report.review.md"), "utf-8"), "first report");
 		assert.equal(fs.readFileSync(path.join(tempDir, "workflow-report.monitor.md"), "utf-8"), "second report");
+	});
+
+	it("uses child-cwd agent output defaults for workflow output true", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "app report" });
+		const appDir = path.join(tempDir, "packages", "app");
+		fs.mkdirSync(appDir, { recursive: true });
+		const rootAgents = [makeAgent("echo", { output: "root-report.md" })];
+		const appAgents = [makeAgent("echo", { output: "app-report.md" })];
+		const executor = makeExecutor(rootAgents, {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (cwd) => path.resolve(cwd) === path.resolve(appDir) ? appAgents : rootAgents);
+
+		const result = await executor.execute(
+			"scripted-workflow-child-cwd-output-default",
+			{
+				async: false,
+				workflowScript: `return await runs.run("app", { agent: "echo", task: "Review app", cwd: "packages/app", output: true });`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(fs.readFileSync(path.join(appDir, "app-report.md"), "utf-8"), "app report");
+		assert.equal(fs.existsSync(path.join(tempDir, "root-report.md")), false);
+	});
+
+	it("reports workflow aggregate output write failures without throwing", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const outputDir = path.join(tempDir, "aggregate-dir");
+		fs.mkdirSync(outputDir);
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-aggregate-output-write-error",
+			{
+				async: false,
+				output: outputDir,
+				workflowScript: `return "ok";`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.match(result.content[0]?.text ?? "", /Workflow completed\./);
+		assert.match(result.content[0]?.text ?? "", /Output file error:/);
+		assert.match(result.content[0]?.text ?? "", new RegExp(escapeRegExp(outputDir)));
 	});
 
 	it("rejects workflow child output collisions before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
