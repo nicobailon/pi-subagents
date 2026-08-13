@@ -773,8 +773,11 @@ describe("scripted workflow runtime", () => {
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			});
 			await launchStarted;
-			controller.abort();
-			await assert.rejects(workflow, (error: unknown) => error instanceof WorkflowScriptError && /aborted/.test(error.message));
+			controller.abort(new Error("Workflow stopped by user."));
+			await assert.rejects(workflow, (error: unknown) => error instanceof WorkflowScriptError
+				&& error.message === "Workflow stopped by user."
+				&& error.partial.trace.some((entry) => entry.operation === "run" && entry.key === "slow" && entry.state === "stopped" && entry.error === "Workflow stopped by user.")
+				&& !error.partial.trace.some((entry) => entry.operation === "run" && entry.key === "slow" && entry.state === "failed"));
 			workflowSettled = true;
 			resolveLaunch({ key: "slow", ok: true, output: "done", artifactPaths: [], results: [] });
 			await new Promise((resolve) => queueMicrotask(resolve));

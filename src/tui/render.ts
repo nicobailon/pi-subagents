@@ -1635,6 +1635,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number): string {
 	if (row.state === "running") return theme.fg("accent", runningGlyph(frame));
 	if (row.state === "complete") return theme.fg("success", "✓");
+	if (row.state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("error", "✗");
 }
 
@@ -1642,6 +1643,7 @@ function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): stri
 	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
 	if (row.state === "running") return theme.fg("accent", label);
 	if (row.state === "complete") return theme.fg("success", label);
+	if (row.state === "stopped") return theme.fg("warning", label);
 	return theme.fg("error", label);
 }
 

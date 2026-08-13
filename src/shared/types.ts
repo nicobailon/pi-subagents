@@ -1086,7 +1086,7 @@ export interface Details {
 		trace: Array<{
 			operation: "run" | "status";
 			key: string;
-			state: "started" | "completed" | "failed" | "reused";
+			state: "started" | "completed" | "failed" | "stopped" | "reused";
 			agent?: string;
 			runId?: string;
 			phase?: string;

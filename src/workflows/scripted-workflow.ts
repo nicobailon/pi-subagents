@@ -332,7 +332,7 @@ export interface WorkflowScriptChildResult {
 export interface WorkflowScriptTraceEntry {
 	operation: "run" | "status";
 	key: string;
-	state: "started" | "completed" | "failed" | "reused";
+	state: "started" | "completed" | "failed" | "stopped" | "reused";
 	/** Canonical child agent name when resolved launch or result data is available. */
 	agent?: string;
 	runId?: string;
@@ -492,6 +492,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
 	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean }>();
+	const stoppedLaunches = new Set<string>();
 	const batchAdmissions = new Map<string, Promise<void>>();
 	const observedRunCalls = new Set<number>();
 	const childController = new AbortController();
@@ -519,7 +520,30 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
 			else resolve({ value: outcome.value, ...partial() });
 		};
-		const onAbort = () => finish({ error: new Error("Workflow script aborted.") });
+		const onAbort = () => {
+			const signalReason = options.signal?.reason;
+			const error = signalReason instanceof Error
+				? signalReason
+				: typeof signalReason === "string"
+					? new Error(signalReason)
+					: new Error("Workflow script aborted.");
+			for (const key of launches.keys()) {
+				if (children.has(key)) continue;
+				stoppedLaunches.add(key);
+				const started = trace.findLast((entry) => entry.operation === "run" && entry.key === key && entry.state === "started");
+				trace.push({
+					operation: "run",
+					key,
+					state: "stopped",
+					...(started?.agent ? { agent: started.agent } : {}),
+					...(started?.phase ? { phase: started.phase } : {}),
+					...(started?.label ? { label: started.label } : {}),
+					error: error.message,
+				});
+			}
+			traceChanged();
+			finish({ error });
+		};
 		const timer = options.timeoutMs === undefined
 			? undefined
 			: setTimeout(() => finish({ error: new Error(`Workflow script timed out after ${options.timeoutMs}ms.`) }), options.timeoutMs);
@@ -699,6 +723,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			const promise = admission.then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true })).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
+				if (stoppedLaunches.has(key)) return normalized;
 				children.set(key, normalized);
 				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
@@ -706,6 +731,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
 				const failure: WorkflowScriptChildResult = { key, ok: false, output: text, error: text, artifactPaths: [] };
+				if (stoppedLaunches.has(key)) return failure;
 				children.set(key, failure);
 				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), error: text });
 				traceChanged();

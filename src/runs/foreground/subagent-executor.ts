@@ -4990,12 +4990,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							if (entry.operation !== "run") continue;
 							const existing = workflowSteps.get(entry.key);
 							if (entry.state === "reused" && existing) continue;
-							const mapped = entry.state === "started" || entry.state === "reused" ? "running" : entry.state === "completed" ? "completed" : "failed";
+							const mapped = entry.state === "started" || entry.state === "reused"
+								? "running"
+								: entry.state === "completed"
+									? "completed"
+									: entry.state === "stopped"
+										? "stopped"
+										: "failed";
 							if (existing) {
 								existing.status = mapped;
 								if (entry.agent) existing.agent = entry.agent;
 								if (entry.runId) existing.runId = entry.runId;
 								if (entry.state === "failed" && !entry.runId && existing.async === undefined) existing.async = false;
+								if (entry.state === "stopped") existing.stopped = true;
+								else delete existing.stopped;
 								if (entry.error === undefined) delete existing.error;
 								else existing.error = entry.error;
 								if (entry.durationMs === undefined) delete existing.durationMs;
@@ -5010,6 +5018,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									startedAt: Date.now(),
 									...(entry.runId ? { runId: entry.runId } : {}),
 									...(entry.state === "failed" && !entry.runId ? { async: false } : {}),
+									...(entry.state === "stopped" ? { stopped: true } : {}),
 								};
 								status.steps?.push(step);
 								workflowSteps.set(entry.key, step);

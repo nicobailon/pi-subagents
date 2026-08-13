@@ -215,6 +215,7 @@ describe("workflow chat progress rendering", () => {
 						{ operation: "run", key: "scout", state: "completed", runId: "run-scout", phase: "Validation", label: "Found renderer seam", durationMs: 12 },
 						{ operation: "run", key: "tests", state: "started", phase: "Validation", label: "focused integration suite" },
 						{ operation: "run", key: "review", state: "failed", phase: "Validation", label: "fresh-context UX review", error: "needs fixes" },
+						{ operation: "run", key: "stale", state: "stopped", phase: "Validation", label: "superseded exact-head review", error: "Workflow stopped by user." },
 					],
 					emits: [],
 					console: [],
@@ -228,6 +229,7 @@ describe("workflow chat progress rendering", () => {
 		assert.match(text, /complete\s+scout Found renderer seam/);
 		assert.match(text, /running\s+tests focused integration suite/);
 		assert.match(text, /failed\s+review fresh-context UX review .* needs fixes/);
+		assert.match(text, /stopped\s+stale superseded exact-head review .* Workflow stopped by user/);
 	});
 
 	it("applies main-window density settings to collapsed workflow live cards", () => {

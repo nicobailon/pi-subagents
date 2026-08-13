@@ -882,6 +882,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /Stop requested for async workflow workflow-stop/);
 	});
 
+	it("persists parent-stopped workflow children as stopped instead of failed", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ delay: 5_000, output: "too late" });
+		const workflowControllers = new Map<string, AbortController>();
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), workflowControllers);
+		const started = await executor.execute(
+			`workflow-stop-child-${Date.now()}`,
+			{ workflowScript: `return await runs.run("review", { agent: "echo", task: "Wait" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.ok(started.details.asyncId);
+		const workflowRunId = started.details.asyncId;
+		const statusPath = path.join(started.details.asyncDir!, "status.json");
+		for (let attempt = 0; attempt < 100; attempt++) {
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+			if (status.steps?.some((step) => step.workflowKey === "review" && step.status === "running")) break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+
+		const stopped = await executor.execute(
+			"stop-workflow-child",
+			{ action: "stop", id: workflowRunId },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(stopped.isError, undefined);
+
+		let status: AsyncStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		for (let attempt = 0; attempt < 100 && status.state !== "stopped"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		}
+		assert.equal(status.state, "stopped");
+		assert.equal(status.error, "Workflow stopped by user.");
+		assert.equal(status.steps?.[0]?.status, "stopped");
+		assert.equal(status.steps?.[0]?.stopped, true);
+		assert.equal(status.steps?.[0]?.error, "Workflow stopped by user.");
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "review" && entry.state === "stopped"), true);
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "review" && entry.state === "failed"), false);
+
+		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });
+	});
+
 	it("reports completed async workflows as not running when stopped after completion", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const runId = `workflow-stop-complete-${Date.now()}`;
 		const asyncDir = path.join(DIRS.async, runId);
