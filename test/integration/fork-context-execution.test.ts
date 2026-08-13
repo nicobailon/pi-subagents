@@ -331,6 +331,29 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.ok((args.at(-1) ?? "").startsWith("Task: parallel task\n\n## Acceptance Contract"));
 	});
 
+	it("falls back to fresh when an implicit default fork has no persisted parent session", async () => {
+		const { manager } = makeSessionManagerRecorder({ sessionFile: undefined, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.equal(result.details?.results?.[0]?.context, "fresh");
+		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /delegated subagent running from a fork/);
+	});
+
 	it("uses agent defaultContext fork when launch context is omitted", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager, openedPaths, branchedLeafIds } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });

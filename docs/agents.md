@@ -102,7 +102,7 @@ Use these fields when an agent should see more:
 | `systemPromptMode: append` | Append the agent prompt to Pi's normal base prompt. |
 | `inheritProjectContext: true` | Keep inherited project instructions from files like `AGENTS.md` and `CLAUDE.md`. |
 | `inheritSkills: true` | Let the child see Pi's discovered skills catalog. |
-| `defaultContext: fork` | Use forked session context when a launch omits `context`; explicit `context: "fresh"` still wins. |
+| `defaultContext: fork` | Prefer forked session context when a launch omits `context`; if a brand-new parent has no persisted session yet, the implicit default falls back to `fresh` without a failed first attempt. Explicit `context: "fork"` remains strict, and explicit `context: "fresh"` still wins. |
 
 Builtin agents opt into project instruction inheritance by default so they follow repo-specific rules out of the box. `delegate` also uses append mode because its job is orchestration inside the parent workflow.
 
@@ -171,7 +171,7 @@ Field notes:
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited project instruction blocks. |
 | `inheritSkills` | Keeps or strips Pi's discovered skills catalog. |
-| `defaultContext` | Optional `fresh` or `fork` launch context default for this agent. |
+| `defaultContext` | Optional `fresh` or `fork` launch-context preference. An implicit `fork` falls back to `fresh` when the parent has no persisted session; an explicit launch `context: "fork"` remains strict. |
 | `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |
 | `skillPath` | Invocation-private skill files or discovery directories. Relative paths resolve from the agent definition file. Local matches take precedence, while unresolved or unreadable matches fall back to normal skill discovery. This field discovers candidates only; `skills` still selects what the child receives. |
 | `output` | Default single-agent output file. |

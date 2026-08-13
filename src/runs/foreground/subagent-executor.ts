@@ -2175,13 +2175,14 @@ interface AgentDefaultContextPolicy {
 	usesFork: boolean;
 }
 
-function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: AgentConfig[]): AgentDefaultContextPolicy {
+function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: AgentConfig[], parentSessionFile?: string | null): AgentDefaultContextPolicy {
 	if (params.context !== undefined) {
 		return resolveExplicitContextPolicy(params);
 	}
+	const canUseDefaultFork = Boolean(parentSessionFile);
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
-		byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
+		canUseDefaultFork && byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
 	const requestedAgentNames = collectRequestedAgentNames(params);
 	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => contextForAgent(name)));
 	const usesFork = contextSummary === "fork" || contextSummary === "mixed";
@@ -6046,7 +6047,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
 		const turnBudget = resolveTurnBudgetConfig(effectiveParams.turnBudget ?? deps.config.turnBudget);
 		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
-		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents);
+		// An agent-level defaultContext is a preference, unlike an explicit request.
+		// A brand-new parent may not have a persisted session to fork yet; use fresh
+		// immediately instead of launching a guaranteed-to-fail fork and relying on
+		// the caller to retry. Explicit context:"fork" remains strict.
+		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents, parentSessionFile);
 		effectiveParams = contextPolicy.params;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
