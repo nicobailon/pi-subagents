@@ -182,6 +182,8 @@ describe("async interrupt action", () => {
 
 			assert.match(output, /Run lifecycle debug/);
 			assert.match(output, new RegExp(`Run: ${runId}`));
+			assert.match(output, /Status process terminal: pending · runner workflow-runner/);
+			assert.match(output, /Sidecar process terminal: missing/);
 			assert.match(output, /Active capacity: releasable/);
 			assert.match(output, /Workflow children: 1/);
 			assert.match(output, /key review · worker · completed · async no/);
@@ -556,6 +558,13 @@ describe("async interrupt action", () => {
 			assert.match(statusText, /State: display-dismissed/);
 			assert.match(statusText, /No running work was terminated/);
 			assert.doesNotMatch(statusText, /Steer/);
+			const debugResult = inspectSubagentStatus({ action: "debug.run", id: runId }, { state, kill: () => {
+				throw new Error("dismissed workflow debug must not inspect the pid");
+			} });
+			const debugText = text(debugResult);
+			assert.match(debugText, /Run lifecycle debug/);
+			assert.match(debugText, /State: running/);
+			assert.match(debugText, /Active capacity: not-owned/);
 			const transcriptResult = inspectSubagentStatus({ action: "status", id: runId, view: "transcript" }, { state, kill: () => {
 				throw new Error("dismissed workflow transcript must not inspect the pid");
 			} });

@@ -37,6 +37,14 @@ function formatProcessTerminal(value: AsyncStatus["processTerminal"] | undefined
 	return `${value.state}${value.reason ? ` (${value.reason})` : ""}${value.runnerProcessInstanceId ? ` · runner ${value.runnerProcessInstanceId}` : ""}`;
 }
 
+function debugProcessTerminal(asyncDir: string, status: AsyncStatus): { sidecar?: AsyncStatus["processTerminal"]; overlay?: AsyncStatus["processTerminal"] } {
+	const expected = { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId };
+	return {
+		sidecar: readProcessTerminal(asyncDir, expected),
+		overlay: sanitizeProcessTerminal(status.processTerminal, expected, path.join(asyncDir, "status.json")),
+	};
+}
+
 function formatCapacityOwner(inspect: ActiveAsyncCapacityInspection): string[] {
 	if (!inspect.owner) return [`Active capacity: ${inspect.release.state} — ${inspect.release.reason}`];
 	const owner = inspect.owner;
@@ -63,8 +71,8 @@ function formatWorkflowDebug(status: AsyncStatus): string[] {
 	return lines;
 }
 
-function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string; processTerminal: AsyncStatus["processTerminal"] | undefined; capacity: ActiveAsyncCapacityInspection }): string {
-	const { status, asyncDir, processTerminal, capacity } = input;
+function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string; sidecarProcessTerminal: AsyncStatus["processTerminal"] | undefined; overlayProcessTerminal: AsyncStatus["processTerminal"] | undefined; capacity: ActiveAsyncCapacityInspection }): string {
+	const { status, asyncDir, sidecarProcessTerminal, overlayProcessTerminal, capacity } = input;
 	const lines = [
 		"Run lifecycle debug",
 		`Run: ${status.runId}`,
@@ -76,8 +84,8 @@ function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string;
 		`Mode: ${status.mode}`,
 		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}` : undefined,
 		status.workflowKey ? `Workflow key: ${status.workflowKey}` : undefined,
-		`Status process terminal: ${formatProcessTerminal(status.processTerminal)}`,
-		`Sidecar process terminal: ${formatProcessTerminal(processTerminal)}`,
+		`Status process terminal: ${formatProcessTerminal(overlayProcessTerminal)}`,
+		`Sidecar process terminal: ${formatProcessTerminal(sidecarProcessTerminal)}`,
 		...formatCapacityOwner(capacity),
 		...formatWorkflowDebug(status),
 	].filter((line): line is string => line !== undefined);
@@ -387,6 +395,14 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		const status = reconciliation.status;
 		if (!status && diskStatus?.displayDismissedAt !== undefined) {
+			if (params.action === "debug.run") {
+				const { sidecar, overlay } = debugProcessTerminal(asyncDir, diskStatus);
+				const capacity = inspectActiveAsyncCapacityOwner({ runId: diskStatus.runId, sessionId: diskStatus.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
+				return {
+					content: [{ type: "text", text: formatRunLifecycleDebug({ status: diskStatus, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
+					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
+				};
+			}
 			if (params.view === "transcript") {
 				if (currentSessionId && diskStatus.sessionId !== currentSessionId) {
 					return {
@@ -407,12 +423,11 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		if (status) {
 			if (params.action === "debug.run") {
-				const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
-					?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+				const { sidecar, overlay } = debugProcessTerminal(asyncDir, status);
 				const capacity = inspectActiveAsyncCapacityOwner({ runId: status.runId, sessionId: status.sessionId, asyncDir }, { rootDir: deps.activeCapacityRoot, liveWorkflowRunIds: new Set(deps.state?.workflowControllers?.keys() ?? []) });
 				return {
-					content: [{ type: "text", text: formatRunLifecycleDebug({ status, asyncDir, processTerminal, capacity }) }],
-					details: { mode: "single", results: [], ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) },
+					content: [{ type: "text", text: formatRunLifecycleDebug({ status, asyncDir, sidecarProcessTerminal: sidecar, overlayProcessTerminal: overlay, capacity }) }],
+					details: { mode: "single", results: [], ...((sidecar ?? overlay) ? { lifecycleStatus: { processTerminal: sidecar ?? overlay } } : {}) },
 				};
 			}
 			if (params.view === "transcript") {
