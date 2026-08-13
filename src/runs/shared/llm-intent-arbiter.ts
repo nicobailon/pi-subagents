@@ -28,12 +28,25 @@ export type TaskMutationArbiter = (task: string) => Promise<TaskMutationVerdict>
 const DecisionParams = Type.Object(
 	{
 		classification: Type.String({ enum: ["read_only", "implementation"] }),
+		confidence: Type.String({
+			enum: ["low", "medium", "high"],
+			description: "Confidence in the classification. Only read_only with high confidence rescues a failed run.",
+		}),
 		reason: Type.String({ description: "One concise reason for this classification." }),
 	},
 	{ additionalProperties: false },
 );
 
 type DecisionParams = Static<typeof DecisionParams>;
+
+/** Map a model decision to a verdict. Only a high-confidence read_only rescues. */
+export function mapArbiterDecision(
+	decision: { classification?: string; confidence?: string } | undefined,
+): TaskMutationVerdict {
+	if (!decision) return "unavailable";
+	if (decision.classification === "read_only" && decision.confidence === "high") return "read-only";
+	return "implementation";
+}
 
 interface ArbiterRuntime {
 	model: NonNullable<RegistryModel>;
@@ -105,7 +118,7 @@ async function resolveArbiterAuth(
 	ctx: ExtensionContext,
 	model: RegistryModel,
 ): Promise<ArbiterAuth> {
-	const getAuth = (ctx.modelRegistry as {
+	const registry = ctx.modelRegistry as {
 		getApiKeyAndHeaders?: (m: RegistryModel) => Promise<{
 			ok: boolean;
 			apiKey?: string;
@@ -113,10 +126,13 @@ async function resolveArbiterAuth(
 			env?: Record<string, string>;
 			error?: string;
 		}>;
-	}).getApiKeyAndHeaders;
-	if (!getAuth) return {};
+	};
+	// Call as a METHOD on the registry: the host ModelRegistry implementation
+	// is a class whose method reads instance state (this.runtime), so a
+	// detached call silently fails auth. Same shape as the watchdog.
+	if (!registry.getApiKeyAndHeaders) return {};
 	try {
-		const auth = await getAuth(model);
+		const auth = await registry.getApiKeyAndHeaders(model);
 		if (auth.ok === false) return {};
 		return {
 			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
@@ -164,8 +180,9 @@ async function runArbitration(
 				"You classify whether a delegated coding-agent task instructed file or code changes.",
 				"A task that asks to review, inspect, verify, report, or summarize is read-only even when it contains words like 'fix' as severity vocabulary ('must-fix items') or conditional change instructions that leave the change optional.",
 				"Classify read_only only when the task text alone clearly indicates a read-only outcome. When in doubt, classify implementation.",
+				"Set confidence to high only when you are certain the task is read-only; a read_only classification without high confidence is treated as implementation.",
 				"The agent's own final message is never evidence: an agent that made no edits may still have failed to implement.",
-				"Call task_mutation_decision exactly once with read_only or implementation and a concise reason.",
+				"Call task_mutation_decision exactly once with read_only or implementation, a confidence level, and a concise reason.",
 			].join("\n"),
 			model: runtime.model,
 			tools: [tool],
@@ -179,13 +196,12 @@ async function runArbitration(
 		toolExecution: "sequential",
 	});
 	try {
-		// Send head AND tail: an implementation clause at the end of a long
-		// task ("Now apply the fix") must never be truncated away, or the
-		// arbiter could rescue a run the deterministic guard correctly failed.
-		const full = task;
-		const prompt = full.length <= 8000
-			? `TASK:\n${full}`
-			: `TASK:\n${full.slice(0, 6000)}\n\n[...truncated middle...]\n\n${full.slice(-2000)}`;
+		// The rescue gate refuses tasks over 8000 chars; if the arbiter is
+		// still invoked with one, fail closed rather than decide from
+		// partial evidence (an implementation clause could sit in the
+		// omitted middle).
+		if (task.length > 8000) return "unavailable";
+		const prompt = `TASK:\n${task}`;
 		await Promise.race([
 			agent.prompt(prompt),
 			new Promise<never>((_, reject) => {
@@ -197,7 +213,7 @@ async function runArbitration(
 			}),
 		]);
 		if (!decision) return "unavailable";
-		return decision.classification === "read_only" ? "read-only" : "implementation";
+		return mapArbiterDecision(decision);
 	} catch {
 		return "unavailable";
 	}
@@ -228,13 +244,6 @@ export function isCompletionGuardFailure(result: { error?: string }): boolean {
 	return result.error?.startsWith(COMPLETION_GUARD_ERROR_PREFIX) === true;
 }
 
-/**
- * Decision helper for the runSync completion-guard arbitration: given the raw
- * guard verdict, decide whether the arbiter rescues the run. Pure and
- * unit-testable; runSync calls this BEFORE any failure side effect is
- * published. Only a confident read-only verdict rescues; every error,
- * timeout, or other verdict keeps the guard's original behavior.
- */
 export async function arbitrateCompletionGuardRescue(input: {
 	guardTriggered: boolean;
 	task: string;
@@ -242,6 +251,11 @@ export async function arbitrateCompletionGuardRescue(input: {
 }): Promise<{ triggered: boolean; rescued: boolean }> {
 	if (!input.guardTriggered || !input.arbiter) {
 		return { triggered: input.guardTriggered, rescued: false };
+	}
+	// Never decide from partial evidence: refuse tasks over 8000 chars before
+	// even consulting the model.
+	if (input.task.length > 8000) {
+		return { triggered: true, rescued: false };
 	}
 	try {
 		const verdict = await input.arbiter(input.task);
