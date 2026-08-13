@@ -318,6 +318,20 @@ The parser canonicalizes known enum synonyms, snake_case report keys and wrapper
 
 Acceptance fences are removed from normal output artifacts, while the raw child transcript remains intact and per-child metadata stores the complete acceptance ledger and parsed report. Explicit failed gates fail the run. Inferred gates remain observable without failing the run.
 
+## Orca progress tabs (experimental observer)
+
+Orca progress tabs are a global, opt-in observer, not an agent runner. Enable them in the extension config:
+
+```json
+{ "orcaProgressTabs": { "enabled": true } }
+```
+
+Every foreground or background child keeps running through its normal native Pi or `external-cli` path. For each logical child, the observer asks Orca to create a background terminal tab in that child's current worktree and mirrors progress into it. Titles receive a persistent worktree-local sequence number, including across separate workflow calls. Model/startup retries reuse the same tab. Parallel and chain children each receive their own tab; attaching an already-running async root does not create a duplicate. After the child finishes, its viewer returns to the terminal shell instead of ending the terminal session, so the tab and scrollback remain until the user closes them. Successful native Pi children with a known session append the exact `find`/`rm` command for that session; unsuccessful and sessionless children append only their terminal status.
+
+The observer requires executable `orca` on `PATH` (or `PI_SUBAGENT_ORCA_BINARY`) and a running Orca runtime that recognizes the child cwd. Availability and tab creation are best-effort: failures never fail, stop, or delay the subagent. Set `orcaProgressTabs.enabled` to `false` to guarantee that no Orca command or tab is created.
+
+Agent profile `runner.type` remains unchanged: supported values are native Pi (the default) and `external-cli`. Orca is intentionally not a profile runner and does not own subagent execution, completion, cancellation, artifacts, or result delivery.
+
 ## External CLI agent profiles
 
 Agent profiles can opt into a local one-shot command instead of a Pi child. External runners add no install dependency, but the configured executable must exist at runtime. They are async-only, receive one combined system/task prompt over stdin, and use argv arrays without a shell:

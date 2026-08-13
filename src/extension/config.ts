@@ -62,6 +62,18 @@ function validateArtifactConfig(value: unknown): void {
 	}
 }
 
+function validateOrcaProgressTabsConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.orcaProgressTabs must be a JSON object");
+	const config = value as Record<string, unknown>;
+	for (const key of Object.keys(config)) {
+		if (key !== "enabled") throw new Error(`config.orcaProgressTabs.${key} is not supported`);
+	}
+	if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+		throw new Error("config.orcaProgressTabs.enabled must be a boolean");
+	}
+}
+
 function validateMainWindowRendererConfig(value: unknown): void {
 	if (value === undefined) return;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.mainWindowRenderer must be a JSON object");
@@ -105,6 +117,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);
+	validateOrcaProgressTabsConfig(config.orcaProgressTabs);
 }
 
 export function getConfigPath(): string {

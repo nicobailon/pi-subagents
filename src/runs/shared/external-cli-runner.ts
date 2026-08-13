@@ -35,6 +35,8 @@ export function runExternalCli(input: {
 	timeoutMessage?: string;
 	stopMessage?: string;
 	onProcess?: (process: ExternalProcessStatus) => void;
+	onStdout?: (chunk: Buffer) => void;
+	onStderr?: (chunk: Buffer) => void;
 }): Promise<ExternalCliRunResult> {
 	return new Promise((resolve, reject) => {
 		const startedAt = Date.now();
@@ -65,11 +67,13 @@ export function runExternalCli(input: {
 		input.onProcess?.(initialProcess);
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdoutStream.write(chunk);
+			input.onStdout?.(chunk);
 			stdoutTail = Buffer.concat([stdoutTail, chunk]);
 			if (stdoutTail.length > MAX_OUTPUT_TAIL_BYTES) stdoutTail = stdoutTail.subarray(stdoutTail.length - MAX_OUTPUT_TAIL_BYTES);
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			stderrStream.write(chunk);
+			input.onStderr?.(chunk);
 			stderrTail = Buffer.concat([stderrTail, chunk]);
 			if (stderrTail.length > MAX_ERROR_TAIL_BYTES) stderrTail = stderrTail.subarray(stderrTail.length - MAX_ERROR_TAIL_BYTES);
 		});

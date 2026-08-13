@@ -135,6 +135,7 @@ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
+import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
@@ -548,6 +549,7 @@ function runPiStreaming(
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 	toolTimeoutMs?: number,
 	runDeadlineAt?: number,
+	orcaProgressTab?: OrcaProgressTab,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
@@ -604,6 +606,7 @@ function runPiStreaming(
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
 			outputStream.write(`${line}\n`);
+			orcaProgressTab?.append(`${line}\n`);
 		};
 
 		const writeOutputText = (text: string) => {
@@ -784,6 +787,7 @@ function runPiStreaming(
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
 			outputStream.write(chunk);
+			orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		registerInterrupt?.(() => {
 			if (settled || timedOut || stopped) return;
@@ -1179,10 +1183,11 @@ interface SingleStepContext {
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void;
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
 	skipAcceptance?: () => boolean;
+	orcaProgressTab?: OrcaProgressTab;
 }
 
 /** Run a single pi agent step, returning output and metadata */
-async function runSingleStep(
+async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
@@ -1311,6 +1316,8 @@ async function runSingleStep(
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
+			onStdout: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
+			onStderr: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
 		}));
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
@@ -1499,6 +1506,7 @@ async function runSingleStep(
 			ctx.onWriterProcess,
 			ctx.toolTimeoutMs,
 			ctx.deadlineAt,
+			ctx.orcaProgressTab,
 		);
 		if (run.processCloseObservedAt !== undefined) {
 			writerProcesses.push({
@@ -1848,6 +1856,27 @@ async function runSingleStep(
 		writerAttemptCount,
 	});
 	return isAgentContractV1(step.agentContract) ? attachContractProjections(result as unknown as import("../../shared/types.ts").SingleResult) as unknown as typeof result : result;
+}
+
+async function runSingleStep(
+	step: SubagentStep,
+	ctx: SingleStepContext,
+): Promise<StepResult & { completionGuardTriggered?: boolean }> {
+	if (step.importAsyncRoot) return runSingleStepInner(step, ctx);
+	const orcaProgressTab = createOrcaProgressTab({
+		cwd: step.cwd ?? ctx.cwd,
+		runId: ctx.id,
+		agent: step.agent,
+		index: ctx.flatIndex,
+	});
+	try {
+		const result = await runSingleStepInner(step, { ...ctx, orcaProgressTab });
+		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
+		return result;
+	} catch (error) {
+		orcaProgressTab?.finish("failed");
+		throw error;
+	}
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
