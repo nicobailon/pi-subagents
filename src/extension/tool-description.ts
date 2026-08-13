@@ -9,7 +9,7 @@ const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for workflowScript execution; use action only for management/control.
-• Async/background runs are the default. Use async:false only when a blocking foreground result is needed. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
+• Async/background runs are the default. Use async:false only when a blocking foreground result is needed. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
 • Ordinary child subagents are not orchestrators. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
 • Keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers for independent review, then have the parent synthesize and apply fixes.
 • Async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, status via { action: "status", id }, and lifecycle diagnostics via { action: "debug.run", id }. Include output paths and residual risks when reporting results.`;
@@ -47,7 +47,7 @@ MANAGE / CONTROL:
 • A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 
 ASYNC / SAFETY:
-• Omitted async detaches background work. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
+• Omitted async detaches background work. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
 • Ordinary children are not orchestrators. Keep one writer per cwd/worktree and use fresh read-only reviewers for independent checks.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and {action:"status",id:"..."}.`;
 
