@@ -642,6 +642,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const target = known?.runId ?? keyOrRunId;
 				trace.push({ operation: "status", key: keyOrRunId, state: "started", ...(known?.runId ? { runId: known.runId } : {}) });
 				traceChanged();
+				if (settled) return;
 				respond(options.status(target, childController.signal).then((result) => {
 					if (settled) return result;
 					trace.push({ operation: "status", key: keyOrRunId, state: result.ok ? "completed" : "failed", ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });

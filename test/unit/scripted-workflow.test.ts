@@ -889,6 +889,33 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("does not dispatch status after abort fires during the status started trace callback", async () => {
+		const controller = new AbortController();
+		let statusCount = 0;
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.status("probe");`,
+				signal: controller.signal,
+				onTrace(trace) {
+					const started = trace.some((entry) => entry.operation === "status" && entry.key === "probe" && entry.state === "started");
+					if (started && !controller.signal.aborted) controller.abort(new Error("Workflow stopped by user."));
+				},
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) {
+					statusCount += 1;
+					return { key, ok: true, output: "done", artifactPaths: [] };
+				},
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message === "Workflow stopped by user."
+				&& error.partial.trace.some((entry) => entry.operation === "status" && entry.key === "probe" && entry.state === "started")
+				&& !error.partial.trace.some((entry) => entry.operation === "status" && entry.key === "probe" && entry.state === "completed"),
+		);
+		await new Promise((resolve) => queueMicrotask(resolve));
+		assert.equal(statusCount, 0);
+	});
+
 	it("drops a status response that settles after the workflow aborts", async () => {
 		const controller = new AbortController();
 		let traceLengths: number[] = [];
