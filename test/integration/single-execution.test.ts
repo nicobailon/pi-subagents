@@ -901,6 +901,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			if (status.steps?.some((step) => step.workflowKey === "review" && step.status === "running")) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
+		let childCall: string | undefined;
+		for (let attempt = 0; attempt < 100 && !childCall; attempt++) {
+			childCall = fs.readdirSync(mockPi.dir).find((name) => /^call-\d+-\d+-/.test(name));
+			if (!childCall) await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		const childPid = Number(childCall?.match(/^call-\d+-(\d+)-/)?.[1]);
+		assert.equal(Number.isInteger(childPid) && childPid > 0, true);
 
 		const stopped = await executor.execute(
 			"stop-workflow-child",
@@ -923,6 +930,26 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.steps?.[0]?.error, "Workflow stopped by user.");
 		assert.equal(status.workflow?.trace.some((entry) => entry.key === "review" && entry.state === "stopped"), true);
 		assert.equal(status.workflow?.trace.some((entry) => entry.key === "review" && entry.state === "failed"), false);
+
+		let childSettled = false;
+		for (let attempt = 0; attempt < 100; attempt++) {
+			try {
+				process.kill(childPid, 0);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+					childSettled = true;
+					break;
+				}
+				throw error;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(childSettled, true, "child process must settle after the workflow stop");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		assert.equal(status.steps?.[0]?.status, "stopped");
+		assert.equal(status.steps?.[0]?.stopped, true);
+		assert.equal(status.steps?.[0]?.error, "Workflow stopped by user.");
 
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });

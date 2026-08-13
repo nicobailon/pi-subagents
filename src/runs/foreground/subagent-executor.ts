@@ -5084,7 +5084,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									return execute(randomUUID(), childRequest, workflowSignal, (update) => {
 										const progress = update.details.progress?.[0];
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
-										if (!progress || !step) return;
+										if (!progress || !step || step.stopped) return;
 										step.status = progress.status === "completed" ? "completed" : progress.status === "failed" ? "failed" : "running";
 										step.activityState = progress.activityState;
 										step.lastActivityAt = progress.lastActivityAt;
