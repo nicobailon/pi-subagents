@@ -15,6 +15,7 @@ import {
 	type NestedRunSummary,
 	type NestedStepSummary,
 	type WorkflowNodeStatus,
+	type MainWindowRendererConfig,
 	MAX_WIDGET_JOBS,
 	POLL_INTERVAL_MS,
 	WIDGET_KEY,
@@ -29,6 +30,38 @@ import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode
 import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
+
+interface MainWindowRenderLayout {
+	horizontalSpacing: number;
+	compactResultMaxLines?: number;
+}
+
+function resolveMainWindowRenderLayout(config?: MainWindowRendererConfig): MainWindowRenderLayout {
+	return {
+		horizontalSpacing: config?.horizontalSpacing ?? 2,
+		...(config?.compactResultMaxLines !== undefined ? { compactResultMaxLines: config.compactResultMaxLines } : {}),
+	};
+}
+
+function mainWindowIndent(layout: MainWindowRenderLayout, level: number): string {
+	return " ".repeat(Math.max(0, layout.horizontalSpacing * level));
+}
+
+function capCompactMainWindowResult(component: Component, layout: MainWindowRenderLayout, theme: Theme, enabled: boolean): Component {
+	const maxLines = layout.compactResultMaxLines;
+	if (!enabled || maxLines === undefined) return component;
+	const capped = new Container();
+	capped.render = (width: number): string[] => {
+		const lines = component.render(width);
+		if (lines.length <= maxLines) return lines;
+		const visibleRows = maxLines === 1 ? 1 : maxLines - 1;
+		const hiddenCount = lines.length - visibleRows;
+		const hint = theme.fg("accent", `… ${hiddenCount} rows hidden · ${liveDetailKeyText()} expands`);
+		if (maxLines === 1) return [truncLine(`${lines[0] ?? ""} ${hint}`, width)];
+		return [...lines.slice(0, visibleRows), truncLine(hint, width)];
+	};
+	return capped;
+}
 
 function liveDetailKeyText(): string {
 	return keyText("app.tools.expand");
@@ -1555,7 +1588,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
 }
 
-function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme, frame?: number): Component {
+function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
 	const output = r.truncation?.text || getSingleResultOutput(r);
 	const progress = r.progress || r.progressSummary;
 	const isRunning = isResultRunning(r);
@@ -1566,34 +1599,36 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 	]);
 	const c = new Container();
 	const width = getTermWidth() - 4;
+	const detailIndent = mainWindowIndent(layout, 1);
+	const continuationIndent = mainWindowIndent(layout, 2) + (layout.horizontalSpacing > 0 ? " " : "");
 	const modelDisplay = modelThinkingBadge(theme, r.model ?? r.progress?.model, r.thinking ?? r.progress?.thinking);
 	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(r.agent))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	if (isRunning && r.progress) {
 		const progressSnapshotNow = snapshotNowForProgress(r.progress);
 		const activity = compactCurrentActivity(r.progress);
-		c.addChild(new Text(truncLine(theme.fg("dim", `  ⎿  ${activity}`), width), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}⎿  ${activity}`), width), 0, 0));
 		const liveStatus = buildLiveStatusLine(r.progress, progressSnapshotNow);
-		if (liveStatus && liveStatus !== activity) c.addChild(new Text(truncLine(theme.fg("dim", `     ${liveStatus}`), width), 0, 0));
+		if (liveStatus && liveStatus !== activity) c.addChild(new Text(truncLine(theme.fg("dim", `${continuationIndent}${liveStatus}`), width), 0, 0));
 		for (const nestedLine of formatNestedWidgetLines(r.children, theme, width, false, progressSnapshotNow)) {
-			c.addChild(new Text(truncLine(`  ${nestedLine}`, width), 0, 0));
+			c.addChild(new Text(truncLine(`${detailIndent}${nestedLine}`, width), 0, 0));
 		}
-		c.addChild(new Text(truncLine(theme.fg("accent", `  ${liveDetailHintText()}`), width), 0, 0));
-		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `  output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}${liveDetailHintText()}`), width), 0, 0));
+		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
 		return c;
 	}
 
 	for (const nestedLine of formatNestedWidgetLines(r.children, theme, width, false, r.progress?.lastActivityAt)) {
-		c.addChild(new Text(truncLine(`  ${nestedLine}`, width), 0, 0));
+		c.addChild(new Text(truncLine(`${detailIndent}${nestedLine}`, width), 0, 0));
 	}
-	c.addChild(new Text(truncLine(theme.fg("dim", `  ⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
+	c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
 	const preview = firstOutputLine(output);
 	if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
-		c.addChild(new Text(truncLine(theme.fg("dim", `     ${preview}`), width), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("dim", `${continuationIndent}${preview}`), width), 0, 0));
 	}
-	if (r.sessionFile) c.addChild(new Text(truncLine(theme.fg("dim", `  session: ${shortenPath(r.sessionFile)}`), width), 0, 0));
-	if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `  output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
-	if (r.truncation?.artifactPath) c.addChild(new Text(truncLine(theme.fg("dim", `  full output: ${shortenPath(r.truncation.artifactPath)}`), width), 0, 0));
+	if (r.sessionFile) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}session: ${shortenPath(r.sessionFile)}`), width), 0, 0));
+	if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
+	if (r.truncation?.artifactPath) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}full output: ${shortenPath(r.truncation.artifactPath)}`), width), 0, 0));
 	return c;
 }
 
@@ -1616,7 +1651,7 @@ function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue:
 	return "running";
 }
 
-function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, frame?: number): Component {
+function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
 	const workflow = d.workflow;
 	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
@@ -1626,28 +1661,29 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	const repoLabel = d.chatProgress?.repoLabel ?? (d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo");
 	const phase = rows.find((row) => row.state === "running" && row.phase)?.phase ?? [...rows].reverse().find((row) => row.phase)?.phase;
 	const c = new Container();
+	const rowIndent = mainWindowIndent(layout, 1);
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold("workflow"))} ${runId} ${theme.fg("dim", "·")} ${d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo"} ${theme.fg("dim", "·")} ${state}`, width), 0, 0));
-	c.addChild(new Text(truncLine(theme.fg("dim", `  Repo   ${repoLabel}`), width), 0, 0));
-	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `  Phase  ${phase}`), width), 0, 0));
+	c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Repo   ${repoLabel}`), width), 0, 0));
+	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Phase  ${phase}`), width), 0, 0));
 	if (rows.length === 0) {
-		c.addChild(new Text(truncLine(theme.fg("dim", "  ◦ waiting for workflow child launches"), width), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}◦ waiting for workflow child launches`), width), 0, 0));
 		return c;
 	}
 	const visible = visibleWorkflowRows(rows);
-	if (visible.hiddenRows > 0) c.addChild(new Text(truncLine(theme.fg("dim", `  … ${visible.hiddenRows} older workflow rows hidden`), width), 0, 0));
+	if (visible.hiddenRows > 0) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}… ${visible.hiddenRows} older workflow rows hidden`), width), 0, 0));
 	for (const row of visible.rows) {
 		const status = workflowRowStateLabel(row, theme);
 		const label = row.label && row.label !== row.key ? ` ${oneLine(row.label)}` : "";
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
 		const error = row.error ? ` ${theme.fg("error", `· ${compactWorkflowError(row.error)}`)}` : "";
-		c.addChild(new Text(truncLine(`  ${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
+		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
 	}
-	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `  Emits  ${workflow.emits.length}`), width), 0, 0));
+	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));
 	return c;
 }
 
-function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component {
+function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
 	const hasRunning = detailsHaveRunningResult(d);
 	const detached = d.results.some((r) => r.detached)
 		|| workflowGraphHasStatus(d, ["detached"]);
@@ -1687,6 +1723,9 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 	const contextBadge = contextModeBadge(theme, d.context);
 	const c = new Container();
 	const width = getTermWidth() - 4;
+	const rowIndent = mainWindowIndent(layout, 1);
+	const detailIndent = mainWindowIndent(layout, 2);
+	const continuationIndent = mainWindowIndent(layout, 3) + (layout.horizontalSpacing > 0 ? " " : "");
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold(d.mode))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	const useResultsDirectly = multiLabel.hasParallelInChain || !d.chainAgents?.length;
@@ -1704,8 +1743,8 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		if (entry.kind === "placeholder") {
 			const glyph = widgetStepGlyph(entry.status as AsyncJobStep["status"], theme);
 			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme);
-			c.addChild(new Text(truncLine(`  ${glyph} ${entry.stepLabel}: ${themeBold(theme, entry.agentName)} ${theme.fg("dim", "·")} ${statusLabel}`, width), 0, 0));
-			if (entry.error) c.addChild(new Text(truncLine(theme.fg("error", `    ⎿  Error: ${entry.error}`), width), 0, 0));
+			c.addChild(new Text(truncLine(`${rowIndent}${glyph} ${entry.stepLabel}: ${themeBold(theme, entry.agentName)} ${theme.fg("dim", "·")} ${statusLabel}`, width), 0, 0));
+			if (entry.error) c.addChild(new Text(truncLine(theme.fg("error", `${detailIndent}⎿  Error: ${entry.error}`), width), 0, 0));
 			continue;
 		}
 		const i = entry.resultIndex;
@@ -1714,7 +1753,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const agentName = entry.agentName;
 		if (!r) {
 			const pendingLabel = entry.rowLabel ?? `${itemTitle} ${rowNumber}`;
-			c.addChild(new Text(truncLine(theme.fg("dim", `  ◦ ${pendingLabel}: ${agentName} · pending`), width), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}◦ ${pendingLabel}: ${agentName} · pending`), width), 0, 0));
 			continue;
 		}
 		const output = getSingleResultOutput(r);
@@ -1730,28 +1769,28 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 		const rowProgressModel = rProg && "status" in rProg ? rProg : undefined;
 		const rowModelDisplay = modelThinkingBadge(theme, r.model ?? rowProgressModel?.model, r.thinking ?? rowProgressModel?.thinking);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${contextModeBadge(theme, r.context)}${rowModelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
-		c.addChild(new Text(truncLine(`  ${line}`, width), 0, 0));
+		c.addChild(new Text(truncLine(`${rowIndent}${line}`, width), 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
 			const liveProgress = rProg as AgentProgress;
 			const activity = compactCurrentActivity(liveProgress);
-			c.addChild(new Text(truncLine(theme.fg("dim", `    ⎿  ${activity}`), width), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}⎿  ${activity}`), width), 0, 0));
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, width, false, snapshotNowForProgress(liveProgress))) {
-				c.addChild(new Text(truncLine(`    ${nestedLine}`, width), 0, 0));
+				c.addChild(new Text(truncLine(`${detailIndent}${nestedLine}`, width), 0, 0));
 			}
-			c.addChild(new Text(truncLine(theme.fg("accent", `    ${liveDetailHintText()}`), width), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}${liveDetailHintText()}`), width), 0, 0));
 		} else if (!rPending && (r.exitCode !== 0 || r.interrupted || r.detached || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
-			c.addChild(new Text(truncLine(theme.fg(r.exitCode !== 0 ? "error" : "dim", `    ⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
+			c.addChild(new Text(truncLine(theme.fg(r.exitCode !== 0 ? "error" : "dim", `${detailIndent}⎿  ${resultStatusLine(r, output)}`), width), 0, 0));
 		}
 		if (!rRunning && !rPending) {
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, width, false, r.progress?.lastActivityAt)) {
-				c.addChild(new Text(truncLine(`    ${nestedLine}`, width), 0, 0));
+				c.addChild(new Text(truncLine(`${detailIndent}${nestedLine}`, width), 0, 0));
 			}
 		}
 		const outputTarget = extractOutputTarget(r.task);
-		if (outputTarget) c.addChild(new Text(truncLine(theme.fg("dim", `    output: ${outputTarget}`), width), 0, 0));
-		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `    output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
+		if (outputTarget) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}output: ${outputTarget}`), width), 0, 0));
+		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
 	}
-	if (d.artifacts) c.addChild(new Text(truncLine(theme.fg("dim", `  artifacts: ${shortenPath(d.artifacts.dir)}`), width), 0, 0));
+	if (d.artifacts) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}artifacts: ${shortenPath(d.artifacts.dir)}`), width), 0, 0));
 	return c;
 }
 
@@ -1802,22 +1841,28 @@ export function renderSubagentResult(
 	options: { expanded: boolean },
 	theme: Theme,
 	frame?: number,
+	rendererConfig?: MainWindowRendererConfig,
 ): Component {
+	const layout = resolveMainWindowRenderLayout(rendererConfig);
+	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
-	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) return renderWorkflowChatProgress(d, result, theme, frame);
+	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) {
+		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame));
+	}
 	if (!d || !d.results.length) {
 		const t = result.content[0];
 		const text = t?.type === "text" ? t.text : "(no output)";
 		const contextPrefix = contextModePrefix(theme, d?.context);
 		const width = getTermWidth() - 4;
-		if (!text.includes("\n")) return new Text(truncLine(`${contextPrefix}${text}`, width), 0, 0);
+		if (!text.includes("\n")) return compact(new Text(truncLine(`${contextPrefix}${text}`, width), 0, 0));
 		if (d && !options.expanded && !result.isError) {
 			const lines = text.split(/\r?\n/);
 			const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
 			const c = new Container();
+			const detailIndent = mainWindowIndent(layout, 1);
 			c.addChild(new Text(truncLine(`${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width), 0, 0));
-			c.addChild(new Text(truncLine(theme.fg("accent", `  Press ${liveDetailKeyText()} for full output`), width), 0, 0));
-			return c;
+			c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}Press ${liveDetailKeyText()} for full output`), width), 0, 0));
+			return compact(c);
 		}
 		const c = new Container();
 		const wrapped = wrapPlainText(`${contextPrefix}${text}`, width);
@@ -1830,8 +1875,8 @@ export function renderSubagentResult(
 
 	if (d.mode === "single" && d.results.length === 1) {
 		const r = d.results[0];
-		if (!r) return renderMultiCompact(d, theme, frame);
-		if (!expanded) return renderSingleCompact(d, r, theme, frame);
+		if (!r) return compact(renderMultiCompact(d, theme, layout, frame));
+		if (!expanded) return compact(renderSingleCompact(d, r, theme, layout, frame));
 		const isRunning = isResultRunning(r);
 		const contextBadge = contextModeBadge(theme, r.context ?? d.context);
 		const output = r.truncation?.text || getSingleResultOutput(r);
@@ -1924,7 +1969,7 @@ export function renderSubagentResult(
 		return c;
 	}
 
-	if (!expanded) return renderMultiCompact(d, theme, frame);
+	if (!expanded) return compact(renderMultiCompact(d, theme, layout, frame));
 
 	const hasRunning = detailsHaveRunningResult(d);
 	const detached = d.results.some((r) => r.detached)

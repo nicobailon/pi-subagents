@@ -59,6 +59,7 @@ import { resolveMissionStoreLocation } from "../missions/store.ts";
 import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
 	type Details,
+	type MainWindowRendererConfig,
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -253,12 +254,13 @@ function rebuildSlashResultContainer(
 	result: AgentToolResult<Details>,
 	options: { expanded: boolean },
 	theme: ExtensionContext["ui"]["theme"],
+	rendererConfig?: MainWindowRendererConfig,
 ): void {
 	container.clear();
 	container.addChild(new Spacer(1));
 	const boxTheme = isSlashResultRunning(result) ? "toolPendingBg" : isSlashResultError(result) ? "toolErrorBg" : "toolSuccessBg";
 	const box = new Box(1, 1, (text: string) => theme.bg(boxTheme, text));
-	box.addChild(renderSubagentResult(result, options, theme));
+	box.addChild(renderSubagentResult(result, options, theme, undefined, rendererConfig));
 	container.addChild(box);
 }
 
@@ -266,6 +268,7 @@ function createSlashResultComponent(
 	details: SlashMessageDetails,
 	options: { expanded: boolean },
 	theme: ExtensionContext["ui"]["theme"],
+	rendererConfig?: MainWindowRendererConfig,
 ): Container {
 	const container = new Container();
 	let lastVersion = -1;
@@ -273,7 +276,7 @@ function createSlashResultComponent(
 		const snapshot = getSlashRenderableSnapshot(details);
 		if (snapshot.version !== lastVersion || isSlashResultRunning(snapshot.result)) {
 			lastVersion = snapshot.version;
-			rebuildSlashResultContainer(container, snapshot.result, options, theme);
+			rebuildSlashResultContainer(container, snapshot.result, options, theme, rendererConfig);
 		}
 		return Container.prototype.render.call(container, width);
 	};
@@ -481,7 +484,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
 		if (!details) return undefined;
-		return createSlashResultComponent(details, options, theme);
+		return createSlashResultComponent(details, options, theme, config.mainWindowRenderer);
 	});
 
 	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -581,22 +584,24 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 
 		renderCall(args, theme) {
+			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
+			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			if (args.action) {
 				const target = args.agent || args.chainName || "";
 				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`,
+					`${title}${gap}${args.action}${target ? `${gap}${theme.fg("accent", target)}` : ""}`,
 					0, 0,
 				);
 			}
 			if (args.workflowScript)
 				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent "))}${formatWorkflowManifest(args.workflowScript, args.async, false)}`,
+					`${title}${gap}${formatWorkflowManifest(args.workflowScript, args.async, false)}`,
 					0,
 					0,
 				);
-			const asyncLabel = args.async === true ? theme.fg("warning", " [async]") : "";
+			const asyncLabel = args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : "";
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
+				`${title}${gap}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
 				0,
 				0,
 			);
@@ -607,7 +612,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const renderedResult = { ...result, isError: context.isError };
 			return summaryInlineToolDisplay
 				? renderSubagentSummary(renderedResult, options, theme)
-				: renderSubagentResult(renderedResult, options, theme);
+				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer);
 		},
 
 	};

@@ -238,3 +238,51 @@ test("static sequential and static parallel chain rendering keep existing labels
 	assert.match(parallel, /Agent 2\/2: auditor/);
 	assert.match(parallel, /Step 3: writer/);
 });
+
+test("main-window renderer config removes compact result indentation without changing status glyphs", () => {
+	const component = renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [result("scout", "a"), { ...result("reviewer", ""), exitCode: 1, error: "failed" }],
+		},
+	}, { expanded: false }, theme as any, undefined, { horizontalSpacing: 0 });
+
+	const text = componentText(component);
+	assert.match(text, /^✗ parallel/m);
+	assert.match(text, /^✓ Agent 1\/2: scout/m);
+	assert.match(text, /^✗ Agent 2\/2: reviewer/m);
+	assert.match(text, /^⎿  Error: failed/m);
+});
+
+test("main-window renderer config caps only collapsed rich result rows", () => {
+	const rendered = renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [
+				result("scout", "a"),
+				result("reviewer", "b"),
+				result("writer", "c"),
+			],
+		},
+	}, { expanded: false }, theme as any, undefined, { compactResultMaxLines: 3 }).render(120);
+
+	assert.equal(rendered.length, 3);
+	assert.match(rendered[2]!, /rows hidden/);
+
+	const expanded = renderSubagentResult({
+		content: [{ type: "text", text: "done" }],
+		details: {
+			mode: "parallel",
+			results: [
+				result("scout", "a"),
+				result("reviewer", "b"),
+				result("writer", "c"),
+			],
+		},
+	}, { expanded: true }, theme as any, undefined, { compactResultMaxLines: 3 }).render(120);
+
+	assert.ok(expanded.length > 3);
+	assert.doesNotMatch(expanded.join("\n"), /rows hidden/);
+});

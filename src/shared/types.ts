@@ -1882,6 +1882,13 @@ export const FLEET_KEYBINDING_ACTIONS = [
 export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
 export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
+export interface MainWindowRendererConfig {
+	/** Unit of horizontal space in main chat subagent call/result rows. Omit to preserve current spacing. Set 0 for no extra padding. */
+	horizontalSpacing?: number;
+	/** Maximum collapsed rich-result rows. Expanded output is not capped. */
+	compactResultMaxLines?: number;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	/** Show the Claude Code-style navigable fleet. Defaults to true. */
@@ -1898,6 +1905,8 @@ export interface ExtensionConfig {
 	legacyChainControls?: boolean;
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */
 	inlineToolDisplay?: InlineToolDisplay;
+	/** Density controls for the main chat subagent call/result renderer. */
+	mainWindowRenderer?: MainWindowRendererConfig;
 	forceTopLevelAsync?: boolean;
 	waitTool?: WaitToolConfig;
 	defaultSessionDir?: string;

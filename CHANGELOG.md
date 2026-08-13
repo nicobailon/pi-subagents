@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add main-window renderer density controls for subagent call/result spacing and collapsed result height. Thanks to @pierre-mgmt for #1048.
 - Add `debug.run` for async run lifecycle diagnostics without exposing prompts, secrets, or transcripts (#1037).
 - Add `tools: "inherit"` for builtin role overrides, so one role can inherit Pi's normal tools and extensions without shadowing the agent file. Thanks to @estanexanavsem for #1047 and @davidarny for #1049.
 
