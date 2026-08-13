@@ -5,12 +5,13 @@
 ### Added
 - Add a durable per-run child fan-out budget with a default cap of 64 across static, dynamic, workflow, and nested child admissions. Thanks to @asjer for #1031.
 - Add an opt-in per-session cap for concurrently active top-level async runs, with atomic admission, resume transfer, status/Fleet/RPC/doctor visibility, and release gated by the verified process-terminal behavior from #1030. Thanks to @asjer for #1029.
-- Add a live Prompt Audit drawer to Fleet for current-session foreground children. Prompt text stays hidden until local reveal, is kept outside serializable Fleet state, and is redacted from foreground input, transcript, metadata, result, progress, and run-history artifacts (#1021).
+- Add a live Prompt Audit drawer to Fleet for current-session foreground children. Prompt text is visible in the drawer, kept outside serializable Fleet state, and redacted from foreground input, transcript, metadata, result, progress, and run-history artifacts (#1021).
 - Add a global `timeoutMs` config option that sets the default run deadline for single, parallel, and chain launches (foreground, plus plain single-agent async) when neither the call nor the selected agent provides a timeout. It reaches parallel (`tasks: [...]`) and chain launches, which never adopt an agent's frontmatter `timeoutMs` (that default applies to single-agent launches only), so a long fan-out no longer falls back to the built-in 30-minute default and gets killed mid-run. Explicit call `timeoutMs`/`maxRuntimeMs` and agent frontmatter defaults still win; composite async runs stay unbounded at the top level by design. Thanks to @shaharmor for #1018.
 - Add a `PI_SUBAGENT_TASK_DELIVERY` environment setting (`auto` | `file`, default `auto`) controlling how the task text reaches child Pi processes. `file` writes the task to a temp `task.md` referenced as `@<path>` instead of embedding it in argv, for hosts where endpoint protection (EDR) pre-execution command-line scanning denies children whose argv embeds a long natural-language task. Thanks to @yanqianglu for #1028.
 - Escalate startup retries to file task delivery after an unexplained zero-activity `SIGKILL` child exit, so EDR-denied launches self-heal on retry in both foreground and background runs. Thanks to @yanqianglu for #1028.
 
 ### Fixed
+- Open Fleet Prompt Audit with the authored task visible by default and show a short live task summary in the normal Fleet detail pane (#1021).
 - Use full task-text hashes for LLM intent arbiter memoization so same-prefix review and implementation tasks cannot share a cached verdict.
 - Terminate async Pi writers as owned POSIX process groups on stop and timeout, and keep terminal process proof unknown until process-tree exit is verified. Thanks to @asjer for #1030.
 - Explain when a requested mission is scoped to another worktree by naming the current project root and mission directory (#1024).

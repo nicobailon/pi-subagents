@@ -168,7 +168,7 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("reveals live prompts only inside Prompt Audit for the owning session", async () => {
+	it("shows live prompt summaries and opens Prompt Audit with the authored prompt visible", async () => {
 		const sentinel = "PROMPT_AUDIT_SENTINEL_1021";
 		const secondSentinel = "PROMPT_AUDIT_SECOND_CHILD";
 		const state = stateForTest();
@@ -210,11 +210,10 @@ describe("native subagent fleet", () => {
 		);
 		try {
 			const initialRender = component.render(100).join("\n");
-			assert.doesNotMatch(initialRender, new RegExp(sentinel));
-			assert.match(initialRender, /Prompt audit: 2 live, hidden/);
+			assert.match(initialRender, new RegExp(`Task: ${sentinel}`));
+			assert.match(initialRender, /Prompt audit: 2 live · 3 views · p opens/);
 			component.handleInput("p");
-			assert.match(component.render(100).join("\n"), /Prompt text hidden/);
-			component.handleInput("\r");
+			assert.doesNotMatch(component.render(100).join("\n"), /Prompt text hidden|Enter reveal|r hide/);
 			assert.match(component.render(100).join("\n"), new RegExp(sentinel));
 			component.handleInput("2");
 			assert.match(component.render(100).join("\n"), /Read from: context\.md/);
@@ -233,18 +232,14 @@ describe("native subagent fleet", () => {
 			component.handleInput("j");
 			assert.match(component.render(100).join("\n"), /Selected: 2\/2/);
 			assert.match(component.render(100).join("\n"), /Agent: reviewer/);
-			assert.doesNotMatch(component.render(100).join("\n"), new RegExp(secondSentinel));
-			component.handleInput("\r");
 			assert.match(component.render(100).join("\n"), new RegExp(secondSentinel));
 			component.handleInput("k");
 			component.handleInput("1");
 			assert.match(component.render(100).join("\n"), /Selected: 1\/2/);
 			assert.match(component.render(100).join("\n"), /Agent: worker/);
-			assert.doesNotMatch(component.render(100).join("\n"), new RegExp(sentinel));
-			component.handleInput("r");
-			assert.doesNotMatch(component.render(100).join("\n"), new RegExp(sentinel));
+			assert.match(component.render(100).join("\n"), new RegExp(sentinel));
 			component.handleInput("\x1b");
-			assert.match(component.render(100).join("\n"), /Prompt audit: 2 live, hidden/);
+			assert.match(component.render(100).join("\n"), /Prompt audit: 2 live · 3 views · p opens/);
 		} finally {
 			component.dispose();
 		}
