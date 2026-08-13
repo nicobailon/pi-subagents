@@ -2623,7 +2623,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const args = await waitForMockPiArgs(mockPi, 0);
 			const taskArg = args.at(-1) ?? "";
 			assert.match(taskArg, new RegExp(`\\[Read from: ${escapeRegExp(path.join(worktreeCwd, "input.md"))}\\]`));
-			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${path.join(repoDir, ".pi/subagents", "artifacts", "outputs", asyncId, "report.md")}`));
+			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${path.join(TEMP_ARTIFACTS_DIR, "outputs", asyncId, "report.md")}`));
 			const resultPath = await waitForAsyncResultFile(asyncId, 90_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			const status = await waitForAsyncState(asyncId, (candidate) => candidate.state === "complete");
