@@ -791,6 +791,33 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("marks a child stopped when abort fires during the started trace callback", async () => {
+		const controller = new AbortController();
+		let launchCount = 0;
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.run("slow", { agent: "worker", task: "wait" });`,
+				signal: controller.signal,
+				onTrace(trace) {
+					const started = trace.some((entry) => entry.operation === "run" && entry.key === "slow" && entry.state === "started");
+					if (started && !controller.signal.aborted) controller.abort(new Error("Workflow stopped by user."));
+				},
+				async launch(key) {
+					launchCount += 1;
+					return { key, ok: true, output: "done", artifactPaths: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message === "Workflow stopped by user."
+				&& error.partial.trace.some((entry) => entry.operation === "run" && entry.key === "slow" && entry.state === "stopped")
+				&& !error.partial.trace.some((entry) => entry.operation === "run" && entry.key === "slow" && entry.state === "failed"),
+		);
+		await new Promise((resolve) => queueMicrotask(resolve));
+		assert.equal(launchCount, 0);
+	});
+
 	it("does not launch a child after admission settles following workflow abort", async () => {
 		const controller = new AbortController();
 		let launchCount = 0;

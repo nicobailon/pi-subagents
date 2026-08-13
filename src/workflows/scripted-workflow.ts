@@ -706,9 +706,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 
 			const startedAt = Date.now();
-			childOrder.push(key);
-			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
-			traceChanged();
 			const batch = isRecord(message.args.batch) && typeof message.args.batch.id === "string" && Array.isArray(message.args.batch.calls)
 				? { id: message.args.batch.id, calls: message.args.batch.calls.filter((call): call is { key: string; params: Record<string, unknown> } => isRecord(call) && typeof call.key === "string" && isRecord(call.params)) }
 				: undefined;
@@ -747,6 +744,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return failure;
 			});
 			launches.set(key, { fingerprint, promise, observed: callObserved });
+			childOrder.push(key);
+			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
+			traceChanged();
 			respond(deliver(promise));
 		});
 
