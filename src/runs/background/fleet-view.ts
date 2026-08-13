@@ -197,7 +197,7 @@ function readSessionTranscriptTail(sessionFile: string, maxLines: number, truste
 		try {
 			const parsed = JSON.parse(line) as unknown;
 			const messageLine = sessionMessageLine(parsed);
-			if (messageLine) lines.push(messageLine);
+			if (messageLine) lines.push(...messageLine.split(/\r?\n/));
 		} catch {
 			malformed++;
 		}

@@ -738,6 +738,48 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("keeps safe nested session content parts around binary content", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-nested-session-binary-"));
+		const route = createNestedRoute("run-nested-session-binary-root");
+		try {
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "safe before" }, { type: "text", text: "\0" }, { type: "text", text: "safe after" }] } })}\n`, "utf-8");
+			writeNestedEvent(route, {
+				type: "subagent.nested.updated",
+				ts: 150,
+				parentRunId: "run-nested-session-binary-root",
+				parentStepIndex: 0,
+				child: {
+					id: "nested-session-binary-child",
+					parentRunId: "run-nested-session-binary-root",
+					parentStepIndex: 0,
+					depth: 1,
+					path: [{ runId: "run-nested-session-binary-root", stepIndex: 0, agent: "orchestrator" }],
+					state: "complete",
+					mode: "single",
+					agent: "worker",
+					sessionFile,
+					lastUpdate: 150,
+				},
+			});
+
+			const result = inspectSubagentStatus({ id: "nested-session-binary-child", view: "transcript" }, {
+				asyncDirRoot: path.join(root, "runs"),
+				resultsDir: path.join(root, "results"),
+				sessionRoots: [root],
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.match(text, /safe before/);
+			assert.match(text, /\[binary content omitted for safe display\]/);
+			assert.match(text, /safe after/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+		}
+	});
+
 	it("resolves exact nested run ids from the nested registry", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-nested-exact-"));
 		const route = createNestedRoute("run-nested-exact-root");
