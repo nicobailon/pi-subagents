@@ -1105,8 +1105,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("derives workflow child output paths from the workflow output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "first report" });
-		mockPi.onCall({ output: "second report" });
+		mockPi.onCall({ output: "first report", matchArgIncludes: "Review" });
+		mockPi.onCall({ output: "second report", matchArgIncludes: "Monitor" });
 		const executor = makeExecutor([makeAgent("echo")]);
 		const workflowOutput = path.join(tempDir, "workflow-report.md");
 
@@ -1223,10 +1223,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("checks workflow child output collisions against configured output base", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const configuredBase = path.join(tempDir, "configured-outputs");
-		const executor = makeExecutor([makeAgent("echo")], { singleRunOutputBaseDir: configuredBase });
 		const workflowOutput = "shared.md";
 
-		const result = await executor.execute(
+		const aggregateResult = await makeExecutor([makeAgent("echo")], { singleRunOutputBaseDir: configuredBase }).execute(
 			"scripted-workflow-configured-output-base-collision",
 			{
 				async: false,
@@ -1241,12 +1240,35 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		const children = result.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
-		assert.deepEqual(children.map(({ ok }) => ok), [false, false]);
+		assert.equal(aggregateResult.isError, undefined, aggregateResult.content[0]?.text ?? "workflow failed");
+		const aggregateChildren = aggregateResult.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(aggregateChildren.map(({ ok }) => ok), [false, false]);
 		const resolvedSharedOutput = path.join(configuredBase, workflowOutput);
-		for (const child of children) {
+		for (const child of aggregateChildren) {
 			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
+			assert.match(child.error ?? "", new RegExp(escapeRegExp(resolvedSharedOutput)));
+		}
+		assert.equal(mockPi.callCount(), 0);
+
+		const agentDefaultResult = await makeExecutor([makeAgent("echo", { output: workflowOutput })], { singleRunOutputBaseDir: configuredBase }).execute(
+			"scripted-workflow-configured-agent-default-output-collision",
+			{
+				async: false,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review", output: true },
+					{ key: "monitor", agent: "echo", task: "Monitor", output: true }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(agentDefaultResult.isError, undefined, agentDefaultResult.content[0]?.text ?? "workflow failed");
+		const agentDefaultChildren = agentDefaultResult.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
+		assert.deepEqual(agentDefaultChildren.map(({ ok }) => ok), [false, false]);
+		for (const child of agentDefaultChildren) {
+			assert.match(child.error ?? "", /Workflow children 'review' and 'monitor' resolve output to the same path/);
 			assert.match(child.error ?? "", new RegExp(escapeRegExp(resolvedSharedOutput)));
 		}
 		assert.equal(mockPi.callCount(), 0);
