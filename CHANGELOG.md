@@ -9,6 +9,9 @@
 - Add `tools: "inherit"` for builtin role overrides, so one role can inherit Pi's normal tools and extensions without shadowing the agent file. Thanks to @estanexanavsem for #1047 and @davidarny for #1049.
 - Add simple terminal examples for FleetView, the async widget, and inline tool display. Thanks to @czottmann for #1050.
 
+### Changed
+- Clean up unreleased active-capacity and artifact packaging helpers without changing runtime behavior.
+
 ### Fixed
 - Show children interrupted by a parent-stopped workflow as stopped instead of failed, and preserve the workflow stop reason (#1060).
 - Keep subagent artifacts and automatic mission records outside project worktrees by default, so read-only workflows do not make clean-tree checks fail (#1062).

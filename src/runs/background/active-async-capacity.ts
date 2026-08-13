@@ -194,10 +194,6 @@ function runnerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncSt
 		: { state: "retained", reason: `process-terminal proof is ${proof?.state ?? "missing"}` };
 }
 
-function runnerCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus): boolean {
-	return runnerReleaseVerdict(owner, status).state === "releasable";
-}
-
 function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus | null, liveWorkflowRunIds: ReadonlySet<string>): ActiveAsyncCapacityReleaseVerdict {
 	if (!status) return { state: "retained", reason: "status file is missing or unreadable" };
 	if (status.sessionId !== owner.ownerSessionId) return { state: "retained", reason: `status session ${status.sessionId ?? "unknown"} does not match owner session ${owner.ownerSessionId}` };
@@ -224,18 +220,6 @@ function workflowReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, status: Async
 		if (proof?.state !== "observed" || proof.runId !== step.runId) return { state: "retained", reason: `async workflow child ${label} process-terminal proof is ${proof?.state ?? "missing"}` };
 	}
 	return { state: "releasable", reason: "workflow is terminal, controller is gone, and async children have observed proof" };
-}
-
-function workflowCanRelease(owner: ActiveAsyncCapacityOwnerV1, status: AsyncStatus, liveWorkflowRunIds: ReadonlySet<string>): boolean {
-	return workflowReleaseVerdict(owner, status, liveWorkflowRunIds).state === "releasable";
-}
-
-function ownerCanRelease(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: ReadonlySet<string>): boolean {
-	const status = readStatus(owner.asyncDir);
-	if (!status) return false;
-	return owner.kind === "runner"
-		? runnerCanRelease(owner, status)
-		: workflowCanRelease(owner, status, liveWorkflowRunIds);
 }
 
 function ownerReleaseVerdict(owner: ActiveAsyncCapacityOwnerV1, liveWorkflowRunIds: ReadonlySet<string>): ActiveAsyncCapacityReleaseVerdict {
@@ -298,7 +282,7 @@ export function reconcileActiveAsyncCapacity(
 			|| owner.ownerSessionId !== sessionId
 			|| owner.ownerSessionKey !== activeAsyncCapacitySessionKey(sessionId)
 			|| path.basename(dir) !== `slot-${owner.slot}`
-			|| !ownerCanRelease(owner, liveWorkflowRunIds)) continue;
+			|| ownerReleaseVerdict(owner, liveWorkflowRunIds).state !== "releasable") continue;
 		removeOwnedSlot(dir, owner, options);
 	}
 	return snapshotFor(sessionId, limit, rootDir);

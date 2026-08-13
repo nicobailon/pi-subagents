@@ -65,10 +65,6 @@ function patternMatchesArtifactPath(pattern: string, artifactPath: string): bool
 		|| globMatchesPath(normalized, artifactPath);
 }
 
-function patternMatchesProjectArtifacts(pattern: string): boolean {
-	return PROJECT_ARTIFACT_PATHS.some((artifactPath) => patternMatchesArtifactPath(pattern, artifactPath));
-}
-
 function ignoreFileExcludesProjectArtifacts(filePath: string): boolean {
 	if (!fs.existsSync(filePath)) return false;
 	try {
