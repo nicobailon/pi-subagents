@@ -5388,8 +5388,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
-				if (action === "debug.run" && !targetRunId && !hasDirectoryTarget) {
-					return withBudget({ content: [{ type: "text", text: "action='debug.run' requires id, runId, or dir." }], isError: true, details: { mode: "management", results: [] } });
+				if (action === "debug.run") {
+					if (!targetRunId && !hasDirectoryTarget) {
+						return withBudget({ content: [{ type: "text", text: "action='debug.run' requires id, runId, or dir." }], isError: true, details: { mode: "management", results: [] } });
+					}
+					if (paramsWithResolvedCwd.view) {
+						return withBudget({ content: [{ type: "text", text: "action='debug.run' does not support status views." }], isError: true, details: { mode: "management", results: [] } });
+					}
+					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));
 				}
 				if (paramsWithResolvedCwd.view === "fleet") {
 					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots })));

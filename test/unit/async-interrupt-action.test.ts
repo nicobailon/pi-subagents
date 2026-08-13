@@ -126,6 +126,36 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 }
 
 describe("async interrupt action", () => {
+	it("routes debug.run to async lifecycle debug, not live foreground status", async () => {
+		const state = createState();
+		state.currentSessionId = "session";
+		const runId = `debug-foreground-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId, { track: false, sessionId: "session" });
+		state.foregroundControls.set(runId, {
+			runId,
+			sessionId: "session",
+			mode: "single",
+			startedAt: 100,
+			updatedAt: 100,
+			cwd: os.tmpdir(),
+			agent: "worker",
+			status: "running",
+			controller: new AbortController(),
+		});
+		try {
+			const result = await executorWithKill(state, () => true)
+				.execute("debug.run", { action: "debug.run", id: runId }, new AbortController().signal, undefined, ctx());
+			const output = text(result);
+
+			assert.equal(result.isError, undefined);
+			assert.match(output, /Run lifecycle debug/);
+			assert.doesNotMatch(output, /Live foreground/);
+		} finally {
+			state.foregroundControls.delete(runId);
+			cleanup(runId, asyncDir);
+		}
+	});
+
 	it("renders run lifecycle debug without transcript content", () => {
 		const state = createState();
 		state.currentSessionId = "session";
