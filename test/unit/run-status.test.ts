@@ -892,6 +892,38 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows direct run-id recovery for workflow children", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-resume-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "workflow-parent");
+			const firstSession = path.join(root, "review.jsonl");
+			const secondSession = path.join(root, "writer.jsonl");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(firstSession, "", "utf-8");
+			fs.writeFileSync(secondSession, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-parent",
+				mode: "workflow",
+				state: "failed",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{ agent: "reviewer", workflowKey: "review", runId: "child-review", status: "failed", sessionFile: firstSession },
+					{ agent: "worker", workflowKey: "write", runId: "child-write", status: "paused", sessionFile: secondSession },
+				],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "workflow-parent" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const text = textContent(result);
+			assert.match(text, /Revive workflow child 'review': subagent\(\{ action: "resume", id: "child-review", message: "\.\.\." \}\)/);
+			assert.match(text, /Revive workflow child 'write': subagent\(\{ action: "resume", id: "child-write", message: "\.\.\." \}\)/);
+			assert.doesNotMatch(text, /id: "workflow-parent", index:/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("uses original child indexes when result metadata contains invalid children", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-original-index-"));
 		try {

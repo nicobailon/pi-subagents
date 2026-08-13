@@ -8,6 +8,8 @@ const MAX_TASK_SUMMARY_LENGTH = 120;
 export interface RetainedChild {
 	runId: string;
 	parentRunId?: string;
+	workflowKey?: string;
+	state: "complete" | "failed" | "paused";
 	agent: string;
 	taskSummary: string;
 	completedAt: number;
@@ -33,16 +35,20 @@ function boundedTaskSummary(value: string | undefined): string {
 }
 
 export function listRetainedChildren(asyncDirRoot: string, sessionId: string): RetainedChild[] {
-	return listAsyncRuns(asyncDirRoot, { sessionId, states: ["complete"], reconcile: false })
+	return listAsyncRuns(asyncDirRoot, { sessionId, states: ["complete", "failed", "paused"], reconcile: false })
 		.flatMap((run) => {
 			if (!run.parentWorkflowRunId || run.steps.length !== 1) return [];
+			if (run.state !== "complete" && run.state !== "failed" && run.state !== "paused") return [];
 			const step = run.steps[0]!;
-			if ((step.status !== "complete" && step.status !== "completed") || !retainedSessionFile(step.sessionFile ?? run.sessionFile)) return [];
-			const completedAt = run.endedAt;
+			const terminalStep = step.status === "complete" || step.status === "completed" || step.status === "failed" || step.status === "paused";
+			if (!terminalStep || !retainedSessionFile(step.sessionFile ?? run.sessionFile)) return [];
+			const completedAt = run.endedAt ?? run.lastUpdate;
 			if (completedAt === undefined) return [];
 			return [{
 				runId: run.id,
 				...(run.parentWorkflowRunId ? { parentRunId: run.parentWorkflowRunId } : {}),
+				...(run.workflowKey ? { workflowKey: run.workflowKey } : {}),
+				state: run.state,
 				agent: step.agent,
 				taskSummary: boundedTaskSummary(step.description),
 				completedAt,
@@ -55,11 +61,12 @@ export function listRetainedChildren(asyncDirRoot: string, sessionId: string): R
 }
 
 export function formatRetainedChildren(children: RetainedChild[]): string {
-	if (children.length === 0) return "No completed retained children in the active parent session.";
+	if (children.length === 0) return "No recoverable retained children in the active parent session.";
 	return [
-		`Completed retained children (newest first, last ${MAX_RETAINED_CHILDREN}):`,
+		`Recoverable retained children (newest first, last ${MAX_RETAINED_CHILDREN}):`,
 		...children.flatMap((child) => [
-			`- ${child.runId} | ${child.agent} | ${new Date(child.completedAt).toISOString()}`,
+			`- ${child.runId} | ${child.agent} | ${child.state} | ${new Date(child.completedAt).toISOString()}`,
+			...(child.parentRunId ? [`  workflow: ${child.parentRunId}${child.workflowKey ? ` (${child.workflowKey})` : ""}`] : []),
 			`  task: ${child.taskSummary || "(no task summary)"}`,
 			`  session: ${child.sessionPath}`,
 			...(child.tokenTotals ? [`  tokens: input ${child.tokenTotals.input}, output ${child.tokenTotals.output}, total ${child.tokenTotals.total}`] : []),

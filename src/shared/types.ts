@@ -503,6 +503,8 @@ export interface SteeringRecoveryDescriptor {
 	launchContractDigest?: string;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
 	agentContract?: AgentContract;
 	agent: string;
 	sessionFile?: string;

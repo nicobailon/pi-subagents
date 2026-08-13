@@ -113,12 +113,16 @@ function formatCheckpointGuidance(runId: string | undefined, checkpoint: AsyncSt
 	return `Checkpoint: ${checkpoint.name}${checkpoint.message ? ` — ${checkpoint.message}` : ""}\nApprove: subagent({ action: "approve-checkpoint", id: "${runId}" })\nReject: subagent({ action: "reject-checkpoint", id: "${runId}" })`;
 }
 
-function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown }>, fallbackSessionFile?: unknown, options: { stopped?: boolean } = {}): string {
+function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown; runId?: unknown; workflowKey?: unknown }>, fallbackSessionFile?: unknown, options: { stopped?: boolean } = {}): string {
 	if (options.stopped) return "Resume: unavailable; stopped runs are not resumable. Start a new run instead.";
 	const knownChildren = children
 		.map((child, index) => ({ child, index }))
 		.filter(({ child }) => typeof child.agent === "string");
 	if (!runId || knownChildren.length === 0) return "Resume: unavailable; no child session file was persisted.";
+	const workflowChildren = knownChildren.filter(({ child }) => typeof child.runId === "string" && child.runId.trim() && hasExistingSessionFile(child.sessionFile));
+	if (workflowChildren.length > 0) {
+		return workflowChildren.map(({ child }) => `Revive workflow child${typeof child.workflowKey === "string" && child.workflowKey.trim() ? ` '${child.workflowKey}'` : ""}: subagent({ action: "resume", id: "${child.runId}", message: "..." })`).join("\n");
+	}
 	const singleSessionFile = knownChildren[0]?.child.sessionFile ?? fallbackSessionFile;
 	if (children.length === 1 && knownChildren.length === 1 && hasExistingSessionFile(singleSessionFile)) {
 		return `Revive: subagent({ action: "resume", id: "${runId}", message: "..." })`;
@@ -565,7 +569,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };

@@ -1436,6 +1436,8 @@ export function executeAsyncSingle(
 		launchContractDigest,
 		runFanoutBudget,
 		sourceRunId: id,
+		...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
+		...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
 		launchResolvedExtensions,

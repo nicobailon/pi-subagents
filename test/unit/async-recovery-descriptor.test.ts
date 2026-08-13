@@ -46,6 +46,35 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("accepts paired workflow child identity and rejects partial identity", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-workflow-"));
+		try {
+			const descriptor = {
+				version: 1,
+				runFanoutBudget: runFanoutBudget("run-workflow"),
+				sourceRunId: "run-workflow",
+				agent: "worker",
+				cwd: root,
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				outputMode: "inline",
+				maxSubagentDepth: 2,
+				share: false,
+			};
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({ ...descriptor, parentWorkflowRunId: "workflow-parent", workflowKey: "review" }), "utf-8");
+
+			const recovered = readAsyncRecoveryDescriptor(root);
+			assert.equal(recovered?.parentWorkflowRunId, "workflow-parent");
+			assert.equal(recovered?.workflowKey, "review");
+
+			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({ ...descriptor, workflowKey: "review" }), "utf-8");
+			assert.throws(() => readAsyncRecoveryDescriptor(root), /parentWorkflowRunId and workflowKey must be provided together/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed launchContractDigest values", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-digest-"));
 		try {

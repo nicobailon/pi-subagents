@@ -247,6 +247,9 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 	if (status.sessionId !== undefined && typeof status.sessionId !== "string") throw new Error(`Invalid async status '${source}': sessionId must be a string.`);
 	if (status.cwd !== undefined && typeof status.cwd !== "string") throw new Error(`Invalid async status '${source}': cwd must be a string.`);
 	if (status.sessionFile !== undefined && typeof status.sessionFile !== "string") throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
+	if (status.parentWorkflowRunId !== undefined && (typeof status.parentWorkflowRunId !== "string" || !status.parentWorkflowRunId.trim())) throw new Error(`Invalid async status '${source}': parentWorkflowRunId must be a non-empty string.`);
+	if (status.workflowKey !== undefined && (typeof status.workflowKey !== "string" || !status.workflowKey.trim())) throw new Error(`Invalid async status '${source}': workflowKey must be a non-empty string.`);
+	if ((status.parentWorkflowRunId === undefined) !== (status.workflowKey === undefined)) throw new Error(`Invalid async status '${source}': parentWorkflowRunId and workflowKey must be provided together.`);
 	if (status.capabilityCeiling !== undefined) status.capabilityCeiling = parseSubagentCapabilityCeiling(status.capabilityCeiling, `async status '${source}' capabilityCeiling`);
 	if (status.steps !== undefined) {
 		if (!Array.isArray(status.steps)) throw new Error(`Invalid async status '${source}': steps must be an array.`);
@@ -308,7 +311,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget",
+		"launchResolvedExtensions", "runFanoutBudget", "parentWorkflowRunId", "workflowKey",
 	]);
 	for (const field of Object.keys(parsed)) {
 		if (!allowedFields.has(field)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': unknown field '${field}'.`);
@@ -340,9 +343,10 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (item !== undefined && (!Array.isArray(item) || item.some((entry) => typeof entry !== "string" || !entry.trim()))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must contain non-empty strings.`);
 	}
 	if (parsed.systemPrompt !== undefined && typeof parsed.systemPrompt !== "string") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPrompt must be a string.`);
-	for (const field of ["launchContractDigest", "sessionFile", "model", "thinking", "agentFilePath", "outputPath", "sessionDir", "artifactsDir"] as const) {
+	for (const field of ["launchContractDigest", "sessionFile", "model", "thinking", "agentFilePath", "outputPath", "sessionDir", "artifactsDir", "parentWorkflowRunId", "workflowKey"] as const) {
 		if (parsed[field] !== undefined && (typeof parsed[field] !== "string" || !(parsed[field] as string).trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
+	if ((parsed.parentWorkflowRunId === undefined) !== (parsed.workflowKey === undefined)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': parentWorkflowRunId and workflowKey must be provided together.`);
 	if (parsed.completionGuard !== undefined && typeof parsed.completionGuard !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': completionGuard must be a boolean.`);
 	if (parsed.structuredOutputSchema !== undefined && (!parsed.structuredOutputSchema || typeof parsed.structuredOutputSchema !== "object" || Array.isArray(parsed.structuredOutputSchema))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': structuredOutputSchema must be an object.`);
 	if (parsed.memory !== undefined) {
@@ -423,6 +427,9 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		throw new Error(`Async run '${runId}' was not found in the active session.`);
 	}
 	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run.`);
+	if (recoveryDescriptor?.parentWorkflowRunId && status?.parentWorkflowRunId && (recoveryDescriptor.parentWorkflowRunId !== status.parentWorkflowRunId || recoveryDescriptor.workflowKey !== status.workflowKey)) {
+		throw new Error(`Async run '${runId}' has recovery identity for a different workflow child.`);
+	}
 	const state = status?.state ?? (result ? resultState(result) : undefined);
 	if (!state) throw new Error(`Status file not found for async run '${runId}'.`);
 	if (state === "stopped") throw new Error(`Async run '${runId}' was stopped and cannot be resumed. Start a new run instead.`);
