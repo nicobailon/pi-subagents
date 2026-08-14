@@ -28,6 +28,7 @@ afterEach(() => {
 	}
 	removeProgressFiles("progress-");
 	removeProgressFiles("disabled-run-");
+	removeProgressFiles("standalone-pi-");
 });
 
 function tempDir(): string {
@@ -93,6 +94,38 @@ test("an unavailable Orca command leaves native execution untouched", () => {
 		config: { enabled: true },
 		env: { PATH: "", PI_SUBAGENT_ORCA_BINARY: path.join(dir, "missing") },
 	}), undefined);
+});
+
+test("standalone Pi executables use PATH Node for the watchdog and viewer", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = path.join(dir, "orca");
+	const fakePi = path.join(dir, "pi");
+	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
+	fs.chmodSync(fakeOrca, 0o755);
+	const originalExecPath = process.execPath;
+	try {
+		process.execPath = fakePi;
+		const tab = createOrcaProgressTab({
+			cwd: dir,
+			runId: "standalone-pi",
+			agent: "worker",
+			index: 0,
+			config: { enabled: true },
+			command: fakeOrca,
+			env: { ...process.env, ORCA_TEST_CAPTURE: capture },
+		});
+		assert.ok(tab);
+		tab.finish("failed");
+		await waitForFile(capture);
+		const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
+		const viewer = args[args.indexOf("--command") + 1]!;
+		assert.match(viewer, /^'node' '-e' /);
+		assert.equal(viewer.includes(fakePi), false);
+		assert.match(await captureCommand(viewer, dir), /failed/);
+	} finally {
+		process.execPath = originalExecPath;
+	}
 });
 
 test("hung Orca terminal creation does not delay the owning process", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {

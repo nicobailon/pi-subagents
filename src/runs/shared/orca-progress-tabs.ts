@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
+import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { TEMP_ROOT_DIR, type OrcaProgressTabsConfig } from "../../shared/types.ts";
 import { extractTextFromContent, extractToolArgsPreview, getAgentDir } from "../../shared/utils.ts";
 
@@ -91,8 +92,8 @@ const VIEWER_SCRIPT = [
 	"process.on('exit',()=>clearInterval(timer));",
 ].join("");
 
-function viewerCommand(logPath: string, donePath: string): string {
-	const invocation = [process.execPath, "-e", VIEWER_SCRIPT, logPath, donePath].map(shellQuote).join(" ");
+function viewerCommand(nodeExecutable: string, logPath: string, donePath: string): string {
+	const invocation = [nodeExecutable, "-e", VIEWER_SCRIPT, logPath, donePath].map(shellQuote).join(" ");
 	// Do not replace or exit Orca's interactive shell. The short-lived viewer may
 	// finish and delete its mirror files, while the completed tab remains open at
 	// the shell prompt until the user closes it.
@@ -237,6 +238,7 @@ export function createOrcaProgressTab(input: {
 	if (config?.enabled !== true || process.platform === "win32") return undefined;
 	const command = input.command ?? resolveOrcaCommand(input.env);
 	if (!command) return undefined;
+	const nodeExecutable = resolveNodeExecutable();
 
 	const root = progressRoot();
 	try {
@@ -290,7 +292,7 @@ export function createOrcaProgressTab(input: {
 		}
 	};
 	try {
-		const watchdog = spawn(process.execPath, [
+		const watchdog = spawn(nodeExecutable, [
 			"-e", ORCA_CREATE_WATCHDOG_SCRIPT,
 			String(ORCA_CREATE_TIMEOUT_MS),
 			String(ORCA_KILL_GRACE_MS),
@@ -298,7 +300,7 @@ export function createOrcaProgressTab(input: {
 			"terminal", "create",
 			"--worktree", `path:${path.resolve(cwd)}`,
 			"--title", title,
-			"--command", viewerCommand(logPath, donePath),
+			"--command", viewerCommand(nodeExecutable, logPath, donePath),
 			"--json",
 		], {
 			cwd,
