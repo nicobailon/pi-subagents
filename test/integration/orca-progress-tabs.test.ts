@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
+import { writeNodeCommand } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -54,21 +55,17 @@ describe("Orca progress-tab observer", () => {
 		const asyncDir = path.join(dir, "async");
 		const agentDir = path.join(dir, "agent-dir");
 		const capture = path.join(dir, "orca-args.json");
-		const fakeOrca = path.join(dir, "orca");
-		const fakePi = path.join(dir, "pi");
+		const fakeOrca = writeNodeCommand(dir, "orca", "require('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))");
 		fs.mkdirSync(asyncDir);
 		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
 		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
-		fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-		fs.chmodSync(fakeOrca, 0o755);
 		const childEvents = [
 			{ type: "tool_execution_start", toolName: "read", args: { path: "README.md" } },
 			{ type: "tool_execution_end", toolName: "read" },
 			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "native Pi result" }], stopReason: "stop", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
 			{ type: "agent_settled" },
 		];
-		fs.writeFileSync(fakePi, `#!/usr/bin/env node\nfor (const event of ${JSON.stringify(childEvents)}) process.stdout.write(JSON.stringify(event)+'\\n')\n`);
-		fs.chmodSync(fakePi, 0o755);
+		const fakePi = writeNodeCommand(dir, "pi", `for (const event of ${JSON.stringify(childEvents)}) process.stdout.write(JSON.stringify(event)+'\\n')`);
 
 		const resultPath = path.join(dir, "result.json");
 		const configPath = path.join(dir, "config.json");
@@ -125,9 +122,7 @@ describe("Orca progress-tab observer", () => {
 		fs.mkdirSync(nested, { recursive: true });
 		const captures = path.join(dir, "captures");
 		fs.mkdirSync(captures);
-		const fakeOrca = path.join(dir, "orca");
-		fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nconst fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))\n`);
-		fs.chmodSync(fakeOrca, 0o755);
+		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const moduleUrl = new URL("../../src/runs/shared/orca-progress-tabs.ts", import.meta.url).href;
 		const childScript = `import {createOrcaProgressTab} from ${JSON.stringify(moduleUrl)};const tab=createOrcaProgressTab({cwd:process.env.CHILD_CWD,runId:'concurrent-sequence',agent:'worker',index:0,config:{enabled:true}});if(!tab)throw new Error('tab unavailable');setTimeout(()=>tab.finish('failed'),100);setTimeout(()=>{},180);`;

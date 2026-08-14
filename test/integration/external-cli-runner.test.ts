@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { resultFilesForSession } from "../../src/runs/background/result-files.ts";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
+import { writeNodeCommand } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -120,12 +121,10 @@ describe("external CLI async lifecycle", () => {
 		const asyncDir = path.join(dir, "async");
 		const agentDir = path.join(dir, "agent-dir");
 		const capture = path.join(dir, "orca-args.json");
-		const fakeOrca = path.join(dir, "orca");
+		const fakeOrca = writeNodeCommand(dir, "orca", "require('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))");
 		fs.mkdirSync(asyncDir);
 		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
 		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
-		fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-		fs.chmodSync(fakeOrca, 0o755);
 		const resultPath = path.join(dir, "result.json");
 		const configPath = path.join(dir, "config.json");
 		fs.writeFileSync(configPath, JSON.stringify({

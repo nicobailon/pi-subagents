@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createOrcaProgressTab, resolveOrcaCommand, resolvePiSessionId } from "../../src/runs/shared/orca-progress-tabs.ts";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
+import { writeNodeCommand } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
 
@@ -54,13 +55,17 @@ function progressFile(prefix: string, suffix: ".log" | ".done"): string {
 
 function captureCommand(command: string, cwd: string): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const child = spawn("/bin/sh", ["-c", command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
 		let output = "";
 		child.stdout.setEncoding("utf-8");
 		child.stdout.on("data", (chunk: string) => { output += chunk; });
 		child.once("error", reject);
 		child.once("close", (code) => code === 0 ? resolve(output) : reject(new Error(`Viewer exited ${code}: ${output}`)));
 	});
+}
+
+function writeCaptureOrca(dir: string): string {
+	return writeNodeCommand(dir, "orca", "require('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))");
 }
 
 test("Orca progress tabs are disabled on Windows", { skip: process.platform === "win32" ? undefined : "Windows-only platform boundary" }, () => {
@@ -77,9 +82,7 @@ test("Orca progress tabs are disabled on Windows", { skip: process.platform === 
 
 test("resolveOrcaCommand only returns executable commands", () => {
 	const dir = tempDir();
-	const executable = path.join(dir, process.platform === "win32" ? "orca.cmd" : "orca");
-	fs.writeFileSync(executable, process.platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
-	if (process.platform !== "win32") fs.chmodSync(executable, 0o755);
+	const executable = writeNodeCommand(dir, "orca", "process.exit(0)");
 	assert.equal(resolveOrcaCommand({ PATH: dir, PATHEXT: ".CMD" }), executable);
 	assert.equal(resolveOrcaCommand({ PATH: "", PI_SUBAGENT_ORCA_BINARY: path.join(dir, "missing") }), undefined);
 });
@@ -99,10 +102,8 @@ test("an unavailable Orca command leaves native execution untouched", () => {
 test("standalone Pi executables use PATH Node for the watchdog and viewer", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
-	const fakeOrca = path.join(dir, "orca");
+	const fakeOrca = writeCaptureOrca(dir);
 	const fakePi = path.join(dir, "pi");
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-	fs.chmodSync(fakeOrca, 0o755);
 	const originalExecPath = process.execPath;
 	try {
 		process.execPath = fakePi;
@@ -130,10 +131,8 @@ test("standalone Pi executables use PATH Node for the watchdog and viewer", { sk
 
 test("hung Orca terminal creation does not delay the owning process", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
-	const fakeOrca = path.join(dir, "orca");
+	const fakeOrca = writeNodeCommand(dir, "orca", "require('fs').writeFileSync(process.env.ORCA_TEST_PID, String(process.pid));setInterval(()=>{},1000)");
 	const pidFile = path.join(dir, "orca.pid");
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_PID, String(process.pid));setInterval(()=>{},1000)\n`);
-	fs.chmodSync(fakeOrca, 0o755);
 	const moduleUrl = new URL("../../src/runs/shared/orca-progress-tabs.ts", import.meta.url).href;
 	const ownerScript = `import {createOrcaProgressTab} from ${JSON.stringify(moduleUrl)};const tab=createOrcaProgressTab({cwd:${JSON.stringify(dir)},runId:'progress-hung-owner',agent:'worker',index:0,config:{enabled:true},command:${JSON.stringify(fakeOrca)},env:{...process.env,ORCA_TEST_PID:${JSON.stringify(pidFile)}}});if(!tab)throw new Error('tab unavailable');`;
 	const startedAt = Date.now();
@@ -160,9 +159,7 @@ test("hung Orca terminal creation does not delay the owning process", { skip: pr
 test("malformed optional observer metadata cannot break child execution", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
-	const fakeOrca = path.join(dir, "orca");
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-	fs.chmodSync(fakeOrca, 0o755);
+	const fakeOrca = writeCaptureOrca(dir);
 	const tab = createOrcaProgressTab({
 		cwd: dir,
 		runId: undefined,
@@ -183,9 +180,7 @@ test("malformed optional observer metadata cannot break child execution", { skip
 test("disabled Orca progress tabs do not invoke Orca", async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
-	const fakeOrca = path.join(dir, "orca");
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-	fs.chmodSync(fakeOrca, 0o755);
+	const fakeOrca = writeCaptureOrca(dir);
 	const tab = createOrcaProgressTab({
 		cwd: dir,
 		runId: "disabled-run",
@@ -204,10 +199,8 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
 	const secondCapture = path.join(dir, "capture-2.json");
-	const fakeOrca = path.join(dir, "orca");
+	const fakeOrca = writeCaptureOrca(dir);
 	fs.mkdirSync(path.join(dir, ".git"));
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-	fs.chmodSync(fakeOrca, 0o755);
 	const runId = `progress-${Date.now()}`;
 	const tab = createOrcaProgressTab({
 		cwd: dir,
@@ -276,9 +269,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 test("viewer strips split terminal control sequences across poll ticks", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
-	const fakeOrca = path.join(dir, "orca");
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-	fs.chmodSync(fakeOrca, 0o755);
+	const fakeOrca = writeCaptureOrca(dir);
 	const runId = `progress-sanitize-${Date.now()}`;
 	const tab = createOrcaProgressTab({
 		cwd: dir,
@@ -309,9 +300,7 @@ test("viewer strips split terminal control sequences across poll ticks", { skip:
 test("mirror output truncates at a finite byte bound", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
-	const fakeOrca = path.join(dir, "orca");
-	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
-	fs.chmodSync(fakeOrca, 0o755);
+	const fakeOrca = writeCaptureOrca(dir);
 	const runId = `progress-bounded-${Date.now()}`;
 	const tab = createOrcaProgressTab({
 		cwd: dir,
