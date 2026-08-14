@@ -5,6 +5,7 @@
 ### Fixed
 - Start Herdr inspector and project pane commands with a shell-safe executable token, including paths that need quoting in Nushell. Thanks to @Rival for #1092.
 - Stop `agentContract.version` from using an `enum` on an integer, which Gemini's function-calling schema subset rejects (the property is dropped from the tool schema but stays in `required`, causing a `400: property is not defined` for every Gemini model). Integer bounds express the same constraint and are valid everywhere. Thanks to @MarcusNeufeldt for #1095.
+- Show supervisor-detached workflow children as paused and needing attention instead of failed while preserving recovery guidance (#1096).
 - Show workflow-owned foreground children and recursive nested runs as a bounded tree in FleetView. Thanks to @expoli for #1086.
 - Warn once, instead of on every heartbeat, when a long-running workflow child outlives its mission record. Thanks to @albertgwo for #1079.
 - Keep deleted-schedule timers from exiting Pi and re-arm recurring schedules after unexpected timer fire failures. Thanks to @albertgwo for #1084.

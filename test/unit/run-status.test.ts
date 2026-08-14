@@ -926,6 +926,45 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("keeps supervisor-detached workflow children out of generic revive guidance", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-detached-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "workflow-detached");
+			const sessionFile = path.join(root, "detached.jsonl");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-detached",
+				mode: "workflow",
+				state: "paused",
+				activityState: "needs_attention",
+				error: "Run 'detaches' detached for intercom coordination. Reply to the supervisor request first, then wait with subagent_wait({ id: \"child-detached\" }). Use subagent({ action: \"status\", id: \"child-detached\" }) to recover the result; do not resume or launch a replacement while it remains detached.",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					workflowKey: "detaches",
+					runId: "child-detached",
+					status: "paused",
+					activityState: "needs_attention",
+					sessionFile,
+				}],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "workflow-detached" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const text = textContent(result);
+			assert.match(text, /Reply to the supervisor request first/);
+			assert.match(text, /wait with subagent_wait\(\{ id: "child-detached" \}\)/);
+			assert.match(text, /do not resume or launch a replacement while it remains detached/);
+			assert.match(text, /Recovery workflow child 'detaches'/);
+			assert.doesNotMatch(text, /Revive workflow child 'detaches'/);
+			assert.doesNotMatch(text, /action: "resume", id: "child-detached"/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("uses original child indexes when result metadata contains invalid children", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-original-index-"));
 		try {

@@ -374,7 +374,11 @@ parentPort.on("message", async (message) => {
     if (!entry) return;
     pending.delete(message.callId);
     if (message.ok) entry.resolve(message.value);
-    else entry.reject(new Error(message.error));
+    else {
+      const error = new Error(message.error);
+      if (message.errorKind === "detached-child") error.workflowErrorKind = "detached-child";
+      entry.reject(error);
+    }
     return;
   }
   if (message.type !== "start") return;
@@ -452,7 +456,7 @@ parentPort.on("message", async (message) => {
     assertJsonValue(persistedValue, "return");
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
-    parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error) });
+    parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error), ...(error && error.workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
   }
 });
 `;
@@ -465,6 +469,7 @@ export interface WorkflowScriptChildResult {
 	runId?: string;
 	output: string;
 	error?: string;
+	detached?: boolean;
 	structuredOutput?: unknown;
 	artifactPaths: string[];
 	results?: unknown[];
@@ -473,7 +478,7 @@ export interface WorkflowScriptChildResult {
 export interface WorkflowScriptTraceEntry {
 	operation: "run" | "status";
 	key: string;
-	state: "started" | "completed" | "failed" | "stopped" | "reused";
+	state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused";
 	/** Canonical child agent name when resolved launch or result data is available. */
 	agent?: string;
 	runId?: string;
@@ -493,11 +498,13 @@ export interface WorkflowScriptResult {
 
 export class WorkflowScriptError extends Error {
 	readonly partial: Omit<WorkflowScriptResult, "value">;
+	readonly errorKind?: "detached-child";
 
-	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">) {
+	constructor(message: string, partial: Omit<WorkflowScriptResult, "value">, errorKind?: "detached-child") {
 		super(message);
 		this.name = "WorkflowScriptError";
 		this.partial = partial;
+		this.errorKind = errorKind;
 	}
 }
 
@@ -646,7 +653,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const traceChanged = () => options.onTrace?.([...trace]);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
-		const finish = (outcome: { value: unknown } | { error: Error }) => {
+		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
 			if (settled) return;
 			settled = true;
 			if (timer) clearTimeout(timer);
@@ -657,7 +664,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				? new Error(`workflowScript completed with unawaited runs.run launch(es): ${unobservedKeys.map((key) => `'${key}'`).join(", ")}. Await or return each launch.`)
 				: undefined;
 			childController.abort("error" in outcome ? outcome.error : completionError ?? new Error("Workflow script completed."));
-			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial()));
+			if ("error" in outcome) reject(new WorkflowScriptError(outcome.error.message, partial(), outcome.error.workflowErrorKind === "detached-child" ? "detached-child" : undefined));
 			else if (completionError) reject(new WorkflowScriptError(completionError.message, partial()));
 			else resolve({ value: outcome.value, ...partial() });
 		};
@@ -726,7 +733,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				}
 				return finish({ value: message.value });
 			}
-			if (message.type === "error") return finish({ error: new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") });
+			if (message.type === "error") {
+				const workflowError = new Error(typeof message.error === "string" ? message.error : "Workflow script failed.") as Error & { workflowErrorKind?: "detached-child" };
+				if (message.errorKind === "detached-child") workflowError.workflowErrorKind = "detached-child";
+				return finish({ error: workflowError });
+			}
 			if (message.type === "runObserved" && typeof message.callId === "number") {
 				const key = typeof message.key === "string" ? message.key : undefined;
 				const launch = key ? launches.get(key) : undefined;
@@ -742,7 +753,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: true, value: omitUndefinedWorkflowValues(value) });
 					},
 					(error: unknown) => {
-						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error) });
+						if (!settled) worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error), ...(error instanceof Error && (error as { workflowErrorKind?: unknown }).workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
 					},
 				);
 			};
@@ -834,7 +845,11 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
 				? promise
 				: promise.then((result) => {
-					if (!result.ok) throw new Error(`Run '${key}' failed: ${result.error ?? result.output}`);
+					if (!result.ok) {
+						const childError = new Error(result.detached ? `Run '${key}' detached: ${result.error ?? result.output}` : `Run '${key}' failed: ${result.error ?? result.output}`) as Error & { workflowErrorKind?: "detached-child" };
+						if (result.detached) childError.workflowErrorKind = "detached-child";
+						throw childError;
+					}
 					return result;
 				});
 			const fingerprint = stableJson(params);
@@ -876,7 +891,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (stoppedLaunches.has(key)) return normalized;
 				children.set(key, normalized);
-				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
+				const state = normalized.ok ? "completed" : normalized.detached ? "detached" : "failed";
+				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });
 				traceChanged();
 				return normalized;
 			}, (error: unknown) => {

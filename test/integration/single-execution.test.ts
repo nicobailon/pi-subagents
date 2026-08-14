@@ -1741,7 +1741,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(detachAccepted, true);
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		assert.match(result.content[0]?.text ?? "", /run detaches: failed/);
+		assert.match(result.content[0]?.text ?? "", /run detaches: detached/);
 		const workflowValue = result.details.workflow?.value as Array<{ ok: boolean; artifactPaths: string[] }>;
 		assert.equal(workflowValue[0]?.ok, false);
 		const handoffPath = workflowValue[0]?.artifactPaths.find((candidate) => candidate.endsWith(".json"));
@@ -1765,6 +1765,220 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		await new Promise((resolve) => setTimeout(resolve, 750));
 		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
 		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
+	});
+
+	it("pauses an async workflow when its child detaches for supervisor coordination", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
+			],
+		});
+		const piEvents = createEventBus();
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const executor = makeExecutor(
+			[makeAgent("worker", { systemPrompt: "Intercom orchestration channel:" })],
+			{},
+			false,
+			undefined,
+			true,
+			asyncJobs,
+			undefined,
+			undefined,
+			piEvents,
+		);
+		let detachAccepted = false;
+		piEvents.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
+			if ((payload as { requestId?: unknown }).requestId === "async-workflow-detach") {
+				detachAccepted ||= (payload as { accepted?: unknown }).accepted === true;
+			}
+		});
+		const detachTimer = setInterval(() => {
+			if (!detachAccepted) piEvents.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "async-workflow-detach" });
+		}, 10);
+		detachTimer.unref();
+
+		const started = await executor.execute(
+			"async-scripted-workflow-detached-worktree",
+			{
+				workflowScript: `
+					const child = await runs.run("detaches", { agent: "worker", task: "Ask then continue", worktree: true });
+					return child.output;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(started.isError, undefined);
+		assert.ok(started.details.asyncId);
+		assert.ok(started.details.asyncDir);
+		const workflowRunId = started.details.asyncId;
+		const statusPath = path.join(started.details.asyncDir, "status.json");
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		const activeMarkerPath = path.join(DIRS.async, ACTIVE_RUN_INDEX_DIR, workflowRunId);
+
+		let status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		for (let attempt = 0; attempt < 150 && status.state !== "paused" && status.state !== "failed"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		}
+		clearInterval(detachTimer);
+
+		assert.equal(detachAccepted, true);
+		assert.equal(status.state, "paused", status.error);
+		assert.equal(status.activityState, "needs_attention");
+		assert.match(status.error ?? "", /detached for intercom coordination/i);
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "failed"), false);
+		assert.equal(status.steps?.[0]?.status, "paused");
+		assert.equal(status.steps?.[0]?.activityState, "needs_attention");
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "paused");
+		assert.equal(asyncJobs.get(workflowRunId)?.activityState, "needs_attention");
+		assert.equal(fs.existsSync(activeMarkerPath), false);
+
+		let persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+			state?: string;
+			activityState?: string;
+			error?: string;
+			summary?: string;
+			workflow?: { trace?: Array<{ key?: string; state?: string }> };
+			results?: Array<{ detached?: boolean; artifactPaths?: { outputPath?: string } }>;
+		};
+		assert.equal(persistedResult.state, "paused");
+		assert.equal(persistedResult.activityState, "needs_attention");
+		assert.match(persistedResult.error ?? "", /Reply to the supervisor request first/);
+		assert.match(persistedResult.summary ?? "", /subagent_wait/);
+		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
+		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "failed"), false);
+		assert.equal(persistedResult.results?.[0]?.detached, true);
+		const handoffPath = persistedResult.results?.[0]?.artifactPaths?.outputPath;
+		assert.ok(handoffPath, "missing preserved worktree handoff path");
+		const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as {
+			groups: Array<{
+				cleanup: { state: string; tasks: Array<{ path: string; branch: string; preserved: boolean; worktreeRemoved: boolean; branchRemoved: boolean }> };
+			}>;
+		};
+		const cleanup = handoff.groups[0]?.cleanup;
+		assert.equal(cleanup?.state, "partial");
+		assert.equal(cleanup?.tasks[0]?.preserved, true);
+		assert.equal(cleanup?.tasks[0]?.worktreeRemoved, false);
+		assert.equal(cleanup?.tasks[0]?.branchRemoved, false);
+		const worktreePath = cleanup?.tasks[0]?.path;
+		const branch = cleanup?.tasks[0]?.branch;
+		assert.ok(worktreePath);
+		assert.ok(branch);
+		assert.equal(fs.existsSync(worktreePath), true, "live detached worktree must remain present");
+
+		await new Promise((resolve) => setTimeout(resolve, 750));
+		persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(persistedResult.state, "paused", "terminal async workflow result must not be overwritten by child completion");
+		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
+		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
+		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
+	it("keeps async workflows failed when a detached child is mixed with a real failure", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
+		mockPi.onCall({
+			matchArgIncludes: "Ask then continue",
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
+			],
+		});
+		mockPi.onCall({ matchArgIncludes: "Fail for real", exitCode: 1, stderr: "real child failure" });
+		const piEvents = createEventBus();
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const executor = makeExecutor(
+			[makeAgent("worker", { systemPrompt: "Intercom orchestration channel:" })],
+			{},
+			false,
+			undefined,
+			true,
+			asyncJobs,
+			undefined,
+			undefined,
+			piEvents,
+		);
+		let detachAccepted = false;
+		piEvents.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
+			if ((payload as { requestId?: unknown }).requestId === "async-workflow-detach-with-failure") {
+				detachAccepted ||= (payload as { accepted?: unknown }).accepted === true;
+			}
+		});
+		const detachTimer = setInterval(() => {
+			if (!detachAccepted) piEvents.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "async-workflow-detach-with-failure" });
+		}, 10);
+		detachTimer.unref();
+
+		const started = await executor.execute(
+			"async-scripted-workflow-detached-and-failed",
+			{
+				workflowScript: `
+					await runs.all([
+						{ key: "detaches", agent: "worker", task: "Ask then continue" },
+						{ key: "fails", agent: "worker", task: "Fail for real" }
+					]);
+					throw new Error("manual hard failure");
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(started.isError, undefined);
+		assert.ok(started.details.asyncId);
+		assert.ok(started.details.asyncDir);
+		const workflowRunId = started.details.asyncId;
+		const statusPath = path.join(started.details.asyncDir, "status.json");
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+
+		let status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		for (let attempt = 0; attempt < 150 && status.state !== "failed" && status.state !== "paused"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		}
+		clearInterval(detachTimer);
+
+		assert.equal(detachAccepted, true);
+		assert.equal(status.state, "failed");
+		assert.equal(status.activityState, undefined);
+		assert.match(status.error ?? "", /manual hard failure/);
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
+		assert.equal(status.workflow?.trace.some((entry) => entry.key === "fails" && entry.state === "failed"), true);
+		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.status, "paused");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.activityState, "needs_attention");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "fails")?.status, "failed");
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "failed");
+		assert.equal(asyncJobs.get(workflowRunId)?.activityState, undefined);
+
+		let persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+			state?: string;
+			activityState?: string;
+			error?: string;
+			workflow?: { trace?: Array<{ key?: string; state?: string }> };
+			results?: Array<{ workflowKey?: string; detached?: boolean; success?: boolean }>;
+		};
+		assert.equal(persistedResult.state, "failed");
+		assert.equal(persistedResult.activityState, undefined);
+		assert.match(persistedResult.error ?? "", /manual hard failure/);
+		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "detaches" && entry.state === "detached"), true);
+		assert.equal(persistedResult.workflow?.trace?.some((entry) => entry.key === "fails" && entry.state === "failed"), true);
+		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "detaches")?.detached, true);
+		assert.equal(persistedResult.results?.find((entry) => entry.workflowKey === "fails")?.success, false);
+
+		await new Promise((resolve) => setTimeout(resolve, 750));
+		persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(persistedResult.state, "failed", "real workflow failure must not be overwritten by detached child completion");
+		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
 	});
 
 	it("inherits workflow-level worktree isolation and allows a child opt-out", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {

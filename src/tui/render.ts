@@ -341,7 +341,7 @@ function visibleWorkflowRows(rows: WorkflowChatProgressRow[]): { rows: WorkflowC
 		selected.add(row.key);
 	};
 	for (const row of [...rows].reverse()) {
-		if (row.state === "failed") add(row);
+		if (row.state === "failed" || row.state === "detached") add(row);
 	}
 	for (const row of [...rows].reverse()) add(row);
 	return {
@@ -1635,7 +1635,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 function workflowRowGlyph(row: WorkflowChatProgressRow, theme: Theme, frame?: number): string {
 	if (row.state === "running") return theme.fg("accent", runningGlyph(frame));
 	if (row.state === "complete") return theme.fg("success", "✓");
-	if (row.state === "stopped") return theme.fg("warning", "■");
+	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", "■");
 	return theme.fg("error", "✗");
 }
 
@@ -1643,12 +1643,13 @@ function workflowRowStateLabel(row: WorkflowChatProgressRow, theme: Theme): stri
 	const label = (row.state === "complete" ? "complete" : row.state).padEnd(8);
 	if (row.state === "running") return theme.fg("accent", label);
 	if (row.state === "complete") return theme.fg("success", label);
-	if (row.state === "stopped") return theme.fg("warning", label);
+	if (row.state === "detached" || row.state === "stopped") return theme.fg("warning", label);
 	return theme.fg("error", label);
 }
 
-function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue: boolean, isError?: boolean): "running" | "complete" | "failed" {
+function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue: boolean, isError?: boolean): "running" | "complete" | "failed" | "paused" {
 	if (isError || rows.some((row) => row.state === "failed")) return "failed";
+	if (rows.some((row) => row.state === "detached")) return "paused";
 	if ((rows.length > 0 && rows.every((row) => row.state === "complete")) || hasTerminalValue) return "complete";
 	return "running";
 }
@@ -1657,7 +1658,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	const workflow = d.workflow;
 	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace) : [];
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
-	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : theme.fg("error", "✗");
+	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
 	const width = getTermWidth() - 4;
 	const runId = d.runId ? d.runId.slice(0, 12) : "workflow";
 	const repoLabel = d.chatProgress?.repoLabel ?? (d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo");
@@ -1678,7 +1679,7 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		const label = row.label && row.label !== row.key ? ` ${oneLine(row.label)}` : "";
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
-		const error = row.error ? ` ${theme.fg("error", `· ${compactWorkflowError(row.error)}`)}` : "";
+		const error = row.error ? ` ${theme.fg(row.state === "detached" ? "warning" : "error", `· ${compactWorkflowError(row.error)}`)}` : "";
 		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
 	}
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));

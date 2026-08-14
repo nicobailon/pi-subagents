@@ -96,7 +96,7 @@ export function resolveWorkflowChatProgress(input: ResolveWorkflowChatProgressIn
 
 export interface WorkflowChatProgressRow {
 	key: string;
-	state: "running" | "complete" | "failed" | "stopped";
+	state: "running" | "complete" | "failed" | "detached" | "stopped";
 	label?: string;
 	phase?: string;
 	runId?: string;
@@ -127,9 +127,11 @@ export function buildWorkflowChatProgressRows(trace: NonNullable<Details["workfl
 			? "complete"
 			: entry.state === "failed"
 				? "failed"
-				: entry.state === "stopped"
-					? "stopped"
-					: "running";
+				: entry.state === "detached"
+					? "detached"
+					: entry.state === "stopped"
+						? "stopped"
+						: "running";
 		const label = cleanLabel(entry.label);
 		const phase = cleanLabel(entry.phase);
 		if (label) next.label = label;

@@ -291,6 +291,34 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("tags only fail-fast detached child errors as detached-child", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return await runs.run("detaches", { agent: "worker", task: "ask" });`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: false, detached: true, output: "reply first", error: "reply first", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "detached-child" && /Run 'detaches' detached/.test(error.message),
+		);
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `
+					await runs.all([{ key: "detaches", agent: "worker", task: "ask" }]);
+					throw new Error("manual hard failure");
+				`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: false, detached: true, output: "reply first", error: "reply first", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.errorKind === undefined
+				&& /manual hard failure/.test(error.message)
+				&& error.partial.children[0]?.detached === true,
+		);
+	});
+
 	it("validates every runs.all item before launching children", async () => {
 		const malformedScripts = [
 			`return await runs.all([{ key: "valid", agent: "worker", task: "run" }, null]);`,
