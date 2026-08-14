@@ -99,6 +99,10 @@ describe("subagent extension RPC bridge", () => {
 			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
 			{ version: 1 },
 		);
+		assert.deepEqual(
+			(reply as { data: { capabilities?: { asyncStatusSnapshot?: unknown } } }).data.capabilities?.asyncStatusSnapshot,
+			{ kind: "pi-subagents.async-status-snapshot", version: 1 },
+		);
 
 		bridge.dispose();
 	});
@@ -204,6 +208,51 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(entry.goal, undefined);
 		assert.ok(entry.agent.length <= 96);
 		assert.match(entry.agent, /^worker broken/);
+		bridge.dispose();
+	});
+
+	it("adds a bounded current async status snapshot to status replies", async () => {
+		const events = new FakeEvents();
+		const state = {
+			currentSessionId: "/sessions/parent.jsonl",
+			foregroundControls: new Map(),
+			asyncJobs: new Map([["run-1", {
+				asyncId: "run-1",
+				asyncDir: "/tmp/PRIVATE_RPC_LEAK/run-1",
+				cwd: "/repo/PRIVATE_RPC_LEAK",
+				sessionDir: "/sessions/PRIVATE_RPC_LEAK",
+				outputFile: "/tmp/PRIVATE_RPC_LEAK/output.log",
+				sessionId: "/sessions/parent.jsonl",
+				status: "running",
+				mode: "single",
+				agents: ["worker"],
+				currentTool: "read",
+				steps: [{ agent: "worker", status: "running", currentToolArgs: "PRIVATE_RPC_LEAK args", recentOutput: ["PRIVATE_RPC_LEAK output"] }],
+			}]]),
+			fleetJobs: new Map([["done", {
+				asyncId: "done",
+				asyncDir: "/tmp/done",
+				sessionId: "/sessions/parent.jsonl",
+				status: "complete",
+				agents: ["reviewer"],
+				updatedAt: 50,
+			}]]),
+		} as any;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx("runtime-session-id", "/sessions/parent.jsonl"),
+			state,
+			execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any),
+		});
+
+		const reply = await request(events, "async-snapshot", "status");
+		const snapshot = (reply as any).data.asyncSnapshot;
+		assert.equal(snapshot.kind, "pi-subagents.async-status-snapshot");
+		assert.equal(snapshot.version, 1);
+		assert.deepEqual(snapshot.runs.map((run: { id: string }) => run.id).sort(), ["done", "run-1"]);
+		assert.equal(JSON.stringify(snapshot).includes("PRIVATE_RPC_LEAK"), false);
+		assert.equal(JSON.stringify(snapshot).includes("currentToolArgs"), false);
+		assert.equal(JSON.stringify(snapshot).includes("recentOutput"), false);
 		bridge.dispose();
 	});
 

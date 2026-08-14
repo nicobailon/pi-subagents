@@ -209,6 +209,32 @@ describe("subagent async widget rendering", () => {
 		assert.ok(lines.length <= 10, "collapsed component should stay under Pi's string-widget cap even though it bypasses it");
 	});
 
+	it("uses a bounded string-array snapshot widget in RPC mode", () => {
+		const ui = createUiContext();
+		(ui.ctx as { mode?: string }).mode = "rpc";
+		renderWidget(ui.ctx as never, [{
+			asyncId: "run-rpc",
+			asyncDir: "/tmp/private-run-rpc",
+			cwd: "/repo/private",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			currentTool: "bash",
+			steps: [{ agent: "worker", status: "running", currentToolArgs: "private args" }],
+		}]);
+
+		const widget = ui.widgets.at(-1);
+		assert.ok(Array.isArray(widget), "RPC mode should install a string-array widget payload");
+		const [line] = widget as string[];
+		assert.ok(line?.startsWith("PI_SUBAGENT_ASYNC_JSON:"));
+		const snapshot = JSON.parse(line.slice("PI_SUBAGENT_ASYNC_JSON:".length));
+		assert.equal(snapshot.kind, "pi-subagents.async-status-snapshot");
+		assert.equal(snapshot.version, 1);
+		assert.equal(snapshot.runs[0].id, "run-rpc");
+		assert.equal(JSON.stringify(snapshot).includes("/tmp/private-run-rpc"), false);
+		assert.equal(JSON.stringify(snapshot).includes("private args"), false);
+	});
+
 	it("honors the component render width instead of the terminal width", () => {
 		resetWidgetLayout();
 		withStdoutSize(50, 120, () => {

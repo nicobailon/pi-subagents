@@ -134,6 +134,14 @@ describe("registerSubagentNotify", () => {
 		});
 	});
 
+	it("does not attach async status snapshots to subagent-notify details", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver(completionResult({ id: "direct-no-snapshot" })), true);
+		const message = sent[0]?.message as { customType?: string; details?: Record<string, unknown> } | undefined;
+		assert.equal(message?.customType, "subagent-notify");
+		assert.equal(message?.details?.asyncSnapshot, undefined);
+	});
+
 	it("acknowledges direct delivery only after sendMessage accepts it", async () => {
 		const { notifier, sent } = createPi("session-a");
 		assert.equal(await notifier.deliver(completionResult({ id: "direct-accepted" })), true);
