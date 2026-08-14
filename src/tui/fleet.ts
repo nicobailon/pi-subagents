@@ -21,6 +21,7 @@ import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
 
 const REFRESH_MS = 750;
+const MIN_REFRESH_MS = 250;
 const MAX_RECENT_ASYNC_RUNS = 20;
 const MAX_FLEET_HISTORY_CANDIDATES = 100;
 const TRANSCRIPT_LINES = 200;
@@ -710,7 +711,8 @@ export class SubagentFleetComponent implements Component {
 	private actionBusy = false;
 	private transcriptCache: FleetTranscriptCache | undefined;
 	private disposed = false;
-	private readonly timer: ReturnType<typeof setInterval>;
+	private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+	private readonly refreshMs: number;
 	private readonly tui: FleetTui;
 	private readonly theme: Theme;
 	private readonly markdownTheme: MarkdownTheme;
@@ -733,14 +735,31 @@ export class SubagentFleetComponent implements Component {
 		this.done = done;
 		this.options = options;
 		this.keybindings = resolveFleetKeybindings(options.fleetKeybindings);
+		this.refreshMs = Math.max(MIN_REFRESH_MS, options.refreshMs ?? REFRESH_MS);
 		this.selectedKey = options.initialKey;
 		this.refresh();
-		this.timer = setInterval(() => {
+		this.scheduleRefresh();
+	}
+
+	private scheduleRefresh(): void {
+		if (this.disposed || this.refreshTimer) return;
+		this.refreshTimer = setTimeout(() => {
+			this.refreshTimer = undefined;
 			if (this.disposed) return;
-			this.invalidate();
-			this.tui.requestRender();
-		}, options.refreshMs ?? REFRESH_MS);
-		this.timer.unref?.();
+			try {
+				this.invalidate();
+				this.tui.requestRender();
+			} finally {
+				this.scheduleRefresh();
+			}
+		}, this.refreshMs);
+		this.refreshTimer.unref?.();
+	}
+
+	private stopRefresh(): void {
+		this.disposed = true;
+		if (this.refreshTimer) clearTimeout(this.refreshTimer);
+		this.refreshTimer = undefined;
 	}
 
 	private refresh(): void {
@@ -1015,6 +1034,7 @@ export class SubagentFleetComponent implements Component {
 			return;
 		}
 		if (matchesFleetAction(data, this.keybindings, "close")) {
+			this.stopRefresh();
 			this.done(undefined);
 			return;
 		}
@@ -1239,8 +1259,7 @@ export class SubagentFleetComponent implements Component {
 	}
 
 	dispose(): void {
-		this.disposed = true;
-		clearInterval(this.timer);
+		this.stopRefresh();
 	}
 }
 

@@ -18,6 +18,7 @@ type FleetStatusTui = {
 type FleetStatusEntry = {
 	key: string;
 	parentKey?: string;
+	workflowWrapper?: boolean;
 	agent: string;
 	modelThinking?: string;
 	description?: string;
@@ -223,6 +224,10 @@ function foregroundDescription(control: { parentWorkflowRunId?: string; workflow
 	return description ? `${workflow} · ${description}` : workflow;
 }
 
+function activeLeafAgentCount(entries: FleetStatusEntry[]): number {
+	return entries.filter((entry) => !entry.workflowWrapper).length;
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
@@ -271,6 +276,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			entries.push({
 				key: `async:${job.asyncId}`,
+				workflowWrapper: true,
 				agent: "workflow",
 				description: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
 				startedAt,
@@ -519,8 +525,9 @@ export class SubagentFleetStatus {
 			const hasNativeRows = this.entries.some((entry) => !entry.external);
 			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
 			const asyncRuns = capacity && showNativeSummary ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
+			const activeEntries = activeLeafAgentCount(this.entries);
 			const noun = this.entries.some((entry) => entry.external) ? "job" : "agent";
-			const agents = this.entries.length > 0 ? `${this.entries.length} active ${noun}${this.entries.length === 1 ? "" : "s"}` : "";
+			const agents = activeEntries > 0 ? `${activeEntries} active ${noun}${activeEntries === 1 ? "" : "s"}` : "";
 			const label = [agents, asyncRuns].filter(Boolean).join(" · ");
 			const detail = [showNativeSummary ? formatFleetTokens(tokens) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
 			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", detail)}`, width)];

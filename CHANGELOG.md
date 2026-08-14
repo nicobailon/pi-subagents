@@ -8,6 +8,7 @@
 - Add an optional `foregroundDetachShortcut` binding and show it in the running single-subagent card, so foreground work can be moved to the background without editing package source. Thanks to @Lewis-E for #1097.
 
 ### Fixed
+- Keep the FleetView overlay refreshed while open and count active leaf agents in the compact summary. Thanks to @Don-Yin for #1108.
 - Reject configured subagent models that are not in the active host model registry before spawning a child, instead of forwarding an invalid `--model` argument to Pi. Thanks to @DresvyanskiyDenis for #1093.
 - Start Herdr inspector and project pane commands with a shell-safe executable token, including paths that need quoting in Nushell. Thanks to @Rival for #1092.
 - Stop `agentContract.version` from using an `enum` on an integer, which Gemini's function-calling schema subset rejects (the property is dropped from the tool schema but stays in `required`, causing a `400: property is not defined` for every Gemini model). Integer bounds express the same constraint and are valid everywhere. Thanks to @MarcusNeufeldt for #1095.

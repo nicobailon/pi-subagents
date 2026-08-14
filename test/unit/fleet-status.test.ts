@@ -754,6 +754,9 @@ describe("below-editor subagent FleetView", () => {
 		try {
 			fleet.setContext(ctx);
 			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+			const compact = component.render(120);
+			assert.match(compact[0]!, /2 active agents/, "workflow wrappers must not be counted as leaf agents");
+			assert.doesNotMatch(compact[0]!, /3 active agents/);
 			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
 			const lines = component.render(120);
 			const workflowIndex = lines.findIndex((line) => line.includes("workflow · running"));

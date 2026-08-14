@@ -1434,6 +1434,40 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("periodically redraws only while the overlay remains open", (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const state = stateForTest();
+		let renderRequests = 0;
+		let closed = false;
+		const tui = { terminal: { rows: 28, columns: 90 }, requestRender: () => { renderRequests++; } };
+		const component = new SubagentFleetComponent(
+			tui as never,
+			theme as never,
+			state,
+			() => { closed = true; },
+			{ refreshMs: 10 },
+		);
+		t.mock.timers.tick(249);
+		assert.equal(renderRequests, 0, "refresh cadence is bounded away from a hot loop");
+		t.mock.timers.tick(1);
+		assert.equal(renderRequests, 1);
+		component.handleInput("\x1b");
+		assert.equal(closed, true);
+		t.mock.timers.tick(1_000);
+		assert.equal(renderRequests, 1, "closing cancels periodic redraws");
+
+		const disposed = new SubagentFleetComponent(
+			tui as never,
+			theme as never,
+			state,
+			() => {},
+			{ refreshMs: 250 },
+		);
+		disposed.dispose();
+		t.mock.timers.tick(1_000);
+		assert.equal(renderRequests, 1, "disposing cancels periodic redraws");
+	});
+
 	it("refreshes the roster while the overlay remains open", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-refresh-"));
 		try {
@@ -1445,7 +1479,7 @@ describe("native subagent fleet", () => {
 				theme as never,
 				state,
 				() => {},
-				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 10 },
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 250 },
 			);
 			let invalidations = 0;
 			const originalInvalidate = component.invalidate.bind(component);
@@ -1457,7 +1491,7 @@ describe("native subagent fleet", () => {
 				assert.ok(component.render(90).some((line) => line.includes("No tracked children")));
 				const initialOutput = Array.from({ length: 40 }, (_, index) => `output line ${index}`).join("\n");
 				const asyncDir = writeAsyncRun(root, { id: "appeared-live", output: initialOutput });
-				await new Promise((resolve) => setTimeout(resolve, 35));
+				await new Promise((resolve) => setTimeout(resolve, 275));
 				let lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("appeared")));
 				assert.ok(lines.some((line) => line.includes("output line 39")));
