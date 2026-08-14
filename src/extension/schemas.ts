@@ -93,7 +93,7 @@ const AcceptanceOverride = Type.Unsafe({
 });
 
 const AgentContractOverride = Type.Object({
-	version: Type.Integer({ enum: [1], description: "Enable compatibility behavior for this run/child." }),
+	version: Type.Integer({ minimum: 1, maximum: 1, description: "Enable compatibility behavior for this run/child." }),
 }, { additionalProperties: false, description: "Compatibility behavior. Omit for the default behavior." });
 
 const ChainGateOverride = Type.String({

@@ -225,6 +225,17 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
+	it("keeps agentContract.version as integer bounds without an enum (Gemini schema subset)", () => {
+		const agentContract = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.agentContract;
+		assert.ok(agentContract, "agentContract schema should exist");
+		const version = (agentContract.properties as Record<string, JsonSchemaNode> | undefined)?.version;
+		assert.ok(version, "agentContract.version schema should exist");
+		assert.equal(version.type, "integer");
+		assert.equal(version.minimum, 1);
+		assert.equal(version.maximum, 1);
+		assert.equal(version.enum, undefined);
+	});
+
 	it("documents workflow timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
