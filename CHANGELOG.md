@@ -9,6 +9,7 @@
 
 ### Fixed
 - Remove the native generic `intercom` compatibility fallback from supervisor coordination while preserving `contact_supervisor`, `subagent_supervisor`, and external `intercom` providers. Thanks to @jaudiger for #1107.
+- Report an actionable project-settings override when duplicate ambient Pi extensions prevent a child from starting (#1114).
 - Keep the FleetView overlay refreshed while open and count active leaf agents in the compact summary. Thanks to @Don-Yin for #1108.
 - Keep user-requested foreground detaches from showing supervisor-response recovery guidance. Thanks to @Lewis-E for #1109.
 - Reject configured subagent models that are not in the active host model registry before spawning a child, instead of forwarding an invalid `--model` argument to Pi. Thanks to @DresvyanskiyDenis for #1093.

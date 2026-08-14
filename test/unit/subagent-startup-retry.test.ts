@@ -4,6 +4,7 @@ import type { Usage } from "../../src/shared/types.ts";
 import {
 	MAX_SUBAGENT_STARTUP_FAILURE_DURATION_MS,
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentExtensionConflictError,
 	formatSubagentStartupRetryExhaustedError,
 	formatSubagentStartupRetryNote,
 	isRetryableSubagentStartupFailure,
@@ -67,6 +68,20 @@ describe("subagent startup retry", () => {
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ timedOut: true })), false);
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ stopped: true })), false);
 		assert.equal(isRetryableSubagentStartupFailure(startupFailure({ turnBudgetExceeded: true })), false);
+	});
+
+	it("adds actionable guidance for ambient extension registration conflicts", () => {
+		const conflict = 'Error: Failed to load extension "/tmp/pi-mcp-adapter-clone/index.ts": Tool "mcpScript" conflicts with /tmp/pi-mcp-adapter/index.ts\nError: Failed to load extension "/tmp/pi-mcp-adapter-clone/index.ts": Flag "--mcp-config" conflicts with /tmp/pi-mcp-adapter/index.ts';
+		const formatted = formatSubagentExtensionConflictError(conflict, {
+			agent: "reviewer",
+			ambientExtensionsEnabled: true,
+		});
+
+		assert.match(formatted ?? "", /loaded conflicting ambient Pi extensions/);
+		assert.match(formatted ?? "", /\.pi\/settings\.json/);
+		assert.match(formatted ?? "", /\{"subagents":\{"agentOverrides":\{"reviewer":\{"extensions":\[\]\}\}\}\}/);
+		assert.equal(formatSubagentExtensionConflictError(conflict, { agent: "reviewer", ambientExtensionsEnabled: false }), conflict);
+		assert.equal(formatSubagentExtensionConflictError("authentication failed", { agent: "reviewer", ambientExtensionsEnabled: true }), "authentication failed");
 	});
 
 	it("formats retry and exhaustion diagnostics without task content", () => {

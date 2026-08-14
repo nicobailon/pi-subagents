@@ -568,6 +568,19 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.error, "Detached for intercom coordination before task completion.");
 	});
 
+	it("persists actionable guidance for ambient extension registration conflicts", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			exitCode: 1,
+			stderr: 'Error: Failed to load extension "/tmp/pi-mcp-adapter-clone/index.ts": Flag "--mcp-config" conflicts with /tmp/pi-mcp-adapter/index.ts',
+		});
+		const id = `async-extension-conflict-${Date.now().toString(36)}`;
+		launchProtocolTest(id);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /loaded conflicting ambient Pi extensions/);
+		assert.match(payload.results[0]?.error ?? "", /"worker":\{"extensions":\[\]\}/);
+	});
+
 	it("persists absent output provenance when async lifecycle text is synthetic", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ jsonl: [mockAssistantMessage("", "tool_use")], stderr: "mock child failure", exitCode: 1 });
 		const id = `async-output-absent-${Date.now().toString(36)}`;

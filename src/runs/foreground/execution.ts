@@ -76,6 +76,7 @@ import {
 } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentExtensionConflictError,
 	formatSubagentStartupRetryExhaustedError,
 	formatSubagentStartupRetryNote,
 	isRetryableSubagentStartupFailure,
@@ -1347,6 +1348,10 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
+	result.error = formatSubagentExtensionConflictError(result.error, {
+		agent: agent.name,
+		ambientExtensionsEnabled: !launchResolvedExtensions.disableAmbientExtensions,
+	});
 	if (result.error && result.exitCode === 0) {
 		result.exitCode = 1;
 	}

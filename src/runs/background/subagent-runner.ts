@@ -85,6 +85,7 @@ import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDi
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
+	formatSubagentExtensionConflictError,
 	formatSubagentStartupRetryExhaustedError,
 	formatSubagentStartupRetryNote,
 	isRetryableSubagentStartupFailure,
@@ -1606,15 +1607,21 @@ async function runSingleStep(
 			stopped: run.stopped,
 			turnBudgetExceeded: run.turnBudgetExceeded,
 		})) ? formatProcessSignalError(run.processSignal!) : undefined;
-		const error = toolAvailabilityError
-			?? completionGuardError
-			?? structuredError
-			?? emptyOutputError
-			?? (hiddenError?.hasError
-				? hiddenError.details
-					? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
-					: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-				: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined));
+		const error = formatSubagentExtensionConflictError(
+			toolAvailabilityError
+				?? completionGuardError
+				?? structuredError
+				?? emptyOutputError
+				?? (hiddenError?.hasError
+					? hiddenError.details
+						? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
+						: `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
+					: run.error || signalError || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined)),
+			{
+				agent: step.agent,
+				ambientExtensionsEnabled: launchResolvedExtensions?.disableAmbientExtensions === false,
+			},
+		);
 		const attempt: ModelAttempt = omitUndefinedProperties({
 			model: candidate ?? run.model ?? step.model ?? "default",
 			success: effectiveExitCode === 0 && !error,

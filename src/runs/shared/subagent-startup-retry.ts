@@ -12,6 +12,7 @@ export const SUBAGENT_STARTUP_RETRY_DELAYS_MS = [250, 750, 1500] as const;
 export const MAX_SUBAGENT_STARTUP_FAILURE_DURATION_MS = 2000;
 
 const SIGKILL_PROCESS_SIGNAL_ERROR = formatProcessSignalError("SIGKILL");
+const EXTENSION_REGISTRATION_CONFLICT_PATTERN = /Failed to load extension\b[^\n]*:\s*(?:Tool|Flag)\s+"[^"]+"\s+conflicts with\b/i;
 
 export interface SubagentStartupFailureEvidence {
 	exitCode: number | null | undefined;
@@ -29,6 +30,17 @@ export interface SubagentStartupFailureEvidence {
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudgetExceeded?: boolean;
+}
+
+export function formatSubagentExtensionConflictError(
+	error: string | undefined,
+	input: { agent: string; ambientExtensionsEnabled: boolean },
+): string | undefined {
+	if (!error || !input.ambientExtensionsEnabled || !EXTENSION_REGISTRATION_CONFLICT_PATTERN.test(error)) return error;
+	const settings = JSON.stringify({
+		subagents: { agentOverrides: { [input.agent]: { extensions: [] } } },
+	});
+	return `${error}\n\nSubagent startup loaded conflicting ambient Pi extensions. Retry this run after disabling ambient extension discovery for agent ${JSON.stringify(input.agent)} in project .pi/settings.json: ${settings}. Replace the empty array with only the required extension entry paths when this agent needs extension tools.`;
 }
 
 function hasUsage(usage: Usage): boolean {

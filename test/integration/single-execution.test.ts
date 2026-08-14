@@ -6359,6 +6359,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(firstDetachResponse, true);
 	});
 
+	it("returns actionable guidance for ambient extension registration conflicts", async () => {
+		mockPi.onCall({
+			exitCode: 1,
+			stderr: 'Error: Failed to load extension "/tmp/pi-mcp-adapter-clone/index.ts": Tool "mcpScript" conflicts with /tmp/pi-mcp-adapter/index.ts',
+		});
+		const agents = makeAgentConfigs(["echo"]);
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {});
+
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /loaded conflicting ambient Pi extensions/);
+		assert.match(result.error ?? "", /"echo":\{"extensions":\[\]\}/);
+	});
+
 	it("handles stderr without exit code as info (not error)", async () => {
 		mockPi.onCall({ output: "Success", stderr: "Warning: something", exitCode: 0 });
 		const agents = makeAgentConfigs(["echo"]);
