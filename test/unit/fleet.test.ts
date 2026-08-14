@@ -367,15 +367,25 @@ describe("native subagent fleet", () => {
 		assert.equal(snapshot.items[0]?.agent, "workflow");
 	});
 
-	it("labels workflow-owned foreground children and opens their parent Herdr inspector", async () => {
+	it("hides workflow-owned foreground duplicates and opens the workflow parent inspector", async () => {
 		const state = stateForTest();
 		state.asyncJobs.set("workflow-1", {
 			asyncId: "workflow-1",
 			asyncDir: "/tmp/workflow-1",
+			sessionId: "session-current",
 			status: "running",
 			mode: "workflow",
 			startedAt: 10,
 			updatedAt: 20,
+		});
+		state.asyncJobs.set("unrelated", {
+			asyncId: "unrelated",
+			asyncDir: "/tmp/unrelated",
+			sessionId: "session-current",
+			status: "running",
+			mode: "single",
+			startedAt: 5,
+			updatedAt: 30,
 		});
 		state.foregroundControls.set("child-1", {
 			runId: "child-1",
@@ -387,8 +397,7 @@ describe("native subagent fleet", () => {
 			activeChildren: new Map([[0, { index: 0, agent: "reviewer", startedAt: 10, updatedAt: 20 }]]),
 		});
 		const snapshot = collectFleetSnapshot(state);
-		const child = snapshot.items.find((item) => item.key === "foreground-active:child-1:0");
-		assert.equal(child?.kind, "foreground-active");
+		assert.deepEqual(snapshot.items.map((item) => item.key), ["async:unrelated", "async:workflow-1"]);
 		const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
 		const component = new SubagentFleetComponent(
 			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
@@ -406,7 +415,7 @@ describe("native subagent fleet", () => {
 			},
 		);
 		try {
-			assert.ok(component.render(100).some((line) => line.includes("Workflow child of: workflow-1 (review)")));
+			assert.ok(component.render(100).some((line) => line.includes("workflow")));
 			component.handleInput("H");
 			await new Promise((resolve) => setImmediate(resolve));
 			assert.deepEqual(calls, [{ runId: "workflow-1", asyncDir: "/tmp/workflow-1" }]);

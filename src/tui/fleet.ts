@@ -186,8 +186,13 @@ export function collectFleetSnapshot(
 ): FleetSnapshot {
 	const items: FleetItem[] = [];
 	const activeForegroundIds = new Set<string>();
+	const trackedJobs = state.fleetJobs ?? state.asyncJobs;
+	const workflowParentIds = new Set([...trackedJobs.values()]
+		.filter((job) => job.mode === "workflow" && belongsToCurrentSession(job.sessionId, state.currentSessionId))
+		.map((job) => job.asyncId));
 	for (const control of [...state.foregroundControls.values()].sort((left, right) => right.updatedAt - left.updatedAt)) {
 		activeForegroundIds.add(control.runId);
+		if (control.parentWorkflowRunId && workflowParentIds.has(control.parentWorkflowRunId)) continue;
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
 				items.push({
@@ -222,7 +227,7 @@ export function collectFleetSnapshot(
 	try {
 		let runs: AsyncRunSummary[];
 		const descriptions = new Map<string, string>();
-		const tracked = [...(state.fleetJobs ?? state.asyncJobs).values()]
+		const tracked = [...trackedJobs.values()]
 			.filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
 		const byUpdate = (left: AsyncJobState, right: AsyncJobState) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0);
 		const active = tracked.filter((job) => job.status === "queued" || job.status === "running").sort(byUpdate);
@@ -274,6 +279,27 @@ export function collectFleetSnapshot(
 		}
 	}
 	return { items, ...(error ? { error } : {}) };
+}
+
+function visibleWorkflowParentKeyForForegroundKey(state: SubagentState, key: string, items: FleetItem[]): string | undefined {
+	for (const control of state.foregroundControls.values()) {
+		if (!control.parentWorkflowRunId) continue;
+		let matches = false;
+		if (control.activeChildren) {
+			for (const child of control.activeChildren.values()) {
+				if (`foreground-active:${control.runId}:${child.index}` === key) {
+					matches = true;
+					break;
+				}
+			}
+		} else {
+			matches = `foreground-active:${control.runId}:${control.currentIndex ?? 0}` === key;
+		}
+		if (!matches) continue;
+		const parentKey = `async:${control.parentWorkflowRunId}`;
+		return items.some((item) => item.key === parentKey) ? parentKey : undefined;
+	}
+	return undefined;
 }
 
 function statusGlyph(item: FleetItem, theme: Theme): string {
@@ -665,7 +691,11 @@ export class SubagentFleetComponent implements Component {
 	private refresh(): void {
 		const previousKey = this.snapshot.items[this.selected]?.key ?? this.selectedKey;
 		this.snapshot = collectFleetSnapshot(this.state, this.options);
-		const preserved = previousKey ? this.snapshot.items.findIndex((item) => item.key === previousKey) : -1;
+		let preserved = previousKey ? this.snapshot.items.findIndex((item) => item.key === previousKey) : -1;
+		if (preserved < 0 && previousKey) {
+			const parentKey = visibleWorkflowParentKeyForForegroundKey(this.state, previousKey, this.snapshot.items);
+			if (parentKey) preserved = this.snapshot.items.findIndex((item) => item.key === parentKey);
+		}
 		this.selected = preserved >= 0 ? preserved : Math.min(this.selected, Math.max(0, this.snapshot.items.length - 1));
 		this.selectedKey = this.snapshot.items[this.selected]?.key;
 	}

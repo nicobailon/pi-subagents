@@ -417,6 +417,16 @@ describe("below-editor subagent FleetView", () => {
 				thinking: "medium",
 				startedAt: 10,
 				lastUpdate: 20,
+				...(index === 4 ? {
+					children: [{
+						id: "nested-hidden-child",
+						parentRunId: "nested-4",
+						depth: 2,
+						path: [{ runId: "supervisor", stepIndex: 0 }, { runId: "nested-4" }],
+						state: "running" as const,
+						agent: "hidden-child",
+					}],
+				} : {}),
 			})),
 		});
 		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
@@ -448,7 +458,8 @@ describe("below-editor subagent FleetView", () => {
 				assert.match(line!, new RegExp(state));
 			}
 			assert.doesNotMatch(lines, /leaf-4.*running/);
-			assert.match(lines, /\+1 nested leaves/);
+			assert.doesNotMatch(lines, /hidden-child/);
+			assert.match(lines, /\+2 nested leaves/);
 		} finally {
 			fleet.dispose();
 		}
@@ -592,6 +603,171 @@ describe("below-editor subagent FleetView", () => {
 			agent: "reviewer",
 			description: "workflow child: workflow-1 (review) · Review the change",
 		}]);
+	});
+
+	it("renders a workflow-owned foreground child under its workflow parent", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			startedAt: 10,
+			updatedAt: 20,
+			nestedChildren: [{
+				id: "owner-nested",
+				parentRunId: "workflow-1",
+				depth: 1,
+				path: [{ runId: "workflow-1" }],
+				state: "running",
+				agent: "owner-nested",
+			}],
+		});
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 11,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "reviewer", startedAt: 11, updatedAt: 20 }]]),
+			nestedChildren: [{
+				id: "nested-review",
+				parentRunId: "child-1",
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: "child-1", stepIndex: 0 }],
+				state: "running",
+				agent: "nested-reviewer",
+			}],
+		});
+		state.foregroundControls.set("child-2", {
+			runId: "child-2",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "test",
+			mode: "single",
+			startedAt: 12,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "tester", startedAt: 12, updatedAt: 20 }]]),
+			nestedChildren: [{
+				id: "nested-test",
+				parentRunId: "child-2",
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: "child-2", stepIndex: 0 }],
+				state: "running",
+				agent: "nested-tester",
+			}],
+		});
+		const entries = collectFleetStatusEntries(state);
+		assert.deepEqual(entries.map((entry) => [entry.key, entry.parentKey]), [
+			["async:workflow-1", undefined],
+			["foreground-active:child-1:0", "async:workflow-1"],
+			["foreground-active:child-2:0", "async:workflow-1"],
+		]);
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+			const lines = component.render(120);
+			const workflowIndex = lines.findIndex((line) => line.includes("workflow · running"));
+			const childIndex = lines.findIndex((line) => line.includes("reviewer · running"));
+			const nestedIndex = lines.findIndex((line) => line.includes("nested-reviewer"));
+			const secondChildIndex = lines.findIndex((line) => line.includes("tester · running"));
+			const secondNestedIndex = lines.findIndex((line) => line.includes("nested-tester"));
+			const ownerNestedIndex = lines.findIndex((line) => line.includes("owner-nested"));
+			assert.ok(workflowIndex >= 0 && childIndex > workflowIndex && nestedIndex > childIndex);
+			assert.ok(secondChildIndex > nestedIndex && secondNestedIndex > secondChildIndex && ownerNestedIndex > secondNestedIndex);
+			assert.match(lines[childIndex]!, /├─.*reviewer/);
+			assert.match(lines[nestedIndex]!, /├─.*nested-reviewer/);
+			assert.match(lines[secondNestedIndex]!, /├─.*nested-tester/);
+			assert.match(lines[ownerNestedIndex]!, /└─.*owner-nested/);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("renders recursive nested runs and steps within the existing row budget", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("supervisor", {
+			asyncId: "supervisor",
+			asyncDir: "/tmp/supervisor",
+			status: "running",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			steps: [{ agent: "supervisor", index: 0, status: "running" }],
+			nestedChildren: [{
+				id: "level-one",
+				parentRunId: "supervisor",
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: "supervisor", stepIndex: 0 }],
+				state: "running",
+				agent: "level-one",
+				children: [{
+					id: "level-two",
+					parentRunId: "level-one",
+					depth: 2,
+					path: [{ runId: "supervisor", stepIndex: 0 }, { runId: "level-one" }],
+					state: "running",
+					mode: "parallel",
+					steps: [{
+						agent: "level-two",
+						status: "running",
+						children: [0, 1, 2, 3].map((index) => ({
+							id: `leaf-${index}`,
+							parentRunId: "level-two",
+							depth: 3,
+							path: [{ runId: "level-two" }],
+							state: "running" as const,
+							agent: `leaf-${index}`,
+						})),
+					}],
+				}],
+			}],
+		});
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+			const lines = component.render(140).join("\n");
+			assert.match(lines, /level-one/);
+			assert.match(lines, /level-two/);
+			assert.match(lines, /leaf-0/);
+			assert.match(lines, /leaf-1/);
+			assert.doesNotMatch(lines, /leaf-[23]/);
+			assert.match(lines, /\+2 nested leaves/);
+		} finally {
+			fleet.dispose();
+		}
 	});
 
 	it("uses the same item keys as the full inspector", () => {
