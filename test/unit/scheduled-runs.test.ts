@@ -66,7 +66,7 @@ function context(cwd: string, sessionId = "session-a"): ExtensionContext {
 	} as unknown as ExtensionContext;
 }
 
-function harness(options: { cwd?: string; sessionId?: string; now?: number; config?: ExtensionConfig } = {}): Harness {
+function harness(options: { cwd?: string; sessionId?: string; now?: number; config?: ExtensionConfig; randomId?: () => string } = {}): Harness {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-test-"));
 	roots.push(root);
 	const project = options.cwd ?? path.join(root, "project");
@@ -80,7 +80,7 @@ function harness(options: { cwd?: string; sessionId?: string; now?: number; conf
 		config: options.config ?? { scheduledRuns: { enabled: true } },
 		storeRoot: path.join(root, "stores"),
 		now: () => clock.now,
-		randomId: () => `id-${++id}`,
+		randomId: options.randomId ?? (() => `id-${++id}`),
 		timers,
 		launch: (params, launchCtx) => new Promise((resolve) => launches.push({ params: params as Record<string, unknown>, ctx: launchCtx, resolve: resolve as Launch["resolve"] })) as never,
 	});
@@ -237,6 +237,41 @@ describe("project schedule management", () => {
 		assert.match(text(await h.manager.handleToolCall({ action: "schedule.list" }, h.ctx)), /No project schedules/);
 	});
 
+	it("ignores schedules deleted by another session while a timer is still armed", async () => {
+		const first = harness();
+		await first.manager.handleToolCall({ action: "schedule.create", id: "stale", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, first.ctx);
+		const secondTimers = new FakeTimers();
+		const second = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(first.root, "stores"),
+			now: () => first.clock.now,
+			timers: secondTimers,
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+		const secondCtx = context(first.ctx.cwd, "session-b");
+		second.bindSession(secondCtx);
+		assert.equal(first.timers.values.size, 1);
+		assert.equal(secondTimers.values.size, 1);
+
+		assert.match(text(await second.handleToolCall({ action: "schedule.delete", id: "stale" }, secondCtx)), /Deleted/);
+		assert.equal(secondTimers.values.size, 0);
+		assert.equal(first.timers.values.size, 1);
+		first.clock.now += 3_600_000;
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => void warnings.push(String(message));
+		try {
+			first.timers.fireAll();
+			await flush();
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.deepEqual(warnings, []);
+		assert.equal(first.launches.length, 0);
+		assert.equal(first.timers.values.size, 0);
+		assert.match(text(await first.manager.handleToolCall({ action: "schedule.list" }, first.ctx)), /No project schedules/);
+	});
+
 	it("reports corrupt project schedule records instead of dropping them", async () => {
 		const h = harness();
 		const root = scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores"));
@@ -311,6 +346,74 @@ describe("recurring schedule execution", () => {
 		assert.equal(fs.existsSync(path.join(dir, "active.lock")), false);
 		const shown = await h.manager.handleToolCall({ action: "schedule.show", id: "hourly" }, h.ctx);
 		assert.match(text(shown), /2030-01-01T02:00:00.000Z/, "next occurrence advances from the planned time without completion drift");
+	});
+
+	it("delays retrying an overdue recurring schedule after an unexpected timer failure", async () => {
+		const h = harness({ randomId: () => { throw new Error("persistent id failure"); } });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "hourly", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		h.clock.now += 3_600_000;
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => void warnings.push(String(message));
+		try {
+			h.timers.fireAll();
+			await flush();
+		} finally {
+			console.warn = originalWarn;
+		}
+
+		assert.equal(h.launches.length, 0);
+		assert.equal(h.timers.values.size, 1);
+		assert.equal([...h.timers.values.values()][0]?.delay, 3_600_000);
+		assert.match(warnings[0] ?? "", /failed to fire: persistent id failure/);
+		const shown = await h.manager.handleToolCall({ action: "schedule.show", id: "hourly" }, h.ctx);
+		assert.match(text(shown), /State: scheduled/);
+		assert.match(text(shown), /2030-01-01T01:00:00.000Z/);
+	});
+
+	it("re-arms overdue catch-up-none schedules when missed-run recovery fails", async () => {
+		const h = harness({ randomId: () => { throw new Error("persistent id failure"); } });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "none", every: "1h", catchUp: "none", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		h.clock.now += 2 * 3_600_000;
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => void warnings.push(String(message));
+		try {
+			h.timers.fireAll();
+			await flush();
+		} finally {
+			console.warn = originalWarn;
+		}
+
+		assert.equal(h.launches.length, 0);
+		assert.equal(h.timers.values.size, 1);
+		assert.equal([...h.timers.values.values()][0]?.delay, 3_600_000);
+		assert.match(warnings[0] ?? "", /failed to fire: persistent id failure/);
+		assert.match(warnings[1] ?? "", /could not be restored after fire failure: persistent id failure/);
+		const shown = await h.manager.handleToolCall({ action: "schedule.show", id: "none" }, h.ctx);
+		assert.match(text(shown), /2030-01-01T01:00:00.000Z/);
+	});
+
+	it("does not immediately retry an overdue one-shot after an unexpected timer failure", async () => {
+		const h = harness({ randomId: () => { throw new Error("persistent id failure"); } });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "once", at: "+1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, h.ctx);
+		h.clock.now += 3_600_000;
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => void warnings.push(String(message));
+		try {
+			h.timers.fireAll();
+			await flush();
+		} finally {
+			console.warn = originalWarn;
+		}
+
+		assert.equal(h.launches.length, 0);
+		assert.equal(h.timers.values.size, 0);
+		assert.match(warnings[0] ?? "", /failed to fire: persistent id failure/);
+		const shown = await h.manager.handleToolCall({ action: "schedule.show", id: "once" }, h.ctx);
+		assert.match(text(shown), /State: scheduled/);
+		assert.match(text(shown), /2030-01-01T01:00:00.000Z/);
 	});
 
 	it("run-due launches the latest missed occurrence while catchUp none records a miss", async () => {

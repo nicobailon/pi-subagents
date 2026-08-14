@@ -4,6 +4,7 @@
 
 ### Fixed
 - Warn once, instead of on every heartbeat, when a long-running workflow child outlives its mission record. Thanks to @albertgwo for #1079.
+- Keep deleted-schedule timers from exiting Pi and re-arm recurring schedules after unexpected timer fire failures. Thanks to @albertgwo for #1084.
 
 ### Changed
 - Reduce reload work for large async histories by indexing the async result inbox by session, observer, and tool-call id instead of scanning every old result file; also age stale terminal active markers and throttle replay cleanup scans.
