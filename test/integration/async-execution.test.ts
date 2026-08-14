@@ -3745,6 +3745,58 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.doesNotMatch(eventsText, /Interrupt:/);
 	});
 
+	it("background implementation challenges keep explicit no-change reports successful", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: [
+			"Kept the current implementation. No new code or test changes were made in this challenge pass.",
+			"Reason: the current candidate is the smallest correct shape.",
+		].join("\n\n") });
+
+		const id = `async-no-change-challenge-${Date.now().toString(36)}`;
+		const sessionRoot = path.join(tempDir, "sessions");
+		const task = [
+			"You are reviving a previous subagent conversation.",
+			"",
+			"Original run: source-run",
+			"Original agent: worker",
+			"Original session file: /tmp/source-session.jsonl",
+			"",
+			"Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child process is still alive.",
+			"",
+			"Follow-up:",
+			"Implementation challenge pass 1 for the accepted candidate. Reconsider it and implement any better current-scope change.",
+		].join("\n");
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task,
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(payload.success, true);
+		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.results[0].success, true);
+		assert.match(String(payload.results[0].output), /Kept the current implementation/);
+		assert.doesNotMatch(String(payload.results[0].error ?? ""), /completed without making edits/);
+
+		const eventsText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf-8");
+		assert.doesNotMatch(eventsText, /Subagent failed: worker/);
+		assert.doesNotMatch(eventsText, /"reason":"completion_guard"/);
+	});
+
 	it("agent contract v1 keeps async acceptance and file-mutation effects separate from execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "I’ll do that now and report back after implementing.\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const id = `async-v1-separate-${Date.now().toString(36)}`;

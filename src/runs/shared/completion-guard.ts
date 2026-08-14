@@ -22,9 +22,16 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 const CURSOR_FILE_MUTATION_THINKING =
 	/(?:^|\n)\s*Cursor (?:edit|write)\s*:/i;
 
-const IMPLEMENTATION_CHALLENGE_TASK_PATTERN = /^You are reviving a previous subagent conversation\.\n\nOriginal run: .+\nOriginal agent: .+(?:\nOriginal session file: .+)?\n\nUse the stored session context as background\. Answer the orchestrator's follow-up below\. Do not assume the original child process is still alive\.\n\nFollow-up:\nRun implementation challenge pass (?:one|two|\d+) and implement any better current-scope change\.$/;
-const NO_BETTER_CHANGE_NEEDED_PATTERN = /^\s*no (?:better|further|additional) (?:current[- ]scope )?(?:code |source |file )?(?:change|changes|edit|edits|patch|patches) (?:is|are) needed[.!]?\s*$/i;
-const NO_BETTER_CHANGE_QUALIFIER_PATTERN = /\b(?:do\s+not|don't|dont|not|never|cannot|can't|cant|unable|uncertain|unsure|unclear|maybe|might|may|\w+n['’]t)\b/i;
+const REVIVED_TASK_PREFIX = /^You are reviving a previous subagent conversation\.\n\nOriginal run: .+\nOriginal agent: .+(?:\nOriginal session file: .+)?\n\nUse the stored session context as background\. Answer the orchestrator's follow-up below\. Do not assume the original child process is still alive\.\n\nFollow-up:\n/;
+const IMPLEMENTATION_CHALLENGE_TASK_PATTERN = new RegExp(`${REVIVED_TASK_PREFIX.source}(?:Run )?implementation challenge pass (?:one|two|\\d+)\\b`, "i");
+const NO_BETTER_CHANGE_NEEDED_PATTERN = /^\s*no (?:better|further|additional) (?:current[- ]scope )?(?:code |source |file )?(?:change|changes|edit|edits|patch|patches) (?:is|are) needed\b/i;
+const KEPT_CURRENT_IMPLEMENTATION_PATTERN = /\b(?:kept (?:the )?current (?:implementation|candidate|shape)|(?:the )?current (?:implementation|candidate|shape) was kept)\b/i;
+const NO_CHANGE_MADE_PATTERN = /\bno (?:new )?(?:(?:code|source|file|test)(?:\s*(?:,\s*or|,|\/|or)\s*(?:code|source|file|test))* changes?|changes?) (?:were|was) made\b/i;
+const NO_BETTER_CHANGE_QUALIFIER_PATTERN = /\b(?:do\s+not|don't|dont|not|never|cannot|can't|cant|unable|uncertain|unsure|unclear|disagree|wrong|false|reject|rejected|rejecting|maybe|might|may|\w+n['’]t)\b/i;
+const REPORT_SENTENCE_PATTERN = /[^.!?]+(?:[.!?]+(?=\s|$)|$)/g;
+const QUOTED_CLAIM_PATTERN = /["“]([^"”]+)["”]([.!?]?\s*[^.!?]*)/g;
+const QUOTED_CLAIM_REFERENCE_PATTERN = /\b(?:that|this|it|claim|report|message|disagree)\b/i;
+const CLAIM_CONTRADICTION_PATTERN = /\bbut\b[^.!?]*\b(?:uncertain|unsure|unclear|disagree|wrong|false|reject|rejected|rejecting)\b/i;
 
 interface CompletionMutationGuardInput {
 	agent: string;
@@ -86,14 +93,37 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 	return false;
 }
 
+function hasUnqualifiedClaim(sentences: string[], pattern: RegExp): boolean {
+	return sentences.some((sentence) => {
+		const claim = sentence.match(pattern);
+		if (claim === null) return false;
+		const before = sentence.slice(0, claim.index!);
+		const after = sentence.slice(claim.index! + claim[0].length);
+		return !NO_BETTER_CHANGE_QUALIFIER_PATTERN.test(before)
+			&& !CLAIM_CONTRADICTION_PATTERN.test(after);
+	});
+}
+
+function explicitlyRejectsQuotedClaim(report: string): boolean {
+	for (const [, claim, response] of report.matchAll(QUOTED_CLAIM_PATTERN)) {
+		if ((KEPT_CURRENT_IMPLEMENTATION_PATTERN.test(claim!) || NO_CHANGE_MADE_PATTERN.test(claim!))
+			&& NO_BETTER_CHANGE_QUALIFIER_PATTERN.test(response!)
+			&& QUOTED_CLAIM_REFERENCE_PATTERN.test(response!)) return true;
+	}
+	return false;
+}
+
 function reportsNoBetterChallengeChange(messages: Message[]): boolean {
 	const report = messages
 		.filter((message) => message.role === "assistant")
 		.flatMap((message) => message.content)
 		.flatMap((part) => part.type === "text" ? [part.text] : [])
 		.join("\n");
-	return NO_BETTER_CHANGE_NEEDED_PATTERN.test(report)
-		&& !NO_BETTER_CHANGE_QUALIFIER_PATTERN.test(report);
+	if (explicitlyRejectsQuotedClaim(report)) return false;
+	const sentences = report.match(REPORT_SENTENCE_PATTERN) ?? [];
+	if (hasUnqualifiedClaim(sentences, NO_BETTER_CHANGE_NEEDED_PATTERN)) return true;
+	return hasUnqualifiedClaim(sentences, KEPT_CURRENT_IMPLEMENTATION_PATTERN)
+		&& hasUnqualifiedClaim(sentences, NO_CHANGE_MADE_PATTERN);
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
