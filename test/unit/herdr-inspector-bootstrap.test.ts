@@ -78,7 +78,7 @@ describe("Herdr inspector bootstrap", () => {
 			assert.equal(opened.isError, undefined);
 			const command = calls.find((args) => args[0] === "pane" && args[1] === "run")?.[3] ?? "";
 			assert.equal(command.startsWith("& "), process.platform === "win32");
-			assert.match(command, process.platform === "win32" ? /^& "node\.exe" / : /^'node' /);
+			assert.match(command, process.platform === "win32" ? /^& "node\.exe" / : /^node /);
 			assert.doesNotMatch(command, /(?:^|[\\/])pi(?:\.exe)?'/);
 		} finally {
 			process.execPath = originalExecPath;

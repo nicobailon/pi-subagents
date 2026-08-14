@@ -12,6 +12,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentRunId } from "../../runs/background/run-id-resolver.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode, type HerdrResult } from "./client.ts";
+import { formatShellCommand } from "./shell-command.ts";
 
 export const HERDR_INSPECTOR_ACTIONS = ["inspector.open", "inspector.status", "inspector.close"] as const;
 export type HerdrInspectorAction = typeof HERDR_INSPECTOR_ACTIONS[number];
@@ -86,16 +87,11 @@ function extractPaneId(value: unknown): string | undefined {
 	return undefined;
 }
 
-function shellQuote(value: string): string {
-	if (process.platform === "win32") return `"${value.replaceAll('"', '\\"')}"`;
-	return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function inspectorCommand(input: { runnerPath: string; asyncDir: string; runId: string; index?: number; missionPath?: string; allowSteer: boolean; allowStop: boolean; sessionRoots: string[] }): string {
-	const args = [resolveNodeExecutable(), input.runnerPath, "--async-dir", input.asyncDir, "--run-id", input.runId, "--allow-steer", String(input.allowSteer), "--allow-stop", String(input.allowStop), "--session-roots", JSON.stringify(input.sessionRoots)];
+	const args = [input.runnerPath, "--async-dir", input.asyncDir, "--run-id", input.runId, "--allow-steer", String(input.allowSteer), "--allow-stop", String(input.allowStop), "--session-roots", JSON.stringify(input.sessionRoots)];
 	if (input.index !== undefined) args.push("--index", String(input.index));
 	if (input.missionPath) args.push("--mission-path", input.missionPath);
-	return `${process.platform === "win32" ? "& " : ""}${args.map(shellQuote).join(" ")}`;
+	return formatShellCommand(resolveNodeExecutable(), args);
 }
 
 function missionForRun(asyncDir: string, cwd: string, config: MissionStoreConfig | undefined, runId: string): { id: string; path: string } | undefined {

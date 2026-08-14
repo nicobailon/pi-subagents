@@ -6,6 +6,7 @@ import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { Details } from "../../shared/types.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode } from "./client.ts";
+import { formatShellCommand } from "./shell-command.ts";
 
 export const HERDR_PROJECT_PANE_ACTIONS = ["project.open", "project.status", "project.close"] as const;
 export type HerdrProjectPaneAction = typeof HERDR_PROJECT_PANE_ACTIONS[number];
@@ -257,11 +258,6 @@ function projectPaneRuntime(value: unknown): ProjectPaneRuntime | undefined {
 	};
 }
 
-function shellQuote(value: string): string {
-	if (process.platform === "win32") return `"${value.replaceAll('"', '\\"')}"`;
-	return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function resolveProjectRoot(requested: string): ProjectPaneResult<string> {
 	const resolved = path.resolve(requested);
 	try {
@@ -284,7 +280,7 @@ async function inspectPane(client: HerdrClient, paneId: string, signal?: AbortSi
 function projectPaneCommand(message: string | undefined): string {
 	const args = message?.trim() ? [message.trim()] : [];
 	const command = getPiSpawnCommand(args);
-	return `${process.platform === "win32" ? "& " : ""}${[command.command, ...command.args].map(shellQuote).join(" ")}`;
+	return formatShellCommand(command.command, command.args);
 }
 
 function canonicalRuntimePath(value: string | undefined): string | undefined {

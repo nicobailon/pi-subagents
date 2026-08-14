@@ -113,6 +113,9 @@ describe("Herdr inspector", () => {
 			assert.equal(binding?.missionPath, path.join(missionDir, "mission-cross-project.json"));
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p9");
 			assert.ok(runCall);
+			if (process.platform !== "win32") {
+				assert.ok(!/^[']/.test(runCall[3] ?? ""), `pane run command must not open with a quoted executable; Nushell parses it as a string expression: ${runCall[3]}`);
+			}
 			assert.match(runCall[3] ?? "", /--allow-steer.*true.*--allow-stop.*true/);
 			assert.match(runCall[3] ?? "", /--session-roots.*sessions/);
 
@@ -258,7 +261,7 @@ describe("Herdr inspector", () => {
 	});
 
 	it("opens, reports, and closes a project-owned Herdr pane", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-project-pane-"));
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi=herdr project pane-"));
 		const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
 		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
 		try {
@@ -292,6 +295,7 @@ describe("Herdr inspector", () => {
 			assert.deepEqual(splitCall?.slice(0, 7), ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot]);
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p10");
 			assert.equal(runCall?.[3]?.startsWith("& "), process.platform === "win32");
+			if (process.platform !== "win32") assert.match(runCall?.[3] ?? "", /^sh -c 'exec \"\$0\" \"\$@\"' '/);
 			assert.match(runCall?.[3] ?? "", /pi-bin/);
 			assert.match(runCall?.[3] ?? "", /Own this project mission\./);
 
