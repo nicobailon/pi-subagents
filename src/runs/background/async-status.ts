@@ -25,6 +25,7 @@ interface AsyncRunStepSummary {
 	structured?: boolean;
 	checkpoint?: ChainCheckpointState;
 	status: AsyncJobStep["status"];
+	runner?: AsyncJobStep["runner"];
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -254,6 +255,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.structured ? { structured: step.structured } : {}),
 			...(step.checkpoint ? { checkpoint: step.checkpoint } : {}),
 			status: step.status,
+			...(step.runner ? { runner: step.runner } : {}),
 			...(stepActivityState ? { activityState: stepActivityState } : {}),
 			...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
 			...(step.currentTool ? { currentTool: step.currentTool } : {}),

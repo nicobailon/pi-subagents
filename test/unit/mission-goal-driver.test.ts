@@ -7,6 +7,7 @@ import { handleMissionAction } from "../../src/missions/actions.ts";
 import { collectGoalContinuationNotices } from "../../src/missions/goal-driver.ts";
 import { createMission, readMission, resolveMissionStoreLocation, updateMission } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
+import type { RetainedChild } from "../../src/runs/background/retained-children.ts";
 
 function fixture() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-goal-mission-"));
@@ -46,7 +47,7 @@ describe("goal mission continuation", () => {
 			const resumed = collectGoalContinuationNotices({
 				location: test.location,
 				ownerSessionId: "session-1",
-				retainedChildren: [{ runId: "child-review", parentRunId: "workflow-1", agent: "reviewer", taskSummary: "Review", completedAt: 1, sessionPath: "/tmp/child.jsonl" }],
+				retainedChildren: [{ runId: "child-review", parentRunId: "workflow-1", state: "complete", agent: "reviewer", taskSummary: "Review", completedAt: 1, sessionPath: "/tmp/child.jsonl", resumability: { state: "resumable", sessionPath: "/tmp/child.jsonl" } }],
 				turnId: 3,
 			});
 			assert.equal(resumed.length, 1);
@@ -85,8 +86,8 @@ describe("goal mission continuation", () => {
 				location: test.location,
 				ownerSessionId: "session-1",
 				retainedChildren: [
-					{ runId: "child-old", parentRunId: "workflow-old", agent: "reviewer", taskSummary: "Old", completedAt: 2, sessionPath: "/tmp/old.jsonl" },
-					{ runId: "child-new", parentRunId: "workflow-new", agent: "reviewer", taskSummary: "New", completedAt: 1, sessionPath: "/tmp/new.jsonl" },
+					{ runId: "child-old", parentRunId: "workflow-old", state: "complete", agent: "reviewer", taskSummary: "Old", completedAt: 2, sessionPath: "/tmp/old.jsonl", resumability: { state: "resumable", sessionPath: "/tmp/old.jsonl" } },
+					{ runId: "child-new", parentRunId: "workflow-new", state: "complete", agent: "reviewer", taskSummary: "New", completedAt: 1, sessionPath: "/tmp/new.jsonl", resumability: { state: "resumable", sessionPath: "/tmp/new.jsonl" } },
 				],
 				turnId: 1,
 			});
@@ -94,6 +95,69 @@ describe("goal mission continuation", () => {
 			assert.equal(notices.length, 1);
 			assert.match(notices[0]!.message, /Resume retained child child-new \(reviewer\)/);
 			assert.doesNotMatch(notices[0]!.message, /child-old/);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("resumes a mission-linked child older than ten unrelated children", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, {
+				title: "Continue linked work",
+				objective: "Resume the linked worker",
+				goal: true,
+				budget: { tokens: 100 },
+				status: "active",
+				ownerSessionId: "session-1",
+			});
+			updateMission(test.location, mission.id, { addRuns: [{ runId: "workflow-mission", mode: "workflow", status: "complete" }] });
+			const retainedChildren: RetainedChild[] = [
+				...Array.from({ length: 10 }, (_, offset) => {
+					const index = 10 - offset;
+					return { runId: `child-${index}`, parentRunId: `workflow-unrelated-${index}`, state: "complete" as const, agent: "worker", taskSummary: "Unrelated", completedAt: index, resumability: { state: "resumable" as const, sessionPath: `/tmp/child-${index}.jsonl` } };
+				}),
+				{ runId: "child-0", parentRunId: "workflow-mission", state: "complete", agent: "worker", taskSummary: "Linked", completedAt: 0, resumability: { state: "resumable", sessionPath: "/tmp/child-0.jsonl" } },
+			];
+			const notices = collectGoalContinuationNotices({
+				location: test.location,
+				ownerSessionId: "session-1",
+				retainedChildren,
+				turnId: 1,
+			});
+
+			assert.equal(retainedChildren.length, 11);
+			assert.equal(notices.length, 1);
+			assert.match(notices[0]!.message, /Resume retained child child-0 \(worker\)/);
+			assert.doesNotMatch(notices[0]!.message, /child-10/);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not resume non-resumable retained children from goal notices", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, {
+				title: "Ship auth refresh",
+				objective: "Implement and validate token refresh",
+				goal: true,
+				budget: { tokens: 100 },
+				status: "active",
+				ownerSessionId: "session-1",
+			});
+			updateMission(test.location, mission.id, { addRuns: [{ runId: "workflow-stopped", mode: "workflow", status: "complete" }] });
+
+			const notices = collectGoalContinuationNotices({
+				location: test.location,
+				ownerSessionId: "session-1",
+				retainedChildren: [{ runId: "child-stopped", parentRunId: "workflow-stopped", state: "stopped", agent: "worker", taskSummary: "Stopped", completedAt: 1, resumability: { state: "not-resumable", reason: "stopped run" } }],
+				turnId: 1,
+			});
+
+			assert.equal(notices.length, 1);
+			assert.doesNotMatch(notices[0]!.message, /Resume retained child/);
+			assert.match(notices[0]!.message, /Next ready action: Continue objective: Implement and validate token refresh/);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}

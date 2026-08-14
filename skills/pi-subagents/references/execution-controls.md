@@ -72,7 +72,7 @@ Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `
 
 For one host-run verification command, pass `gate: "npm test"` on a `runs.run`/`runs.all` item (or at the top level as a workflow default). It is shorthand for verified acceptance with that single command: the runtime executes it on the host, records the result as evidence, and memoizes it per tracked workspace state and effective environment. `gate` cannot be combined with `acceptance`; use explicit `acceptance.verify` for multiple commands or custom criteria.
 
-Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids. For a simple implementation challenge, revive the same writer with `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })`. Inside `workflowScript`, continue one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; awaiting that call waits for the revived child to finish and returns its completed output and new `runId`. Top-level `{ action: "resume" }` remains detached. A follow-up loop can render each task with `await prompts.render(...)`. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
+Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids and explicit `resumable` or `not resumable` state. Resume only rows reported `resumable`. If no retained writer is resumable, start a same-role fallback challenge and label it as fallback. For a simple implementation challenge, revive the same resumable writer with `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })`. Inside `workflowScript`, continue one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; awaiting that call waits for the revived child to finish and returns its completed output and new `runId`. Top-level `{ action: "resume" }` remains detached. A follow-up loop can render each task with `await prompts.render(...)`. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
 
 ### Async/background
 
@@ -123,6 +123,8 @@ subagent({ action: "approve-checkpoint", id: "run-id" })
 subagent({ action: "reject-checkpoint", id: "run-id" })
 ```
 
+Use `children.list` before retained-writer challenge resumes. Resume only rows reported `resumable`. If no resumable child is listed, launch a same-role fallback challenge and label it as fallback.
+
 Use `steer` for top-level live async guidance and `resume` after a delegated run pauses or finishes. Routed nested runs retain their existing non-destructive live follow-up path:
 
 ```typescript
@@ -142,6 +144,7 @@ Resume behavior:
 - Nested runs can be resumed by nested id when a live route or persisted nested session metadata is available.
 - Revive starts a new child process from the old session context; it does not restart the same OS process.
 - Direct revival holds an exclusive cross-process lease on the canonical child session file until the new child finishes. Concurrent attempts fail before Pi starts and identify the owning revived run; stale ownership is reclaimed only when the recorded process is demonstrably gone or reused.
+- `children.list` keeps non-resumable retained children visible with the exact reason, such as stopped run, external CLI runner, or no persisted session file.
 - If the chosen child has no persisted `.jsonl` session file, resume fails and reports that directly.
 
 Use diagnostics when setup or child startup looks wrong:
