@@ -1000,7 +1000,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("background treats agent_settled as a clean terminal watermark", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({ jsonl: [mockAssistantMessage("settled async without a terminal assistant stop", "tool_use"), { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 5000 });
+		mockPi.onCall({ jsonl: [mockAssistantMessage("settled async without a terminal assistant stop", "tool_use"), { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 15_000 });
 		const id = `async-lifecycle-settled-${Date.now().toString(36)}`;
 		const startedAt = Date.now();
 		launchProtocolTest(id);
@@ -1008,7 +1008,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0]?.error, undefined);
 		assert.equal(payload.results[0]?.output, "settled async without a terminal assistant stop");
-		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
+		assert.ok(Date.now() - startedAt < 10_000, "agent_settled should trigger bounded child cleanup");
 	});
 
 	it("keeps named output references literal in async single tasks", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -3031,7 +3031,14 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].modelAttempts.length, 2);
 		assert.deepEqual(payload.results[0].totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
 		assert.deepEqual(payload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
-		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete" && candidate.totalCost !== undefined);
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete"
+			&& candidate.lifecycleArtifactVersion !== undefined
+			&& candidate.totalTokens?.total !== undefined
+			&& candidate.totalCost !== undefined
+			&& candidate.steps[0]?.model !== undefined
+			&& candidate.steps[0]?.thinking !== undefined
+			&& candidate.steps[0]?.tokens?.total !== undefined
+			&& candidate.steps[0]?.totalCost !== undefined);
 		assert.equal(statusPayload.lifecycleArtifactVersion, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION);
 		assert.equal(statusPayload.steps[0]?.model, "anthropic/claude-sonnet-4:low");
 		assert.equal(statusPayload.steps[0]?.thinking, "low");

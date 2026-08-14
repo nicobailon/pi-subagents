@@ -932,6 +932,7 @@ describe("result watcher", () => {
 			});
 			const originalError = console.error;
 			const childSessionPath = path.join(resultsDir, "a-session.jsonl");
+			const resultPath = path.join(resultsDir, "async-fallback.json");
 			console.error = () => {};
 			try {
 				watcher.startResultWatcher();
@@ -939,7 +940,7 @@ describe("result watcher", () => {
 				assert.notEqual(state.watcherRestartTimer, null);
 
 				fs.writeFileSync(childSessionPath, "", "utf-8");
-				writeIndexedResult(path.join(resultsDir, "async-fallback.json"), {
+				writeIndexedResult(resultPath, {
 					id: "async-fallback",
 					runId: "run-fallback",
 					agent: "parallel:a+b",
@@ -955,7 +956,7 @@ describe("result watcher", () => {
 					intercomTarget: "subagent-chat-main",
 				});
 				poll?.();
-				await new Promise((resolve) => setTimeout(resolve, 10));
+				assert.equal(await waitForPredicate(() => emitted.some((entry) => entry.event === "subagent:async-complete") && !fs.existsSync(resultPath)), true);
 			} finally {
 				console.error = originalError;
 				watcher.stopResultWatcher();
@@ -964,7 +965,7 @@ describe("result watcher", () => {
 			const intercomEvents = emitted.filter((entry) => entry.event === "subagent:result-intercom");
 			assert.equal(intercomEvents.length, 1);
 			assert.equal(emitted.some((entry) => entry.event === "subagent:async-complete"), true);
-			assert.equal(fs.existsSync(path.join(resultsDir, "async-fallback.json")), false);
+			assert.equal(fs.existsSync(resultPath), false);
 			const payload = intercomEvents[0]?.data as { mode?: string; status?: string; message?: string; children?: Array<{ status?: string; summary?: string; sessionPath?: string }> };
 			const completion = emitted.find((entry) => entry.event === "subagent:async-complete")?.data as { results?: Array<{ status?: string; summary?: string; sessionPath?: string }> } | undefined;
 			assert.equal(payload.mode, "parallel");
@@ -1327,7 +1328,7 @@ describe("result watcher", () => {
 					intercomTarget: "subagent-chat-main",
 				});
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath) && emitted.some((entry) => entry.event === "subagent:async-complete")), true);
 			} finally {
 				console.error = originalError;
 				watcher.stopResultWatcher();
