@@ -453,8 +453,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(text, /Detached at user request/);
 		assert.doesNotMatch(text, /intercom coordination|supervisor request/);
 
-		// Let the detached mock child reach its terminal callback before test teardown removes its files.
-		await new Promise((resolve) => setTimeout(resolve, 600));
+		let terminalChild = state.foregroundRuns?.get(control.runId)?.children[0];
+		for (let attempt = 0; attempt < 250 && terminalChild?.status !== "completed"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			terminalChild = state.foregroundRuns?.get(control.runId)?.children[0];
+		}
+		assert.equal(terminalChild?.status, "completed", "detached child should reach its terminal callback before teardown");
+		assert.equal(terminalChild.finalOutput, "completed after user detach");
 	});
 
 	it("rejects action='single' with execution fields", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
