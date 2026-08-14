@@ -301,7 +301,7 @@ export function createOrcaProgressTab(input: {
 			clearProcessTimers();
 			failObserver();
 		});
-		child.unref();
+		// Keep the child referenced so the timeout can stop a hung Orca CLI before this owner exits.
 	} catch {
 		failObserver();
 		return undefined;
