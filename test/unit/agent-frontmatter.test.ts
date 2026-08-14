@@ -473,6 +473,9 @@ Do work
 		const oracle = agents.find((candidate) => candidate.name === "oracle");
 		assert.deepEqual(oracle?.aliases, ["advisor"]);
 		assert.doesNotMatch(oracle?.tools?.join(",") ?? "", /contact_supervisor/);
+		for (const name of ["scout", "researcher", "oracle", "reviewer"]) {
+			assert.equal(agents.find((candidate) => candidate.name === name)?.tools?.includes("intercom"), false, `${name} should not require generic intercom`);
+		}
 		assert.match(oracle?.systemPrompt ?? "", /asking or consulting the oracle/);
 		assert.match(oracle?.systemPrompt ?? "", /When runtime bridge instructions provide `contact_supervisor`/);
 		assert.match(oracle?.systemPrompt ?? "", /If no supervisor channel is available/);

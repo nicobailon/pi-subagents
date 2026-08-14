@@ -381,7 +381,7 @@ Use `oracle` as a smart-friend escalation when the parent needs help with trajec
 
 This is separate from optional external completion delivery. Set `intercomBridge.resultDelivery: true` only when an external listener consumes and acknowledges `subagent:result-intercom` grouped results. It does not deliver results by itself, and it does not change native supervisor asks or progress updates.
 
-Most agents should not call generic `intercom` directly unless bridge instructions provide a target and `contact_supervisor` is unavailable. Do not invent a target. Prefer the tool from the injected bridge instructions.
+Most agents should not call generic `intercom` directly. Use it only when an external intercom provider explicitly supplies the tool and the task identifies a safe target. Do not invent a target. Prefer the tool from the injected bridge instructions.
 
 Use `contact_supervisor` with `reason: "need_decision"` when:
 - a subagent is blocked on a decision
@@ -423,6 +423,6 @@ Or inspects unresolved asks first:
 subagent_supervisor({ action: "pending" })
 ```
 
-If no external `pi-intercom` tool owns the `intercom` name, native supervisor coordination may also expose `intercom` as a compatibility fallback. Prefer `subagent_supervisor` for parent replies because it never overrides installed `pi-intercom`.
+Native supervisor coordination does not expose generic `intercom`. Prefer `subagent_supervisor` for parent replies because it never overrides installed `pi-intercom`.
 
 If intercom messages do not show up, run `subagent({ action: "doctor" })` or `/subagents-doctor`.

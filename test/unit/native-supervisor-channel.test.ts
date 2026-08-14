@@ -150,7 +150,7 @@ describe("native supervisor channel", () => {
 		channel.start();
 		channel.dispose();
 
-		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME, "intercom"]);
+		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME]);
 		assert.deepEqual(sent.map(({ message }) => message.details?.id), [matchingId]);
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
@@ -553,7 +553,7 @@ describe("native supervisor channel", () => {
 				registeredTools.set(tool.name, tool);
 			},
 		};
-		registerNativeSupervisorClient(pi as never, { includeIntercomFallback: false });
+		registerNativeSupervisorClient(pi as never);
 		const controller = new AbortController();
 		controller.abort();
 

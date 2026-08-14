@@ -90,12 +90,12 @@ Configure the worktree base directory and setup hook in [configuration.md](confi
 
 ## Supervisor coordination (child asks parent)
 
-Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. If no external `pi-intercom` tool owns the `intercom` name, the native channel also exposes `intercom` as a compatibility fallback.
+Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.
 
 Use it for work where the child might need a decision instead of guessing:
 
 ```text
-Run this implementation in the background. If the worker gets blocked or needs a product decision, have it ask me through intercom.
+Run this implementation in the background. If the worker gets blocked or needs a product decision, have it ask me through the supervisor channel.
 ```
 
 ```text

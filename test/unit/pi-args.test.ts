@@ -825,7 +825,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			tools: reviewer.tools,
 		});
 
-		assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls,intercom");
+		assert.equal(args[args.indexOf("--tools") + 1], "read,grep,find,ls");
 		assert.doesNotMatch(args[args.indexOf("--tools") + 1] ?? "", /\b(?:bash|edit|write)\b/);
 	});
 

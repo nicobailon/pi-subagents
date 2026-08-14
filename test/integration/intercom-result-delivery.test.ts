@@ -305,7 +305,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const isolatedArgs = await readMockCallArgs(0);
 		const normalArgs = await readMockCallArgs(1);
 		assert.equal(isolatedArgs[isolatedArgs.indexOf("--tools") + 1], "read");
-		assert.equal(normalArgs[normalArgs.indexOf("--tools") + 1], "read,intercom,contact_supervisor");
+		assert.equal(normalArgs[normalArgs.indexOf("--tools") + 1], "read,contact_supervisor");
 		assert.equal(events.emitted.filter((entry) => entry.channel === "subagent:result-intercom").length, 1);
 		assert.deepEqual(result.details?.workflow?.value, { isolated: "Isolated child output", normal: "Normal child output" });
 	});

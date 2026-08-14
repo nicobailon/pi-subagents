@@ -61,7 +61,7 @@ Give subagents specific tasks rather than vague mandates.
 
 ### Escalate decisions upward
 
-If a subagent encounters an unapproved product, architecture, scope, merge, release, credential, or authority choice, it should use `contact_supervisor` and wait for the reply instead of deciding alone. Generic `intercom` is a fallback only when the bridge-provided supervisor tool is unavailable. External checks, receipts, and review bots provide evidence only; they do not grant authority.
+If a subagent encounters an unapproved product, architecture, scope, merge, release, credential, or authority choice, it should use `contact_supervisor` and wait for the reply instead of deciding alone. Generic `intercom` is external-only and should be used only when an explicit provider supplies it and the task identifies a safe target. External checks, receipts, and review bots provide evidence only; they do not grant authority.
 
 ### Intervene only on clear control signals
 

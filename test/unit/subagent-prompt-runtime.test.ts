@@ -922,7 +922,7 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(registered, ["subagent_wait"]);
 	});
 
-	it("registers native intercom before the final strict allowlist check", () => {
+	it("does not satisfy strict allowlists with native generic intercom", () => {
 		setSupervisorEnv();
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-intercom-diagnostic-"));
 		try {
@@ -944,9 +944,14 @@ describe("subagent prompt runtime", () => {
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; getAllTools(): Array<{ name: string }>; registerTool(tool: { name: string }): void });
 
 			handlers.get("session_start")?.({});
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor", "intercom"]);
+			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 			handlers.get("agent_start")?.({});
-			assert.equal(fs.existsSync(diagnosticPath), false);
+			assert.deepEqual(readChildToolDiagnostic(diagnosticPath), {
+				agent: "scout",
+				required: ["read", "grep", "find", "ls", "bash", "edit", "write", "intercom"],
+				available: ["subagent_wait", "contact_supervisor"],
+				missing: ["intercom"],
+			});
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
@@ -973,7 +978,7 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 	});
 
-	it("registers native supervisor tools at runtime when pi-intercom is absent", async () => {
+	it("registers only native supervisor tools at runtime when pi-intercom is absent", async () => {
 		setSupervisorEnv();
 		const previousRequiredTools = process.env[REQUIRED_CHILD_TOOLS_ENV];
 		delete process.env[REQUIRED_CHILD_TOOLS_ENV];
@@ -995,7 +1000,7 @@ describe("subagent prompt runtime", () => {
 			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 
 			await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor", "intercom"]);
+			assert.deepEqual(registered, ["subagent_wait", "contact_supervisor"]);
 		} finally {
 			if (previousRequiredTools === undefined) delete process.env[REQUIRED_CHILD_TOOLS_ENV];
 			else process.env[REQUIRED_CHILD_TOOLS_ENV] = previousRequiredTools;

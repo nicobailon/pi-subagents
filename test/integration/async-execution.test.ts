@@ -861,7 +861,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.deepEqual(status.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(status.steps?.[0]?.capabilityCeiling, payload.capabilityCeiling);
 			assert.deepEqual(payload.capabilityAudit?.effectiveTools, ["read"]);
-			assert.deepEqual(payload.capabilityAudit?.removedTools, ["write", "intercom", "contact_supervisor"]);
+			assert.deepEqual(payload.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
 			assert.equal(payload.capabilityAudit?.extensionsDenied, true);
 			const events = fs.readFileSync(path.join(ASYNC_DIR, asyncId, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line));
 			assert.ok(events.some((event) => event.type === "subagent.capability-ceiling.applied" && event.stepIndex === 0 && event.capabilityAudit?.removedTools?.includes("write")));
@@ -870,7 +870,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { launchContractDigest?: string; capabilityCeiling?: unknown; capabilityAudit?: { removedTools?: string[] } };
 			assert.equal(metadata.launchContractDigest, payload.results[0]?.launchContractDigest);
 			assert.deepEqual(metadata.capabilityCeiling, payload.capabilityCeiling);
-			assert.deepEqual(metadata.capabilityAudit?.removedTools, ["write", "intercom", "contact_supervisor"]);
+			assert.deepEqual(metadata.capabilityAudit?.removedTools, ["write", "contact_supervisor"]);
 		} finally {
 			handle.dispose();
 		}
