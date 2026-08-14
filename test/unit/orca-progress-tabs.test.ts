@@ -95,7 +95,7 @@ test("an unavailable Orca command leaves native execution untouched", () => {
 	}), undefined);
 });
 
-test("the owning process stays alive while Orca terminal creation is pending", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+test("hung Orca terminal creation does not delay the owning process", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const fakeOrca = path.join(dir, "orca");
 	const pidFile = path.join(dir, "orca.pid");
@@ -103,6 +103,7 @@ test("the owning process stays alive while Orca terminal creation is pending", {
 	fs.chmodSync(fakeOrca, 0o755);
 	const moduleUrl = new URL("../../src/runs/shared/orca-progress-tabs.ts", import.meta.url).href;
 	const ownerScript = `import {createOrcaProgressTab} from ${JSON.stringify(moduleUrl)};const tab=createOrcaProgressTab({cwd:${JSON.stringify(dir)},runId:'progress-hung-owner',agent:'worker',index:0,config:{enabled:true},command:${JSON.stringify(fakeOrca)},env:{...process.env,ORCA_TEST_PID:${JSON.stringify(pidFile)}}});if(!tab)throw new Error('tab unavailable');`;
+	const startedAt = Date.now();
 	const owner = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", ownerScript], { cwd: dir, stdio: "ignore" });
 	const ownerClosed = new Promise<number | null>((resolve, reject) => {
 		owner.once("error", reject);
@@ -110,12 +111,11 @@ test("the owning process stays alive while Orca terminal creation is pending", {
 	});
 	let fakePid: number | undefined;
 	try {
+		assert.equal(await ownerClosed, 0);
+		assert.ok(Date.now() - startedAt < 2_000, "the Orca observer delayed runner completion");
 		await waitForFile(pidFile);
 		fakePid = Number.parseInt(fs.readFileSync(pidFile, "utf-8"), 10);
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		assert.equal(owner.exitCode, null, "the runner exited while its Orca create process was still running");
-		process.kill(fakePid, "SIGKILL");
-		assert.equal(await ownerClosed, 0);
+		process.kill(fakePid, 0);
 	} finally {
 		if (fakePid !== undefined) {
 			try { process.kill(fakePid, "SIGKILL"); } catch { /* already stopped */ }

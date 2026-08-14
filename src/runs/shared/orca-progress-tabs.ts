@@ -17,6 +17,17 @@ const COUNTER_LOCK_STALE_MS = 30_000;
 const COUNTER_LOCK_RETRIES = 200;
 const COUNTER_LOCK_RETRY_MS = 10;
 
+const ORCA_CREATE_WATCHDOG_SCRIPT = [
+	"const {spawn}=require('node:child_process');",
+	"const timeout=Number(process.argv[1]),grace=Number(process.argv[2]),command=process.argv[3],args=process.argv.slice(4);",
+	"const child=spawn(command,args,{stdio:'ignore',windowsHide:true});",
+	"let hardKill;",
+	"const timer=setTimeout(()=>{child.kill('SIGTERM');hardKill=setTimeout(()=>child.kill('SIGKILL'),grace)},timeout);",
+	"const clear=()=>{clearTimeout(timer);if(hardKill)clearTimeout(hardKill)};",
+	"child.once('error',()=>{clear();process.exitCode=1});",
+	"child.once('close',code=>{clear();process.exitCode=code===0?0:1});",
+].join("");
+
 export interface OrcaProgressTab {
 	append(text: string): void;
 	event(event: { type?: string; message?: Message; toolName?: string; args?: unknown }): void;
@@ -279,7 +290,11 @@ export function createOrcaProgressTab(input: {
 		}
 	};
 	try {
-		const child = spawn(command, [
+		const watchdog = spawn(process.execPath, [
+			"-e", ORCA_CREATE_WATCHDOG_SCRIPT,
+			String(ORCA_CREATE_TIMEOUT_MS),
+			String(ORCA_KILL_GRACE_MS),
+			command,
 			"terminal", "create",
 			"--worktree", `path:${path.resolve(cwd)}`,
 			"--title", title,
@@ -287,30 +302,16 @@ export function createOrcaProgressTab(input: {
 			"--json",
 		], {
 			cwd,
+			detached: true,
 			stdio: "ignore",
 			windowsHide: true,
 			env: input.env ?? process.env,
 		});
-		let hardKillTimer: NodeJS.Timeout | undefined;
-		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
-			hardKillTimer = setTimeout(() => child.kill("SIGKILL"), ORCA_KILL_GRACE_MS);
-			hardKillTimer.unref?.();
-		}, ORCA_CREATE_TIMEOUT_MS);
-		timer.unref?.();
-		const clearProcessTimers = () => {
-			clearTimeout(timer);
-			if (hardKillTimer) clearTimeout(hardKillTimer);
-		};
-		child.once("close", (code) => {
-			clearProcessTimers();
+		watchdog.once("close", (code) => {
 			if (code !== 0) failObserver();
 		});
-		child.once("error", () => {
-			clearProcessTimers();
-			failObserver();
-		});
-		// Keep the child referenced so the timeout can stop a hung Orca CLI before this owner exits.
+		watchdog.once("error", failObserver);
+		watchdog.unref();
 	} catch {
 		failObserver();
 		return undefined;
