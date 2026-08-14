@@ -71,6 +71,22 @@ function liveDetailHintText(): string {
 	return `Press ${liveDetailKeyText()} for live detail`;
 }
 
+function foregroundSingleHintText(shortcut?: string): string {
+	if (!shortcut) return liveDetailHintText();
+	const label = shortcut
+		.split("+")
+		.map((part) => {
+			const normalized = part.trim().toLowerCase();
+			if (normalized === "ctrl") return "Ctrl";
+			if (normalized === "alt") return "Alt";
+			if (normalized === "shift") return "Shift";
+			if (normalized === "super") return "Super";
+			return normalized.length === 1 ? normalized.toUpperCase() : part.trim();
+		})
+		.join("+");
+	return `${liveDetailHintText()} · ${label} to run in background`;
+}
+
 function getTermWidth(): number {
 	return process.stdout.columns || 120;
 }
@@ -1588,7 +1604,14 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui.getToolsExpanded?.() ?? false));
 }
 
-function renderSingleCompact(d: Details, r: Details["results"][number], theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
+function renderSingleCompact(
+	d: Details,
+	r: Details["results"][number],
+	theme: Theme,
+	layout: MainWindowRenderLayout,
+	frame?: number,
+	foregroundDetachShortcut?: string,
+): Component {
 	const output = r.truncation?.text || getSingleResultOutput(r);
 	const progress = r.progress || r.progressSummary;
 	const isRunning = isResultRunning(r);
@@ -1613,7 +1636,7 @@ function renderSingleCompact(d: Details, r: Details["results"][number], theme: T
 		for (const nestedLine of formatNestedWidgetLines(r.children, theme, width, false, progressSnapshotNow)) {
 			c.addChild(new Text(truncLine(`${detailIndent}${nestedLine}`, width), 0, 0));
 		}
-		c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}${liveDetailHintText()}`), width), 0, 0));
+		c.addChild(new Text(truncLine(theme.fg("accent", `${detailIndent}${foregroundSingleHintText(foregroundDetachShortcut)}`), width), 0, 0));
 		if (r.artifactPaths) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}output: ${shortenPath(r.artifactPaths.outputPath)}`), width), 0, 0));
 		return c;
 	}
@@ -1845,6 +1868,7 @@ export function renderSubagentResult(
 	theme: Theme,
 	frame?: number,
 	rendererConfig?: MainWindowRendererConfig,
+	foregroundDetachShortcut?: string,
 ): Component {
 	const layout = resolveMainWindowRenderLayout(rendererConfig);
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
@@ -1878,8 +1902,9 @@ export function renderSubagentResult(
 
 	if (d.mode === "single" && d.results.length === 1) {
 		const r = d.results[0];
+		const detachableShortcut = d.asyncId ? undefined : foregroundDetachShortcut;
 		if (!r) return compact(renderMultiCompact(d, theme, layout, frame));
-		if (!expanded) return compact(renderSingleCompact(d, r, theme, layout, frame));
+		if (!expanded) return compact(renderSingleCompact(d, r, theme, layout, frame, detachableShortcut));
 		const isRunning = isResultRunning(r);
 		const contextBadge = contextModeBadge(theme, r.context ?? d.context);
 		const output = r.truncation?.text || getSingleResultOutput(r);
@@ -1919,7 +1944,7 @@ export function renderSubagentResult(
 			if (liveStatusLine) {
 				c.addChild(new Text(fit(theme.fg("accent", liveStatusLine)), 0, 0));
 			}
-			c.addChild(new Text(fit(theme.fg("accent", liveDetailHintText())), 0, 0));
+			c.addChild(new Text(fit(theme.fg("accent", foregroundSingleHintText(detachableShortcut))), 0, 0));
 			if (r.artifactPaths) {
 				c.addChild(new Text(fit(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 			}

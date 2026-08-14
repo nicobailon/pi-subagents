@@ -67,6 +67,22 @@ With `"summary"`, a tool result looks like this:
 ✓ reviewer · completed
 ```
 
+## `foregroundDetachShortcut`
+
+```json
+{ "foregroundDetachShortcut": "ctrl+b" }
+```
+
+Optionally binds a shortcut that detaches the active foreground single-subagent run without terminating it. The running foreground card shows the configured shortcut beside its live-detail hint. The default is unset, so pi-subagents does not reserve a global key.
+
+Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Pi reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.pi/agent/keybindings.json`:
+
+```json
+{
+  "tui.editor.cursorLeft": "left"
+}
+```
+
 ## `asyncByDefault`
 
 ```json

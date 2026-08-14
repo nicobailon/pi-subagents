@@ -46,6 +46,7 @@ interface RegisterSlashCommandsModule {
 			watcherRestartTimer: ReturnType<typeof setTimeout> | null;
 			resultFileCoalescer: { schedule(file: string, delayMs?: number): boolean; clear(): void };
 		},
+		options?: { foregroundDetachShortcut?: string },
 	) => void;
 }
 
@@ -477,6 +478,48 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 describe("slash command custom message delivery", { skip: !available ? "slash-commands.ts not importable" : undefined }, () => {
 	beforeEach(() => {
 		clearSlashSnapshots?.();
+	});
+
+	it("registers a configured foreground detach shortcut", async () => {
+		const shortcuts = new Map<string, { handler(ctx: unknown): Promise<void> }>();
+		const sent: unknown[] = [];
+		const state = createState(process.cwd());
+		let detachCalls = 0;
+		state.foregroundControls.set("run-123", {
+			runId: "run-123",
+			mode: "single",
+			updatedAt: Date.now(),
+			detach: () => {
+				detachCalls += 1;
+				return true;
+			},
+		});
+		state.lastForegroundControlId = "run-123";
+
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand() {},
+			registerShortcut(key: string, spec: { handler(ctx: unknown): Promise<void> }) {
+				shortcuts.set(key, spec);
+			},
+			sendMessage(message: unknown) { sent.push(message); },
+		}, state, { foregroundDetachShortcut: "ctrl+b" });
+
+		assert.ok(shortcuts.has("ctrl+b"));
+		await shortcuts.get("ctrl+b")!.handler(createCommandContext());
+		assert.equal(detachCalls, 1);
+		assert.match(String((sent[0] as { content?: unknown }).content ?? ""), /Detached foreground run run-123/);
+	});
+
+	it("does not reserve a foreground detach shortcut by default", () => {
+		const shortcuts = new Map<string, unknown>();
+		registerSlashCommands!({
+			events: createEventBus(),
+			registerCommand() {},
+			registerShortcut(key: string, spec: unknown) { shortcuts.set(key, spec); },
+			sendMessage() {},
+		}, createState(process.cwd()));
+		assert.equal(shortcuts.has("ctrl+b"), false);
 	});
 
 	it("/subagents-stop keeps the selector within its allocated width", async () => {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, type Component, type KeyId, type TUI } from "@earendil-works/pi-tui";
 import { BUILTIN_AGENT_NAMES, discoverAgents } from "../agents/agents.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import {
@@ -631,7 +631,7 @@ function slashRunWorkflowScript(key: string, child: Record<string, unknown>): st
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
-	options: { fleetKeybindings?: FleetKeybindingsConfig } = {},
+	options: { fleetKeybindings?: FleetKeybindingsConfig; foregroundDetachShortcut?: string } = {},
 ): void {
 	let fleetOpen = false;
 	const showFleet = async (ctx: ExtensionContext) => {
@@ -741,32 +741,41 @@ export function registerSlashCommands(
 		handler: async (ctx) => showFleet(ctx),
 	});
 
+	const detachForegroundRun = (args: string, ctx: ExtensionContext): void => {
+		const id = args.trim();
+		let control: ReturnType<typeof selectForegroundDetachControl>;
+		try {
+			control = selectForegroundDetachControl(state, id);
+		} catch (error) {
+			ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+			return;
+		}
+		if (!control) {
+			ctx.ui.notify(id ? `No active foreground run found for '${id}'.` : "No active foreground single-subagent run to detach.", "info");
+			return;
+		}
+		if (control.mode !== "single") {
+			ctx.ui.notify("/subagents-detach currently supports single-subagent runs only.", "error");
+			return;
+		}
+		if (!control.detach?.()) {
+			ctx.ui.notify(`Foreground run ${control.runId} is not currently detachable.`, "info");
+			return;
+		}
+		sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or subagent_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
+	};
+
 	pi.registerCommand("subagents-detach", {
 		description: "Detach the active foreground single-subagent run without terminating it",
-		handler: async (args, ctx) => {
-			const id = args.trim();
-			let control: ReturnType<typeof selectForegroundDetachControl>;
-			try {
-				control = selectForegroundDetachControl(state, id);
-			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-				return;
-			}
-			if (!control) {
-				ctx.ui.notify(id ? `No active foreground run found for '${id}'.` : "No active foreground single-subagent run to detach.", "info");
-				return;
-			}
-			if (control.mode !== "single") {
-				ctx.ui.notify("/subagents-detach currently supports single-subagent runs only.", "error");
-				return;
-			}
-			if (!control.detach?.()) {
-				ctx.ui.notify(`Foreground run ${control.runId} is not currently detachable.`, "info");
-				return;
-			}
-			sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or subagent_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
-		},
+		handler: async (args, ctx) => detachForegroundRun(args, ctx),
 	});
+
+	if (options.foregroundDetachShortcut) {
+		pi.registerShortcut(options.foregroundDetachShortcut as KeyId, {
+			description: "Detach the active foreground subagent and keep it running in the background",
+			handler: async (ctx) => detachForegroundRun("", ctx),
+		});
+	}
 
 	pi.registerCommand("subagents-stop", {
 		description: "Stop a current-session async subagent run",

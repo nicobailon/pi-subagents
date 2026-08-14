@@ -80,6 +80,40 @@ test("multiline rendering omits two-column graphemes at one-column width", () =>
 	}
 });
 
+test("running single-subagent cards show the configured detach shortcut", () => {
+	const running = {
+		...result("reviewer", ""),
+		progress: { status: "running", index: 0, agent: "reviewer", toolCount: 0, tokens: 0, durationMs: 0 },
+	};
+	const toolResult = {
+		content: [{ type: "text", text: "running" }],
+		details: { mode: "single", results: [running] },
+	};
+
+	const configured = componentText(renderSubagentResult(
+		toolResult as never,
+		{ expanded: false },
+		theme as any,
+		undefined,
+		undefined,
+		"ctrl+b",
+	));
+	assert.match(configured, /Ctrl\+B to run in background/);
+
+	const unconfigured = componentText(renderSubagentResult(toolResult as never, { expanded: false }, theme as any));
+	assert.doesNotMatch(unconfigured, /run in background/);
+
+	const alreadyBackground = componentText(renderSubagentResult(
+		{ ...toolResult, details: { ...toolResult.details, asyncId: "async-123" } } as never,
+		{ expanded: false },
+		theme as any,
+		undefined,
+		undefined,
+		"ctrl+b",
+	));
+	assert.doesNotMatch(alreadyBackground, /run in background/);
+});
+
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {
 	const component = renderSubagentResult({
 		content: [{ type: "text", text: "done" }],

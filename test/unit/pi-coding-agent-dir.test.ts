@@ -241,6 +241,15 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.pageUp entries must be non-empty strings/);
 	});
 
+	it("loads and validates the foreground detach shortcut", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ foregroundDetachShortcut: "ctrl+b" }));
+		assert.equal(loadConfig().foregroundDetachShortcut, "ctrl+b");
+
+		writeFile(configPath, JSON.stringify({ foregroundDetachShortcut: "banana" }));
+		assert.throws(() => updateConfig((config) => config), /config\.foregroundDetachShortcut must be a valid keybinding string/);
+	});
+
 	it("loads and validates main-window renderer density config", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ mainWindowRenderer: { horizontalSpacing: 0, compactResultMaxLines: 4 } }));

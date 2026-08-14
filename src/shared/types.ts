@@ -1907,6 +1907,8 @@ export interface MainWindowRendererConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Optional shortcut that detaches the active foreground single-subagent run. */
+	foregroundDetachShortcut?: string;
 	/** Show the Claude Code-style navigable fleet. Defaults to true. */
 	fleetView?: boolean;
 	/** Place the persistent FleetView above or below the editor. Defaults to belowEditor. */

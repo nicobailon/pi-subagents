@@ -263,12 +263,13 @@ function rebuildSlashResultContainer(
 	options: { expanded: boolean },
 	theme: ExtensionContext["ui"]["theme"],
 	rendererConfig?: MainWindowRendererConfig,
+	foregroundDetachShortcut?: string,
 ): void {
 	container.clear();
 	container.addChild(new Spacer(1));
 	const boxTheme = isSlashResultRunning(result) ? "toolPendingBg" : isSlashResultError(result) ? "toolErrorBg" : "toolSuccessBg";
 	const box = new Box(1, 1, (text: string) => theme.bg(boxTheme, text));
-	box.addChild(renderSubagentResult(result, options, theme, undefined, rendererConfig));
+	box.addChild(renderSubagentResult(result, options, theme, undefined, rendererConfig, foregroundDetachShortcut));
 	container.addChild(box);
 }
 
@@ -277,6 +278,7 @@ function createSlashResultComponent(
 	options: { expanded: boolean },
 	theme: ExtensionContext["ui"]["theme"],
 	rendererConfig?: MainWindowRendererConfig,
+	foregroundDetachShortcut?: string,
 ): Container {
 	const container = new Container();
 	let lastVersion = -1;
@@ -284,7 +286,7 @@ function createSlashResultComponent(
 		const snapshot = getSlashRenderableSnapshot(details);
 		if (snapshot.version !== lastVersion || isSlashResultRunning(snapshot.result)) {
 			lastVersion = snapshot.version;
-			rebuildSlashResultContainer(container, snapshot.result, options, theme, rendererConfig);
+			rebuildSlashResultContainer(container, snapshot.result, options, theme, rendererConfig, foregroundDetachShortcut);
 		}
 		return Container.prototype.render.call(container, width);
 	};
@@ -502,7 +504,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
 		if (!details) return undefined;
-		return createSlashResultComponent(details, options, theme, config.mainWindowRenderer);
+		return createSlashResultComponent(details, options, theme, config.mainWindowRenderer, config.foregroundDetachShortcut);
 	});
 
 	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -630,7 +632,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const renderedResult = { ...result, isError: context.isError };
 			return summaryInlineToolDisplay
 				? renderSubagentSummary(renderedResult, options, theme)
-				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer);
+				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, config.foregroundDetachShortcut);
 		},
 
 	};
@@ -660,7 +662,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	registerSlashCommands(pi, state, { fleetKeybindings: config.fleetKeybindings });
+	registerSlashCommands(pi, state, {
+		fleetKeybindings: config.fleetKeybindings,
+		foregroundDetachShortcut: config.foregroundDetachShortcut,
+	});
 
 	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
 	const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";

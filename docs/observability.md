@@ -81,6 +81,22 @@ Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "statu
 
 Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait.
 
+Set `foregroundDetachShortcut` in `~/.pi/agent/extensions/subagent/config.json` to bind the same action to a shortcut. The running foreground card shows the configured shortcut beside its live-detail hint:
+
+```json
+{
+  "foregroundDetachShortcut": "ctrl+b"
+}
+```
+
+Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes precedence, but Pi reports the conflict at startup. To reserve the key without that warning, override the editor action in `~/.pi/agent/keybindings.json`:
+
+```json
+{
+  "tui.editor.cursorLeft": "left"
+}
+```
+
 If something feels misconfigured, run `/subagents-doctor` or ask: "Check whether subagents and intercom are set up correctly."
 
 ## Async run artifacts
