@@ -1686,7 +1686,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /handoffs/);
 	});
 
-	it("preserves a workflow worktree when its child detaches for supervisor coordination", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+	it("preserves a workflow worktree when its child detaches for supervisor coordination", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
 		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
@@ -1767,7 +1767,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
 	});
 
-	it("pauses an async workflow when its child detaches for supervisor coordination", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
+	it("pauses an async workflow when its child detaches for supervisor coordination", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
 		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
