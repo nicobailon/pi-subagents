@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { resultFilesForSession } from "../../src/runs/background/result-files.ts";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -59,5 +60,42 @@ describe("external CLI async lifecycle", () => {
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(result.success, true);
 		assert.equal(result.results[0].runner.type, "external-cli");
+	});
+
+	it("keeps terminal status recoverable when public result publish fails", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-pending-result-"));
+		tempDirs.push(dir);
+		const asyncDir = path.join(dir, "async");
+		fs.mkdirSync(asyncDir);
+		const resultPath = path.join(dir, "result.json");
+		fs.mkdirSync(resultPath);
+		const configPath = path.join(dir, "config.json");
+		fs.writeFileSync(configPath, JSON.stringify({
+			id: "external-pending-result",
+			sessionId: "session-external",
+			steps: [{
+				agent: "external",
+				task: "Task text",
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('ok')"] },
+				inheritProjectContext: false,
+				inheritSkills: false,
+			}],
+			resultPath,
+			cwd: dir,
+			placeholder: "{previous}",
+			artifactConfig: { enabled: false },
+			asyncDir,
+			resultMode: "single",
+		}));
+		const repo = path.resolve(import.meta.dirname, "../..");
+		const exitCode = await runProcess(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo);
+		assert.equal(exitCode, 0);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.equal(status.state, "complete");
+
+		fs.rmSync(resultPath, { recursive: true, force: true });
+		assert.deepEqual(resultFilesForSession(dir, "session-external"), ["result.json"]);
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(result.success, true);
 	});
 });

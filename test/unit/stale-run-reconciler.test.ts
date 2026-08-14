@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { checkPidLiveness, reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 
 function tempRoot(prefix: string): string {
@@ -222,6 +223,100 @@ describe("async stale-run reconciliation", () => {
 			assert.deepEqual(result.status?.steps?.[1]?.attemptedModels, ["planned-worker", "careful"]);
 			assert.equal(result.status?.steps?.[1]?.sessionFile, workerSession);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("repairs stale running status from an indexed pending result", () => {
+		const root = tempRoot("pi-stale-indexed-pending-result-");
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const asyncDir = path.join(root, "run-pending-result");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				runId: "run-pending-result",
+				sessionId: "session-current",
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			const publicResultPath = path.join(resultsDir, "run-pending-result.json");
+			fs.mkdirSync(publicResultPath, { recursive: true });
+			assert.deepEqual(writeAsyncResultFile(publicResultPath, {
+				id: "run-pending-result",
+				runId: "run-pending-result",
+				sessionId: "session-current",
+				success: true,
+				state: "complete",
+				summary: "already done",
+			}), { state: "pending" });
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, true);
+			assert.equal(result.status?.state, "complete");
+			assert.equal(result.status?.steps?.[0]?.status, "complete");
+			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "complete");
+			assert.equal(fs.statSync(publicResultPath).isDirectory(), true);
+			assert.match(fs.readFileSync(result.resultPath!, "utf-8"), /already done/);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("repairs stale rejected status from an indexed pending status snapshot", () => {
+		const root = tempRoot("pi-stale-rejected-pending-result-");
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const asyncDir = path.join(root, "run-rejected");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				runId: "run-rejected",
+				sessionId: "session-current",
+				mode: "chain",
+				state: "rejected",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				checkpoint: { name: "review", status: "rejected", stepIndex: 0 },
+				steps: [{ agent: "checkpoint:review", status: "rejected", startedAt: 1000, error: "Checkpoint 'review' rejected." }],
+			});
+			const publicResultPath = path.join(resultsDir, "run-rejected.json");
+			fs.mkdirSync(publicResultPath, { recursive: true });
+			writePendingAsyncResultFile(publicResultPath, {
+				id: "run-rejected",
+				runId: "run-rejected",
+				sessionId: "session-current",
+				success: false,
+				state: "rejected",
+				summary: "Checkpoint 'review' rejected.",
+				results: [{ agent: "checkpoint:review", success: false, error: "Checkpoint 'review' rejected." }],
+			});
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "rejected");
+			assert.equal(result.status?.steps?.[0]?.status, "rejected");
+			assert.match(fs.readFileSync(result.resultPath!, "utf-8"), /review/);
+		} finally {
+			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

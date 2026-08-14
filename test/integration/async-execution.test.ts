@@ -476,6 +476,52 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(typeof result, "boolean");
 	});
 
+	it("does not persist terminal async workflow status when the result index write fails", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const id = `async-workflow-result-index-failure-${Date.now().toString(36)}`;
+		const resultIndexPath = path.join(RESULTS_DIR, "result-index");
+		let asyncDir: string | undefined;
+		let resultPath: string | undefined;
+		let pendingPath: string | undefined;
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			fs.rmSync(resultIndexPath, { recursive: true, force: true });
+			fs.mkdirSync(RESULTS_DIR, { recursive: true });
+			fs.writeFileSync(resultIndexPath, "not a directory", "utf-8");
+			const executor = makeAsyncExecutor([]);
+			const context = makeMinimalCtx(tempDir);
+			context.sessionManager.getSessionId = () => "session-workflow-index";
+
+			const launch = await executor.execute(id, { workflowScript: "return 'done'", async: true }, new AbortController().signal, undefined, context);
+			assert.equal(launch.isError, undefined);
+			const asyncId = launch.details?.asyncId;
+			assert.ok(asyncId, "expected async workflow id");
+			asyncDir = path.join(ASYNC_DIR, asyncId);
+			resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
+			pendingPath = path.join(RESULTS_DIR, "result-pending", encodeURIComponent("session-workflow-index"), `${encodeURIComponent(asyncId)}.json`);
+
+			const eventsPath = path.join(asyncDir, "events.jsonl");
+			const deadline = Date.now() + 5_000;
+			let eventsText = "";
+			while (Date.now() <= deadline) {
+				eventsText = readIfExists(eventsPath) ?? "";
+				if (eventsText.includes("subagent.workflow.result_write_failed")) break;
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.match(eventsText, /subagent\.workflow\.result_write_failed/);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+			assert.equal(status.state, "running");
+			assert.equal(fs.existsSync(resultPath), false);
+			assert.equal(fs.existsSync(pendingPath), true);
+		} finally {
+			console.error = originalError;
+			if (asyncDir) fs.rmSync(asyncDir, { recursive: true, force: true });
+			if (resultPath) fs.rmSync(resultPath, { recursive: true, force: true });
+			if (pendingPath) fs.rmSync(pendingPath, { force: true });
+			fs.rmSync(resultIndexPath, { recursive: true, force: true });
+		}
+	});
+
 	it("background parses split UTF-8 JSON and a final unterminated protocol line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const line = Buffer.from(JSON.stringify(events.assistantMessage("你好 from fragmented async JSON")));
 		const unicodeStart = line.indexOf(Buffer.from("你"));
@@ -487,7 +533,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.output, "你好 from fragmented async JSON");
 	});
 
-	it("persists terminal status before creating the result artifact", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("persists terminal status with the result artifact", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "completed output" });
 		const id = `async-terminal-status-${Date.now().toString(36)}`;
 		launchProtocolTest(id);

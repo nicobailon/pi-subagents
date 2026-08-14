@@ -112,16 +112,13 @@ describe("nested route index", () => {
 		assert.ok(tokens.has(indexed.capabilityToken), "indexed route must be one of the two created routes");
 	});
 
-	it("does not drop a route index while the route file is not visible yet", () => {
+	it("recovers a route from its index when the route file is missing", () => {
 		const route = trackRoute("late-route-root");
 		const routeFile = path.join(path.dirname(route.eventSink), "route.json");
-		const routeJson = fs.readFileSync(routeFile, "utf-8");
 		fs.rmSync(routeFile);
 
-		assert.equal(buildNestedRouteIndex().get("late-route-root"), undefined);
-
-		fs.writeFileSync(routeFile, routeJson, "utf-8");
 		assert.equal(buildNestedRouteIndex().get("late-route-root")?.capabilityToken, route.capabilityToken);
+		assert.equal(JSON.parse(fs.readFileSync(routeFile, "utf-8")).capabilityToken, route.capabilityToken);
 	});
 });
 

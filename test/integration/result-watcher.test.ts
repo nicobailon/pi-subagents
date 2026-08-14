@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey } from "../../src/runs/background/completion-dedupe.ts";
 import { createResultWatcher as createRawResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
 import { readMission, updateMission } from "../../src/missions/store.ts";
@@ -45,6 +45,10 @@ function createResultWatcher(
 
 function writeIndexedResult(filePath: string, data: Record<string, unknown>): void {
 	writeAsyncResultFile(filePath, data);
+}
+
+function pendingResultPath(resultsDir: string, sessionId: string, runId: string): string {
+	return path.join(resultsDir, "result-pending", encodeURIComponent(sessionId), `${encodeURIComponent(runId)}.json`);
 }
 
 async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Promise<boolean> {
@@ -429,6 +433,50 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("delivers indexed pending results during reload when public promotion is blocked", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-pending-index-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const delivered: unknown[] = [];
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const resultPath = path.join(resultsDir, "pending-run.json");
+			fs.mkdirSync(resultPath, { recursive: true });
+			writePendingAsyncResultFile(resultPath, {
+				id: "pending-run",
+				runId: "pending-run",
+				sessionId: "session-current",
+				success: true,
+				state: "complete",
+				summary: "done from pending",
+			});
+			const watcher = createResultWatcher({
+				events: {
+					on: () => () => {},
+					emit(event: string, data: unknown) { emitted.push({ event, data }); },
+				},
+			}, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				notifier: { deliver: async (result) => { delivered.push(result); return true; } },
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => emitted.some((entry) => entry.event === "subagent:async-complete")), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal((delivered[0] as { summary?: string } | undefined)?.summary, "done from pending");
+			assert.equal(fs.existsSync(pendingResultPath(resultsDir, "session-current", "pending-run")), false);
+			assert.equal(fs.statSync(resultPath).isDirectory(), true);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("uses indexed result files and ignores unindexed stale files during reload", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-index-"));
 		try {
@@ -483,6 +531,50 @@ describe("result watcher", () => {
 			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("delivers observed indexed pending results when public promotion is blocked", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-observed-pending-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			for (let i = 0; i < 300; i += 1) {
+				fs.writeFileSync(path.join(resultsDir, `stale-${i}.json`), JSON.stringify({ id: `stale-${i}`, sessionId: "session-stale", success: true, summary: "done" }), "utf-8");
+			}
+			const resultPath = path.join(resultsDir, "scheduled-pending.json");
+			fs.mkdirSync(resultPath, { recursive: true });
+			writePendingAsyncResultFile(resultPath, {
+				id: "scheduled-pending",
+				runId: "scheduled-pending",
+				sessionId: "session-a",
+				success: true,
+				state: "complete",
+				summary: "scheduled pending done",
+			});
+			let observations = 0;
+			const state = createState();
+			state.currentSessionId = "session-b";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				observedCompletionRunIds: () => ["scheduled-pending"],
+				observeCompletion: (result) => {
+					if (result.runId === "scheduled-pending") observations += 1;
+				},
+				notifier: { deliver: async () => assert.fail("observer-owned completion must not reach active delivery") },
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => observations === 1), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(fs.existsSync(pendingResultPath(resultsDir, "session-a", "scheduled-pending")), true);
+			assert.equal(fs.statSync(resultPath).isDirectory(), true);
+			assert.equal(fs.existsSync(path.join(resultsDir, "stale-0.json")), true);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});
 

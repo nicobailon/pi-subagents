@@ -533,11 +533,9 @@ function registryPath(route: NestedRoute): string {
 
 function routeFromIndexEntry(rootRunId: string, filePath: string): NestedRoute | undefined {
 	try {
-		const metadata = JSON.parse(fs.readFileSync(filePath, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown; routeRoot?: unknown };
+		const metadata = JSON.parse(fs.readFileSync(filePath, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown; routeRoot?: unknown; createdAt?: unknown };
 		if (metadata.rootRunId !== rootRunId || typeof metadata.capabilityToken !== "string" || typeof metadata.routeRoot !== "string") return undefined;
 		const routeRoot = path.join(NESTED_EVENTS_DIR, path.basename(metadata.routeRoot));
-		const routeFile = JSON.parse(fs.readFileSync(path.join(routeRoot, ROUTE_FILE), "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
-		if (routeFile.rootRunId !== rootRunId || routeFile.capabilityToken !== metadata.capabilityToken) return undefined;
 		const route = {
 			rootRunId,
 			eventSink: path.join(routeRoot, "events"),
@@ -545,6 +543,19 @@ function routeFromIndexEntry(rootRunId: string, filePath: string): NestedRoute |
 			capabilityToken: metadata.capabilityToken,
 		};
 		validateRouteShape(route);
+		if (!fs.statSync(route.eventSink).isDirectory() || !fs.statSync(route.controlInbox).isDirectory()) return undefined;
+		const routeFilePath = path.join(routeRoot, ROUTE_FILE);
+		try {
+			const routeFile = JSON.parse(fs.readFileSync(routeFilePath, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
+			if (routeFile.rootRunId !== rootRunId || routeFile.capabilityToken !== metadata.capabilityToken) return undefined;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+			try {
+				writeAtomicJson(routeFilePath, { rootRunId, capabilityToken: metadata.capabilityToken, createdAt: typeof metadata.createdAt === "number" ? metadata.createdAt : Date.now() });
+			} catch {
+				// The route index already carries enough data for reload lookup.
+			}
+		}
 		return route;
 	} catch {
 		return undefined;

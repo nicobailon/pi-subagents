@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { writeAsyncResultFile } from "./result-files.ts";
+import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import { isActiveAsyncState, updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
@@ -2342,9 +2342,66 @@ async function runSubagent(
 		for (const node of graph.nodes) updateNode(node);
 		statusPayload.workflowGraph = graph;
 	};
+	let finalResultCommitted = false;
 	let lastIndexedActiveState = isActiveAsyncState(statusPayload.state);
+	const statusResultState = (): AsyncStatus["state"] | undefined => {
+		if (statusPayload.state === "running" || statusPayload.state === "queued") return undefined;
+		if (statusPayload.state === "paused" && statusPayload.checkpoint?.status === "pending") return undefined;
+		return statusPayload.state;
+	};
+	const statusResultSummary = (state: AsyncStatus["state"]): string => {
+		if (statusPayload.error) return statusPayload.error;
+		if (state === "paused") return "Paused after interrupt. Waiting for explicit next action.";
+		if (state === "stopped") return stopMessage;
+		if (state === "rejected") return statusPayload.checkpoint?.name ? `Checkpoint '${statusPayload.checkpoint.name}' rejected.` : "Subagent rejected.";
+		return state === "complete" ? "Subagent completed." : "Subagent failed.";
+	};
+	const statusResultSuccess = (state: AsyncStatus["state"], step: RunnerStatusStep): boolean | undefined => {
+		if (step.status === "complete" || step.status === "completed") return true;
+		if (step.status === "failed" || step.status === "stopped" || step.status === "rejected") return false;
+		if (state === "complete") return true;
+		if (state === "failed" || state === "stopped" || state === "rejected") return false;
+		return undefined;
+	};
+	const writeRecoverableStatusResult = (): void => {
+		const state = statusResultState();
+		if (!state || finalResultCommitted || !config.sessionId) return;
+		const now = statusPayload.endedAt ?? statusPayload.lastUpdate ?? Date.now();
+		const summary = statusResultSummary(state);
+		writePendingAsyncResultFile(resultPath, omitUndefinedProperties({
+			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+			id,
+			runId: id,
+			agent: statusPayload.steps.length === 1 ? statusPayload.steps[0]!.agent : statusPayload.mode === "parallel" ? `parallel:${statusPayload.steps.map((step) => step.agent).join("+")}` : `chain:${statusPayload.steps.map((step) => step.agent).join("->")}`,
+			mode: statusPayload.mode,
+			success: state === "complete",
+			state,
+			summary,
+			error: state === "failed" || state === "stopped" || state === "rejected" ? summary : undefined,
+			stopped: state === "stopped" ? true : undefined,
+			checkpoint: statusPayload.checkpoint,
+			results: statusPayload.steps.map((step) => omitUndefinedProperties({
+				agent: step.agent,
+				output: step.status === "complete" || step.status === "completed" ? "" : step.error ?? summary,
+				error: step.error,
+				success: statusResultSuccess(state, step),
+				sessionFile: step.sessionFile,
+				model: step.model,
+				attemptedModels: step.attemptedModels,
+				modelAttempts: step.modelAttempts,
+			})),
+			exitCode: state === "complete" || state === "paused" ? 0 : 1,
+			timestamp: now,
+			durationMs: Math.max(0, now - overallStartTime),
+			asyncDir,
+			cwd,
+			sessionId: config.sessionId,
+			sessionFile: statusPayload.sessionFile ?? latestSessionFile,
+		}));
+	};
 	const writeStatusPayloadNow = (): void => {
 		refreshWorkflowGraph();
+		writeRecoverableStatusResult();
 		writeAtomicJson(statusPath, statusPayload);
 		const activeState = isActiveAsyncState(statusPayload.state);
 		if (activeState !== lastIndexedActiveState) {
@@ -4689,7 +4746,6 @@ async function runSubagent(
 			statusPayload.error = `Step failed: ${failedStep.agent}`;
 		}
 	}
-	writeStatusPayload();
 	try {
 		writeAsyncResultFile(resultPath, {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -4786,9 +4842,15 @@ async function runSubagent(
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
 		});
+		finalResultCommitted = true;
 	} catch (err) {
-		console.error(`Failed to write result file ${resultPath}:`, err);
+		const message = `Failed to write result file ${resultPath}: ${err instanceof Error ? err.message : String(err)}`;
+		console.error(message, err);
+		statusPayload.state = "failed";
+		statusPayload.error = message;
+		statusPayload.lastUpdate = Date.now();
 	}
+	writeStatusPayload();
 	appendJsonl(
 		eventsPath,
 		JSON.stringify({

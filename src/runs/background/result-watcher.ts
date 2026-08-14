@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	type IntercomEventBus,
@@ -23,7 +22,7 @@ import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
 import { MISSION_BINDING_FILE, syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
-import { missionObserverResultFiles, removeMissionObserverIndex, removeResultIndex, resultFilesForSession, writeResultIndexForData } from "./result-files.ts";
+import { missionObserverResultCandidateFiles, promotePendingResultFile, removeMissionObserverIndex, removeResultIndex, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writeResultIndexForData } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
@@ -152,7 +151,7 @@ function hasDeliveredNotification(data: ResultFileData): boolean {
 
 function markDeliveredNotification(resultPath: string, data: ResultFileData, runId: string, now: number): ResultFileData {
 	const marked = { ...data, runId, notificationDeliveredAt: now };
-	writeAtomicJson(resultPath, marked);
+	writeAsyncResultFile(resultPath, marked);
 	return marked;
 }
 
@@ -199,21 +198,49 @@ export function createResultWatcher(
 		state.resultFileCoalescer.schedule(file, delayMs);
 	};
 
-	const resultSignature = (file: string): string | undefined => {
-		const resultPath = path.join(resultsDir, file);
+	const publicResultPath = (file: string): string => path.join(resultsDir, file);
+	const publicResultFileExists = (file: string): boolean => {
+		try {
+			return fsApi.statSync(publicResultPath(file)).isFile();
+		} catch (error) {
+			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${publicResultPath(file)}':`, error);
+			return false;
+		}
+	};
+	const resultPayloadPath = (file: string, observed?: ReadonlySet<string>): string | undefined => {
+		if (file !== path.basename(file) || !file.endsWith(".json")) return undefined;
+		const runId = file.replace(/\.json$/i, "");
+		const sessionResult = state.currentSessionId ? resultPayloadPathForSessionRun(resultsDir, state.currentSessionId, runId) : undefined;
+		if (sessionResult) return sessionResult;
+		const observerResult = resultPayloadPathForMissionObserverRun(resultsDir, runId);
+		if (observerResult) return observerResult;
+		if (observed?.has(runId)) {
+			const indexedResult = resultPayloadPathForIndexedRun(resultsDir, runId);
+			if (indexedResult) return indexedResult;
+		}
+		return publicResultFileExists(file) ? publicResultPath(file) : undefined;
+	};
+	const resultSignature = (file: string, observed?: ReadonlySet<string>): string | undefined => {
+		const resultPath = resultPayloadPath(file, observed);
+		if (!resultPath) {
+			identityCache.delete(file);
+			return undefined;
+		}
 		try {
 			const stat = fsApi.statSync(resultPath);
-			return `${stat.size}:${stat.mtimeMs}`;
+			if (!stat.isFile()) return undefined;
+			return `${resultPath}:${stat.size}:${stat.mtimeMs}`;
 		} catch (error) {
 			identityCache.delete(file);
 			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
 	};
-	const inspectResult = (file: string, knownSignature?: string): { identity: ResultFileIdentity; signature: string } | undefined => {
-		const resultPath = path.join(resultsDir, file);
+	const inspectResult = (file: string, knownSignature?: string, observed?: ReadonlySet<string>): { identity: ResultFileIdentity; signature: string } | undefined => {
+		const resultPath = resultPayloadPath(file, observed);
+		if (!resultPath) return undefined;
 		try {
-			const signature = knownSignature ?? resultSignature(file);
+			const signature = knownSignature ?? resultSignature(file, observed);
 			if (!signature) return undefined;
 			const cached = identityCache.get(file);
 			if (cached?.signature === signature) return { identity: cached.identity, signature };
@@ -237,7 +264,7 @@ export function createResultWatcher(
 	};
 
 	const shouldProcessResult = (file: string, observed?: ReadonlySet<string>, knownSignature?: string): boolean => {
-		const inspected = inspectResult(file, knownSignature);
+		const inspected = inspectResult(file, knownSignature, observed);
 		if (!inspected) return false;
 		const { identity } = inspected;
 		// Missing identity stays on the normal parser path so malformed or legacy
@@ -249,13 +276,55 @@ export function createResultWatcher(
 		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
 	};
 
-	const handleResult = async (file: string, triggerTurn: boolean) => {
-		const resultPath = path.join(resultsDir, file);
-		if (processing.has(file) || !fsApi.existsSync(resultPath)) return;
-		if (!shouldProcessResult(file)) return;
-		processing.add(file);
+	const removeDeliveredResult = (file: string, sessionId: string, runId: string, toolCallId: string | undefined): boolean => {
 		try {
-			let data = parseResult(fsApi.readFileSync(resultPath, "utf-8"));
+			if (publicResultFileExists(file)) fsApi.unlinkSync(publicResultPath(file));
+			identityCache.delete(file);
+			removeResultIndex(resultsDir, sessionId, runId, toolCallId);
+			return true;
+		} catch (error) {
+			if (!isNotFound(error)) {
+				console.error(`Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry:`, error);
+				return false;
+			}
+			return true;
+		}
+	};
+	const handleResult = async (file: string, triggerTurn: boolean) => {
+		if (processing.has(file)) return;
+		let observed: ReadonlySet<string> | undefined;
+		if (!shouldProcessResult(file)) {
+			const runId = file === path.basename(file) && file.endsWith(".json") ? file.replace(/\.json$/i, "") : undefined;
+			observed = observedRunIds();
+			if (!runId || !observed.has(runId) || !shouldProcessResult(file, observed)) return;
+		}
+		processing.add(file);
+		let resultPath = publicResultPath(file);
+		try {
+			const payloadPath = resultPayloadPath(file, observed);
+			if (!payloadPath) return;
+			resultPath = payloadPath;
+			let raw = fsApi.readFileSync(resultPath, "utf-8");
+			let identity = resultFileIdentity(raw, file);
+			if (identity.sessionId && identity.runId) {
+				const pendingState = promotePendingResultFile(resultsDir, identity.sessionId, identity.runId, file);
+				if (pendingState === "promoted") {
+					identityCache.delete(file);
+					resultPath = publicResultPath(file);
+					raw = fsApi.readFileSync(resultPath, "utf-8");
+					identity = resultFileIdentity(raw, file);
+				} else if (pendingState === "pending") {
+					const pendingPath = resultPayloadPathForSessionRun(resultsDir, identity.sessionId, identity.runId);
+					if (!pendingPath) {
+						scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+						return;
+					}
+					resultPath = pendingPath;
+					raw = fsApi.readFileSync(resultPath, "utf-8");
+					identity = resultFileIdentity(raw, file);
+				}
+			}
+			let data = parseResult(raw);
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
@@ -304,17 +373,8 @@ export function createResultWatcher(
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
-				if (!ownsSession(sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
-				try {
-					fsApi.unlinkSync(resultPath);
-					identityCache.delete(file);
-					removeResultIndex(resultsDir, sessionId, runId, toolCallId);
-				} catch (error) {
-					if (!isNotFound(error)) {
-						console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
-						scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-					}
-				}
+				if (!ownsSession(sessionId, epoch)) return;
+				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
 
@@ -368,17 +428,8 @@ export function createResultWatcher(
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
-				if (!ownsSession(sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
-				try {
-					fsApi.unlinkSync(resultPath);
-					identityCache.delete(file);
-					removeResultIndex(resultsDir, sessionId, runId, toolCallId);
-				} catch (error) {
-					if (!isNotFound(error)) {
-						console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
-						scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-					}
-				}
+				if (!ownsSession(sessionId, epoch)) return;
+				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
 
@@ -428,7 +479,7 @@ export function createResultWatcher(
 				return;
 			}
 			try {
-				data = markDeliveredNotification(resultPath, data, runId, Date.now());
+				data = markDeliveredNotification(publicResultPath(file), data, runId, Date.now());
 				identityCache.delete(file);
 			} catch (error) {
 				console.error(`Failed to mark subagent result notification delivered for '${resultPath}'; will retry:`, error);
@@ -463,17 +514,8 @@ export function createResultWatcher(
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
-			if (!ownsSession(sessionId, epoch) || !fsApi.existsSync(resultPath)) return;
-			try {
-				fsApi.unlinkSync(resultPath);
-				identityCache.delete(file);
-				removeResultIndex(resultsDir, sessionId, runId, toolCallId);
-			} catch (error) {
-				if (!isNotFound(error)) {
-					console.error(`Failed to remove delivered subagent result '${resultPath}'; will retry:`, error);
-					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-				}
-			}
+			if (!ownsSession(sessionId, epoch)) return;
+			if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
 		} finally {
@@ -492,25 +534,26 @@ export function createResultWatcher(
 		if (elapsed < SLOW_RESULT_SCAN_MS) return;
 		console.error(`Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`);
 	};
-	const indexedResultCandidates = (): string[] => {
+	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {
 		const files = new Set<string>();
 		if (state.currentSessionId) {
-			for (const file of resultFilesForSession(resultsDir, state.currentSessionId)) files.add(file);
+			for (const file of resultCandidateFilesForSession(resultsDir, state.currentSessionId)) files.add(file);
 		}
 		for (const runId of state.asyncJobs.keys()) files.add(`${runId}.json`);
-		for (const file of missionObserverResultFiles(resultsDir)) files.add(file);
-		for (const runId of observedRunIds()) files.add(`${runId}.json`);
+		for (const file of missionObserverResultCandidateFiles(resultsDir)) files.add(file);
+		for (const runId of observed) files.add(`${runId}.json`);
 		return [...files];
 	};
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		try {
 			const triggerTurn = options.triggerTurn !== false;
 			const stats: ResultScanStats = { files: 0, scheduled: 0, startedAt: Date.now() };
-			for (const file of indexedResultCandidates()) {
+			const observed = observedRunIds();
+			for (const file of indexedResultCandidates(observed)) {
 				stats.files += 1;
-				const signature = resultSignature(file);
+				const signature = resultSignature(file, observed);
 				if (!signature) continue;
-				if (!shouldProcessResult(file, undefined, signature)) continue;
+				if (!shouldProcessResult(file, observed, signature)) continue;
 				stats.scheduled += 1;
 				scheduleResult(file, triggerTurn);
 			}

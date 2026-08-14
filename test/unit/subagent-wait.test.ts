@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
@@ -292,6 +293,45 @@ describe("subagent_wait tool", () => {
 			// The result file is the watcher's to consume; the wait must not delete it.
 			assert.equal(fs.existsSync(path.join(resultsDir, "run-a.json")), true);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces terminal completion payloads from an indexed pending result file", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-completions-pending-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const publicResultPath = path.join(resultsDir, "run-pending.json");
+			fs.mkdirSync(publicResultPath, { recursive: true });
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-pending", "running", { sessionId: "sess-1", pid: 999999 });
+
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					writeStatus(asyncRoot, "run-pending", "complete", { sessionId: "sess-1" });
+					assert.deepEqual(writeAsyncResultFile(publicResultPath, {
+						id: "run-pending",
+						runId: "run-pending",
+						sessionId: "sess-1",
+						agent: "worker",
+						mode: "single",
+						state: "complete",
+						success: true,
+						results: [{ agent: "worker", success: true, outputState: "present" }],
+					}), { state: "pending" });
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details.completions?.[0]?.runId, "run-pending");
+			assert.equal(result.details.completions?.[0]?.success, true);
+			assert.equal(result.details.completions?.[0]?.results?.[0]?.agent, "worker");
+			assert.equal(fs.statSync(publicResultPath).isDirectory(), true);
+		} finally {
+			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
