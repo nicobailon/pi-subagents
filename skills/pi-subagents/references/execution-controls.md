@@ -353,8 +353,8 @@ worktree, first confirm dependencies were linked, installed, or provisioned by
 The intended oracle loop is:
 1. the main agent forks to `oracle`
 2. `oracle` reviews direction, drift, assumptions, and risks
-3. `oracle` can coordinate back through `contact_supervisor` when the bridge injects it
-4. the main agent decides what direction to approve
+3. if the task is framed as asking or consulting the oracle and the bridge provides `contact_supervisor`, `oracle` asks one focused supervisor question or challenge when a material unknown remains; otherwise it returns its best recommendation and names the unresolved decision
+4. when the oracle asks through `contact_supervisor`, the main agent replies and decides what direction to approve
 5. only then should `worker` implement
 
 ```typescript
@@ -373,7 +373,7 @@ subagent({
 a forked advisory thread that inherits the parent session history and uses that
 history as a baseline contract.
 
-Use `oracle` as a smart-friend escalation when the parent needs help with trajectory rather than diff inspection: architectural boundaries, model capability routing, merge conflicts, reviewer disagreement, context drift after long work, a worker about to invent a pattern, or fixes that require product/scope tradeoffs. Ask broad questions when the right concern is unclear, and let `oracle` point out missing context or files the parent should inspect before asking again. Keep `oracle` advisory unless it has been explicitly assigned the single writer role.
+Use `oracle` as a smart-friend escalation when the parent needs help with trajectory rather than diff inspection: architectural boundaries, model capability routing, merge conflicts, reviewer disagreement, context drift after long work, a worker about to invent a pattern, or fixes that require product/scope tradeoffs. Ask broad questions when the right concern is unclear, and let `oracle` point out missing context or files the parent should inspect before asking again. Prefer native `contact_supervisor` dialogue for consultation tasks when the bridge is available; request a one-shot report only when that is what you want. Keep `oracle` advisory unless it has been explicitly assigned the single writer role.
 
 ## Subagent + Intercom Coordination
 

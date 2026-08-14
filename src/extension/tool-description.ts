@@ -11,6 +11,7 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
 • Async/background runs are the default. Use async:false only when a blocking foreground result is needed. After an async launch, continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll status just to wait; use subagent_wait only when the current request must finish in this turn.
 • Ordinary child subagents are not orchestrators. Only explicitly configured fanout children may use the child-safe subagent tool, still bounded by depth/session limits.
+• Oracle/advisor consultations should use supervisor dialogue for material unknowns when available; request one-shot only when desired.
 • Keep one writer for the same cwd/worktree. Use fresh-context read-only reviewers for independent review, then have the parent synthesize and apply fixes.
 • Async runs expose asyncId/asyncDir with status.json, events.jsonl, output logs, status via { action: "status", id }, and lifecycle diagnostics via { action: "debug.run", id }. Include output paths and residual risks when reporting results.`;
 
@@ -51,6 +52,7 @@ MANAGE / CONTROL:
 ASYNC / SAFETY:
 • Omitted async detaches background work. Continue independent work only until its next dependency barrier; consume the result before work that depends on it. Do not sleep or poll merely to wait; use subagent_wait only when this turn must receive results.
 • Ordinary children are not orchestrators. Keep one writer per cwd/worktree and use fresh read-only reviewers for independent checks.
+• Oracle/advisor consultations use available supervisor dialogue for material unknowns; request one-shot when desired.
 • Status and artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and {action:"status",id:"..."}.`;
 
 
