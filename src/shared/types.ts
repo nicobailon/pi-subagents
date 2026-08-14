@@ -1031,6 +1031,7 @@ export interface Details {
 	controlEvents?: ControlEvent[];
 	steering?: SteerActionResult;
 	asyncId?: string;
+	background?: boolean;
 	asyncDir?: string;
 	timeoutMs?: number;
 	deadlineAt?: number;

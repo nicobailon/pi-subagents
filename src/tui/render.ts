@@ -1902,7 +1902,7 @@ export function renderSubagentResult(
 
 	if (d.mode === "single" && d.results.length === 1) {
 		const r = d.results[0];
-		const detachableShortcut = d.asyncId ? undefined : foregroundDetachShortcut;
+		const detachableShortcut = d.asyncId || d.background ? undefined : foregroundDetachShortcut;
 		if (!r) return compact(renderMultiCompact(d, theme, layout, frame));
 		if (!expanded) return compact(renderSingleCompact(d, r, theme, layout, frame, detachableShortcut));
 		const isRunning = isResultRunning(r);

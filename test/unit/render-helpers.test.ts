@@ -112,6 +112,16 @@ test("running single-subagent cards show the configured detach shortcut", () => 
 		"ctrl+b",
 	));
 	assert.doesNotMatch(alreadyBackground, /run in background/);
+
+	const pendingBackground = componentText(renderSubagentResult(
+		{ ...toolResult, details: { ...toolResult.details, background: true } } as never,
+		{ expanded: false },
+		theme as any,
+		undefined,
+		undefined,
+		"ctrl+b",
+	));
+	assert.doesNotMatch(pendingBackground, /run in background/);
 });
 
 test("compact chain rendering uses workflow graph spans for dynamic fanout results", () => {

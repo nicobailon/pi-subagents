@@ -63,6 +63,18 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 		assert.equal(snapshot.version > 0, true);
 	});
 
+	it("marks async initial slash snapshots as background", () => {
+		clearSlashSnapshots!();
+		const details = buildSlashInitialResult!("req-bg", {
+			workflowScript: "return runs.run(\"run\", { agent: \"scout\", task: \"inspect\" })",
+			async: true,
+		});
+
+		assert.equal(details.result.details.mode, "single");
+		assert.equal(details.result.details.background, true);
+		assert.equal(details.result.details.asyncId, undefined);
+	});
+
 	it("does not assign a parallel child update to another chain placeholder", () => {
 		clearSlashSnapshots!();
 		const details = buildSlashInitialResult!("req-parallel", {
