@@ -12,6 +12,8 @@ const ORCA_KILL_GRACE_MS = 2_000;
 const CLEANUP_DELAY_MS = 5 * 60_000;
 const STALE_PROGRESS_MAX_AGE_MS = 24 * 60 * 60_000;
 const VIEWER_POLL_MS = 150;
+const MAX_MIRROR_BYTES = 1024 * 1024;
+const MIRROR_FOOTER_RESERVE_BYTES = 16 * 1024;
 const COUNTER_LOCK_STALE_MS = 30_000;
 const COUNTER_LOCK_RETRIES = 200;
 const COUNTER_LOCK_RETRY_MS = 10;
@@ -53,17 +55,26 @@ export function resolveOrcaCommand(env: NodeJS.ProcessEnv = process.env): string
 }
 
 function shellQuote(value: string): string {
-	if (process.platform === "win32") return `"${value.replace(/"/g, '\\"')}"`;
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 const VIEWER_SCRIPT = [
-	"const fs=require('fs');",
-	"const log=process.argv[1],done=process.argv[2];",
-	"let offset=0,finishing=false;",
+	"const fs=require('fs'),{StringDecoder}=require('string_decoder');",
+	"const log=process.argv[1],done=process.argv[2],decoder=new StringDecoder('utf8');",
+	"let offset=0,finishing=false,state='text';",
+	"function sanitize(input){let output='';for(const char of input){const code=char.charCodeAt(0);",
+	"if(state==='text'){if(code===27){state='escape';continue}if(code===155){state='csi';continue}if(code===157){state='osc';continue}if(code===144||code===152||code===158||code===159){state='string';continue}if(code===10||(code>=32&&code!==127&&(code<128||code>159)))output+=char;continue}",
+	"if(state==='escape'){if(char==='[')state='csi';else if(char===']')state='osc';else if(char==='P'||char==='X'||char==='^'||char==='_')state='string';else if(code<32||code>47)state='text';continue}",
+	"if(state==='csi'){if(code>=64&&code<=126)state='text';continue}",
+	"if(state==='osc'){if(code===7)state='text';else if(code===27)state='osc-escape';continue}",
+	"if(state==='osc-escape'){state=char==='\\\\'?'text':code===27?'osc-escape':'osc';continue}",
+	"if(state==='string'){if(code===27)state='string-escape';continue}",
+	"if(state==='string-escape')state=char==='\\\\'?'text':code===27?'string-escape':'string';",
+	"}return output}",
+	"function write(buffer){const output=sanitize(decoder.write(buffer));if(output)process.stdout.write(output)}",
 	"function pump(){",
-	" try{const size=fs.statSync(log).size;if(size<offset)offset=0;if(size>offset){const fd=fs.openSync(log,'r');const b=Buffer.alloc(size-offset);fs.readSync(fd,b,0,b.length,offset);fs.closeSync(fd);offset=size;process.stdout.write(b);}}catch{}",
-	" if(!finishing&&fs.existsSync(done)){finishing=true;pump();setTimeout(()=>{try{fs.unlinkSync(done)}catch{}try{fs.unlinkSync(log)}catch{}process.exit(0)},250);}",
+	" try{const size=fs.statSync(log).size;if(size<offset)offset=0;if(size>offset){const fd=fs.openSync(log,'r');const b=Buffer.alloc(size-offset);fs.readSync(fd,b,0,b.length,offset);fs.closeSync(fd);offset=size;write(b);}}catch{}",
+	" if(!finishing&&fs.existsSync(done)){finishing=true;pump();setTimeout(()=>{const output=sanitize(decoder.end());if(output)process.stdout.write(output);try{fs.unlinkSync(done)}catch{}try{fs.unlinkSync(log)}catch{}process.exit(0)},250);}",
 	"}",
 	`const timer=setInterval(pump,${VIEWER_POLL_MS});`,
 	"pump();",
@@ -75,8 +86,7 @@ function viewerCommand(logPath: string, donePath: string): string {
 	// Do not replace or exit Orca's interactive shell. The short-lived viewer may
 	// finish and delete its mirror files, while the completed tab remains open at
 	// the shell prompt until the user closes it.
-	if (process.platform === "win32") return invocation;
-	return `printf '\\033[2J\\033[H'; ${invocation}`;
+	return invocation;
 }
 
 function progressRoot(): string {
@@ -204,7 +214,7 @@ export function createOrcaProgressTab(input: {
 	} catch {
 		return undefined;
 	}
-	if (config?.enabled !== true) return undefined;
+	if (config?.enabled !== true || process.platform === "win32") return undefined;
 	const command = input.command ?? resolveOrcaCommand(input.env);
 	if (!command) return undefined;
 
@@ -233,6 +243,9 @@ export function createOrcaProgressTab(input: {
 	}
 
 	let available = true;
+	let truncated = false;
+	let scheduledBytes = fs.statSync(logPath).size;
+	const progressByteLimit = MAX_MIRROR_BYTES - MIRROR_FOOTER_RESERVE_BYTES;
 	const logStream = fs.createWriteStream(logPath, { flags: "a", mode: 0o600 });
 	const failObserver = () => {
 		if (!available) return;
@@ -243,8 +256,18 @@ export function createOrcaProgressTab(input: {
 	};
 	logStream.once("error", failObserver);
 	const writeProgress = (text: string) => {
-		if (!available || !text) return;
-		try { logStream.write(text); } catch { failObserver(); }
+		if (!available || !text || truncated) return;
+		const bytes = Buffer.byteLength(text);
+		if (scheduledBytes + bytes > progressByteLimit) {
+			truncated = true;
+			return;
+		}
+		scheduledBytes += bytes;
+		try {
+			if (!logStream.write(text)) truncated = true;
+		} catch {
+			failObserver();
+		}
 	};
 	try {
 		const child = spawn(command, [
@@ -308,10 +331,17 @@ export function createOrcaProgressTab(input: {
 			if (!available || finished) return;
 			finished = true;
 			const sessionId = status === "completed" ? resolvePiSessionId(sessionFile) : undefined;
-			const terminalMessage = sessionId
-				? `completed. To remove the Pi session of this subagent, run rm $(find ~/.pi/agent/sessions -name "*_${sessionId}.jsonl" -print -quit)`
+			let verifiedSessionFile: string | undefined;
+			if (sessionId && sessionFile) {
+				try { verifiedSessionFile = fs.realpathSync(sessionFile); } catch { /* the session is no longer available */ }
+			}
+			const terminalMessage = verifiedSessionFile
+				? `completed. To remove the Pi session of this subagent, run rm -- ${shellQuote(verifiedSessionFile)}`
 				: status;
-			logStream.end(`\n${"─".repeat(48)}\n${terminalMessage}\n`, () => {
+			const truncation = truncated ? `\n[progress mirror truncated at ${MAX_MIRROR_BYTES} bytes]\n` : "";
+			let footer = `${truncation}\n${"─".repeat(48)}\n${terminalMessage}\n`;
+			if (scheduledBytes + Buffer.byteLength(footer) > MAX_MIRROR_BYTES) footer = `\n${status}\n`;
+			logStream.end(footer, () => {
 				if (!available) return;
 				try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
 				scheduleCleanup([logPath, donePath]);

@@ -114,7 +114,7 @@ describe("external CLI async lifecycle", () => {
 		assert.equal(result.success, true);
 	});
 
-	it("mirrors a child into Orca without replacing its configured runner", { skip: process.platform === "win32" }, async () => {
+	it("mirrors a child into Orca without replacing its configured runner", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-observer-"));
 		tempDirs.push(dir);
 		const asyncDir = path.join(dir, "async");
@@ -130,6 +130,7 @@ describe("external CLI async lifecycle", () => {
 		const configPath = path.join(dir, "config.json");
 		fs.writeFileSync(configPath, JSON.stringify({
 			id: "orca-observer-external",
+			sessionId: "session-orca-external",
 			steps: [{
 				agent: "external",
 				task: "Task text",

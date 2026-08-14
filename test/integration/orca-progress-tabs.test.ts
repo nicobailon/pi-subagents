@@ -48,7 +48,7 @@ async function waitForFileCount(dir: string, count: number): Promise<void> {
 }
 
 describe("Orca progress-tab observer", () => {
-	it("mirrors a native Pi child without replacing its execution path", { skip: process.platform === "win32" }, async () => {
+	it("mirrors a native Pi child without replacing its execution path", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-native-"));
 		tempDirs.push(dir);
 		const asyncDir = path.join(dir, "async");
@@ -74,6 +74,7 @@ describe("Orca progress-tab observer", () => {
 		const configPath = path.join(dir, "config.json");
 		fs.writeFileSync(configPath, JSON.stringify({
 			id: "orca-observer-native",
+			sessionId: "session-orca-native",
 			steps: [{
 				agent: "worker",
 				task: "Read the repository",
@@ -116,7 +117,7 @@ describe("Orca progress-tab observer", () => {
 		assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 1");
 	});
 
-	it("allocates unique worktree-wide numbers across concurrent processes and nested cwd values", { skip: process.platform === "win32" }, async () => {
+	it("allocates unique worktree-wide numbers across concurrent processes and nested cwd values", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-counter-"));
 		tempDirs.push(dir);
 		fs.mkdirSync(path.join(dir, ".git"));

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { afterEach, test } from "node:test";
 import * as fs from "node:fs";
@@ -42,6 +43,36 @@ async function waitForFile(file: string): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 }
+
+function progressFile(prefix: string, suffix: ".log" | ".done"): string {
+	const root = path.join(TEMP_ROOT_DIR, "orca-progress");
+	const name = fs.readdirSync(root).find((candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix));
+	assert.ok(name, `Expected ${suffix} file for ${prefix}`);
+	return path.join(root, name);
+}
+
+function captureCommand(command: string, cwd: string): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const child = spawn("/bin/sh", ["-c", command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+		let output = "";
+		child.stdout.setEncoding("utf-8");
+		child.stdout.on("data", (chunk: string) => { output += chunk; });
+		child.once("error", reject);
+		child.once("close", (code) => code === 0 ? resolve(output) : reject(new Error(`Viewer exited ${code}: ${output}`)));
+	});
+}
+
+test("Orca progress tabs are disabled on Windows", { skip: process.platform === "win32" ? undefined : "Windows-only platform boundary" }, () => {
+	const dir = tempDir();
+	assert.equal(createOrcaProgressTab({
+		cwd: dir,
+		runId: "windows-disabled",
+		agent: "worker",
+		index: 0,
+		config: { enabled: true },
+		command: process.execPath,
+	}), undefined);
+});
 
 test("resolveOrcaCommand only returns executable commands", () => {
 	const dir = tempDir();
@@ -107,7 +138,7 @@ test("disabled Orca progress tabs do not invoke Orca", async () => {
 	assert.equal(fs.existsSync(capture), false);
 });
 
-test("enabled tabs use a worktree sequence and successful Pi sessions get cleanup guidance", { skip: process.platform === "win32" }, async () => {
+test("enabled tabs use a worktree sequence and successful Pi sessions get cleanup guidance", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
 	const secondCapture = path.join(dir, "capture-2.json");
@@ -130,7 +161,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	tab.event({ type: "tool_execution_start", toolName: "read", args: { path: "README.md" } });
 	tab.event({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done output" }] } as never });
 	const sessionId = "019ffd40-4859-7015-94e4-7d15c31885ef";
-	const sessionFile = path.join(dir, `2026-08-13T22-31-16-313Z_${sessionId}.jsonl`);
+	const sessionFile = path.join(dir, `session file's ${sessionId}.jsonl`);
 	fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`);
 	assert.equal(resolvePiSessionId(sessionFile), sessionId);
 	assert.equal(resolvePiSessionId(path.join(dir, `missing_${sessionId}.jsonl`)), undefined);
@@ -153,7 +184,9 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	assert.match(text, /starting/);
 	assert.match(text, /› read: README\.md/);
 	assert.match(text, /done output/);
-	assert.ok(text.includes(`completed. To remove the Pi session of this subagent, run rm $(find ~/.pi/agent/sessions -name "*_${sessionId}.jsonl" -print -quit)`));
+	const quotedSessionFile = `'${fs.realpathSync(sessionFile).replace(/'/g, `'"'"'`)}'`;
+	assert.ok(text.includes(`completed. To remove the Pi session of this subagent, run rm -- ${quotedSessionFile}`));
+	assert.doesNotMatch(text, /find ~\/\.pi\/agent\/sessions/);
 
 	const nestedCwd = path.join(dir, "packages", "app");
 	fs.mkdirSync(nestedCwd, { recursive: true });
@@ -176,4 +209,65 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	const secondText = fs.readFileSync(path.join(progressDir, secondLog), "utf-8");
 	assert.match(secondText, /failed/);
 	assert.doesNotMatch(secondText, /To remove the Pi session/);
+});
+
+test("viewer strips split terminal control sequences across poll ticks", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = path.join(dir, "orca");
+	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
+	fs.chmodSync(fakeOrca, 0o755);
+	const runId = `progress-sanitize-${Date.now()}`;
+	const tab = createOrcaProgressTab({
+		cwd: dir,
+		runId,
+		agent: "worker",
+		index: 0,
+		config: { enabled: true },
+		command: fakeOrca,
+		env: { ...process.env, ORCA_TEST_CAPTURE: capture },
+	});
+	assert.ok(tab);
+	await waitForFile(capture);
+	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
+	const viewer = args[args.indexOf("--command") + 1]!;
+	const outputPromise = captureCommand(viewer, dir);
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	tab.append("safe CSI \u001b[");
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	tab.append("31mred OSC \u001b]0;secret");
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	tab.append(" title\u0007visible\u0000\u0001\r\t\u007f\n");
+	tab.finish("failed");
+	const output = await outputPromise;
+	assert.match(output, /safe CSI red OSC visible\n/);
+	assert.doesNotMatch(output, /\u001b|31m|secret|title|\u0000|\u0001|\r|\t|\u007f/);
+});
+
+test("mirror output truncates at a finite byte bound", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = path.join(dir, "orca");
+	fs.writeFileSync(fakeOrca, `#!/usr/bin/env node\nrequire('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))\n`);
+	fs.chmodSync(fakeOrca, 0o755);
+	const runId = `progress-bounded-${Date.now()}`;
+	const tab = createOrcaProgressTab({
+		cwd: dir,
+		runId,
+		agent: "worker",
+		index: 0,
+		config: { enabled: true },
+		command: fakeOrca,
+		env: { ...process.env, ORCA_TEST_CAPTURE: capture },
+	});
+	assert.ok(tab);
+	tab.append("x".repeat(2 * 1024 * 1024));
+	tab.append("must be dropped");
+	tab.finish("completed");
+	const log = progressFile(`${runId}-0-`, ".log");
+	await waitForFile(log.replace(/\.log$/, ".done"));
+	assert.ok(fs.statSync(log).size <= 1024 * 1024);
+	const text = fs.readFileSync(log, "utf-8");
+	assert.match(text, /progress mirror truncated at 1048576 bytes/);
+	assert.doesNotMatch(text, /must be dropped/);
 });

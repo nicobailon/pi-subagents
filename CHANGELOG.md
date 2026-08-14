@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add optional Orca progress tabs with bounded, sanitized mirrors for native Pi and external CLI children. Thanks to @hyein-cbio for #1080.
 - Show caller-owned external jobs in FleetView through a bounded push/cache API, without polling or exposing managed controls. Thanks to @ssyram for #1083.
 - Add a bounded current-status snapshot for async runs in RPC surfaces, without replaying terminal history. Thanks to @yanqianglu for #1078.
 - Add an optional `foregroundDetachShortcut` binding and show it in the running single-subagent card, so foreground work can be moved to the background without editing package source. Thanks to @Lewis-E for #1097.
