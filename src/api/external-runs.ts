@@ -7,6 +7,7 @@ export const EXTERNAL_RUN_LIMITS = {
 	maxCachedRuns: 100,
 	maxSnapshotRuns: 20,
 	maxIdentityLength: 160,
+	maxSessionIdLength: 4_096,
 	maxTextLength: 160,
 	maxPreviewLength: 4_096,
 	maxPathLength: 4_096,
@@ -82,12 +83,16 @@ function inputObject(value: unknown, field: string, allowed: Set<string>): Recor
 	return input;
 }
 
-function identity(value: unknown, field: string): string {
+function identity(value: unknown, field: string, maxLength: number = EXTERNAL_RUN_LIMITS.maxIdentityLength): string {
 	if (typeof value !== "string" || value.length === 0 || value.trim() !== value || value.includes("\0")) throw new Error(`${field} must be a non-empty trimmed string without NUL characters.`);
-	if (value.length > EXTERNAL_RUN_LIMITS.maxIdentityLength) throw new Error(`${field} must be at most ${EXTERNAL_RUN_LIMITS.maxIdentityLength} characters.`);
+	if (value.length > maxLength) throw new Error(`${field} must be at most ${maxLength} characters.`);
 	const safe = sanitizeDisplayText(value);
 	if (!safe || safe !== value) throw new Error(`${field} must contain only display-safe text.`);
 	return value;
+}
+
+function sessionIdentity(value: unknown, field: string): string {
+	return identity(value, field, EXTERNAL_RUN_LIMITS.maxSessionIdLength);
 }
 
 function displayText(value: unknown, field: string, maxLength: number, required = false): string | undefined {
@@ -119,7 +124,7 @@ function validateRun(value: unknown): ExternalRun {
 	const transcriptPath = displayText(run.transcriptPath, "External run transcriptPath", EXTERNAL_RUN_LIMITS.maxPathLength);
 	return {
 		id: identity(run.id, "External run id"),
-		sessionId: identity(run.sessionId, "External run sessionId"),
+		sessionId: sessionIdentity(run.sessionId, "External run sessionId"),
 		source: displayText(run.source, "External run source", EXTERNAL_RUN_LIMITS.maxTextLength, true)!,
 		label: displayText(run.label, "External run label", EXTERNAL_RUN_LIMITS.maxTextLength, true)!,
 		state: state(run.state, "External run state"),
@@ -154,7 +159,7 @@ export function registerExternalRun(input: ExternalRun): ExternalRun {
 
 /** Update display fields for a registered external job without changing its identity or owner. */
 export function updateExternalRun(sessionId: string, id: string, update: ExternalRunUpdate): ExternalRun {
-	const safeSessionId = identity(sessionId, "External run sessionId");
+	const safeSessionId = sessionIdentity(sessionId, "External run sessionId");
 	const safeId = identity(id, "External run id");
 	const patch = inputObject(update, "External run update", UPDATE_FIELDS);
 	const current = registry();
@@ -168,7 +173,7 @@ export function updateExternalRun(sessionId: string, id: string, update: Externa
 
 /** Remove a cached external job. The caller remains responsible for its process and artifacts. */
 export function unregisterExternalRun(sessionId: string, id: string): boolean {
-	return registry().runs.delete(key(identity(sessionId, "External run sessionId"), identity(id, "External run id")));
+	return registry().runs.delete(key(sessionIdentity(sessionId, "External run sessionId"), identity(id, "External run id")));
 }
 
 function snapshotBytes(runs: readonly ExternalRun[]): number {
@@ -181,7 +186,7 @@ function getErrorMessage(error: unknown): string {
 
 /** Read a bounded cached snapshot for one Pi session. This never invokes third-party code. */
 export function snapshotExternalRuns(sessionId: string, options: ExternalRunSnapshotOptions = {}): readonly ExternalRun[] {
-	const safeSessionId = identity(sessionId, "External-run snapshot sessionId");
+	const safeSessionId = sessionIdentity(sessionId, "External-run snapshot sessionId");
 	const current = registry();
 	const runs: ExternalRun[] = [];
 	for (const [cacheKey, value] of current.runs.entries()) {

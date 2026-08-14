@@ -61,6 +61,52 @@ test("external runs register, update, list, and unregister cached display record
 	clearRegistry();
 });
 
+test("long Pi session IDs work across register, snapshot, update, and unregister", () => {
+	clearRegistry();
+	const sessionId = `session-${"nested/".repeat(30)}`;
+	assert.ok(sessionId.length > EXTERNAL_RUN_LIMITS.maxIdentityLength);
+	assert.equal(registerExternalRun({
+		id: "long-session-run",
+		sessionId,
+		source: "tool",
+		label: "Long session",
+		state: "running",
+		startedAt: 1,
+	}).sessionId, sessionId);
+	assert.deepEqual(snapshotExternalRuns(sessionId).map((run) => run.id), ["long-session-run"]);
+	assert.equal(updateExternalRun(sessionId, "long-session-run", { currentAction: "Still running" }).currentAction, "Still running");
+	assert.equal(unregisterExternalRun(sessionId, "long-session-run"), true);
+	assert.deepEqual(snapshotExternalRuns(sessionId), []);
+	clearRegistry();
+});
+
+test("session and external-run IDs retain bounded display-safe validation", () => {
+	clearRegistry();
+	const input = {
+		id: "run",
+		sessionId: "session-a",
+		source: "tool",
+		label: "Validation",
+		state: "running" as const,
+		startedAt: 1,
+	};
+	assert.throws(
+		() => registerExternalRun({ ...input, id: "r".repeat(EXTERNAL_RUN_LIMITS.maxIdentityLength + 1) }),
+		/External run id must be at most 160 characters/,
+	);
+	assert.throws(
+		() => snapshotExternalRuns("s".repeat(EXTERNAL_RUN_LIMITS.maxSessionIdLength + 1)),
+		/External-run snapshot sessionId must be at most 4096 characters/,
+	);
+	for (const malformed of [" session-a", "session-a ", "session\n-a", "session\0-a"]) {
+		assert.throws(() => snapshotExternalRuns(malformed), /trimmed string without NUL|display-safe/);
+		assert.throws(() => registerExternalRun({ ...input, sessionId: malformed }), /trimmed string without NUL|display-safe/);
+		assert.throws(() => updateExternalRun(malformed, "run", {}), /trimmed string without NUL|display-safe/);
+		assert.throws(() => unregisterExternalRun(malformed, "run"), /trimmed string without NUL|display-safe/);
+	}
+	clearRegistry();
+});
+
 test("external run validation is atomic and display text is bounded", () => {
 	clearRegistry();
 	registerExternalRun({
