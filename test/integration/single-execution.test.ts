@@ -604,8 +604,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
 		assert.equal(mockPi.callCount(), 0);
 
-		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
-		fs.rmSync(path.join(DIRS.results, "external-fallback-model.json"), { force: true });
+		assert.ok(result.details.asyncId);
+		const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
+		let runResult: { state?: string } = {};
+		for (let attempt = 0; attempt < 100; attempt++) {
+			if (fs.existsSync(resultPath)) runResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+			if (runResult.state === "complete" || runResult.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(runResult.state, "complete");
+
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+		fs.rmSync(resultPath, { force: true });
 	});
 
 	it("rejects external CLI fork context before fallback model validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

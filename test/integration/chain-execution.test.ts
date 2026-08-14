@@ -538,7 +538,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 				{
 					ctx: {
 						...makeMinimalCtx(tempDir),
-						model: { provider: "github-copilot" },
+						model: { provider: "github-copilot", id: "gpt-5-mini" },
 						modelRegistry: {
 							getAvailable: () => [
 								{ provider: "openai", id: "gpt-5-mini" },
