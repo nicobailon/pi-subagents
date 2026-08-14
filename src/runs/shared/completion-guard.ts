@@ -23,15 +23,21 @@ const CURSOR_FILE_MUTATION_THINKING =
 	/(?:^|\n)\s*Cursor (?:edit|write)\s*:/i;
 
 const REVIVED_TASK_PREFIX = /^You are reviving a previous subagent conversation\.\n\nOriginal run: .+\nOriginal agent: .+(?:\nOriginal session file: .+)?\n\nUse the stored session context as background\. Answer the orchestrator's follow-up below\. Do not assume the original child process is still alive\.\n\nFollow-up:\n/;
-const IMPLEMENTATION_CHALLENGE_TASK_PATTERN = new RegExp(`${REVIVED_TASK_PREFIX.source}(?:Run )?implementation challenge pass (?:one|two|\\d+)\\b`, "i");
+const IMPLEMENTATION_CHALLENGE_FOLLOW_UP_PATTERN = /^(?:Run )?implementation challenge pass (?:one|two|\d+)(?:\s+and implement any better current[- ]scope change\.?|\s+for the accepted candidate\.\s+Reconsider it and implement any better current[- ]scope change\.?)?$/i;
 const NO_BETTER_CHANGE_NEEDED_PATTERN = /^\s*no (?:better|further|additional) (?:current[- ]scope )?(?:code |source |file )?(?:change|changes|edit|edits|patch|patches) (?:is|are) needed\b/i;
 const KEPT_CURRENT_IMPLEMENTATION_PATTERN = /\b(?:kept (?:the )?current (?:implementation|candidate|shape)|(?:the )?current (?:implementation|candidate|shape) was kept)\b/i;
 const NO_CHANGE_MADE_PATTERN = /\bno (?:new )?(?:(?:code|source|file|test)(?:\s*(?:,\s*or|,|\/|or)\s*(?:code|source|file|test))* changes?|changes?) (?:were|was) made\b/i;
 const NO_BETTER_CHANGE_QUALIFIER_PATTERN = /\b(?:do\s+not|don't|dont|not|never|cannot|can't|cant|unable|uncertain|unsure|unclear|disagree|wrong|false|reject|rejected|rejecting|maybe|might|may|\w+n['’]t)\b/i;
-const REPORT_SENTENCE_PATTERN = /[^.!?]+(?:[.!?]+(?=\s|$)|$)/g;
+const REPORT_SENTENCE_PATTERN = /[^.!?]+(?:[.!?]+(?=(?:["”'’]?\s)|["”'’]?$)|$)/g;
 const QUOTED_CLAIM_PATTERN = /["“]([^"”]+)["”]([.!?]?\s*[^.!?]*)/g;
 const QUOTED_CLAIM_REFERENCE_PATTERN = /\b(?:that|this|it|claim|report|message|disagree)\b/i;
 const CLAIM_CONTRADICTION_PATTERN = /\bbut\b[^.!?]*\b(?:uncertain|unsure|unclear|disagree|wrong|false|reject|rejected|rejecting)\b/i;
+const IMPLEMENTATION_RETRACTION_PATTERN = /\b(?:found|identified)\s+(?:(?:a|an|the)\s+)?(?:required|necessary|additional|better)?\s*(?:(?:code|source|file|test)\s+)?(?:changes?|edits?|patches?)\b|\b(?:(?:implementation|code|source|file|test)\s+)?work\s+(?:remains?|is\s+(?:needed|required))\b|\b(?:(?:a|an|the)\s+)?(?:(?:code|source|file|test)\s+)?(?:changes?|edits?|patches?)\s+(?:are|is)\s+(?:needed|required)\b|\b(?:required|necessary|additional|better)\s+(?:(?:code|source|file|test)\s+)?(?:changes?|edits?|patches?)\b|\b(?:I|we)?\s*need\s+(?:(?:code|source|file|test)\s+)?(?:changes?|edits?|patches?)\b|\b(?:need|needs|require|requires)\s+(?:to\s+)?(?:implement|make|apply)\b/i;
+const IMPLEMENTATION_RETRACTION_GLOBAL_PATTERN = new RegExp(IMPLEMENTATION_RETRACTION_PATTERN.source, "gi");
+const DIRECT_CLAIM_RETRACTION_PATTERN = /^\s*(?:I\s+)?(?:disagree|reject|retract)\b|\b(?:disagree|retract|retracted|retracting|reject|rejected|rejecting)\b[^.!?]*\b(?:that|this|it|claim|report|message)\b|\b(?:that|this|it|claim|report|message)\b[^.!?]*\b(?:is|was)\s+(?:rejected|retracted)\b/i;
+const NEGATED_RETRACTION_PREFIX_PATTERN = /\b(?:no|not|\w+n['’]t)\b(?:\s+\w+){0,2}\s*$/i;
+const REPORTED_CLAIM_PREFIX_PATTERN = /["“]|\b(?:prior|previous)\s+(?:message|report)\b|\b(?:said|stated|reported)\b/i;
+const POST_CLAIM_SEPARATOR_PATTERN = /^[\s,;:.—–'"“‘’-]+/;
 
 interface CompletionMutationGuardInput {
 	agent: string;
@@ -45,6 +51,11 @@ interface CompletionMutationGuardResult {
 	expectedMutation: boolean;
 	attemptedMutation: boolean;
 	triggered: boolean;
+}
+
+interface ReportSentence {
+	text: string;
+	offset: number;
 }
 
 export function hasMutationToolCapability(tools: string[] | undefined, mcpDirectTools: string[] | undefined): boolean {
@@ -93,15 +104,52 @@ export function hasMutationToolCall(messages: Message[]): boolean {
 	return false;
 }
 
-function hasUnqualifiedClaim(sentences: string[], pattern: RegExp): boolean {
-	return sentences.some((sentence) => {
-		const claim = sentence.match(pattern);
+function hasImplementationRetraction(text: string): boolean {
+	return Array.from(text.matchAll(IMPLEMENTATION_RETRACTION_GLOBAL_PATTERN)).some((retraction) =>
+		!NEGATED_RETRACTION_PREFIX_PATTERN.test(text.slice(0, retraction.index!)));
+}
+
+function hasDirectClaimRetraction(text: string): boolean {
+	return DIRECT_CLAIM_RETRACTION_PATTERN.test(text.replace(POST_CLAIM_SEPARATOR_PATTERN, ""));
+}
+
+function isInsideQuotedText(report: string, index: number): boolean {
+	let quote: "double" | "single" | undefined;
+	for (const char of report.slice(0, index)) {
+		if (quote === "double") {
+			if (char === "\"" || char === "”") quote = undefined;
+		} else if (quote === "single") {
+			if (char === "’") quote = undefined;
+		} else if (char === "\"" || char === "“") {
+			quote = "double";
+		} else if (char === "‘") {
+			quote = "single";
+		}
+	}
+	return quote !== undefined;
+}
+
+function unqualifiedClaimIndex(report: string, sentences: ReportSentence[], pattern: RegExp): number {
+	return sentences.findIndex((sentence) => {
+		const claim = sentence.text.match(pattern);
 		if (claim === null) return false;
-		const before = sentence.slice(0, claim.index!);
-		const after = sentence.slice(claim.index! + claim[0].length);
-		return !NO_BETTER_CHANGE_QUALIFIER_PATTERN.test(before)
-			&& !CLAIM_CONTRADICTION_PATTERN.test(after);
+		const before = sentence.text.slice(0, claim.index!);
+		const after = sentence.text.slice(claim.index! + claim[0].length);
+		const previous = before.trimEnd().at(-1);
+		return previous !== "'"
+			&& previous !== "‘"
+			&& !isInsideQuotedText(report, sentence.offset + claim.index!)
+			&& !REPORTED_CLAIM_PREFIX_PATTERN.test(before)
+			&& !NO_BETTER_CHANGE_QUALIFIER_PATTERN.test(before)
+			&& !CLAIM_CONTRADICTION_PATTERN.test(after)
+			&& !hasImplementationRetraction(after)
+			&& !hasDirectClaimRetraction(after);
 	});
+}
+
+function hasLaterClaimRetraction(sentences: ReportSentence[], claimIndex: number): boolean {
+	return sentences.slice(claimIndex + 1).some((sentence) => hasImplementationRetraction(sentence.text)
+		|| hasDirectClaimRetraction(sentence.text));
 }
 
 function explicitlyRejectsQuotedClaim(report: string): boolean {
@@ -113,6 +161,11 @@ function explicitlyRejectsQuotedClaim(report: string): boolean {
 	return false;
 }
 
+function isImplementationChallengeTask(task: string): boolean {
+	const followUp = task.replace(REVIVED_TASK_PREFIX, "");
+	return followUp !== task && IMPLEMENTATION_CHALLENGE_FOLLOW_UP_PATTERN.test(followUp.trim());
+}
+
 function reportsNoBetterChallengeChange(messages: Message[]): boolean {
 	const report = messages
 		.filter((message) => message.role === "assistant")
@@ -120,10 +173,17 @@ function reportsNoBetterChallengeChange(messages: Message[]): boolean {
 		.flatMap((part) => part.type === "text" ? [part.text] : [])
 		.join("\n");
 	if (explicitlyRejectsQuotedClaim(report)) return false;
-	const sentences = report.match(REPORT_SENTENCE_PATTERN) ?? [];
-	if (hasUnqualifiedClaim(sentences, NO_BETTER_CHANGE_NEEDED_PATTERN)) return true;
-	return hasUnqualifiedClaim(sentences, KEPT_CURRENT_IMPLEMENTATION_PATTERN)
-		&& hasUnqualifiedClaim(sentences, NO_CHANGE_MADE_PATTERN);
+	const sentences = Array.from(report.matchAll(REPORT_SENTENCE_PATTERN), (match) => ({
+		text: match[0],
+		offset: match.index!,
+	}));
+	const noBetterIndex = unqualifiedClaimIndex(report, sentences, NO_BETTER_CHANGE_NEEDED_PATTERN);
+	if (noBetterIndex >= 0) return !hasLaterClaimRetraction(sentences, noBetterIndex);
+	const keptIndex = unqualifiedClaimIndex(report, sentences, KEPT_CURRENT_IMPLEMENTATION_PATTERN);
+	const noChangeIndex = unqualifiedClaimIndex(report, sentences, NO_CHANGE_MADE_PATTERN);
+	return keptIndex >= 0
+		&& noChangeIndex >= 0
+		&& !hasLaterClaimRetraction(sentences, Math.min(keptIndex, noChangeIndex));
 }
 
 export function evaluateCompletionMutationGuard(input: CompletionMutationGuardInput): CompletionMutationGuardResult {
@@ -131,7 +191,7 @@ export function evaluateCompletionMutationGuard(input: CompletionMutationGuardIn
 		? expectsImplementationMutation(input.agent, input.task)
 		: false;
 	const attemptedMutation = hasMutationToolCall(input.messages);
-	const noEditChallengeComplete = IMPLEMENTATION_CHALLENGE_TASK_PATTERN.test(input.task)
+	const noEditChallengeComplete = isImplementationChallengeTask(input.task)
 		&& reportsNoBetterChallengeChange(input.messages);
 	return {
 		expectedMutation,

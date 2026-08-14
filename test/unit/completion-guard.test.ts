@@ -74,6 +74,9 @@ test("implementation challenges may complete with explicit no-change reports", (
 		"Kept the current implementation. No code, source, or test changes were made.",
 		"No better current-scope change is needed.\n\nReason: I cannot identify a smaller safe change.",
 		"No better current-scope change is needed because I did not identify a smaller safe change.",
+		"No better current-scope change is needed because no work remains.",
+		"No better current-scope change is needed. I haven't identified required changes.",
+		"No better current-scope change is needed. I haven’t identified required changes.",
 		"No better current-scope change is needed; I did not identify a smaller safe change.",
 		"No better current-scope change is needed, since I did not identify a smaller safe change.",
 		"No better current-scope change is needed, I did not identify a smaller safe change.",
@@ -117,18 +120,91 @@ test("implementation challenge reports require both a kept-current rationale and
 	}
 });
 
-test("revived implementation tasks that mention implementation challenge remain guarded", () => {
-	const result = evaluateCompletionMutationGuard({
-		agent: "worker",
-		task: revivedTask("Fix the implementation challenge completion guard bug."),
-		messages: [assistantText("No better current-scope change is needed.")],
-	});
+test("implementation challenge reports require current kept/no-change claims", () => {
+	for (const report of [
+		"The previous message said \"Kept the current implementation. No code changes were made\".",
+		"The prior report stated Kept the current implementation. No code changes were made.",
+		"The previous message said \"Kept the current implementation. No code changes were made\". Kept the current implementation.",
+		"'Kept the current implementation. No code changes were made.'",
+	]) {
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		}).triggered, true, report);
+	}
+});
 
-	assert.deepEqual(result, {
-		expectedMutation: true,
-		attemptedMutation: false,
-		triggered: true,
-	});
+test("implementation challenge reports with later implementation retractions remain guarded", () => {
+	for (const report of [
+		"No better current-scope change is needed. I found a required code change.",
+		"Kept the current implementation. No code changes were made. Implementation work remains.",
+		"No better current-scope change is needed. A code change is needed.",
+		"Kept the current implementation. No code changes were made. I need to implement the fix.",
+		"No better current-scope change is needed, but I found a required code change.",
+		"No better current-scope change is needed\nI found a required code change.",
+		"No better current-scope change is needed. I found required changes.",
+		"No better current-scope change is needed. Code changes are needed.",
+		"No better current-scope change is needed. Changes are needed.",
+		"No better current-scope change is needed because no work remains. Code changes are needed.",
+		"No better current-scope change is needed. I need changes.",
+		"No better current-scope change is needed. We need edits.",
+		"Kept the current implementation. No code changes were made. I need changes.",
+		"Kept the current implementation. No code changes were made. We need patches.",
+		"No better current-scope change is needed. That claim is rejected.",
+		"No better current-scope change is needed. This report is retracted.",
+		"No better current-scope change is needed. Required changes.",
+		"No better current-scope change is needed. Need changes.",
+		"No better current-scope change is needed, I disagree.",
+		"No better current-scope change is needed; I disagree.",
+		"Kept the current implementation. No code changes were made, I reject.",
+		"Kept the current implementation. No code changes were made; I reject.",
+		"No better current-scope change is needed: I disagree.",
+		"No better current-scope change is needed — I disagree.",
+		"No better current-scope change is needed. \"I reject.\"",
+		"No better current-scope change is needed. 'I reject.'",
+		"No better current-scope change is needed. ‘I reject.’",
+		"Kept the current implementation. No code changes were made: I reject.",
+		"Kept the current implementation. No code changes were made. \"I retract.\"",
+		"No better current-scope change is needed. I disagree.",
+		"No better current-scope change is needed. I reject.",
+		"No better current-scope change is needed. I retract.",
+		"Kept the current implementation. No code changes were made. I disagree.",
+		"Kept the current implementation. No code changes were made. I reject.",
+		"Kept the current implementation. No code changes were made. I retract.",
+		"No better current-scope change is needed. I disagree with that.",
+		"No better current-scope change is needed. I retract that.",
+		"No better current-scope change is needed. I reject that.",
+		"Kept the current implementation. No code changes were made. I disagree with that.",
+		"Kept the current implementation. No code changes were made. I retract that.",
+		"Kept the current implementation. No code changes were made. I reject that.",
+	]) {
+		assert.equal(evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: implementationChallengeTask,
+			messages: [assistantText(report)],
+		}).triggered, true, report);
+	}
+});
+
+test("revived implementation tasks that mention implementation challenge remain guarded", () => {
+	for (const followUp of [
+		"Fix the implementation challenge completion guard bug.",
+		"Implementation challenge pass 1. Implement the required fix.",
+		"Implementation challenge pass 1 and implement the fix.",
+	]) {
+		const result = evaluateCompletionMutationGuard({
+			agent: "worker",
+			task: revivedTask(followUp),
+			messages: [assistantText("No better current-scope change is needed.")],
+		});
+
+		assert.deepEqual(result, {
+			expectedMutation: true,
+			attemptedMutation: false,
+			triggered: true,
+		}, followUp);
+	}
 });
 
 test("implementation challenge reports with negated or uncertain no-better-change claims remain guarded", () => {

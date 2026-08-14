@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
-- Keep FleetView working when a session file path is longer than a short identity, instead of failing external-job inspection on every poll. Thanks to @albertgwo for #1121.
+- Keep FleetView working when a session file path is longer than a short identity, instead of failing external-job inspection on every poll. Thanks to @albertgwo for #1121 and @Don-Yin for #1122.
 
 ### Added
 - Add optional Orca progress tabs with bounded, sanitized mirrors for native Pi and external CLI children. Thanks to @hyein-cbio for #1080.
@@ -13,6 +13,7 @@
 
 ### Fixed
 - Keep structured single-child runs from overriding output paths in the task, while preserving explicit and agent-configured outputs. Thanks to @pasemes for #1119.
+- Keep implementation challenge no-edit confirmations guarded after later implementation retractions (#1115).
 - Remove the native generic `intercom` compatibility fallback from supervisor coordination while preserving `contact_supervisor`, `subagent_supervisor`, and external `intercom` providers. Thanks to @jaudiger for #1107.
 - Report an actionable project-settings override when duplicate ambient Pi extensions prevent a child from starting (#1114).
 - Keep the FleetView overlay refreshed while open and count active leaf agents in the compact summary. Thanks to @Don-Yin for #1108.
