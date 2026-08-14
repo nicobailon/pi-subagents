@@ -29,6 +29,13 @@ const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	"child.once('close',code=>{clear();process.exitCode=code===0?0:1});",
 ].join("");
 
+const ORCA_CLEANUP_WATCHDOG_SCRIPT = [
+	"const fs=require('node:fs');",
+	"const deadline=Date.now()+Number(process.argv[1]),files=process.argv.slice(2);",
+	"function check(){if(!files.some(file=>fs.existsSync(file)))process.exit(0);if(Date.now()<deadline)return;for(const file of files){try{fs.rmSync(file,{force:true})}catch{}}process.exit(0)}",
+	"setInterval(check,1000);check();",
+].join("");
+
 export interface OrcaProgressTab {
 	append(text: string): void;
 	event(event: { type?: string; message?: Message; toolName?: string; args?: unknown }): void;
@@ -201,13 +208,18 @@ export function resolvePiSessionId(sessionFile: string | undefined): string | un
 	}
 }
 
-function scheduleCleanup(paths: string[]): void {
-	const timer = setTimeout(() => {
-		for (const file of paths) {
-			try { fs.rmSync(file, { force: true }); } catch { /* best-effort temp cleanup */ }
-		}
-	}, CLEANUP_DELAY_MS);
-	timer.unref?.();
+function scheduleCleanup(nodeExecutable: string, paths: string[]): void {
+	try {
+		const watchdog = spawn(nodeExecutable, ["-e", ORCA_CLEANUP_WATCHDOG_SCRIPT, String(CLEANUP_DELAY_MS), ...paths], {
+			detached: true,
+			stdio: "ignore",
+			windowsHide: true,
+		});
+		watchdog.once("error", () => {});
+		watchdog.unref();
+	} catch {
+		// Cleanup remains best effort for this optional observer.
+	}
 }
 
 function loadOrcaProgressTabsConfig(): OrcaProgressTabsConfig | undefined {
@@ -356,7 +368,7 @@ export function createOrcaProgressTab(input: {
 			logStream.end(footer, () => {
 				if (!available) return;
 				try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
-				scheduleCleanup([logPath, donePath]);
+				scheduleCleanup(nodeExecutable, [logPath, donePath]);
 			});
 		},
 	};
