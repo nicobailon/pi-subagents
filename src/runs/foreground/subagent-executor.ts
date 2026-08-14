@@ -4491,8 +4491,14 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 
 	if (r.detached) {
+		const recovery = `subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
+		const message = r.detachedReason === "intercom coordination"
+			? `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with ${recovery}`
+			: r.detachedReason === "user request"
+				? `Detached at user request: ${params.agent}. Wait with ${recovery}`
+				: `Detached before task completion: ${params.agent}. Wait with ${recovery}`;
 		return {
-			content: [{ type: "text", text: `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.` }],
+			content: [{ type: "text", text: message }],
 			details,
 		};
 	}

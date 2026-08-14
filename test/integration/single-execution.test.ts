@@ -411,6 +411,52 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(JSON.stringify(result.details), /Converted structured single-child request/);
 	});
 
+	it("reports a user-requested foreground detach without supervisor guidance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ steps: [{ delay: 500, jsonl: [events.assistantMessage("completed after user detach")] }] });
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+			allowMutatingManagementActions: true,
+		});
+
+		const pending = executor.execute(
+			"user-detach-guidance",
+			{ agent: "echo", task: "Keep working", async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		let control = state.lastForegroundControlId ? state.foregroundControls.get(state.lastForegroundControlId) : undefined;
+		for (let attempt = 0; attempt < 100 && !control?.detach; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			control = state.lastForegroundControlId ? state.foregroundControls.get(state.lastForegroundControlId) : undefined;
+		}
+		assert.ok(control?.detach, "foreground detach control should become available");
+		assert.equal(control.detach(), true);
+
+		const result = await pending;
+		const text = result.content.map((part) => part.type === "text" ? part.text : "").join("\n");
+		assert.equal(result.details.results[0]?.detachedReason, "user request");
+		assert.match(text, /Detached at user request/);
+		assert.doesNotMatch(text, /intercom coordination|supervisor request/);
+
+		// Let the detached mock child reach its terminal callback before test teardown removes its files.
+		await new Promise((resolve) => setTimeout(resolve, 600));
+	});
+
 	it("rejects action='single' with execution fields", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const result = await executor.executePublic("single-alias", { action: "single", agent: "echo", task: "work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
