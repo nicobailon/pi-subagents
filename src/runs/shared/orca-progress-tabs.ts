@@ -3,9 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
-import { loadConfig } from "../../extension/config.ts";
 import { TEMP_ROOT_DIR, type OrcaProgressTabsConfig } from "../../shared/types.ts";
-import { extractTextFromContent, extractToolArgsPreview } from "../../shared/utils.ts";
+import { extractTextFromContent, extractToolArgsPreview, getAgentDir } from "../../shared/utils.ts";
 
 const ORCA_CREATE_TIMEOUT_MS = 20_000;
 const ORCA_KILL_GRACE_MS = 2_000;
@@ -199,6 +198,21 @@ function scheduleCleanup(paths: string[]): void {
 	timer.unref?.();
 }
 
+function loadOrcaProgressTabsConfig(): OrcaProgressTabsConfig | undefined {
+	try {
+		const configPath = path.join(getAgentDir(), "extensions", "subagent", "config.json");
+		const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+		const value = (parsed as Record<string, unknown>).orcaProgressTabs;
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		const config = value as Record<string, unknown>;
+		if (Object.keys(config).some((key) => key !== "enabled") || typeof config.enabled !== "boolean") return undefined;
+		return { enabled: config.enabled };
+	} catch {
+		return undefined;
+	}
+}
+
 export function createOrcaProgressTab(input: {
 	cwd: string;
 	runId: string;
@@ -208,12 +222,7 @@ export function createOrcaProgressTab(input: {
 	env?: NodeJS.ProcessEnv;
 	command?: string;
 }): OrcaProgressTab | undefined {
-	let config: OrcaProgressTabsConfig | undefined;
-	try {
-		config = input.config ?? loadConfig().orcaProgressTabs;
-	} catch {
-		return undefined;
-	}
+	const config = input.config ?? loadOrcaProgressTabsConfig();
 	if (config?.enabled !== true || process.platform === "win32") return undefined;
 	const command = input.command ?? resolveOrcaCommand(input.env);
 	if (!command) return undefined;

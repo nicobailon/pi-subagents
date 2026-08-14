@@ -124,7 +124,7 @@ test("the owning process stays alive while Orca terminal creation is pending", {
 	}
 });
 
-test("malformed optional observer metadata cannot break child execution", async () => {
+test("malformed optional observer metadata cannot break child execution", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	const capture = path.join(dir, "capture.json");
 	const fakeOrca = path.join(dir, "orca");
