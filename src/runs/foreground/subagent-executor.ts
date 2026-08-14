@@ -109,7 +109,7 @@ import { inspectSubagentStatus } from "../background/run-status.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
-import { updateMission } from "../../missions/store.ts";
+import { MissionNotFoundError, updateMission } from "../../missions/store.ts";
 import type { MissionWorkflowChildUpdate } from "../../missions/types.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
@@ -4529,17 +4529,28 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionFile?: string; async: boolean; runId?: string }) => void>();
 
+/**
+ * Terminal-mission retention can remove a mission while its children still
+ * report. Remember it to prevent later heartbeats from warning repeatedly.
+ */
+const missionsMissingFromStore = new Set<string>();
+
 function recordMissionWorkflowChild(
 	binding: MissionLaunchBinding | undefined,
 	workflowRunId: string,
 	key: string,
 	update: Omit<MissionWorkflowChildUpdate, "workflowRunId" | "key">,
 ): void {
-	if (!binding) return;
+	if (!binding || missionsMissingFromStore.has(binding.missionId)) return;
 	const { task: _task, ...durableUpdate } = update;
 	try {
 		updateMission(binding.location, binding.missionId, { upsertWorkflowChildren: [{ workflowRunId, key, ...durableUpdate }] });
 	} catch (error) {
+		if (error instanceof MissionNotFoundError) {
+			missionsMissingFromStore.add(binding.missionId);
+			console.warn(`[pi-subagents] Mission '${binding.missionId}' is no longer in the mission store; stopped recording its workflow children. Terminal-mission retention can prune a mission while its run is still active.`);
+			return;
+		}
 		console.warn(`[pi-subagents] Failed to record mission workflow child '${key}': ${error instanceof Error ? error.message : String(error)}`);
 	}
 }

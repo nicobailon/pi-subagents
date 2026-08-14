@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Warn once, instead of on every heartbeat, when a long-running workflow child outlives its mission record. Thanks to @albertgwo for #1079.
+
 ### Changed
 - Reduce reload work for large async histories by indexing the async result inbox by session, observer, and tool-call id instead of scanning every old result file; also age stale terminal active markers and throttle replay cleanup scans.
 

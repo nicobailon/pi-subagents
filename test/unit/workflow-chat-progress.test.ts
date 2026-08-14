@@ -202,6 +202,38 @@ describe("workflow chat progress rendering", () => {
 		}
 	});
 
+	it("warns once when a workflow child outlives its mission record", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-missing-mission-"));
+		const originalWarn = console.warn;
+		const warnings: string[] = [];
+		try {
+			const location = {
+				projectRoot: root,
+				missionDir: path.join(root, ".pi/subagents", "missions"),
+				globalIndexDir: path.join(root, ".pi/subagents", "mission-index"),
+				writeGlobalIndex: false,
+			};
+			const mission = createMission(location, { title: "Workflow", objective: "Track child" });
+			fs.rmSync(path.join(location.missionDir, `${mission.id}.json`));
+			console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+
+			for (const key of ["first", "second"]) {
+				await assert.rejects(
+					() => runMissionWorkflowChild({ missionId: mission.id, location, autoCreated: false }, "wf-missing-mission", key, "Prep", async () => {
+						throw new Error("child failed");
+					}),
+					/child failed/,
+				);
+			}
+
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0] ?? "", new RegExp(`Mission '${mission.id}' is no longer in the mission store`));
+		} finally {
+			console.warn = originalWarn;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("renders stable rows keyed by workflow trace entries", () => {
 		const text = componentText(renderSubagentResult({
 			content: [{ type: "text", text: "Workflow running." }],
