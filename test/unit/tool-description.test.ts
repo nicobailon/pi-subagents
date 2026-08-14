@@ -45,6 +45,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
+		assert.match(description, /implementation challenge.*\{action:\"resume\", id:\"run-id\", message:\"\.\.\.\"\}/i);
+		assert.match(description, /Resume keeps the stored agent\/model\/tool contract/i);
 		assert.match(description, /status\.json/);
 	});
 
@@ -64,6 +66,8 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
 		assert.match(description, /subagent_wait/i);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
+		assert.match(description, /\{action:\"resume\",id:\"run-id\",message:\"\.\.\.\"\} for a simple follow-up or challenge/i);
+		assert.match(description, /resume keeps the stored agent\/model\/tool contract/i);
 		assert.match(description, /exactly one non-empty title or summary/i);
 		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
 		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);

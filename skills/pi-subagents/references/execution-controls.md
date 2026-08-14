@@ -72,7 +72,7 @@ Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `
 
 For one host-run verification command, pass `gate: "npm test"` on a `runs.run`/`runs.all` item (or at the top level as a workflow default). It is shorthand for verified acceptance with that single command: the runtime executes it on the host, records the result as evidence, and memoizes it per tracked workspace state and effective environment. `gate` cannot be combined with `acceptance`; use explicit `acceptance.verify` for multiple commands or custom criteria.
 
-Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids, and a later workflow continues one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`. Inside `workflowScript`, awaiting that call waits for the revived child to finish and returns its completed output and new `runId`; top-level `{ action: "resume" }` remains detached. A follow-up loop can render each task with `await prompts.render(...)`. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items.
+Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids. For a simple implementation challenge, revive the same writer with `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })`. Inside `workflowScript`, continue one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; awaiting that call waits for the revived child to finish and returns its completed output and new `runId`. Top-level `{ action: "resume" }` remains detached. A follow-up loop can render each task with `await prompts.render(...)`. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
 
 ### Async/background
 
@@ -134,7 +134,7 @@ subagent({ action: "resume", id: "nested-run-id", message: "Continue this nested
 
 Resume behavior:
 - `resume` revives paused, completed, or failed async/foreground children from persisted session files; stopped runs remain non-resumable, and it does not interrupt live top-level async children.
-- Use `steer` for acknowledged guidance to a live top-level async child.
+- Use `steer` for acknowledged guidance to a live top-level async child. For a completed retained child, `steer` with `mode: "follow_up"` only queues text for the next `resume`; it does not revive the child by itself.
 - A live nested run can still receive a non-destructive `resume` follow-up through its owner route.
 - If an async child has completed, `resume` revives it by starting a new async child from the persisted child session file.
 - Multi-child async runs require `index` unless only one running child is selectable.

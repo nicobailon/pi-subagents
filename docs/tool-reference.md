@@ -103,6 +103,8 @@ Completed workflow children from the current parent session stay addressable as 
 
 Inside `workflowScript`, `await runs.run(key, { resume, task })` waits for the revived child to finish and returns its completed output and new `runId`. Each resume can return a new retained run id, so loops must continue from the latest returned `runId`. Top-level `{ action: "resume" }` remains detached and returns a background-run receipt.
 
+For a simple implementation challenge outside a workflow script, send the challenge through `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })`. Use workflow `runs.run({ resume })` only when the script must await the revived writer output before the next step. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
+
 `resume` and `agent` are mutually exclusive. The revived child keeps its stored agent, model, and tool contract. `gate` is rejected on retained resume items because resume uses the retained child contract.
 
 ## Management actions
@@ -239,7 +241,7 @@ subagent({ action: "doctor" })
 
 `steer` waits up to three seconds for a correlated child-Pi input acceptance and returns a request id with `delivered`, `scheduled`, `pending`, `partial`, `recovered`, or `failed` plus per-child states. The receipt also has `deliveryStatus: "delivered" | "queued"`. Delivery means Pi accepted the user message, not model compliance. A pending indexed child returns `scheduled`.
 
-The optional `mode` is `steer` by default and keeps the current interrupt behavior. `follow_up` waits for the next turn boundary. `auto` queues during an active turn and delivers immediately between turns. The bounded FIFO holds 20 messages and returns a clear error when full. Terminal details report queued messages that the run did not deliver. A `follow_up` sent to a completed retained workflow child becomes the first brief for its next `resume`.
+The optional `mode` is `steer` by default and keeps the current interrupt behavior. `follow_up` waits for the next turn boundary. `auto` queues during an active turn and delivers immediately between turns. The bounded FIFO holds 20 messages and returns a clear error when full. Terminal details report queued messages that the run did not deliver. A `follow_up` sent to a completed retained workflow child becomes the first brief for its next `resume`; it does not revive the child by itself.
 
 Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; durable multi-child and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery.
 

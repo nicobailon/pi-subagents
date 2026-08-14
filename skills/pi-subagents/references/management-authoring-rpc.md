@@ -18,7 +18,7 @@ subagent({ action: "list" })
 subagent({ action: "children.list" })
 ```
 
-Lists up to the last 10 completed retained workflow children from this parent session with their run ids. Continue one in a later workflow with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; the revived child keeps its stored agent, model, and tool contract.
+Lists up to the last 10 completed retained workflow children from this parent session with their run ids. Send a simple follow-up or implementation challenge with `subagent({ action: "resume", id: "<run-id>", message: "..." })`. Continue one inside a workflow with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; the revived child keeps its stored agent, model, and tool contract. `steer` with `mode: "follow_up"` only queues text for the next `resume` when the child has already completed.
 
 ### Refinement overlays
 
