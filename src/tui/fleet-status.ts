@@ -17,6 +17,7 @@ type FleetStatusTui = {
 type FleetStatusEntry = {
 	key: string;
 	parentKey?: string;
+	workflowWrapper?: boolean;
 	agent: string;
 	modelThinking?: string;
 	description?: string;
@@ -221,6 +222,10 @@ function foregroundDescription(control: { parentWorkflowRunId?: string; workflow
 	return description ? `${workflow} · ${description}` : workflow;
 }
 
+function activeLeafAgentCount(entries: FleetStatusEntry[]): number {
+	return entries.filter((entry) => !entry.workflowWrapper).length;
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
@@ -269,6 +274,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			const latestEmit = job.workflow?.emits?.length ? formatWorkflowJsonPreview(job.workflow.emits.at(-1), 120) : undefined;
 			entries.push({
 				key: `async:${job.asyncId}`,
+				workflowWrapper: true,
 				agent: "workflow",
 				description: latestEmit !== undefined ? `latest emit: ${latestEmit}` : job.description,
 				startedAt,
@@ -496,7 +502,8 @@ export class SubagentFleetStatus {
 			const tokens = this.entries.reduce((total, entry) => total + entry.tokens, 0);
 			const capacity = this.state.activeAsyncCapacity;
 			const asyncRuns = capacity ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
-			const agents = this.entries.length > 0 ? `${this.entries.length} active ${this.entries.length === 1 ? "agent" : "agents"}` : "";
+			const activeAgents = activeLeafAgentCount(this.entries);
+			const agents = activeAgents > 0 ? `${activeAgents} active ${activeAgents === 1 ? "agent" : "agents"}` : "";
 			const label = [agents, asyncRuns].filter(Boolean).join(" · ");
 			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", `${formatFleetTokens(tokens)} · ↓/← to inspect`)}`, width)];
 		}
