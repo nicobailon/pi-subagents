@@ -4491,12 +4491,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 
 	if (r.detached) {
-		const recovery = `subagent_wait({ id: "${runId}" }). Use subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
+		const statusRecovery = `subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
+		const blockingRecovery = `subagent_wait({ id: "${runId}" }). Use ${statusRecovery}`;
 		const message = r.detachedReason === "intercom coordination"
-			? `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with ${recovery}`
+			? `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with ${blockingRecovery}`
 			: r.detachedReason === "user request"
-				? `Detached at user request: ${params.agent}. Wait with ${recovery}`
-				: `Detached before task completion: ${params.agent}. Wait with ${recovery}`;
+				? `Detached at user request: ${params.agent}. The child continues independently. Register a completion wake-up with subagent_wait({ id: "${runId}", nonBlocking: true }), or use ${statusRecovery}`
+				: `Detached before task completion: ${params.agent}. Wait with ${blockingRecovery}`;
 		return {
 			content: [{ type: "text", text: message }],
 			details,

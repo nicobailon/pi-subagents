@@ -451,7 +451,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const text = result.content.map((part) => part.type === "text" ? part.text : "").join("\n");
 		assert.equal(result.details.results[0]?.detachedReason, "user request");
 		assert.match(text, /Detached at user request/);
-		assert.doesNotMatch(text, /intercom coordination|supervisor request/);
+		assert.match(text, /subagent_wait\(\{ id: "[^"]+", nonBlocking: true \}\)/);
+		assert.doesNotMatch(text, /intercom coordination|supervisor request|Wait with subagent_wait/);
+		assert.doesNotMatch(text, /subagent_wait\(\{ id: "[^"]+" \}\)/);
 
 		let terminalChild = state.foregroundRuns?.get(control.runId)?.children[0];
 		for (let attempt = 0; attempt < 250 && terminalChild?.status !== "completed"; attempt++) {
