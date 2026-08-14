@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Add opt-in `fleetViewDefaultExpanded` configuration so active FleetView rosters can open automatically.
+
 ### Fixed
 - Show workflow-owned foreground children and recursive nested runs as a bounded tree in FleetView. Thanks to @expoli for #1086.
 - Warn once, instead of on every heartbeat, when a long-running workflow child outlives its mission record. Thanks to @albertgwo for #1079.

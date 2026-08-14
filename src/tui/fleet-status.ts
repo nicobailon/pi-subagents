@@ -45,6 +45,7 @@ export interface FleetStatusOptions {
 	refreshMs?: number;
 	maxAgentRows?: number;
 	placement?: FleetViewPlacement;
+	defaultExpanded?: boolean;
 }
 
 export function resolveFleetViewPlacement(value: unknown): FleetViewPlacement {
@@ -221,6 +222,17 @@ function foregroundDescription(control: { parentWorkflowRunId?: string; workflow
 	return description ? `${workflow} · ${description}` : workflow;
 }
 
+function collectFleetOwnerKeys(state: SubagentState): Set<string> {
+	const owners = new Set<string>();
+	for (const control of state.foregroundControls.values()) {
+		owners.add(`foreground:${control.runId}`);
+	}
+	for (const job of state.asyncJobs.values()) {
+		if (isActiveState(job.status)) owners.add(`async:${job.asyncId}`);
+	}
+	return owners;
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
@@ -329,16 +341,18 @@ export class SubagentFleetStatus {
 	private inputUnsubscribe: (() => void) | undefined;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private widgetRegistered = false;
-	private active = false;
+	private active: boolean;
 	private selectedKey = "main";
 	private inspectorOpen = false;
 	private lastRenderKey = "";
 	private entries: FleetStatusEntry[] = [];
+	private ownerKeys = new Set<string>();
 	private readonly state: SubagentState;
 	private readonly openInspector: (itemKey: string) => Promise<void> | void;
 	private readonly refreshMs: number;
 	private readonly maxAgentRows: number;
 	private readonly placement: FleetViewPlacement;
+	private readonly defaultExpanded: boolean;
 
 	constructor(
 		state: SubagentState,
@@ -350,6 +364,8 @@ export class SubagentFleetStatus {
 		this.refreshMs = options.refreshMs ?? REFRESH_MS;
 		this.maxAgentRows = options.maxAgentRows ?? MAX_AGENT_ROWS;
 		this.placement = options.placement ?? "belowEditor";
+		this.defaultExpanded = options.defaultExpanded === true;
+		this.active = this.defaultExpanded;
 	}
 
 	setContext(ctx: ExtensionContext): void {
@@ -376,7 +392,8 @@ export class SubagentFleetStatus {
 		this.ctx = undefined;
 		this.ui = undefined;
 		this.entries = [];
-		this.active = false;
+		this.ownerKeys.clear();
+		this.active = this.defaultExpanded;
 		this.selectedKey = "main";
 		this.inspectorOpen = false;
 		this.lastRenderKey = "";
@@ -385,20 +402,31 @@ export class SubagentFleetStatus {
 	refresh(): void {
 		const ctx = this.getActiveUiContext();
 		if (!ctx) return;
-		if (this.state.widgetsSuspended) {
-			this.clearWidget();
-			return;
-		}
+		const previousOwnerKeys = this.ownerKeys;
+		const nextOwnerKeys = collectFleetOwnerKeys(this.state);
+		const startsNewFleet = nextOwnerKeys.size > 0
+			&& (previousOwnerKeys.size === 0 || ![...nextOwnerKeys].some((key) => previousOwnerKeys.has(key)));
+		this.ownerKeys = nextOwnerKeys;
 		this.entries = collectFleetStatusEntries(this.state);
+		if (this.defaultExpanded && startsNewFleet) {
+			this.active = true;
+			this.selectedKey = "main";
+		}
 		this.clampSelection();
-		if (this.inspectorOpen || this.state.fleetInspectorOpen) {
+		if (this.entries.length === 0 && !(this.state.activeAsyncCapacity?.used)) {
+			if (this.ownerKeys.size === 0) {
+				this.active = this.defaultExpanded;
+				this.selectedKey = "main";
+			}
 			this.lastRenderKey = "";
 			this.clearWidget();
 			return;
 		}
-		if (this.entries.length === 0 && !(this.state.activeAsyncCapacity?.used)) {
-			this.active = false;
-			this.selectedKey = "main";
+		if (this.state.widgetsSuspended) {
+			this.clearWidget();
+			return;
+		}
+		if (this.inspectorOpen || this.state.fleetInspectorOpen) {
 			this.lastRenderKey = "";
 			this.clearWidget();
 			return;
@@ -433,7 +461,7 @@ export class SubagentFleetStatus {
 		if (this.state.widgetsSuspended) return undefined;
 		const ctx = this.getActiveUiContext();
 		if (!ctx || this.entries.length === 0 || isKeyRelease(data)) return undefined;
-		if (this.inspectorOpen) return undefined;
+		if (this.inspectorOpen || this.state.fleetInspectorOpen) return undefined;
 		if (!this.editorHasFocus()) {
 			if (this.active) this.deactivate();
 			return undefined;

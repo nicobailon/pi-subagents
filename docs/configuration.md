@@ -91,6 +91,14 @@ Controls the persistent, navigable FleetView. The default is `true`. Set it to `
 
 Places the persistent FleetView either `"belowEditor"` or `"aboveEditor"`. The default is `"belowEditor"`; invalid values fall back to `"belowEditor"`.
 
+## `fleetViewDefaultExpanded`
+
+```json
+{ "fleetViewDefaultExpanded": true }
+```
+
+Starts FleetView expanded whenever active work first appears, showing `main` plus active child rows without requiring `↓` or `←`. The default is `false`, preserving the compact one-line summary. You can still press `Esc` or move up from `main` to collapse the roster for the current active fleet; it expands again after the fleet becomes idle and new work starts.
+
 ## `fleetKeybindings`
 
 ```json

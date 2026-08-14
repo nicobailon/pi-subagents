@@ -434,7 +434,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const ctx = state.lastUiContext;
 			if (!ctx?.hasUI) return;
 			await openSubagentFleet(ctx, state, { initialKey: itemKey, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, fleetKeybindings: config.fleetKeybindings });
-		}, { placement: fleetViewPlacement })
+		}, { placement: fleetViewPlacement, defaultExpanded: config.fleetViewDefaultExpanded === true })
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let goalTurnId = 0;

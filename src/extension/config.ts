@@ -72,6 +72,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.legacyChainControls !== undefined && typeof config.legacyChainControls !== "boolean") {
 		throw new Error("config.legacyChainControls must be a boolean");
 	}
+	if (config.fleetViewDefaultExpanded !== undefined && typeof config.fleetViewDefaultExpanded !== "boolean") {
+		throw new Error("config.fleetViewDefaultExpanded must be a boolean");
+	}
 	if (config.maxActiveAsyncRunsPerSession !== undefined
 		&& (typeof config.maxActiveAsyncRunsPerSession !== "number"
 			|| !Number.isInteger(config.maxActiveAsyncRunsPerSession)

@@ -53,6 +53,205 @@ describe("below-editor subagent FleetView", () => {
 		assert.equal(resolveFleetViewPlacement("side"), "belowEditor");
 	});
 
+	it("starts expanded when defaultExpanded is configured", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: Date.now() - 1_000,
+			updatedAt: Date.now(),
+			currentAgent: "worker",
+		});
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, defaultExpanded: true });
+		try {
+			fleet.setContext(ctx);
+			assert.ok(widgetFactory);
+			const lines = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme).render(80);
+			assert.ok(lines.length > 1);
+			assert.ok(lines.some((line) => line.includes("> main")));
+			assert.ok(lines.some((line) => line.includes("worker · running")));
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("preserves manual collapse for one fleet and re-expands a replacement fleet hidden during suspension", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: Date.now() - 1_000,
+			updatedAt: Date.now(),
+			currentAgent: "worker",
+		});
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, defaultExpanded: true });
+		try {
+			fleet.setContext(ctx);
+			const tui = { requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor };
+			assert.ok(widgetFactory!(tui, theme).render(80).length > 1);
+
+			assert.deepEqual(fleet.handleKey("\x1b"), { consume: true });
+			assert.equal(widgetFactory!(tui, theme).render(80).length, 1);
+
+			state.foregroundControls.set("run-reviewer", {
+				runId: "run-reviewer",
+				mode: "single",
+				startedAt: Date.now(),
+				updatedAt: Date.now(),
+				currentAgent: "reviewer",
+			});
+			fleet.refresh();
+			assert.equal(widgetFactory!(tui, theme).render(80).length, 1, "joining the current fleet must not override manual collapse");
+
+			state.widgetsSuspended = true;
+			state.foregroundControls.clear();
+			state.foregroundControls.set("run-scout", {
+				runId: "run-scout",
+				mode: "single",
+				startedAt: Date.now(),
+				updatedAt: Date.now(),
+				currentAgent: "scout",
+			});
+			fleet.refresh();
+			state.widgetsSuspended = false;
+			fleet.refresh();
+			const replacementLines = widgetFactory!(tui, theme).render(80);
+			assert.ok(replacementLines.length > 1);
+			assert.ok(replacementLines.some((line) => line.includes("scout · running")));
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("keeps manual collapse across step transitions within one foreground run", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-chain", {
+			runId: "run-chain",
+			mode: "chain",
+			startedAt: Date.now() - 1_000,
+			updatedAt: Date.now(),
+			currentAgent: "scout",
+			currentIndex: 0,
+		});
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, defaultExpanded: true });
+		try {
+			fleet.setContext(ctx);
+			const tui = { requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor };
+			widgetFactory!(tui, theme);
+			assert.deepEqual(fleet.handleKey("\x1b"), { consume: true });
+
+			state.foregroundControls.set("run-chain", {
+				runId: "run-chain",
+				mode: "chain",
+				startedAt: Date.now() - 1_000,
+				updatedAt: Date.now(),
+				activeChildren: new Map(),
+			});
+			fleet.refresh();
+			state.foregroundControls.set("run-chain", {
+				runId: "run-chain",
+				mode: "chain",
+				startedAt: Date.now() - 1_000,
+				updatedAt: Date.now(),
+				currentAgent: "worker",
+				currentIndex: 1,
+			});
+			fleet.refresh();
+			assert.equal(widgetFactory!(tui, theme).render(80).length, 1);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
+	it("preserves replacement-fleet expansion while the external inspector handles input", () => {
+		const state = stateForTest();
+		state.foregroundControls.set("run-worker", {
+			runId: "run-worker",
+			mode: "single",
+			startedAt: Date.now() - 1_000,
+			updatedAt: Date.now(),
+			currentAgent: "worker",
+		});
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, defaultExpanded: true });
+		try {
+			fleet.setContext(ctx);
+			const tui = { requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor };
+			widgetFactory!(tui, theme);
+			assert.deepEqual(fleet.handleKey("\x1b"), { consume: true });
+
+			state.fleetInspectorOpen = true;
+			state.foregroundControls.clear();
+			state.foregroundControls.set("run-scout", {
+				runId: "run-scout",
+				mode: "single",
+				startedAt: Date.now(),
+				updatedAt: Date.now(),
+				currentAgent: "scout",
+			});
+			fleet.refresh();
+			tui.focusedComponent = {} as Editor;
+			assert.equal(fleet.handleKey("x"), undefined);
+
+			state.fleetInspectorOpen = false;
+			fleet.refresh();
+			assert.ok(widgetFactory!(tui, theme).render(80).length > 1);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
 	it("renders main plus active children below the editor and bounds every line", () => {
 		const state = stateForTest();
 		state.activeAsyncCapacity = { used: 2, limit: 4 };

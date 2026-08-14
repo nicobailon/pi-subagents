@@ -229,6 +229,15 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.artifactDir must be "project", "session", or "temp"/);
 	});
 
+	it("loads and validates the FleetView default expansion config", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ fleetViewDefaultExpanded: true }));
+		assert.equal(loadConfig().fleetViewDefaultExpanded, true);
+
+		writeFile(configPath, JSON.stringify({ fleetViewDefaultExpanded: "yes" }));
+		assert.throws(() => updateConfig((config) => config), /config\.fleetViewDefaultExpanded must be a boolean/);
+	});
+
 	it("loads and validates Fleet keybinding config", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ fleetKeybindings: { pageUp: ["u"], pageDown: ["d"] } }));
