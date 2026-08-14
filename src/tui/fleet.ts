@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { snapshotExternalRuns, type ExternalRun } from "../api/external-runs.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
 import { DIRS, type AsyncJobState, type Details, type FleetKeybindingAction, type FleetKeybindingsConfig, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
@@ -77,6 +78,7 @@ export type FleetItem = (
 	| { key: string; kind: "foreground-active"; runId: string; index?: number; agent: string; state: "running"; updatedAt: number; control: ForegroundRunControl; activeChild?: ForegroundChildControl }
 	| { key: string; kind: "foreground-recent"; runId: string; index: number; agent: string; state: ForegroundResumeChild["status"]; updatedAt: number; run: ForegroundResumeRun; child: ForegroundResumeChild }
 	| { key: string; kind: "async"; runId: string; index?: number; agent: string; state: string; updatedAt: number; run: AsyncRunSummary; step?: AsyncStep }
+	| { key: string; kind: "external"; runId: string; agent: string; state: ExternalRun["state"]; updatedAt: number; run: ExternalRun }
 ) & { description?: string };
 
 export interface FleetSnapshot {
@@ -258,6 +260,26 @@ export function collectFleetSnapshot(
 		}
 	} catch (cause) {
 		error = cause instanceof Error ? cause.message : String(cause);
+	}
+
+	if (state.currentSessionId) {
+		try {
+			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => console.warn(`[pi-subagents] Removed ${message}`) })) {
+				items.push({
+					key: `external:${run.id}`,
+					kind: "external",
+					runId: run.id,
+					agent: run.label,
+					state: run.state,
+					updatedAt: run.updatedAt ?? run.endedAt ?? run.startedAt,
+					run,
+					...(run.currentAction ? { description: run.currentAction } : {}),
+				});
+			}
+		} catch (cause) {
+			const message = `Failed to inspect external jobs: ${cause instanceof Error ? cause.message : String(cause)}`;
+			error = error ? `${error}; ${message}` : message;
+		}
 	}
 
 	const recentForeground = [...(state.foregroundRuns?.values() ?? [])]
@@ -450,6 +472,11 @@ function foregroundRecentDetail(item: Extract<FleetItem, { kind: "foreground-rec
 	return lines.filter((line): line is string => line !== undefined);
 }
 
+function externalElapsedEnd(run: ExternalRun): number {
+	const terminal = run.state !== "queued" && run.state !== "running";
+	return terminal ? (run.endedAt ?? run.updatedAt ?? Date.now()) : Date.now();
+}
+
 function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 	const status = readStatus(item.run.asyncDir);
 	if (status) {
@@ -470,13 +497,36 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 	].filter((line): line is string => line !== undefined);
 }
 
+function externalDetail(item: Extract<FleetItem, { kind: "external" }>): string[] {
+	return [
+		`Run: ${item.runId}`,
+		"Source: external · display-only",
+		`Owner: ${item.run.source}`,
+		`State: ${item.state}`,
+		`Started: ${new Date(item.run.startedAt).toISOString()}`,
+		item.run.updatedAt !== undefined ? `Updated: ${new Date(item.run.updatedAt).toISOString()}` : undefined,
+		item.run.endedAt !== undefined ? `Ended: ${new Date(item.run.endedAt).toISOString()}` : undefined,
+		`Elapsed: ${formatDuration(Math.max(0, externalElapsedEnd(item.run) - item.run.startedAt))}`,
+		item.run.currentAction ? `Current action: ${item.run.currentAction}` : undefined,
+		item.run.reportPath ? `Report path: ${item.run.reportPath}` : undefined,
+		item.run.transcriptPath ? `Transcript path: ${item.run.transcriptPath}` : undefined,
+		"",
+		"Preview",
+		item.run.preview ?? "(no preview supplied)",
+		"",
+		"The owning extension controls execution, persistence, cancellation, and results.",
+	].filter((line): line is string => line !== undefined);
+}
+
 function detailLines(item: FleetItem | undefined, error: string | undefined, state: SubagentState): string[] {
-	if (!item) return [error ? `Fleet scan failed: ${error}` : "No current-session foreground or recent async children.", "", "New runs appear here automatically while this inspector remains open."];
+	if (!item) return [error ? `Fleet scan failed: ${error}` : "No current-session Fleet jobs.", "", "New jobs appear here automatically while this inspector remains open."];
 	const lines = item.kind === "foreground-active"
 		? foregroundActiveDetail(item, state)
 		: item.kind === "foreground-recent"
 			? foregroundRecentDetail(item, state)
-			: asyncDetail(item);
+			: item.kind === "external"
+				? externalDetail(item)
+				: asyncDetail(item);
 	if (error) lines.unshift(`Fleet scan warning: ${error}`, "");
 	return lines;
 }
@@ -504,6 +554,7 @@ function fleetArtifactsRoot(state: SubagentState, cwd: string): string {
 }
 
 function transcriptTarget(item: FleetItem, state: SubagentState): { path: string; trustedRoots: string[] } | undefined {
+	if (item.kind === "external") return undefined;
 	if (item.kind === "foreground-active") {
 		const artifactsRoot = fleetArtifactsRoot(state, item.control.cwd ?? state.baseCwd);
 		return {
@@ -548,10 +599,12 @@ function itemContext(item: FleetItem): string | undefined {
 }
 
 function itemMode(item: FleetItem): string {
+	if (item.kind === "external") return "display-only";
 	return item.kind === "foreground-active" ? item.control.mode : item.run.mode;
 }
 
 function itemSource(item: FleetItem): string {
+	if (item.kind === "external") return `external · ${item.run.source}`;
 	if (item.kind === "async") return "background";
 	return item.kind === "foreground-active" ? "foreground · live" : "foreground · recent";
 }
@@ -571,6 +624,8 @@ function itemStats(item: FleetItem): string[] {
 		model = formatModelThinking(item.child.model, item.child.thinking) || undefined;
 		tokens = item.child.tokens;
 		tools = item.child.toolCount;
+	} else if (item.kind === "external") {
+		durationMs = Math.max(0, externalElapsedEnd(item.run) - item.run.startedAt);
 	} else {
 		model = formatModelThinking(item.step?.model, item.step?.thinking) || undefined;
 		tokens = item.step?.tokens?.total ?? (item.index === undefined ? item.run.totalTokens?.total : undefined);
@@ -590,7 +645,7 @@ function itemStats(item: FleetItem): string[] {
 function structuredHeader(item: FleetItem, width: number, theme: Theme, conversationState: string, promptSummary?: string): string[] {
 	const lines: string[] = [];
 	lines.push(rightAligned(` ${statusGlyph(item, theme)} ${theme.bold(item.agent)}`, theme.fg("dim", item.state), width));
-	const child = item.index !== undefined ? ` · child ${item.index + 1}` : "";
+	const child = "index" in item && item.index !== undefined ? ` · child ${item.index + 1}` : "";
 	const context = itemContext(item);
 	const identity = `${itemSource(item)} · ${item.runId.slice(0, 8)}${child} · ${itemMode(item)}${context ? ` ${context}` : ""}`;
 	lines.push(`  ${theme.fg("dim", identity)}`);
@@ -755,6 +810,7 @@ export class SubagentFleetComponent implements Component {
 	private selectedAsyncAction(): { item: Extract<FleetItem, { kind: "async" }> } | { reason: string } {
 		const item = this.snapshot.items[this.selected];
 		if (!item) return { reason: "No child is selected." };
+		if (item.kind === "external") return { reason: "External jobs are display-only and remain controlled by their owning extension." };
 		if (item.kind !== "async") return { reason: "Fleet controls are available for current-session top-level async runs only." };
 		if (!isActionableAsyncState(item.run.state) || !isActionableAsyncState(item.state)) return { reason: `Selected child is ${item.state}; controls require a running or queued async child.` };
 		return { item };
@@ -763,6 +819,7 @@ export class SubagentFleetComponent implements Component {
 	private selectedHerdrInspectAction(): { runId: string; asyncDir: string; index?: number } | { reason: string } {
 		const item = this.snapshot.items[this.selected];
 		if (!item) return { reason: "No child is selected." };
+		if (item.kind === "external") return { reason: "External jobs are display-only and have no Herdr controls." };
 		if (item.kind === "async") {
 			if (!isActionableAsyncState(item.run.state) || !isActionableAsyncState(item.state)) return { reason: `Selected child is ${item.state}; controls require a running or queued async child.` };
 			return { runId: item.runId, asyncDir: item.run.asyncDir, ...(item.index !== undefined ? { index: item.index } : {}) };
@@ -1147,7 +1204,9 @@ export class SubagentFleetComponent implements Component {
 		];
 		const lines = [this.theme.fg("border", `╭${"─".repeat(innerWidth)}╮`)];
 		const selected = this.snapshot.items[this.selected];
-		const title = ` ${this.theme.bold("Subagent fleet inspector")} ${this.theme.fg("dim", "· live controls")}`;
+		const title = selected?.kind === "external"
+			? ` ${this.theme.bold("Fleet inspector")} ${this.theme.fg("dim", "· external display-only")}`
+			: ` ${this.theme.bold("Subagent fleet inspector")} ${this.theme.fg("dim", "· live controls")}`;
 		const selectedStatus = selected
 			? `${statusGlyph(selected, this.theme)} ${selected.agent} · ${selected.state} `
 			: this.theme.fg("dim", "no children ");
@@ -1166,7 +1225,9 @@ export class SubagentFleetComponent implements Component {
 		const position = this.snapshot.items.length ? `${this.selected + 1}/${this.snapshot.items.length}` : "0/0";
 		const footer = this.promptAuditOpen
 			? ` j/k child · 1/2/3 view · g redo with guidance · c copy · Esc close Prompt Audit · ${position}`
-			: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
+			: selected?.kind === "external"
+				? ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} job · display-only · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`
+				: ` ${bindingLabel(this.keybindings, "selectUp")}/${bindingLabel(this.keybindings, "selectDown")} agent · p Prompt Audit · ${bindingLabel(this.keybindings, "inspect")} Herdr · ${bindingLabel(this.keybindings, "steer")} steer · ${bindingLabel(this.keybindings, "stop")} stop · ${bindingLabel(this.keybindings, "toggleTools")} tools · ${bindingLabel(this.keybindings, "refresh")} refresh · ${bindingLabel(this.keybindings, "close")} close · ${position}`;
 		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));

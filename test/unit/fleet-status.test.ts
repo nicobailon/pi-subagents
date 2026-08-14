@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { Editor, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentState } from "../../src/shared/types.ts";
+import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun } from "../../src/api/external-runs.ts";
 import { collectFleetSnapshot } from "../../src/tui/fleet.ts";
 import {
 	FLEET_STATUS_WIDGET_KEY,
@@ -12,6 +13,10 @@ import {
 	formatFleetTokens,
 	resolveFleetViewPlacement,
 } from "../../src/tui/fleet-status.ts";
+
+function clearExternalRuns(): void {
+	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
+}
 
 function stateForTest(): SubagentState {
 	return {
@@ -44,6 +49,73 @@ describe("below-editor subagent FleetView", () => {
 		assert.equal(formatFleetTokens(999), "↓ 999 tokens");
 		assert.equal(formatFleetTokens(13_100), "↓ 13.1k tokens");
 		assert.equal(formatFleetTokens(1_250_000), "↓ 1.3M tokens");
+	});
+
+	it("renders cached external jobs with an external marker and elapsed time", () => {
+		clearExternalRuns();
+		registerExternalRun({
+			id: "external-review",
+			sessionId: "session-current",
+			source: "interactive-shell",
+			label: "Dependency review",
+			state: "running",
+			startedAt: Date.now() - 11_000,
+			currentAction: "Inspecting package metadata",
+		});
+		const state = stateForTest();
+		state.activeAsyncCapacity = { used: 0, limit: 0 };
+		assert.deepEqual(collectFleetStatusEntries(state).map((entry) => ({ key: entry.key, agent: entry.agent, description: entry.description })), [{
+			key: "external:external-review",
+			agent: "external · Dependency review",
+			description: "Inspecting package metadata",
+		}]);
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000 });
+		try {
+			fleet.setContext(ctx);
+			const tui = { requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor };
+			const component = widgetFactory!(tui, theme);
+			const compact = component.render(80)[0]!;
+			assert.match(compact, /1 active job/);
+			assert.doesNotMatch(compact, /Async runs|tokens/);
+			fleet.handleKey("\x1b[B");
+			const expanded = component.render(80).join("\n");
+			assert.match(expanded, /external · Dependency review · running/);
+			assert.match(expanded, /11s/);
+			assert.doesNotMatch(expanded.split("\n").find((line) => line.includes("Dependency review"))!, /tokens/);
+		} finally {
+			fleet.dispose();
+			clearExternalRuns();
+		}
+	});
+
+	it("warns when compact FleetView cannot inspect external jobs", () => {
+		clearExternalRuns();
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		(globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)] = {
+			version: EXTERNAL_RUN_REGISTRY_VERSION + 1,
+			runs: new Map(),
+		};
+		try {
+			assert.deepEqual(collectFleetStatusEntries(stateForTest()), []);
+			assert.match(warnings[0]!, /Failed to inspect external jobs/);
+		} finally {
+			console.warn = originalWarn;
+			clearExternalRuns();
+		}
 	});
 
 	it("resolves configured FleetView placement with a below-editor fallback", () => {

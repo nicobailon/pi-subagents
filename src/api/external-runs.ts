@@ -1,129 +1,210 @@
-export const EXTERNAL_RUN_REGISTRY_VERSION = 1;
-export const EXTERNAL_RUN_REGISTRY_KEY = "pi-subagents.external-runs.v1";
+import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 
-const MAX_PROVIDERS = 100;
-const MAX_RUNS_PER_PROVIDER = 10_000;
-const MAX_TEXT_LENGTH = 4_096;
+export const EXTERNAL_RUN_REGISTRY_VERSION = 2;
+export const EXTERNAL_RUN_REGISTRY_KEY = "pi-subagents.external-runs.v2";
 
-export type ExternalRunState = "running" | "completed" | "failed" | "stopped";
-export type ExternalRunCompletionReason = "exit" | "timeout" | "user-kill" | "auto-close-quiet" | "crash" | "unknown";
+export const EXTERNAL_RUN_LIMITS = {
+	maxCachedRuns: 100,
+	maxSnapshotRuns: 20,
+	maxIdentityLength: 160,
+	maxTextLength: 160,
+	maxPreviewLength: 4_096,
+	maxPathLength: 4_096,
+	maxSerializedBytes: 32 * 1_024,
+} as const;
 
-/** An observational record for work owned by another runtime. */
+export type ExternalRunState = "queued" | "running" | "completed" | "failed" | "stopped";
+
+/** A display-only record for work owned by another extension or runtime. */
 export interface ExternalRun {
 	id: string;
 	sessionId: string;
 	source: string;
+	label: string;
 	state: ExternalRunState;
-	command?: string;
-	cwd?: string;
-	isolationPath?: string;
-	owner?: string;
-	completionReason?: ExternalRunCompletionReason;
+	startedAt: number;
+	updatedAt?: number;
+	endedAt?: number;
+	currentAction?: string;
+	preview?: string;
 	reportPath?: string;
-	startedAt?: number;
-	completedAt?: number;
-	exitCode?: number | null;
-	residualRisks?: string[];
+	transcriptPath?: string;
 }
 
-export interface ExternalRunProvider {
-	name: string;
-	listExternalRuns(): readonly ExternalRun[];
-}
+export type ExternalRunUpdate = Partial<Omit<ExternalRun, "id" | "sessionId" | "source">>;
 
-export interface RegisteredExternalRun extends ExternalRun {
-	provider: string;
+export interface ExternalRunSnapshotOptions {
+	onMalformedRecord?: (message: string) => void;
+	ignoreMalformed?: boolean;
 }
 
 interface ExternalRunRegistry {
 	version: typeof EXTERNAL_RUN_REGISTRY_VERSION;
-	providers: Map<string, ExternalRunProvider>;
+	runs: Map<string, ExternalRun>;
 }
+
+const RUN_FIELDS = new Set([
+	"id",
+	"sessionId",
+	"source",
+	"label",
+	"state",
+	"startedAt",
+	"updatedAt",
+	"endedAt",
+	"currentAction",
+	"preview",
+	"reportPath",
+	"transcriptPath",
+]);
+const UPDATE_FIELDS = new Set([...RUN_FIELDS].filter((field) => field !== "id" && field !== "sessionId" && field !== "source"));
 
 function registry(): ExternalRunRegistry {
 	const key = Symbol.for(EXTERNAL_RUN_REGISTRY_KEY);
 	const target = globalThis as Record<PropertyKey, unknown>;
 	const existing = target[key];
 	if (existing === undefined) {
-		const created: ExternalRunRegistry = { version: EXTERNAL_RUN_REGISTRY_VERSION, providers: new Map() };
+		const created: ExternalRunRegistry = { version: EXTERNAL_RUN_REGISTRY_VERSION, runs: new Map() };
 		target[key] = created;
 		return created;
 	}
 	if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error(`Malformed external-run registry at Symbol.for("${EXTERNAL_RUN_REGISTRY_KEY}").`);
 	const candidate = existing as Partial<ExternalRunRegistry>;
-	if (candidate.version !== EXTERNAL_RUN_REGISTRY_VERSION || !(candidate.providers instanceof Map)) throw new Error(`Unsupported external-run registry at Symbol.for("${EXTERNAL_RUN_REGISTRY_KEY}").`);
+	if (candidate.version !== EXTERNAL_RUN_REGISTRY_VERSION || !(candidate.runs instanceof Map)) throw new Error(`Unsupported external-run registry at Symbol.for("${EXTERNAL_RUN_REGISTRY_KEY}").`);
 	return candidate as ExternalRunRegistry;
 }
 
-function text(value: unknown, field: string, required = false): string | undefined {
-	if (value === undefined && !required) return undefined;
+function inputObject(value: unknown, field: string, allowed: Set<string>): Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object.`);
+	const input = value as Record<string, unknown>;
+	const unknown = Object.keys(input).filter((key) => !allowed.has(key));
+	if (unknown.length) throw new Error(`${field} has unknown fields: ${unknown.join(", ")}.`);
+	return input;
+}
+
+function identity(value: unknown, field: string): string {
 	if (typeof value !== "string" || value.length === 0 || value.trim() !== value || value.includes("\0")) throw new Error(`${field} must be a non-empty trimmed string without NUL characters.`);
-	if (value.length > MAX_TEXT_LENGTH) throw new Error(`${field} must be at most ${MAX_TEXT_LENGTH} characters.`);
+	if (value.length > EXTERNAL_RUN_LIMITS.maxIdentityLength) throw new Error(`${field} must be at most ${EXTERNAL_RUN_LIMITS.maxIdentityLength} characters.`);
+	const safe = sanitizeDisplayText(value);
+	if (!safe || safe !== value) throw new Error(`${field} must contain only display-safe text.`);
 	return value;
 }
 
-function timestamp(value: unknown, field: string): number | undefined {
-	if (value === undefined) return undefined;
-	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`${field} must be a non-negative finite number.`);
+function displayText(value: unknown, field: string, maxLength: number, required = false): string | undefined {
+	if (value === undefined && !required) return undefined;
+	if (typeof value !== "string" || value.length === 0) throw new Error(`${field} must be a non-empty string.`);
+	const safe = sanitizeDisplayText(value.slice(0, Math.max(maxLength * 4, maxLength)));
+	if (!safe) throw new Error(`${field} must contain displayable text.`);
+	return truncateDisplayText(safe, maxLength);
+}
+
+function timestamp(value: unknown, field: string, required = false): number | undefined {
+	if (value === undefined && !required) return undefined;
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000) throw new Error(`${field} must be a non-negative safe timestamp.`);
 	return value;
 }
 
-function validateRun(value: unknown, provider: string, index: number): ExternalRun {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`External-run provider '${provider}' item ${index} must be an object.`);
-	const run = value as Record<string, unknown>;
-	const fields = new Set(["id", "sessionId", "source", "state", "command", "cwd", "isolationPath", "owner", "completionReason", "reportPath", "startedAt", "completedAt", "exitCode", "residualRisks"]);
-	const unknown = Object.keys(run).filter((key) => !fields.has(key));
-	if (unknown.length) throw new Error(`External-run provider '${provider}' item ${index} has unknown fields: ${unknown.join(", ")}.`);
-	if (!["running", "completed", "failed", "stopped"].includes(run.state as string)) throw new Error(`External-run provider '${provider}' item ${index} state is invalid.`);
-	if (run.completionReason !== undefined && !["exit", "timeout", "user-kill", "auto-close-quiet", "crash", "unknown"].includes(run.completionReason as string)) throw new Error(`External-run provider '${provider}' item ${index} completionReason is invalid.`);
-	if (run.exitCode !== undefined && run.exitCode !== null && (!Number.isInteger(run.exitCode) || !Number.isFinite(run.exitCode))) throw new Error(`External-run provider '${provider}' item ${index} exitCode must be an integer or null.`);
-	if (run.residualRisks !== undefined && (!Array.isArray(run.residualRisks) || run.residualRisks.some((risk, riskIndex) => text(risk, `External-run provider '${provider}' item ${index} residualRisks[${riskIndex}]`, true) === undefined))) throw new Error(`External-run provider '${provider}' item ${index} residualRisks must be an array of strings.`);
+function state(value: unknown, field: string): ExternalRunState {
+	if (!["queued", "running", "completed", "failed", "stopped"].includes(value as string)) throw new Error(`${field} is invalid.`);
+	return value as ExternalRunState;
+}
+
+function validateRun(value: unknown): ExternalRun {
+	const run = inputObject(value, "External run", RUN_FIELDS);
+	const updatedAt = timestamp(run.updatedAt, "External run updatedAt");
+	const endedAt = timestamp(run.endedAt, "External run endedAt");
+	const currentAction = displayText(run.currentAction, "External run currentAction", EXTERNAL_RUN_LIMITS.maxTextLength);
+	const preview = displayText(run.preview, "External run preview", EXTERNAL_RUN_LIMITS.maxPreviewLength);
+	const reportPath = displayText(run.reportPath, "External run reportPath", EXTERNAL_RUN_LIMITS.maxPathLength);
+	const transcriptPath = displayText(run.transcriptPath, "External run transcriptPath", EXTERNAL_RUN_LIMITS.maxPathLength);
 	return {
-		id: text(run.id, `External-run provider '${provider}' item ${index} id`, true)!,
-		sessionId: text(run.sessionId, `External-run provider '${provider}' item ${index} sessionId`, true)!,
-		source: text(run.source, `External-run provider '${provider}' item ${index} source`, true)!,
-		state: run.state as ExternalRunState,
-		...(text(run.command, `External-run provider '${provider}' item ${index} command`) !== undefined ? { command: text(run.command, `External-run provider '${provider}' item ${index} command`) } : {}),
-		...(text(run.cwd, `External-run provider '${provider}' item ${index} cwd`) !== undefined ? { cwd: text(run.cwd, `External-run provider '${provider}' item ${index} cwd`) } : {}),
-		...(text(run.isolationPath, `External-run provider '${provider}' item ${index} isolationPath`) !== undefined ? { isolationPath: text(run.isolationPath, `External-run provider '${provider}' item ${index} isolationPath`) } : {}),
-		...(text(run.owner, `External-run provider '${provider}' item ${index} owner`) !== undefined ? { owner: text(run.owner, `External-run provider '${provider}' item ${index} owner`) } : {}),
-		...(run.completionReason !== undefined ? { completionReason: run.completionReason as ExternalRunCompletionReason } : {}),
-		...(text(run.reportPath, `External-run provider '${provider}' item ${index} reportPath`) !== undefined ? { reportPath: text(run.reportPath, `External-run provider '${provider}' item ${index} reportPath`) } : {}),
-		...(timestamp(run.startedAt, `External-run provider '${provider}' item ${index} startedAt`) !== undefined ? { startedAt: timestamp(run.startedAt, `External-run provider '${provider}' item ${index} startedAt`) } : {}),
-		...(timestamp(run.completedAt, `External-run provider '${provider}' item ${index} completedAt`) !== undefined ? { completedAt: timestamp(run.completedAt, `External-run provider '${provider}' item ${index} completedAt`) } : {}),
-		...(run.exitCode !== undefined ? { exitCode: run.exitCode as number | null } : {}),
-		...(run.residualRisks !== undefined ? { residualRisks: [...run.residualRisks] as string[] } : {}),
+		id: identity(run.id, "External run id"),
+		sessionId: identity(run.sessionId, "External run sessionId"),
+		source: displayText(run.source, "External run source", EXTERNAL_RUN_LIMITS.maxTextLength, true)!,
+		label: displayText(run.label, "External run label", EXTERNAL_RUN_LIMITS.maxTextLength, true)!,
+		state: state(run.state, "External run state"),
+		startedAt: timestamp(run.startedAt, "External run startedAt", true)!,
+		...(updatedAt !== undefined ? { updatedAt } : {}),
+		...(endedAt !== undefined ? { endedAt } : {}),
+		...(currentAction ? { currentAction } : {}),
+		...(preview ? { preview } : {}),
+		...(reportPath ? { reportPath } : {}),
+		...(transcriptPath ? { transcriptPath } : {}),
 	};
 }
 
-/** Register an observational provider. pi-subagents never starts, stops, or steers these processes. */
-export function registerExternalRunProvider(provider: ExternalRunProvider): () => void {
-	if (!provider || typeof provider !== "object" || Array.isArray(provider) || Object.keys(provider).some((key) => key !== "name" && key !== "listExternalRuns")) throw new Error("External-run provider must contain only name and listExternalRuns.");
-	const name = text(provider.name, "External-run provider name", true)!;
-	if (typeof provider.listExternalRuns !== "function") throw new Error(`External-run provider '${name}' must expose listExternalRuns().`);
-	const current = registry();
-	if (!current.providers.has(name) && current.providers.size >= MAX_PROVIDERS) throw new Error(`External-run registry supports at most ${MAX_PROVIDERS} providers.`);
-	current.providers.set(name, provider);
-	return () => { if (current.providers.get(name) === provider) current.providers.delete(name); };
+function key(sessionId: string, id: string): string {
+	return `${sessionId}\0${id}`;
 }
 
-/** Snapshot records for one Pi session. Records are read-only observations of foreign process ownership. */
-export function snapshotExternalRuns(sessionId: string): readonly RegisteredExternalRun[] {
-	text(sessionId, "External-run snapshot sessionId", true);
-	const records: RegisteredExternalRun[] = [];
-	const identities = new Set<string>();
-	for (const [name, provider] of registry().providers) {
-		if (provider.name !== name) throw new Error(`External-run registry key '${name}' does not match provider name '${provider.name}'.`);
-		const runs = provider.listExternalRuns();
-		if (!Array.isArray(runs)) throw new Error(`External-run provider '${name}' listExternalRuns() must return an array.`);
-		if (runs.length > MAX_RUNS_PER_PROVIDER) throw new Error(`External-run provider '${name}' returned more than ${MAX_RUNS_PER_PROVIDER} runs.`);
-		runs.forEach((value, index) => {
-			const run = validateRun(value, name, index);
-			const identity = `${name}\0${run.sessionId}\0${run.id}`;
-			if (identities.has(identity)) throw new Error(`External-run provider '${name}' returned duplicate run '${run.id}' for session '${run.sessionId}'.`);
-			identities.add(identity);
-			if (run.sessionId === sessionId) records.push({ provider: name, ...run });
-		});
-	}
-	return records;
+function clone(run: ExternalRun): ExternalRun {
+	return { ...run };
 }
+
+/** Register one current-session external job. pi-subagents never controls the job. */
+export function registerExternalRun(input: ExternalRun): ExternalRun {
+	const run = validateRun(input);
+	const current = registry();
+	const runKey = key(run.sessionId, run.id);
+	if (current.runs.has(runKey)) throw new Error(`External run '${run.id}' is already registered for session '${run.sessionId}'.`);
+	if (current.runs.size >= EXTERNAL_RUN_LIMITS.maxCachedRuns) throw new Error(`External-run registry supports at most ${EXTERNAL_RUN_LIMITS.maxCachedRuns} cached runs.`);
+	current.runs.set(runKey, run);
+	return clone(run);
+}
+
+/** Update display fields for a registered external job without changing its identity or owner. */
+export function updateExternalRun(sessionId: string, id: string, update: ExternalRunUpdate): ExternalRun {
+	const safeSessionId = identity(sessionId, "External run sessionId");
+	const safeId = identity(id, "External run id");
+	const patch = inputObject(update, "External run update", UPDATE_FIELDS);
+	const current = registry();
+	const runKey = key(safeSessionId, safeId);
+	const previous = current.runs.get(runKey);
+	if (!previous) throw new Error(`External run '${safeId}' is not registered for session '${safeSessionId}'.`);
+	const next = validateRun({ ...previous, ...patch });
+	current.runs.set(runKey, next);
+	return clone(next);
+}
+
+/** Remove a cached external job. The caller remains responsible for its process and artifacts. */
+export function unregisterExternalRun(sessionId: string, id: string): boolean {
+	return registry().runs.delete(key(identity(sessionId, "External run sessionId"), identity(id, "External run id")));
+}
+
+function snapshotBytes(runs: readonly ExternalRun[]): number {
+	return Buffer.byteLength(JSON.stringify(runs), "utf8");
+}
+
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+/** Read a bounded cached snapshot for one Pi session. This never invokes third-party code. */
+export function snapshotExternalRuns(sessionId: string, options: ExternalRunSnapshotOptions = {}): readonly ExternalRun[] {
+	const safeSessionId = identity(sessionId, "External-run snapshot sessionId");
+	const current = registry();
+	const runs: ExternalRun[] = [];
+	for (const [cacheKey, value] of current.runs.entries()) {
+		try {
+			const run = validateRun(value);
+			if (run.sessionId === safeSessionId) runs.push(run);
+		} catch (error) {
+			const message = `Malformed cached external run '${cacheKey}': ${getErrorMessage(error)}`;
+			if (!options.ignoreMalformed) throw new Error(message, { cause: error instanceof Error ? error : undefined });
+			current.runs.delete(cacheKey);
+			options.onMalformedRecord?.(message);
+		}
+	}
+	runs.sort((left, right) => {
+		const leftActive = left.state === "queued" || left.state === "running";
+		const rightActive = right.state === "queued" || right.state === "running";
+		if (leftActive !== rightActive) return leftActive ? -1 : 1;
+		return (right.updatedAt ?? right.endedAt ?? right.startedAt) - (left.updatedAt ?? left.endedAt ?? left.startedAt) || left.id.localeCompare(right.id);
+	});
+	const snapshot = runs.slice(0, EXTERNAL_RUN_LIMITS.maxSnapshotRuns).map(clone);
+	while (snapshot.length > 0 && snapshotBytes(snapshot) > EXTERNAL_RUN_LIMITS.maxSerializedBytes) snapshot.pop();
+	return snapshot;
+}
+
+/** Alias for callers that prefer list terminology. */
+export const listExternalRuns = snapshotExternalRuns;

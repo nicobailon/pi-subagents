@@ -69,8 +69,11 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
 	const externalRuns = await import("pi-subagents/external-runs");
-	assert.equal(externalRuns.EXTERNAL_RUN_REGISTRY_VERSION, 1);
-	assert.equal(typeof externalRuns.registerExternalRunProvider, "function");
+	assert.equal(externalRuns.EXTERNAL_RUN_REGISTRY_VERSION, 2);
+	assert.equal(typeof externalRuns.registerExternalRun, "function");
+	assert.equal(typeof externalRuns.updateExternalRun, "function");
+	assert.equal(typeof externalRuns.snapshotExternalRuns, "function");
+	assert.equal(typeof externalRuns.unregisterExternalRun, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");

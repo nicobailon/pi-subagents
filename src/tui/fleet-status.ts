@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { snapshotExternalRuns } from "../api/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
 import type { AsyncJobStep, FleetViewPlacement, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
@@ -23,6 +24,7 @@ type FleetStatusEntry = {
 	startedAt: number;
 	tokens: number;
 	state: string;
+	external?: true;
 	nestedChildren?: NestedRunSummary[];
 };
 
@@ -319,6 +321,25 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		}
 	}
 
+	if (state.currentSessionId) {
+		try {
+			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => console.warn(`[pi-subagents] Removed ${message}`) })) {
+				if (!isActiveState(run.state)) continue;
+				entries.push({
+					key: `external:${run.id}`,
+					agent: `external · ${run.label}`,
+					description: run.currentAction ?? `source: ${run.source}`,
+					startedAt: run.startedAt,
+					tokens: 0,
+					state: run.state,
+					external: true,
+				});
+			}
+		} catch (cause) {
+			console.warn(`[pi-subagents] Failed to inspect external jobs: ${cause instanceof Error ? cause.message : String(cause)}`);
+		}
+	}
+
 	return entries.sort((left, right) => left.startedAt - right.startedAt || left.key.localeCompare(right.key));
 }
 
@@ -495,10 +516,14 @@ export class SubagentFleetStatus {
 		if (!this.active) {
 			const tokens = this.entries.reduce((total, entry) => total + entry.tokens, 0);
 			const capacity = this.state.activeAsyncCapacity;
-			const asyncRuns = capacity ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
-			const agents = this.entries.length > 0 ? `${this.entries.length} active ${this.entries.length === 1 ? "agent" : "agents"}` : "";
+			const hasNativeRows = this.entries.some((entry) => !entry.external);
+			const showNativeSummary = hasNativeRows || Boolean(capacity?.used);
+			const asyncRuns = capacity && showNativeSummary ? `Async runs ${capacity.used}/${capacity.limit || "∞"}` : "";
+			const noun = this.entries.some((entry) => entry.external) ? "job" : "agent";
+			const agents = this.entries.length > 0 ? `${this.entries.length} active ${noun}${this.entries.length === 1 ? "" : "s"}` : "";
 			const label = [agents, asyncRuns].filter(Boolean).join(" · ");
-			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", `${formatFleetTokens(tokens)} · ↓/← to inspect`)}`, width)];
+			const detail = [showNativeSummary ? formatFleetTokens(tokens) : undefined, "↓/← to inspect"].filter(Boolean).join(" · ");
+			return [truncateToWidth(`  ${theme.fg("muted", label)} · ${theme.fg("dim", detail)}`, width)];
 		}
 		const roster = this.rosterKeys();
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
@@ -529,7 +554,7 @@ export class SubagentFleetStatus {
 		const prefix = branch ? `    ${branch}` : " ";
 		const left = `${prefix} ${this.bullet(rosterIndex, selectedIndex, theme)} ${theme.fg("muted", agent)} · ${entry.state}`;
 		const elapsed = Date.now() - entry.startedAt;
-		const right = theme.fg("dim", `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
+		const right = theme.fg("dim", entry.external ? formatFleetElapsed(elapsed) : `${formatFleetElapsed(elapsed)} · ${formatFleetTokens(entry.tokens)}`);
 		return rightAlign(left, right, width);
 	}
 
@@ -589,6 +614,7 @@ export class SubagentFleetStatus {
 					entry.state,
 					entry.modelThinking,
 					entry.description,
+					entry.external,
 					Math.round((now - entry.startedAt) / 1000),
 					entry.tokens,
 					nestedFleetRows(entry.nestedChildren, entry.parentKey ? 3 : 4).map((row) => [
@@ -601,7 +627,7 @@ export class SubagentFleetStatus {
 						row.overflow,
 					]),
 				]
-				: [entry.key, entry.state, entry.tokens]),
+				: [entry.key, entry.state, entry.external, entry.tokens]),
 		});
 	}
 

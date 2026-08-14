@@ -56,6 +56,42 @@ The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore
 
 `pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
+## External jobs in FleetView
+
+Use `pi-subagents/external-runs` to publish display-only current-session jobs owned by another extension:
+
+```ts
+import {
+  registerExternalRun,
+  updateExternalRun,
+  unregisterExternalRun,
+} from "pi-subagents/external-runs";
+
+registerExternalRun({
+  id: "dependency-review",
+  sessionId: ctx.sessionManager.getSessionId(),
+  source: "interactive-shell",
+  label: "Dependency review",
+  state: "running",
+  startedAt: Date.now(),
+  currentAction: "Inspecting package metadata",
+});
+
+updateExternalRun(ctx.sessionManager.getSessionId(), "dependency-review", {
+  state: "completed",
+  updatedAt: Date.now(),
+  endedAt: Date.now(),
+  preview: "No dependency blockers found.",
+  reportPath: "/tmp/dependency-review.md",
+});
+
+unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
+```
+
+The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
+
+External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
+
 ## Launch contract preflight
 
 Use `pi-subagents/preflight` when an extension needs to inspect the resolved child launch contract before deciding whether to run anything:
