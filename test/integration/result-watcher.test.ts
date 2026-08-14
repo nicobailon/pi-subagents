@@ -1101,7 +1101,7 @@ describe("result watcher", () => {
 					intercomTarget: "subagent-chat-main",
 				});
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
+				assert.equal(await waitForPredicate(() => emitted.some((entry) => entry.event === "subagent:async-complete") && emitted.some((entry) => entry.event === "subagent:result-intercom")), true);
 			} finally {
 				watcher.stopResultWatcher();
 			}
@@ -1248,7 +1248,7 @@ describe("result watcher", () => {
 					intercomTarget: "subagent-chat-main",
 				});
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath) && emitted.some((entry) => entry.event === "subagent:async-complete") && emitted.some((entry) => entry.event === "subagent:result-intercom")), true);
 			} finally {
 				watcher.stopResultWatcher();
 			}
