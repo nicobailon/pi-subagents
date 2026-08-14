@@ -71,7 +71,7 @@ describe("slash subagent bridge requester context", () => {
           assert.equal(executedParams.agent, undefined);
           assert.equal(executedParams.task, undefined);
           assert.equal(executedParams.async, false);
-          assert.match(executedParams.workflowScript, /runs\.run\("main", \{"agent":"worker","task":"work"\}\)/);
+          assert.match(executedParams.workflowScript, /runs\.run\("main", \{"agent":"worker","task":"work","output":true\}\)/);
           resolve();
         } catch (error) {
           reject(error);

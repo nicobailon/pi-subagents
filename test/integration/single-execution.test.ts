@@ -411,6 +411,41 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(JSON.stringify(result.details), /Converted structured single-child request/);
 	});
 
+	it("does not override structured single output unless configured by the agent", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		for (const params of [
+			{ agent: "echo", task: "Use the task output path", async: false },
+			{ agent: "echo", task: "Disable file output", output: false, async: false },
+		] as const) {
+			mockPi.onCall({ output: "Structured child completed" });
+			const result = await makeExecutor([makeAgent("echo")]).executePublic(
+				"structured-single-output",
+				params,
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+			assert.doesNotMatch(readCallArgs().join("\n"), /This path is authoritative for this run/);
+		}
+
+		mockPi.onCall({ output: "Agent report" });
+		const configuredPath = path.join(tempDir, "agent-report.md");
+		const configured = await makeExecutor([makeAgent("echo", { output: configuredPath })]).executePublic(
+			"structured-single-agent-output",
+			{ agent: "echo", task: "Use agent output", async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(configured.isError, undefined, configured.content[0]?.text ?? "workflow failed");
+		const configuredTask = readCallArgs().join("\n");
+		assert.match(configuredTask, new RegExp(escapeRegExp(configuredPath)));
+		assert.match(configuredTask, /This path is authoritative for this run/);
+		assert.equal(fs.readFileSync(configuredPath, "utf-8"), "Agent report");
+	});
+
 	it("reports a user-requested foreground detach without supervisor guidance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ steps: [{ delay: 500, jsonl: [events.assistantMessage("completed after user detach")] }] });
 		const state: SubagentState = {

@@ -9,6 +9,7 @@ export interface PublicSubagentExecutionParams {
 	concurrency?: unknown;
 	chainDir?: unknown;
 	workflowScript?: unknown;
+	output?: unknown;
 	resume?: unknown;
 	clarify?: unknown;
 	runFanoutBudget?: unknown;
@@ -82,10 +83,11 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (params.task !== undefined && typeof params.task !== "string") {
 			return { ok: false, error: "Structured single-child task must be a string when provided.", mode: "workflow" };
 		}
-		const { agent: _agent, task: _task, ...workflowDefaults } = params;
+		const { agent: _agent, task: _task, output, ...workflowDefaults } = params;
 		const child = {
 			agent: params.agent.trim(),
 			...(params.task !== undefined ? { task: params.task } : {}),
+			output: output === undefined ? true : output,
 		};
 		return {
 			ok: true,
