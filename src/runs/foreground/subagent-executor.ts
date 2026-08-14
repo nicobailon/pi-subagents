@@ -2511,16 +2511,19 @@ function resolveStaticLaunchSummary(input: {
 	thinkingOverrideForTask: ForkThinkingOverrideForTask;
 }): StaticLaunchSummary {
 	const agentConfig = input.agents.find((agent) => agent.name === input.agent);
-	const model = resolveEffectiveSubagentModel(
-		input.explicitModel,
-		agentConfig?.model,
-		input.parentModel,
-		input.availableModels,
-		input.currentProvider,
-		input.modelScope === undefined ? {} : { scope: input.modelScope },
-	);
-	const thinkingOverride = input.thinkingOverrideForTask(input.agent, input.index, model);
-	const thinking = resolveEffectiveThinking(model, thinkingOverride ?? agentConfig?.thinking);
+	const externalRunner = agentConfig?.runner?.type === "external-cli";
+	const model = externalRunner
+		? undefined
+		: resolveEffectiveSubagentModel(
+			input.explicitModel,
+			agentConfig?.model,
+			input.parentModel,
+			input.availableModels,
+			input.currentProvider,
+			input.modelScope === undefined ? {} : { scope: input.modelScope },
+		);
+	const thinkingOverride = externalRunner ? undefined : input.thinkingOverrideForTask(input.agent, input.index, model);
+	const thinking = externalRunner ? undefined : resolveEffectiveThinking(model, thinkingOverride ?? agentConfig?.thinking);
 	return {
 		agent: input.agent,
 		...(model ? { model } : {}),
@@ -2880,8 +2883,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const externalRunnerWithoutExplicitModel = a.runner?.type === "external-cli"
 			&& params.model === undefined
 			&& (a.model === undefined || (a.modelSource?.type === "subagents.defaultModel" && a.model === a.modelSource.model));
-		const modelOverride = externalRunnerWithoutExplicitModel
-			? undefined
+		const modelOverride = a.runner?.type === "external-cli"
+			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
 		return executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
@@ -3764,7 +3767,9 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(task.model !== undefined ? { model: task.model } : {}),
 	}));
 	const modelOverrides: (string | undefined)[] = tasks.map((_, i) =>
-		resolveEffectiveSubagentModel(behaviorOverrides[i]?.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope }),
+		agentConfigs[i]?.runner?.type === "external-cli"
+			? undefined
+			: resolveEffectiveSubagentModel(behaviorOverrides[i]?.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope }),
 	);
 
 	if (params.clarify === true && ctx.hasUI) {
@@ -3799,7 +3804,9 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		for (let i = 0; i < result.behaviorOverrides.length; i++) {
 			const override = result.behaviorOverrides[i];
 			if (override?.model !== undefined) {
-				modelOverrides[i] = resolveEffectiveSubagentModel(override.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
+				modelOverrides[i] = agentConfigs[i]?.runner?.type === "external-cli"
+					? undefined
+					: resolveEffectiveSubagentModel(override.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
 				behaviorOverrides[i]!.model = override.model;
 			}
 			if (override?.output !== undefined) behaviorOverrides[i]!.output = override.output;
@@ -6064,6 +6071,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const parentModel = requestParentModel;
 			prepareForkThinking = (agentName, index, modelOverride) => {
 				const agentConfig = agents.find((agent) => agent.name === agentName);
+				if (agentConfig?.runner?.type === "external-cli") {
+					forkThinkingRequirements.set(index, true);
+					return;
+				}
 				const primaryModel = resolveEffectiveSubagentModel(
 					modelOverride,
 					agentConfig?.model,

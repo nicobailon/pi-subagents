@@ -154,6 +154,54 @@ Project prompt.
 		}
 	});
 
+	it("rejects an unresolved configured model when the host registry is available", async () => {
+		const cwd = path.join(tempDir, "repo-unresolved-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+model: fast
+---
+Project prompt.
+`);
+
+		await assert.rejects(
+			resolveSubagentLaunchContract({
+				agent: "worker",
+				cwd,
+				availableModels: [{ provider: "test", id: "primary", fullId: "test/primary" }],
+			}),
+			/Unknown subagent model 'fast'/,
+		);
+	});
+
+	it("bypasses native model validation for external CLI runners", async () => {
+		const cwd = path.join(tempDir, "repo-external-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(process.env.HOME!, ".pi", "agent", "settings.json"), {
+			subagents: { defaultModel: "mock/default-model" },
+		});
+		writeAgent(path.join(cwd, ".pi", "agents", "external.md"), `---
+name: external
+description: External runner
+runner:
+  type: external-cli
+  command: ${JSON.stringify(process.execPath)}
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "external",
+			cwd,
+			availableModels: [{ provider: "other", id: "known", fullId: "other/known" }],
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.model, undefined);
+		assert.deepEqual(result.contract.modelCandidates, []);
+	});
+
 	it("resolves agent aliases to the canonical launch contract agent", async () => {
 		const cwd = path.join(tempDir, "repo-alias");
 		fs.mkdirSync(cwd, { recursive: true });

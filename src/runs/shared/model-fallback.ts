@@ -163,6 +163,20 @@ export function resolveModelCandidate(
 	return model;
 }
 
+function resolveRequiredSubagentModelCandidate(
+	model: string,
+	availableModels: AvailableModelInfo[] | undefined,
+	preferredProvider?: string,
+): string {
+	if (!availableModels || availableModels.length === 0) return model;
+	const resolvedWhole = resolveBaseModelCandidate(model, availableModels, preferredProvider);
+	if (resolvedWhole) return resolvedWhole;
+	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
+	const resolvedBase = thinkingSuffix ? resolveBaseModelCandidate(baseModel, availableModels, preferredProvider) : undefined;
+	if (resolvedBase) return `${resolvedBase}${thinkingSuffix}`;
+	throw new Error(`Unknown subagent model '${model}' in the active Pi model registry.`);
+}
+
 export interface ResolveSubagentModelOverrideOptions {
 	/** When set with `enforce: true`, out-of-scope models are rejected. */
 	scope?: ModelScopeConfig;
@@ -207,7 +221,7 @@ export function resolveSubagentModelOverride(
 	if (explicit === undefined) {
 		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
 	} else {
-		resolved = resolveModelCandidate(explicit, availableModels, preferredProvider);
+		resolved = resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider);
 	}
 	if (resolved && options?.scope?.enforce) {
 		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
@@ -264,7 +278,7 @@ export function buildModelCandidates(
 	for (let index = 0; index < rawCandidates.length; index++) {
 		const raw = rawCandidates[index];
 		if (!raw) continue;
-		const normalized = resolveModelCandidate(raw.trim(), availableModels, preferredProvider);
+		const normalized = resolveRequiredSubagentModelCandidate(raw.trim(), availableModels, preferredProvider);
 		if (!normalized || seen.has(normalized)) continue;
 		if ((index > 0 || options?.scope?.strict === true) && options?.scope?.enforce) {
 			const violation = checkModelScope(normalized, options.scope, "inherited");

@@ -66,6 +66,13 @@ describe("model fallback helpers", () => {
 		);
 	});
 
+	it("rejects fallback models that the active registry cannot resolve", () => {
+		assert.throws(
+			() => buildModelCandidates("gpt-5-mini", ["does-not-exist"], availableModels),
+			/Unknown subagent model 'does-not-exist'/,
+		);
+	});
+
 	it("detects retryable provider/model failures", () => {
 		assert.equal(isRetryableModelFailure("rate limit exceeded for provider"), true);
 		assert.equal(isRetryableModelFailure("model unavailable"), true);
@@ -144,6 +151,17 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		assert.equal(
 			resolveSubagentModelOverride("gpt-5-mini", parentModel, availableModels),
 			"openai/gpt-5-mini",
+		);
+	});
+
+	it("rejects explicit models that the active registry cannot resolve", () => {
+		assert.throws(
+			() => resolveSubagentModelOverride("does-not-exist", parentModel, availableModels),
+			/Unknown subagent model 'does-not-exist'/,
+		);
+		assert.throws(
+			() => resolveSubagentModelOverride("does-not-exist:high", parentModel, availableModels),
+			/Unknown subagent model 'does-not-exist:high'/,
 		);
 	});
 

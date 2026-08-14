@@ -577,6 +577,74 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(workflowResultPath, { force: true });
 	});
 
+	it("runs external CLI agents with fallback models without registry validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerPath = path.join(tempDir, "external-fallback-started");
+		const executor = makeExecutor([
+			makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`] },
+				fallbackModels: ["mock/fallback"],
+			}),
+		]);
+		const result = await executor.execute(
+			"external-fallback-model",
+			{ agent: "external", task: "Run external", async: true },
+			new AbortController().signal,
+			undefined,
+			{
+				...makeMinimalCtx(tempDir),
+				modelRegistry: { getAvailable: () => [{ provider: "other", id: "known" }] },
+			},
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Unknown subagent model/);
+		for (let attempt = 0; attempt < 100 && !fs.existsSync(markerPath); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(fs.readFileSync(markerPath, "utf-8"), "started");
+		assert.equal(mockPi.callCount(), 0);
+
+		fs.rmSync(result.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.results, "external-fallback-model.json"), { force: true });
+	});
+
+	it("rejects external CLI fork context before fallback model validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const markerPath = path.join(tempDir, "external-fork-started");
+		const parentSessionFile = path.join(mockPi.dir, "external-fork-parent.jsonl");
+		fs.writeFileSync(parentSessionFile, `${JSON.stringify({ type: "session", version: 3, id: "parent", cwd: tempDir })}\n`, "utf-8");
+		const ctx = makeMinimalCtx(tempDir);
+		Object.assign(ctx.sessionManager, {
+			getSessionFile: () => parentSessionFile,
+			getLeafId: () => "parent-leaf",
+			openSession: () => ({
+				createBranchedSession: () => parentSessionFile,
+			}),
+		});
+		const executor = makeExecutor([
+			makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`] },
+				defaultContext: "fork",
+				fallbackModels: ["mock/fallback"],
+			}),
+		]);
+		const result = await executor.execute(
+			"external-fork-fallback",
+			{ agent: "external", task: "Run external", async: true },
+			new AbortController().signal,
+			undefined,
+			{
+				...ctx,
+				modelRegistry: { getAvailable: () => [{ provider: "other", id: "known" }] },
+			},
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /does not support: fork context/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Unknown subagent model/);
+		assert.equal(mockPi.callCount(), 0);
+		assert.equal(fs.existsSync(markerPath), false);
+	});
+
 	it("rejects explicit model overrides for external CLI agents", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([
 			makeAgent("external", {
@@ -588,11 +656,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			{ agent: "external", task: "Run external", async: true, model: "mock/override" },
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			{
+				...makeMinimalCtx(tempDir),
+				modelRegistry: { getAvailable: () => [{ provider: "other", id: "known" }] },
+			},
 		);
 
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /does not support: model override/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /Unknown subagent model/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 
@@ -3296,6 +3368,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.model, "openai/gpt-4o");
+	});
+
+	it("rejects an unresolved agent model before spawning Pi", async () => {
+		const agents = [makeAgent("echo", { model: "fast" })];
+
+		await assert.rejects(
+			runSync(tempDir, agents, "echo", "Task", {
+				availableModels: [{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" }],
+			}),
+			/Unknown subagent model 'fast'/,
+		);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("prefers the parent session provider for ambiguous bare model ids", async () => {
