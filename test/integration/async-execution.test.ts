@@ -1866,23 +1866,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "attested");
 	});
 
-	it("applies agent acceptance roles to inferred async parallel acceptance", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		mockPi.onCall({ output: "parallel exploration complete" });
-		const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
 
-		const result = await executor.execute(
-			"async-parallel-agent-acceptance-role",
-			{ tasks: [{ agent: "worker", task: "Explore the authentication flow" }], async: true, clarify: false },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const asyncId = result.details?.asyncId;
-		assert.ok(asyncId, "expected asyncId");
-		const payload = await readAsyncPayload(asyncId);
-		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "attested");
-	});
 
 	it("infers async chain acceptance after expanding top-level task templates", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "patched" });
@@ -1915,170 +1899,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
 	});
 
-	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		fs.writeFileSync(path.join(tempDir, "input.md"), "context");
-		mockPi.onCall({ output: "Async top-level report" });
-		const executor = createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("worker", { defaultProgress: true })] }),
-		});
 
-		const result = await executor.execute(
-			"async-parallel-fields",
-			{
-				tasks: [{ agent: "worker", task: "Do async work", output: "async-top-output.md", reads: ["input.md"] }],
-				async: true,
-				clarify: false,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
 
-		const asyncId = result.details?.asyncId;
-		assert.ok(asyncId, "expected asyncId");
-		const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
-		const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
-		const deadline = Date.now() + 10_000;
-		while (!fs.existsSync(resultPath)) {
-			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
 
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-		assert.equal(payload.mode, "parallel");
-		assert.equal(payload.sessionId, "session-123");
-		assert.equal(payload.results[0]?.acceptance?.status, "review-required");
-		assert.equal(payload.results[0]?.acceptance?.evidenceStatus, "checked");
-		assert.equal(status.sessionId, "session-123");
-		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
-		assert.equal(status.steps?.[0]?.acceptance?.evidenceStatus, "checked");
-		const outputPath = path.join(TEMP_ARTIFACTS_DIR, "outputs", asyncId, "async-top-output.md");
-		const outputDeadline = Date.now() + 5_000;
-		while (!fs.existsSync(outputPath)) {
-			if (Date.now() > outputDeadline) {
-				assert.fail(`Timed out waiting for saved output file: ${outputPath}`);
-			}
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Async top-level report");
-		const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
-		assert.ok(callFile, "expected a recorded mock pi call");
-		const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
-		const taskArg = args.at(-1) ?? "";
-		const progressPath = path.join(TEMP_ARTIFACTS_DIR, "progress", asyncId, "progress.md");
-		assert.ok(taskArg.includes(`[Read from: ${path.join(tempDir, "input.md")}]`));
-		assert.ok(taskArg.includes(`Update progress at: ${progressPath}`));
-		assert.ok(taskArg.includes(`Write your findings to exactly this path: ${outputPath}`));
-		assert.equal(fs.existsSync(progressPath), true);
-		assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
-	});
 
-	for (const outputOverride of [undefined, true] as const) {
-		it(`async top-level parallel isolates inherited output (${outputOverride === true ? "output:true" : "omitted output"})`, { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-			mockPi.onCall({ matchArgIncludes: "Write the first report", output: "first async report" });
-			mockPi.onCall({ matchArgIncludes: "Write the second report", output: "second async report" });
-			const agent = makeAgent("worker", { output: "context.md", tools: ["read", "grep", "find", "ls"] });
-			const executor = makeAsyncExecutor([agent]);
-			const tasks = [
-				{ agent: "worker", task: "Write the first report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
-				{ agent: "worker", task: "Write the second report", ...(outputOverride !== undefined ? { output: outputOverride } : {}) },
-			];
-			const launch = await executor.execute(
-				`async-inherited-output-${outputOverride === true ? "true" : "omitted"}`,
-				{ tasks, async: true, clarify: false },
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(tempDir),
-			);
 
-			assert.equal(launch.isError, undefined);
-			const payload = await readAsyncPayload(launch.details?.asyncId as string);
-			assert.equal(payload.success, true);
-			assert.equal(payload.results[0]?.output?.split("\n\nOutput saved to:")[0], "first async report");
-			assert.equal(payload.results[1]?.output?.split("\n\nOutput saved to:")[0], "second async report");
-			const outputDir = path.join(TEMP_ARTIFACTS_DIR, "outputs", launch.details?.asyncId as string);
-			const authoritativePaths = [
-				path.join(outputDir, "parallel-0", "0-worker", "context.md"),
-				path.join(outputDir, "parallel-0", "1-worker", "context.md"),
-			];
-			assert.equal(fs.readFileSync(authoritativePaths[0]!, "utf-8"), "first async report");
-			assert.equal(fs.readFileSync(authoritativePaths[1]!, "utf-8"), "second async report");
-			const artifactPaths = payload.results.map((result) => result.artifactPaths?.outputPath);
-			assert.ok(artifactPaths[0] && artifactPaths[1]);
-			assert.notEqual(artifactPaths[0], artifactPaths[1]);
-			assert.equal(fs.readFileSync(artifactPaths[0], "utf-8"), "first async report");
-			assert.equal(fs.readFileSync(artifactPaths[1], "utf-8"), "second async report");
-			const calls = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).sort();
-			const taskArgs = calls.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args?.at(-1) ?? "");
-			const firstTask = taskArgs.find((task) => task.includes("Write the first report")) ?? "";
-			const secondTask = taskArgs.find((task) => task.includes("Write the second report")) ?? "";
-			assert.ok(firstTask.includes(path.join("parallel-0", "0-worker", "context.md")));
-			assert.ok(secondTask.includes(path.join("parallel-0", "1-worker", "context.md")));
-			for (const taskArg of [firstTask, secondTask]) {
-				assert.match(taskArg, /Return the complete artifact in your final response\./);
-				assert.match(taskArg, /Do not call contact_supervisor merely because no write-capable tool is available\./);
-				assert.doesNotMatch(taskArg, /Write your findings to exactly this path/);
-			}
-		});
-	}
 
-	it("async top-level parallel rejects duplicate explicit output paths before spawning", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		const executor = makeAsyncExecutor([makeAgent("worker")]);
-		const result = await executor.execute(
-			"async-duplicate-output",
-			{
-				tasks: [
-					{ agent: "worker", task: "Write A", output: "same.md" },
-					{ agent: "worker", task: "Write B", output: "same.md" },
-				],
-				async: true,
-				clarify: false,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
 
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Parallel tasks 1 \(worker\) and 2 \(worker\).*same\.md/);
-		assert.equal(mockPi.callCount(), 0);
-	});
-
-	it("async top-level parallel preserves distinct explicit output destinations", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		mockPi.onCall({ matchArgIncludes: "first.md", output: "first explicit report" });
-		mockPi.onCall({ matchArgIncludes: "second.md", output: "second explicit report" });
-		const executor = makeAsyncExecutor([makeAgent("worker", { output: "context.md" })]);
-		const launch = await executor.execute(
-			"async-distinct-explicit-output",
-			{
-				tasks: [
-					{ agent: "worker", task: "Write A", output: "first.md" },
-					{ agent: "worker", task: "Write B", output: "second.md" },
-				],
-				async: true,
-				clarify: false,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const payload = await readAsyncPayload(launch.details?.asyncId as string);
-		assert.equal(payload.success, true);
-		const outputDir = path.join(TEMP_ARTIFACTS_DIR, "outputs", launch.details?.asyncId as string);
-		assert.equal(fs.readFileSync(path.join(outputDir, "first.md"), "utf-8"), "first explicit report");
-		assert.equal(fs.readFileSync(path.join(outputDir, "second.md"), "utf-8"), "second explicit report");
-		assert.ok(payload.results[0]?.artifactPaths?.outputPath?.endsWith("_worker_0_output.md"));
-		assert.ok(payload.results[1]?.artifactPaths?.outputPath?.endsWith("_worker_1_output.md"));
-	});
 
 	it("async chain static parallel namespaces inherited default outputs", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Write first", output: "chain first report" });
@@ -2164,46 +1991,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
 	});
 
-	it("top-level async chain suppresses progress for {task} review-only tasks", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
-		mockPi.onCall({ output: "Async review" });
-		const executor = createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
-			asyncByDefault: false,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (p: string) => p,
-			discoverAgents: () => ({ agents: [makeAgent("reviewer", { defaultProgress: true })] }),
-		});
 
-		const result = await executor.execute(
-			"async-chain-read-only-progress",
-			{
-				chain: [{ agent: "reviewer" }],
-				task: "Review-only. Do not edit files. Return findings.",
-				async: true,
-				clarify: false,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const asyncId = result.details?.asyncId;
-		assert.ok(asyncId, "expected asyncId");
-		const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
-		const deadline = Date.now() + 10_000;
-		while (!fs.existsSync(resultPath)) {
-			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-		const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
-		assert.ok(callFile, "expected a recorded mock pi call");
-		const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
-		assert.doesNotMatch(args.at(-1) ?? "", /progress\.md/);
-		assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
-	});
 
 	it("async chains reject malformed named output references before spawning", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-malformed-output-ref-${Date.now().toString(36)}`;
@@ -2777,64 +2565,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.workflowGraph?.nodes?.[1]?.error ?? "", /Collected output validation failed/);
 	});
 
-	it("top-level async worktree parallel keeps existing reads and writes output under project artifacts", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : process.platform === "win32" ? "worktree path separators unreliable on Windows CI" : undefined }, async () => {
-		const repoDir = createRepo("pi-subagent-async-worktree-");
-		try {
-			mockPi.onCall({ output: "Worktree report" });
-			const executor = createSubagentExecutor!({
-				pi: { events: createEventBus(), getSessionName: () => undefined },
-				state: { baseCwd: repoDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-				config: {},
-				asyncByDefault: false,
-				tempArtifactsDir: repoDir,
-				getSubagentSessionRoot: () => repoDir,
-				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-			});
 
-			const result = await executor.execute(
-				"async-parallel-worktree-fields",
-				{
-					tasks: [{ agent: "worker", task: "Do worktree work", output: "report.md", reads: ["input.md"] }],
-					async: true,
-					clarify: false,
-					worktree: true,
-				},
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(repoDir),
-			);
-
-			const asyncId = result.details?.asyncId;
-			assert.ok(asyncId, "expected asyncId");
-
-			const worktreeCwd = path.join(os.tmpdir(), `pi-worktree-${asyncId}-s0-0`);
-			const args = await waitForMockPiArgs(mockPi, 0);
-			const taskArg = args.at(-1) ?? "";
-			assert.match(taskArg, new RegExp(`\\[Read from: ${escapeRegExp(path.join(worktreeCwd, "input.md"))}\\]`));
-			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${path.join(TEMP_ARTIFACTS_DIR, "outputs", asyncId, "report.md")}`));
-			const resultPath = await waitForAsyncResultFile(asyncId, 90_000);
-			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-			const status = await waitForAsyncState(asyncId, (candidate) => candidate.state === "complete");
-			assert.equal(payload.parallelHandoff?.version, 1);
-			assert.equal(payload.parallelHandoff?.path, path.join(result.details!.asyncDir!, "handoff.json"));
-			assert.deepEqual(status.parallelHandoff, payload.parallelHandoff);
-			assert.equal(payload.parallelHandoff?.childCount, 1);
-			assert.equal(payload.parallelHandoff?.cleanupState, "complete");
-			assert.equal(fs.existsSync(worktreeCwd), false, "temporary worktree should be removed before handoff publication");
-			const handoff = JSON.parse(fs.readFileSync(payload.parallelHandoff!.path!, "utf-8")) as {
-				version: number;
-				groups: Array<{ children: Array<{ agent: string; status: string; patch: { path: string } }>; cleanup: { state: string } }>;
-			};
-			assert.equal(handoff.version, 1);
-			assert.equal(handoff.groups[0]!.children[0]!.agent, "worker");
-			assert.equal(handoff.groups[0]!.children[0]!.status, "completed");
-			assert.equal(handoff.groups[0]!.cleanup.state, "complete");
-			assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true, "patch artifact should outlive cleanup");
-		} finally {
-			removeTempDir(repoDir);
-		}
-	});
 
 	it("readStatus caches ordered sweeps above 50 files and invalidates same-mtime replacements", () => {
 		const root = createTempDir();
@@ -4052,27 +3783,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
-	it("foreground chains keep the last parent session model after continuation drops ctx.model", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
-		mockPi.onCall({ output: "Done foreground" });
-		const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
-		const initialCtx = makeMinimalCtx(tempDir);
-		initialCtx.sessionManager.getSessionId = () => "session-continued";
-		initialCtx.model = { provider: "deepseek", id: "deepseek-v4-flash" };
-		await executor.execute("prime-parent-model", { action: "list" }, new AbortController().signal, undefined, initialCtx);
 
-		const continuedCtx = makeMinimalCtx(tempDir);
-		continuedCtx.sessionManager.getSessionId = () => "session-continued";
-		const result = await executor.execute(
-			"continued-foreground-chain",
-			{ chain: [{ agent: "worker", task: "Do work" }], acceptance: false },
-			new AbortController().signal,
-			undefined,
-			continuedCtx,
-		);
-		assert.equal(result.isError, undefined);
-		const args = readMockPiArgs(mockPi, 0);
-		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
-	});
 
 	it("background single runs inherit the parent session model when no model is set", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });

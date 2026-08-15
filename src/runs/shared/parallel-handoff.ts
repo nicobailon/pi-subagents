@@ -74,7 +74,7 @@ function missingDiff(input: { manifestPath: string; stepIndex: number; taskIndex
 export function writeParallelHandoffGroup(input: {
 	manifestPath: string;
 	runId: string;
-	mode: "parallel" | "chain";
+	mode: "single" | "parallel" | "chain";
 	source: "foreground" | "async";
 	cwd: string;
 	stepIndex: number;
@@ -162,7 +162,7 @@ export function parallelHandoffPath(baseDir: string, runId?: string): string {
 export function writePendingParallelHandoff(input: {
 	manifestPath: string;
 	runId: string;
-	mode: "parallel" | "chain";
+	mode: "single" | "parallel" | "chain";
 	source: "foreground" | "async";
 	cwd: string;
 	stepIndex: number;
@@ -173,11 +173,11 @@ export function writePendingParallelHandoff(input: {
 }
 
 export function formatParallelHandoffReference(reference: ParallelHandoffReference): string {
-	return `Parallel handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})`;
+	return `Worktree handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})`;
 }
 
 export function formatParallelHandoffError(error: unknown): string {
-	return `Parallel handoff unavailable: ${error instanceof Error ? error.message : String(error)}`;
+	return `Worktree handoff unavailable: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 export function discardPreservedWorktrees(

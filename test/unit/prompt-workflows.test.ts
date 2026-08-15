@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverPromptWorkflows, registerPromptWorkflowCommands } from "../../src/slash/prompt-workflows.ts";
+import { runWorkflowScript } from "../../src/workflows/scripted-workflow.ts";
 import type { SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -142,9 +143,25 @@ Fix from {previous}: $@
 		assert.equal(params?.clarify, undefined);
 		assert.equal(params?.agentScope, "both");
 		assert.equal(params?.async, false);
-		assert.match(params?.workflowScript ?? "", /runs\.run\("prompt-1-native-analyze"/);
-		assert.match(params?.workflowScript ?? "", /runs\.run\("prompt-2-native-fix"/);
-		assert.match(params?.workflowScript ?? "", /replaceAll\("\{previous\}"/);
+		const script = params?.workflowScript ?? "";
+		assert.match(script, /runs\.run\("prompt-1-native-analyze"/);
+		assert.match(script, /runs\.run\("prompt-2-native-fix"/);
+		assert.match(script, /replaceAll\("\{previous\}"/);
 		assert.equal(commands.has("chain-prompts"), false);
+
+		const launches: Array<{ key: string; task: unknown }> = [];
+		const executed = await runWorkflowScript({
+			script,
+			async launch(key, childParams) {
+				launches.push({ key, task: childParams.task });
+				return { key, ok: true, output: key === "prompt-1-native-analyze" ? "analysis output" : "fixed output", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launches, [
+			{ key: "prompt-1-native-analyze", task: "Analyze bug report" },
+			{ key: "prompt-2-native-fix", task: "Fix from analysis output: bug report" },
+		]);
+		assert.equal(executed.value, "fixed output");
 	});
 });

@@ -607,7 +607,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			if (args.action) {
-				const target = args.agent || args.chainName || "";
+				const target = args.agent || "";
 				return new Text(
 					`${title}${gap}${args.action}${target ? `${gap}${theme.fg("accent", target)}` : ""}`,
 					0, 0,

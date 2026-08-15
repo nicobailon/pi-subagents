@@ -6,20 +6,17 @@ import { describe, it } from "node:test";
  * Tests for cross-platform path handling patterns used throughout the codebase.
  * These tests document the correct patterns after fixes were applied.
  *
- * Fixed locations:
- * - chain-execution.ts — uses path.isAbsolute() for absolute path detection
- * - settings.ts — uses path.join() for path construction
+ * Use path.isAbsolute() for absolute path detection and path.join() for path construction.
  */
 
 describe("path.isAbsolute vs startsWith('/')", () => {
-	// chain-execution.ts:496 uses startsWith("/") to detect absolute paths.
 	// On Windows, absolute paths look like "C:\\..." or "C:/..." — neither starts with "/".
 
 	it("startsWith('/') misses Windows absolute paths", () => {
 		const windowsAbsolute = "C:\\dev\\pi-subagents\\output.md";
 		const windowsAbsoluteForward = "C:/dev/pi-subagents/output.md";
 
-		// This is what the current code does (chain-execution.ts:496):
+		// A startsWith check is not portable:
 		assert.equal(windowsAbsolute.startsWith("/"), false,
 			"Windows backslash absolute path not detected by startsWith('/')");
 		assert.equal(windowsAbsoluteForward.startsWith("/"), false,
@@ -60,7 +57,6 @@ describe("path.join vs template string concatenation", () => {
 	// This works but produces inconsistent separators on Windows.
 
 	it("template concatenation produces forward slashes regardless of platform", () => {
-		// chain-execution.ts:496 uses startsWith("/") to detect absolute paths.
 		const chainDir = "C:\\Users\\marc\\temp\\chain-abc";
 		const file = "progress.md";
 

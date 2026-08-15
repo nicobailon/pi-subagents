@@ -31,8 +31,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 | `agent` | string | - | Agent target for management actions. Workflow child agents are set inside `runs.run` or `runs.all`. |
 | `action` | string | - | Agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Herdr inspector (`inspector.open/status/close`), status/control, schedule, watchdog, or doctor action. |
 | `topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api` | `overview` | Packaged guide topic for `action: "guide"`. |
-| `chainName` | string | - | Chain name for management actions. |
-| `config` | object/string | - | Agent or existing durable chain config for management create/update. |
+| `config` | object/string | - | Agent config for management create/update. |
 | `context` | `fresh \| fork` | per-agent default or `fresh` | Explicit `fresh` or `fork` overrides every workflow child. When omitted, each child agent uses its own `defaultContext`; an implicit `fork` creates a real branched session when the parent session file and current leaf exist, otherwise it falls back to `fresh` without a failed first attempt. Packaged `worker`, `oracle`, and `advisor` default to `fork`. |
 | `missionId` | string | - | Attach a workflow to an existing project mission instead of creating its default enclosing mission. |
 | `mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
@@ -106,7 +105,7 @@ For a simple implementation challenge outside a workflow script, send the challe
 
 `{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead. Valid topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, and `extension-api`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
 
-Agent definitions are not loaded into context by default. Management actions let the LLM discover, inspect, create, update, and delete agents and chains at runtime. An unknown action returns safe next steps (`status` and `list`) and may suggest a close non-destructive action. Destructive actions are only named for a near-complete one-character typo, and suggestions never execute an action.
+Agent definitions are not loaded into context by default. Management actions let the LLM discover, inspect, create, update, and delete agents at runtime. An unknown action returns safe next steps (`status` and `list`) and may suggest a close non-destructive action. Destructive actions are only named for a near-complete one-character typo, and suggestions never execute an action.
 
 ```ts
 { action: "list" }
@@ -115,7 +114,6 @@ Agent definitions are not loaded into context by default. Management actions let
 { action: "models" }
 { action: "models", agent: "reviewer" }
 { action: "get", agent: "code-analysis.scout" }
-{ action: "get", chainName: "review-pipeline" }
 
 { action: "create", config: {
   name: "Code Scout",
@@ -139,22 +137,11 @@ Agent definitions are not loaded into context by default. Management actions let
   progress: true
 }}
 
-{ action: "create", config: {
-  name: "review-pipeline",
-  description: "Scout then review",
-  scope: "project",
-  steps: [
-    { agent: "scout", task: "Scan {task}", output: "context.md" },
-    { agent: "reviewer", task: "Review {previous}", reads: ["context.md"] }
-  ]
-}}
 
 { action: "update", agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } }
 { action: "update", agent: "code-analysis.scout", config: { acceptance: "" } } // clear the frontmatter default
 { action: "update", agent: "code-analysis.scout", config: { acceptanceRole: false } } // restore inferred name fallback
-{ action: "update", chainName: "review-pipeline", config: { steps: [...] } }
 { action: "delete", agent: "scout" }
-{ action: "delete", chainName: "review-pipeline" }
 
 { action: "eject", agent: "reviewer" }
 { action: "eject", agent: "reviewer", agentScope: "project" }

@@ -272,7 +272,7 @@ export interface ParallelHandoffGroup {
 export interface ParallelHandoffManifest {
 	version: 1;
 	runId: string;
-	mode: "parallel" | "chain";
+	mode: "single" | "parallel" | "chain";
 	source: "foreground" | "async";
 	cwd: string;
 	createdAt: number;

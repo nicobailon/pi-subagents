@@ -199,8 +199,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(properties?.output, "output remains a workflow child default");
 	});
 
-	it("omits removed legacy chain and schedule fields", () => {
-		for (const name of ["tasks", "chain", "concurrency", "chainDir", "step", "schedule", "scheduleName"]) {
+	it("omits removed legacy and workflow-child-only fields", () => {
+		for (const name of ["tasks", "chain", "concurrency", "chainDir", "step", "schedule", "scheduleName", "resume"]) {
 			assert.equal((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], undefined, `${name} should not be public`);
 		}
 

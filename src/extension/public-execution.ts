@@ -8,6 +8,8 @@ export interface PublicSubagentExecutionParams {
 	parallel?: unknown;
 	concurrency?: unknown;
 	chainDir?: unknown;
+	chainName?: unknown;
+	config?: unknown;
 	workflowScript?: unknown;
 	output?: unknown;
 	resume?: unknown;
@@ -37,6 +39,12 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
 	if (params.clarify !== undefined) {
 		return { ok: false, error: "Public workflowScript execution does not support clarify UI.", mode: "workflow" };
+	}
+	if (params.chainName !== undefined) {
+		return { ok: false, error: "Durable chain management was removed; use workflowScript or /prompt-workflow for repeatable workflows.", mode: "management" };
+	}
+	if (params.config && typeof params.config === "object" && !Array.isArray(params.config) && Object.prototype.hasOwnProperty.call(params.config, "steps")) {
+		return { ok: false, error: "Durable chain definitions were removed; use workflowScript or /prompt-workflow for repeatable workflows.", mode: "management" };
 	}
 	if (params.resume !== undefined) {
 		return { ok: false, error: "Top-level resume execution is not available. Put resume on a workflowScript runs.run/runs.all item.", mode: "workflow" };

@@ -468,59 +468,5 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 			assert.match(payload.results[0]?.output ?? "", /# Findings/);
 			assert.doesNotMatch(payload.results[0]?.output ?? "", /```acceptance-report/);
 		});
-
-		it("parallel children keep acceptance tied to their distinct configured outputs", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
-			const alphaPath = path.join(tempDir, "alpha-report.md");
-			const betaPath = path.join(tempDir, "beta-report.md");
-			const alphaReport = `# Alpha findings\n${acceptanceReport("satisfied", "alpha evidence")}`;
-			const betaReport = `# Beta findings\n${acceptanceReport("not-satisfied", "beta evidence")}`;
-			mockPi.onCall({
-				matchArgIncludes: "Alpha task",
-				jsonl: [...events.completedWrite(alphaPath, alphaReport), events.assistantMessage("Alpha wrote its report.")],
-				writeFiles: [{ path: alphaPath, content: alphaReport }],
-			});
-			mockPi.onCall({
-				matchArgIncludes: "Beta task",
-				jsonl: [...events.completedWrite(betaPath, betaReport), events.assistantMessage("Beta wrote its report.")],
-				writeFiles: [{ path: betaPath, content: betaReport }],
-			});
-			const executor = createSubagentExecutor!({
-				pi: { events: createEventBus(), getSessionName: () => undefined },
-				state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-				config: {},
-				asyncByDefault: false,
-				tempArtifactsDir: tempDir,
-				getSubagentSessionRoot: () => tempDir,
-				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("worker", { completionGuard: false })] }),
-			});
-
-			const acceptance = { level: "checked", criteria: ["Report the findings"] };
-			const result = await executor.execute(
-				"acceptance-parallel-files",
-				{
-					tasks: [
-						{ agent: "worker", task: "Alpha task: write the report.", output: alphaPath, outputMode: "file-only", acceptance },
-						{ agent: "worker", task: "Beta task: write the report.", output: betaPath, outputMode: "file-only", acceptance },
-					],
-					async: true,
-					clarify: false,
-				},
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(tempDir),
-			);
-
-			const asyncId = result.details?.asyncId;
-			assert.ok(asyncId, "expected asyncId");
-			const payload = await waitForAsyncResult(asyncId);
-			assert.equal(payload.results.length, 2);
-			const alpha = payload.results[0];
-			const beta = payload.results[1];
-			assert.equal(alpha?.acceptance?.status, "checked");
-			assert.equal(alpha?.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "alpha evidence");
-			assert.equal(beta?.acceptance?.status, "rejected");
-			assert.equal(beta?.acceptance?.childReport?.criteriaSatisfied?.[0]?.evidence, "beta evidence");
-		});
 	});
 });

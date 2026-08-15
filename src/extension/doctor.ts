@@ -134,7 +134,7 @@ function formatSessionLines(input: DoctorReportInput): string[] {
 
 function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 	return [
-		lineFromCheck("agents/chains", () => {
+		lineFromCheck("agents", () => {
 			const discovered = deps.discoverAgentsAll(input.cwd);
 			const agentCounts = {
 				builtin: discovered.builtin.length,
@@ -142,14 +142,7 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 				user: discovered.user.length,
 				project: discovered.project.length,
 			};
-			const chainCounts = discovered.chains.reduce<Record<AgentSource, number>>((counts, chain) => {
-				counts[chain.source] += 1;
-				return counts;
-			}, { builtin: 0, package: 0, user: 0, project: 0 });
-			return [
-				`- agents: total ${agentCounts.builtin + agentCounts.package + agentCounts.user + agentCounts.project} (${formatSourceCounts(agentCounts)})`,
-				`- chains: total ${discovered.chains.length} (${formatSourceCounts(chainCounts)})`,
-			].join("\n");
+			return `- agents: total ${agentCounts.builtin + agentCounts.package + agentCounts.user + agentCounts.project} (${formatSourceCounts(agentCounts)})`;
 		}),
 		lineFromCheck("skills", () => {
 			const skills = deps.discoverAvailableSkills(input.cwd);

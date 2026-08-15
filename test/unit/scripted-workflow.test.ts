@@ -517,6 +517,20 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("rejects clarify UI on workflow children", async () => {
+		let launches = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("clarify", { agent: "worker", task: "Review", clarify: true });`,
+				timeoutMs: 2_000,
+				launch: async () => { launches++; return { ok: true, output: "unexpected" }; },
+				status: async () => ({ ok: true, output: "unused" }),
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /does not support clarify UI/.test(error.message),
+		);
+		assert.equal(launches, 0);
+	});
+
 	it("rejects a duplicate key with incompatible params", async () => {
 		await assert.rejects(
 			runWorkflowScript({

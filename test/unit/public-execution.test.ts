@@ -63,6 +63,8 @@ describe("public subagent execution normalization", () => {
 			{ chain: [{ agent: "worker" }] },
 			{ parallel: [{ agent: "worker" }] },
 			{ concurrency: 2 },
+			{ action: "get", chainName: "review-pipeline" },
+			{ action: "create", config: { name: "review-pipeline", steps: [{ agent: "worker" }] } },
 			{ clarify: true, workflowScript: "return 1" },
 			{ resume: "retained-run", workflowScript: "return 1" },
 			{},

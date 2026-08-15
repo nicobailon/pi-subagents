@@ -62,6 +62,25 @@ return runs.run("test", { agent: "worker", task });
 
 A plain workflow creates one enclosing mission by default. Its children do not create separate missions. The result exposes the id as `details.missionId`, and human-readable output ends with `Mission: <id> (<status>)`. Pass `mission:false` for an ephemeral workflow with no mission or durable `state` global.
 
+### Repeatable workflows
+
+Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string.
+
+For a process you run often, save the task as a prompt template under `.pi/prompts/` or `~/.pi/agent/prompts/` and launch it with `/prompt-workflow`. The adapter compiles prompt steps into `workflowScript`, so templates describe the work instead of embedding raw `subagent` tool-call JSON. You can ask the parent agent to create or update these prompt files from a process described in natural language.
+
+```md
+---
+description: Review a release candidate
+subagent: reviewer
+fresh: true
+---
+Review $@. Return concrete findings with source proof, or state that no issue was found.
+```
+
+```text
+/prompt-workflow review-release-candidate v0.51.0
+```
+
 For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
 
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.

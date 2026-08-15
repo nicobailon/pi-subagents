@@ -65,6 +65,8 @@ export interface RunnerSubagentStep {
 	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 	/** Private stable logical-child path for inherited run fan-out accounting. */
 	runFanoutPath?: string;
+	/** Run this single child in one managed worktree. */
+	worktree?: boolean;
 }
 
 export interface ParallelStepGroup {

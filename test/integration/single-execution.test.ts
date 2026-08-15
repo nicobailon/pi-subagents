@@ -1009,7 +1009,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
 		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
-		mockPi.onCall({ output: "async child done" });
+		mockPi.onCall({ output: "async child done", writeFiles: [{ path: "feature.txt", content: "feature\n" }] });
 		const executor = makeExecutor([makeAgent("echo")]);
 		const toolCallId = `scripted-workflow-parent-${Date.now()}`;
 		const started = await executor.execute(
@@ -1037,16 +1037,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(workflowStepSessionFile, /session\.jsonl$/);
 		const childDir = path.join(DIRS.async, childRunId);
 		const childStatusPath = path.join(childDir, "status.json");
-		let childStatus: { state?: string; mode?: string; parentWorkflowRunId?: string; workflowKey?: string; parallelHandoff?: { path?: string } } = {};
+		let childStatus: { state?: string; mode?: string; parentWorkflowRunId?: string; workflowKey?: string; parallelHandoff?: { path?: string; changedPatches?: number } } = {};
 		for (let attempt = 0; attempt < 200; attempt++) {
 			if (fs.existsSync(childStatusPath)) childStatus = JSON.parse(fs.readFileSync(childStatusPath, "utf-8"));
 			if (["complete", "failed", "stopped"].includes(childStatus.state ?? "")) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.equal(childStatus.mode, "parallel");
+		assert.equal(childStatus.mode, "single");
 		assert.equal(childStatus.parentWorkflowRunId, workflowRunId);
 		assert.equal(childStatus.workflowKey, "background");
 		assert.equal(typeof childStatus.parallelHandoff?.path, "string");
+		assert.equal(childStatus.parallelHandoff?.changedPatches, 1);
+		assert.equal(fs.existsSync(path.join(tempDir, "feature.txt")), false);
+		const handoff = JSON.parse(fs.readFileSync(childStatus.parallelHandoff!.path!, "utf-8")) as { groups?: Array<{ children?: Array<{ patch?: { changed?: boolean; filesChanged?: number } }> }> };
+		assert.equal(handoff.groups?.[0]?.children?.[0]?.patch?.changed, true);
+		assert.equal(handoff.groups?.[0]?.children?.[0]?.patch?.filesChanged, 1);
 		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
 		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1333,7 +1338,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
 		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
 		mockPi.onCall({ output: "isolated feature", writeFiles: [{ path: "feature.txt", content: "feature\n" }] });
-		const executor = makeExecutor([makeAgent("worker")]);
+		const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
 
 		const result = await executor.execute(
 			"direct-worktree",
@@ -1343,7 +1348,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, undefined);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "managed worktree child failed");
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(fs.existsSync(path.join(tempDir, "feature.txt")), false);
 		const handoffPath = (result.content[0]?.text ?? "").match(/([^\s]+\/handoffs\/[^\s]+\.json)/)?.[1];
@@ -2964,23 +2969,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("allows intentional parallel tasks inside one subagent execution call", async () => {
-		mockPi.onCall({ output: "first parallel result" });
-		mockPi.onCall({ output: "second parallel result" });
-		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
 
-		const result = await executor.execute(
-			"parallel",
-			{ tasks: [{ agent: "echo", task: "First task" }, { agent: "second", task: "Second task" }] },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.equal(mockPi.callCount(), 2);
-		assert.deepEqual(result.details?.totalCost, { inputTokens: 200, outputTokens: 100, costUsd: 0.002 });
-	});
 
 	it("reports total cost for foreground single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "single result" });
@@ -3083,57 +3072,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
-	it("blocks later foreground chain children when hard reported usage is exhausted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "first result" });
-		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
 
-		const result = await executor.execute(
-			"foreground-usage-budget",
-			{
-				chain: [
-					{ agent: "echo", task: "First task" },
-					{ agent: "second", task: "Second task" },
-				],
-				usageBudget: { tokens: { hard: 10 } },
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
 
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Usage budget exhausted/);
-		assert.equal(mockPi.callCount(), 1);
-		assert.equal(result.details?.usageBudget?.exhausted, true);
-		assert.equal(result.details?.usageBudget?.reason, "tokens");
-	});
 
-	it("blocks queued foreground parallel children when hard reported usage is exhausted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "first result" });
-		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
-
-		const result = await executor.execute(
-			"foreground-parallel-usage-budget",
-			{
-				tasks: [
-					{ agent: "echo", task: "First task" },
-					{ agent: "second", task: "Second task" },
-				],
-				concurrency: 1,
-				usageBudget: { tokens: { hard: 10 } },
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.equal(mockPi.callCount(), 1);
-		assert.equal(result.details?.results.length, 2);
-		assert.equal(result.details?.results[1]?.skipped, true);
-		assert.match(result.details?.results[1]?.error ?? "", /Usage budget exhausted/);
-		assert.equal(result.details?.usageBudget?.exhausted, true);
-	});
 
 	it("fails implementation runs that complete without mutation attempts", async () => {
 		mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });
@@ -4441,29 +4382,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
 	});
 
-	for (const artifactDir of ["session", "temp"] as const) {
-		it(`keeps foreground chain scratch files out of the project for artifactDir=${artifactDir}`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-			mockPi.onCall({ output: `${artifactDir} chain result` });
-			const sessionFile = path.join(tempDir, "sessions", "parent-session", "session.jsonl");
-			const ctx = makeMinimalCtx(tempDir);
-			ctx.sessionManager.getSessionFile = () => sessionFile;
-			const executor = makeExecutor([makeAgent("echo")], { artifactDir });
 
-			const result = await executor.execute(
-				`${artifactDir}-chain-artifact-dir`,
-				{ chain: [{ agent: "echo", task: "Run without project-local scratch files in {chain_dir}" }] },
-				new AbortController().signal,
-				undefined,
-				ctx,
-			);
-
-			const taskArg = readCallArgs().at(-1) ?? "";
-			assert.equal(result.isError, undefined);
-			assert.ok(taskArg.includes(`${CHAIN_RUNS_DIR}${path.sep}`), taskArg);
-			assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "chain-runs")), false);
-			assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
-		});
-	}
 
 	it("writes a failure stub to foreground output artifacts when no output was produced", async () => {
 		mockPi.onCall({ output: "", stderr: "model unavailable", exitCode: 1 });

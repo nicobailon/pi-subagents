@@ -241,6 +241,7 @@ function validateRunCall(key, params, label, fingerprints) {
     const hint = label === "runs.run" ? "; use runs.all(...) and JavaScript control flow for orchestration." : ".";
     throw new Error(label + " accepts one child via { agent, task } and execution controls only" + hint);
   }
+  if (Object.prototype.hasOwnProperty.call(params, "clarify")) throw new Error(label + " does not support clarify UI.");
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
   if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
   if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");

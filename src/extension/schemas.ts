@@ -255,7 +255,6 @@ const ControlOverrides = Type.Object({
 const SubagentParamProperties = {
 	agent: Type.Optional(Type.String({ description: "Agent for one-child execution, or target for agent management actions." })),
 	task: Type.Optional(Type.String({ description: "Optional one-child task. Requires agent; cannot combine with action or workflowScript." })),
-	resume: Type.Optional(Type.String({ description: "Retained child run id for a workflowScript runs.run/runs.all item. Mutually exclusive with agent; task supplies the follow-up." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
 		description: "Optional management/control action. Omit this field for structured single-child or workflowScript execution; use it only for management/control actions."
@@ -300,17 +299,13 @@ const SubagentParamProperties = {
 	runMode: Type.Optional(Type.String({ description: "Attached run mode." })),
 	runStatus: Type.Optional(Type.String({ description: "Attached run status." })),
 	summary: Type.Optional(Type.String({ description: "Mission close summary." })),
-	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
-	chainName: Type.Optional(Type.String({
-		description: "Chain name for get/update/delete management actions"
-	})),
-	// Agent/chain configuration for create/update (nested to avoid conflicts with execution fields)
+	// Agent configuration for create/update (nested to avoid conflicts with execution fields)
 	config: Type.Optional(Type.Unsafe({
 		anyOf: [
 			{ type: "object", additionalProperties: true },
 			{ type: "string" },
 		],
-		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
+		description: "Agent config for create/update. Object or JSON string."
 	})),
 	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body. Normally async unless asyncByDefault:false; set async:true when async matters. Use async:false only for foreground behavior, never reviews or gates. Use explicit return for output. Use await runs.run(key, {agent, task, worktree?, gate?}) or runs.run(key, {resume, task}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. Mission workflows also have async state.get(key) and state.set(key, JSONValue). Compose sequential and parallel phases dynamically. Set worktree:true at workflow or child level for a separate managed worktree; child fields override workflow defaults. gate is one host-run command and cannot be combined with acceptance. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
 	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "live-card"], description: "WorkflowScript chat progress projection. auto shows a live in-chat card only for watched foreground workflows in the same Git repository; it is off otherwise." })),

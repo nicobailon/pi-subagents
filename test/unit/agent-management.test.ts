@@ -64,16 +64,10 @@ describe("agent management config parsing", () => {
 		fs.mkdirSync(projectAgentsDir, { recursive: true });
 		fs.mkdirSync(userAgentsDir, { recursive: true });
 		fs.mkdirSync(path.join(packageDir, "agents"), { recursive: true });
-		fs.mkdirSync(path.join(packageDir, "chains"), { recursive: true });
 		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Project worker override\n---\n\nProject worker.\n");
 		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker override\n---\n\nUser worker.\n");
-		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"], chains: ["chains"] } }));
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
 		fs.writeFileSync(path.join(packageDir, "agents", "worker.md"), "---\nname: worker\ndescription: Package worker override\n---\n\nPackage worker.\n");
-		fs.writeFileSync(path.join(packageDir, "chains", "package-flow.chain.json"), JSON.stringify({
-			name: "package-flow",
-			description: "Package flow",
-			chain: [{ agent: "worker", task: "Package task" }],
-		}), "utf-8");
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 
 		const effective = readText(handleManagementAction("get", { agent: "worker" }, ctx));
@@ -86,36 +80,6 @@ describe("agent management config parsing", () => {
 		assert.match(userScoped, /Description: User worker override/);
 		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
 
-		const userChainsDir = path.join(tempDir, "agent-home", "chains");
-		const projectChainsDir = path.join(tempDir, ".pi", "chains");
-		fs.mkdirSync(userChainsDir, { recursive: true });
-		fs.mkdirSync(projectChainsDir, { recursive: true });
-		fs.writeFileSync(path.join(userChainsDir, "shared-flow.chain.json"), JSON.stringify({
-			name: "shared-flow",
-			description: "User shared flow",
-			chain: [{ agent: "worker", task: "User flow" }],
-		}), "utf-8");
-		fs.writeFileSync(path.join(projectChainsDir, "shared-flow.chain.json"), JSON.stringify({
-			name: "shared-flow",
-			description: "Project shared flow",
-			chain: [{ agent: "worker", task: "Project flow" }],
-		}), "utf-8");
-
-		const userChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "user" }, ctx));
-		assert.match(userChain, /Chain: shared-flow \(user\)/);
-		assert.match(userChain, /Description: User shared flow/);
-		assert.doesNotMatch(userChain, /Project shared flow|Project flow/);
-
-		const projectChain = readText(handleManagementAction("get", { chainName: "shared-flow", agentScope: "project" }, ctx));
-		assert.match(projectChain, /Chain: shared-flow \(project\)/);
-		assert.match(projectChain, /Description: Project shared flow/);
-		assert.doesNotMatch(projectChain, /User shared flow|User flow/);
-
-		for (const agentScope of ["user", "project"] as const) {
-			const packageChain = readText(handleManagementAction("get", { chainName: "package-flow", agentScope }, ctx));
-			assert.match(packageChain, /Chain: package-flow \(package\)/);
-			assert.match(packageChain, /Description: Package flow/);
-		}
 	});
 
 	it("surfaces JSON parse errors for update config strings", () => {
@@ -210,41 +174,52 @@ describe("agent management config parsing", () => {
 		assert.match(readText(created), /config\.package is invalid/);
 	});
 
-	it("creates and updates packaged chains while preserving packaged step names", () => {
+	it("rejects durable chain definitions", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		fs.mkdirSync(path.join(tempDir, ".pi", "agents"), { recursive: true });
-		fs.writeFileSync(path.join(tempDir, ".pi", "agents", "code-analysis.scout.md"), `---
-name: scout
-package: code-analysis
-description: Fast recon
----
+		const created = handleCreate(
+			{ config: { name: "Review Flow", description: "Review flow", scope: "project", steps: [{ agent: "scout", task: "Inspect" }] } },
+			ctx,
+		);
+		assert.equal(created.isError, true);
+		assert.match(readText(created), /Durable chain definitions were removed/);
 
-Inspect
-`, "utf-8");
+		const agent = handleCreate(
+			{ config: { name: "Scout", description: "Scout", scope: "project" } },
+			ctx,
+		);
+		assert.equal(agent.isError, false);
+		const updated = handleUpdate(
+			{ agent: "scout", config: JSON.stringify({ steps: [{ agent: "scout", task: "Inspect" }] }) },
+			ctx,
+		);
+		assert.equal(updated.isError, true);
+		assert.match(readText(updated), /Durable chain definitions were removed/);
+	});
+
+	it("ignores discovered legacy chains during agent management", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const chainsDir = path.join(tempDir, ".pi", "chains");
+		fs.mkdirSync(chainsDir, { recursive: true });
+		fs.writeFileSync(path.join(chainsDir, "scout.chain.md"), "---\nname: scout\ndescription: Old scout flow\n---\n\n## worker\nInspect\n", "utf-8");
+		fs.writeFileSync(path.join(chainsDir, "scout-review.chain.md"), "---\nname: scout-review\ndescription: Old review flow\n---\n\n## worker\nReview\n", "utf-8");
+		fs.writeFileSync(path.join(chainsDir, "reference.chain.md"), "---\nname: reference\ndescription: Old reference flow\n---\n\n## scout-review\nUse old agent\n", "utf-8");
 
 		const created = handleCreate(
-			{ config: { name: "Review Flow", package: "Code Analysis", description: "Review flow", scope: "project", steps: [{ agent: "code-analysis.scout", task: "Inspect", toolBudget: { soft: 3, hard: 5, block: ["read"] } }] } },
+			{ config: { name: "Scout", description: "Scout", scope: "project" } },
 			ctx,
 		);
 		assert.equal(created.isError, false);
-		assert.match(readText(created), /Created chain 'code-analysis.review-flow'/);
-		const filePath = path.join(tempDir, ".pi", "chains", "code-analysis.review-flow.chain.md");
-		let content = fs.readFileSync(filePath, "utf-8");
-		assert.match(content, /^name: review-flow$/m);
-		assert.match(content, /^package: code-analysis$/m);
-		assert.match(content, /^## code-analysis\.scout$/m);
-		assert.match(content, /^toolBudget: \{"soft":3,"hard":5,"block":\["read"\]\}$/m);
 
 		const updated = handleUpdate(
-			{ chainName: "code-analysis.review-flow", config: { package: false } },
+			{ agent: "scout", config: { name: "Scout Review" } },
 			ctx,
 		);
 		assert.equal(updated.isError, false);
-		const updatedPath = path.join(tempDir, ".pi", "chains", "review-flow.chain.md");
-		assert.equal(fs.existsSync(filePath), false);
-		content = fs.readFileSync(updatedPath, "utf-8");
-		assert.match(content, /^name: review-flow$/m);
-		assert.doesNotMatch(content, /^package:/m);
+		assert.doesNotMatch(readText(updated), /chains/i);
+
+		const deleted = handleManagementAction("delete", { agent: "scout-review" }, ctx);
+		assert.equal(deleted.isError, false);
+		assert.doesNotMatch(readText(deleted), /chains/i);
 	});
 
 	it("creates and updates agents with single-agent launch defaults", () => {
@@ -365,11 +340,11 @@ Inspect
 		assert.match(readText(agentResult), /config\.toolBudget\.soft must be <= config\.toolBudget\.hard/);
 
 		const chainResult = handleCreate(
-			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer", toolBudget: { hard: 2, block: [] } }] } },
+			{ config: { name: "bad-chain-budget", description: "Bad budget", scope: "project", steps: [{ agent: "reviewer" }] } },
 			ctx,
 		);
 		assert.equal(chainResult.isError, true);
-		assert.match(readText(chainResult), /config\.steps\[0\]\.toolBudget\.block must contain at least one tool name/);
+		assert.match(readText(chainResult), /Durable chain definitions were removed/);
 	});
 
 	it("creates, updates, reports, clears, and validates acceptance roles", () => {
@@ -562,86 +537,6 @@ Drive the failing test first.
 		const afterText = readText(gotAfter);
 		assert.match(afterText, /Thinking: off/);
 		assert.doesNotMatch(afterText, /Thinking: high/);
-	});
-
-	it("updates JSON chain descriptions without rewriting them as markdown", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const chainPath = path.join(tempDir, ".pi", "chains", "dynamic-review.chain.json");
-		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
-		fs.writeFileSync(chainPath, JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews" },
-				},
-			],
-		}), "utf-8");
-
-		const updated = handleUpdate({ chainName: "dynamic-review", config: { description: "Updated dynamic review" } }, ctx);
-
-		assert.equal(updated.isError, false);
-		const content = fs.readFileSync(chainPath, "utf-8");
-		assert.doesNotMatch(content, /^---/);
-		const parsed = JSON.parse(content) as { description?: string; chain?: Array<{ collect?: { as?: string } }> };
-		assert.equal(parsed.description, "Updated dynamic review");
-		assert.equal(parsed.chain?.[1]?.collect?.as, "reviews");
-	});
-
-	it("renames and repackages JSON chains while preserving JSON format and extension", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		const chainPath = path.join(tempDir, ".pi", "chains", "dynamic-review.chain.json");
-		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
-		fs.writeFileSync(chainPath, JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [{ agent: "scout", task: "Return targets" }],
-		}), "utf-8");
-
-		const updated = handleUpdate({ chainName: "dynamic-review", config: { name: "Review Flow", package: "Code Analysis" } }, ctx);
-
-		assert.equal(updated.isError, false);
-		const updatedPath = path.join(tempDir, ".pi", "chains", "code-analysis.review-flow.chain.json");
-		assert.equal(fs.existsSync(chainPath), false);
-		const content = fs.readFileSync(updatedPath, "utf-8");
-		assert.doesNotMatch(content, /^---/);
-		const parsed = JSON.parse(content) as { name?: string; package?: string; chain?: Array<{ agent?: string }> };
-		assert.equal(parsed.name, "review-flow");
-		assert.equal(parsed.package, "code-analysis");
-		assert.equal(parsed.chain?.[0]?.agent, "scout");
-	});
-
-	it("gets dynamic JSON chain details and lists invalid chain diagnostics", () => {
-		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
-		fs.mkdirSync(path.join(tempDir, ".pi", "chains"), { recursive: true });
-		fs.writeFileSync(path.join(tempDir, ".pi", "chains", "dynamic-review.chain.json"), JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews" },
-				},
-			],
-		}), "utf-8");
-		fs.writeFileSync(path.join(tempDir, ".pi", "chains", "broken.chain.json"), "{", "utf-8");
-
-		const got = handleManagementAction("get", { chainName: "dynamic-review" }, ctx);
-		assert.equal(got.isError, false);
-		assert.match(readText(got), /Dynamic fanout -> reviews/);
-		assert.match(readText(got), /Expand: targets\/items/);
-		assert.match(readText(got), /Agent: reviewer/);
-
-		const listed = handleManagementAction("list", {}, ctx);
-		assert.equal(listed.isError, false);
-		assert.match(readText(listed), /Chain diagnostics:/);
-		assert.match(readText(listed), /broken\.chain\.json/);
-		assert.match(readText(listed), /Invalid JSON chain/);
 	});
 
 	it("reports builtin runtime-loaded model mappings from current session state", () => {

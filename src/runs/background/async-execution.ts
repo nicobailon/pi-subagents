@@ -144,7 +144,7 @@ interface AsyncChainParams {
 	/** Raw caller-facing goal used only by the started event. */
 	goal?: string;
 	attachRoot?: ImportedAsyncRoot & { agent: string; outputName?: string; label?: string };
-	resultMode?: Exclude<SubagentRunMode, "single">;
+	resultMode?: SubagentRunMode;
 	agents: AgentConfig[];
 	ctx: AsyncExecutionContext;
 	availableModels?: AvailableModelInfo[];
@@ -225,6 +225,7 @@ interface AsyncSingleParams {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	worktree?: boolean;
 	controlConfig?: ResolvedControlConfig;
 	intercomBridge?: IntercomBridgeConfig;
 	controlIntercomTarget?: string;
@@ -868,6 +869,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
 			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) } : {}),
 			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
+			...(s.worktree ? { worktree: true } : {}),
 		};
 	};
 
@@ -951,8 +953,17 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					...(s.gateOn ? { gateOn: s.gateOn } : {}),
 				};
 			}
+			const sequential = s as SequentialStep;
+			let behaviorCwd: string | undefined;
+			if (sequential.worktree) {
+				try {
+					behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, 0, worktreeBaseDir);
+				} catch {
+					behaviorCwd = undefined;
+				}
+			}
 			const staticStep = nextFlatStep();
-			return buildSeqStep(s as SequentialStep, staticStep.sessionFile, undefined, false, undefined, staticStep.index, undefined, `chain[${stepIndex}]`);
+			return buildSeqStep(sequential, staticStep.sessionFile, behaviorCwd, false, undefined, staticStep.index, undefined, `chain[${stepIndex}]`);
 		});
 		const steps = params.attachRoot
 			? [{
@@ -1336,6 +1347,10 @@ export function executeAsyncSingle(
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 	}
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+	const instructionCwd = params.worktree === true
+		? resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s0`, 0, worktreeBaseDir)
+		: runnerCwd;
+	const readExistenceCwd = params.worktree === true ? runnerCwd : instructionCwd;
 	const skillNames = params.skills ?? agentConfig.skills ?? [];
 	const availableModels = params.availableModels;
 	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
@@ -1377,7 +1392,7 @@ export function executeAsyncSingle(
 	}
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
-	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
+	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, instructionCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
@@ -1386,7 +1401,7 @@ export function executeAsyncSingle(
 	// Reads: caller override > agent defaultReads > none. `~`/`~/` expand to home;
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = params.reads !== undefined ? params.reads : agentConfig.defaultReads ?? false;
-	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, runnerCwd) : [];
+	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, readExistenceCwd) : [];
 	const readsInstruction = readPaths.length > 0
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
@@ -1562,6 +1577,7 @@ export function executeAsyncSingle(
 						...(structuredOutput ? { structuredOutput } : {}),
 						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
+						...(params.worktree === true ? { worktree: true } : {}),
 					},
 				],
 				resultPath: params.parentWorkflowRunId !== undefined && params.revivalLease !== undefined

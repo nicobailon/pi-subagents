@@ -17,6 +17,7 @@
 - Preserve workflow child task output when neither the workflow nor child configures an output file (#1136).
 
 ### Changed
+- Keep `worktree: true` workflow children on the single-child path while preserving managed patch handoffs, and remove unused foreground chain/parallel execution and durable chain management surfaces.
 - Document that a host's session lifetime owns completion wakes, and how to key an idle check on live run state rather than parent activity. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1144.
 - Remove legacy subagent tool compatibility fields for append-step control, schedule aliases, async recovery metadata, and string mission goals.
 - Remove chain approval checkpoint steps and the `approve-checkpoint` / `reject-checkpoint` controls.

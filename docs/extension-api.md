@@ -356,7 +356,7 @@ The main runtime files in this repository:
 | `src/runs/background/subagent-runner.ts` | Detached async runner. |
 | `src/runs/background/async-execution.ts` | Background launch support. |
 | `src/runs/background/async-status.ts` | Status discovery and formatting for async runs. |
-| `src/runs/foreground/chain-execution.ts` / `src/agents/chain-serializer.ts` | Chain orchestration and `.chain.md` parsing. |
+| `src/workflows/scripted-workflow.ts` / `src/runs/foreground/subagent-executor.ts` | Scripted workflow orchestration and child launch routing. |
 | `src/shared/settings.ts` | Chain behavior, instructions, and config helpers. |
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |

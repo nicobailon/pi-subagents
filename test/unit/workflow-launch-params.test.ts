@@ -59,7 +59,7 @@ describe("workflow launch params", () => {
 		assert.equal(prepareWorkflowLaunchParams({}, { agent: "worker", task: "Run" }, "workflow-run", "sibling").intercomBridge, undefined);
 	});
 
-	it("places workflow child gates inside managed worktree tasks", () => {
+	it("keeps managed worktree children on the single-run contract", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
 				{},
@@ -68,15 +68,13 @@ describe("workflow launch params", () => {
 				"gated",
 			),
 			{
+				agent: "worker",
+				task: "Implement",
 				worktree: true,
 				async: false,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "gated",
-				tasks: [{
-					agent: "worker",
-					task: "Implement",
-					acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },
-				}],
+				acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },
 			},
 		);
 	});
@@ -96,6 +94,25 @@ describe("workflow launch params", () => {
 				workflowParentRunId: "workflow-run",
 				workflowKey: "continue",
 				intercomBridge: { mode: "off" },
+			},
+		);
+	});
+
+	it("preserves worktree isolation for retained workflow children", () => {
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(
+				{},
+				{ resume: "retained-run", task: "Continue", worktree: true },
+				"workflow-run",
+				"continue",
+			),
+			{
+				action: "resume",
+				id: "retained-run",
+				message: "Continue",
+				workflowParentRunId: "workflow-run",
+				workflowKey: "continue",
+				worktree: true,
 			},
 		);
 	});
