@@ -336,9 +336,10 @@ This matters because "is the parent busy?" is the wrong idle signal. A parent th
 If your host reclaims idle sessions, keep a session alive while it still has live detached work:
 
 - Read run state from the status files under the async run directory rather than from event traffic. A long, quiet workflow sends almost nothing to the parent, so recent-activity heuristics conclude the wrong thing.
-- Treat `queued`, `running`, and `paused` as live; `complete`, `failed`, `stopped`, and `rejected` are terminal.
-- Age runs out by `lastUpdate` so a wedged run cannot pin a session forever. Live runs rewrite `status.json` continuously.
-- Note that `sessionId` in `status.json` is the parent's session *file path*, not a bare session id.
+- Treat `queued` and `running` as live, matching `isActiveAsyncState`. `paused` is not: an interrupted run is finalized as paused. The one live exception is a workflow blocked on a pending checkpoint, whose runner is still waiting for a decision — check `checkpoint.status === "pending"` if you want to keep those sessions open too.
+- Do not treat `lastUpdate` as a heartbeat. The runner advances it in memory every second but only rewrites `status.json` when the activity classification changes, so a live run inside one long quiet tool call leaves a stale file behind. Judging liveness by file age will reap exactly the run you meant to protect.
+- Prefer the recorded runner `pid`, which stays true through a silent tool call and goes false when the runner dies. Keep file age only as a fallback for runs that record no pid, and give it a wide window.
+- Match `sessionId` in `status.json` against both forms. It is resolved as `getSessionFile() ?? getSessionId()`, so it is normally the parent's session *file path*, but a session that is not persisted records a bare session id instead.
 
 The symptom when this is missed is quiet and easy to misattribute: subagents appear never to report back, which looks like a fault in this extension rather than in the host that disposed the listener.
 

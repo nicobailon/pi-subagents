@@ -12,6 +12,7 @@
 - Preserve workflow child task output when neither the workflow nor child configures an output file (#1136).
 
 ### Changed
+- Document that a host's session lifetime owns completion wakes, and how to key an idle check on live run state rather than parent activity. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1144.
 - Clarify that subagent reviews and gates should stay async unless foreground behavior is the actual requirement.
 - Remove `prompts.render` from `workflowScript`; pass explicit task text to `runs.run` or use `/prompt-workflow` for reusable prompt templates.
 
