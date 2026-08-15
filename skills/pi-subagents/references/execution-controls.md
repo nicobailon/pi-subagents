@@ -72,7 +72,7 @@ Scripts run in a timed worker with only `runs.run`, `runs.all`, `runs.status`, `
 
 For one host-run verification command, pass `gate: "npm test"` on a `runs.run`/`runs.all` item (or at the top level as a workflow default). It is shorthand for verified acceptance with that single command: the runtime executes it on the host, records the result as evidence, and memoizes it per tracked workspace state and effective environment. `gate` cannot be combined with `acceptance`; use explicit `acceptance.verify` for multiple commands or custom criteria.
 
-Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids and explicit `resumable` or `not resumable` state. Resume only rows reported `resumable`. If no retained writer is resumable, start a same-role fallback challenge and label it as fallback. For a simple implementation challenge, revive the same resumable writer with `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })`. Inside `workflowScript`, continue one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`; awaiting that call waits for the revived child to finish and returns its completed output and new `runId`. Top-level `{ action: "resume" }` remains detached. A follow-up loop can render each task with `await prompts.render(...)`. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
+Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids, and a later workflow continues one with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`. Inside `workflowScript`, awaiting that call waits for the revived child to finish and returns its completed output and new `runId`; top-level `{ action: "resume" }` remains detached. A follow-up loop can render each task with `await prompts.render(...)`. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items.
 
 ### Async/background
 
@@ -123,8 +123,6 @@ subagent({ action: "approve-checkpoint", id: "run-id" })
 subagent({ action: "reject-checkpoint", id: "run-id" })
 ```
 
-Use `children.list` before retained-writer challenge resumes. Resume only rows reported `resumable`. If no resumable child is listed, launch a same-role fallback challenge and label it as fallback.
-
 Use `steer` for top-level live async guidance and `resume` after a delegated run pauses or finishes. Routed nested runs retain their existing non-destructive live follow-up path:
 
 ```typescript
@@ -136,7 +134,7 @@ subagent({ action: "resume", id: "nested-run-id", message: "Continue this nested
 
 Resume behavior:
 - `resume` revives paused, completed, or failed async/foreground children from persisted session files; stopped runs remain non-resumable, and it does not interrupt live top-level async children.
-- Use `steer` for acknowledged guidance to a live top-level async child. For a completed retained child, `steer` with `mode: "follow_up"` only queues text for the next `resume`; it does not revive the child by itself.
+- Use `steer` for acknowledged guidance to a live top-level async child.
 - A live nested run can still receive a non-destructive `resume` follow-up through its owner route.
 - If an async child has completed, `resume` revives it by starting a new async child from the persisted child session file.
 - Multi-child async runs require `index` unless only one running child is selectable.
@@ -144,7 +142,6 @@ Resume behavior:
 - Nested runs can be resumed by nested id when a live route or persisted nested session metadata is available.
 - Revive starts a new child process from the old session context; it does not restart the same OS process.
 - Direct revival holds an exclusive cross-process lease on the canonical child session file until the new child finishes. Concurrent attempts fail before Pi starts and identify the owning revived run; stale ownership is reclaimed only when the recorded process is demonstrably gone or reused.
-- `children.list` keeps non-resumable retained children visible with the exact reason, such as stopped run, external CLI runner, or no persisted session file.
 - If the chosen child has no persisted `.jsonl` session file, resume fails and reports that directly.
 
 Use diagnostics when setup or child startup looks wrong:
@@ -157,7 +154,7 @@ subagent({ action: "doctor" })
 
 Use native `subagent` runs for unattended implementation, review, and gate work that needs managed isolation, durable artifacts, and process controls. Use `interactive_shell` for visible terminal work, alternate CLIs, trust prompts, and recovery.
 
-A cooperating terminal runtime can publish display-only external jobs through `pi-subagents/external-runs`. Records include the session, source, label, lifecycle state, current action, bounded preview, and optional report or transcript path text. They are cached observations only: pi-subagents does not start, stop, steer, resume, cancel, read arbitrary paths for, or otherwise own the foreign process. Run unattended raw terminal agents in an explicit isolated cwd or worktree; do not use a live project checkout as disposable review space.
+A cooperating terminal runtime can register read-only external records through `pi-subagents/external-runs`. Records include the source, session, state, optional report path, and completion reason. They are observations only: pi-subagents does not start, stop, steer, or otherwise own the foreign process. Run unattended raw terminal agents in an explicit isolated cwd or worktree; do not use a live project checkout as disposable review space.
 
 ### Scheduled subagent runs
 
@@ -290,7 +287,7 @@ Use `mission.update` while work runs to record decisions, artifacts, labels, sum
 - **Use `missionId` for follow-up work.** Attach later work to an existing objective with `missionId`; attachment re-marks the mission active. `missionId` and `mission` are mutually exclusive. Explicit attachment fails before launch if the mission is missing, while automatic missions degrade to `details.missionWarning` without blocking the run.
 - **Keep `state` small.** Mission `state` is JSON coordination across workflows on the same mission. Keys use the same format as run keys, values must be JSON, and the whole state file is capped at 256 KiB. Each `set` merges one key under a file lock. Put large content in artifact files and store paths in state. In goal missions, write `state.set("nextReadyAction", "...")` so the next idle-turn notice names the exact ready step.
 - **Use artifacts and receipts as evidence.** Mission-backed launches already record run artifacts such as async `status.json`, `events.jsonl`, child output paths, and handoff manifests. Add `mission.update` artifacts only for extra durable outputs such as `patch`, `review`, or `note` files. Add receipts for external outcomes: `pull_request`, `ci`, `deployment`, or `release`; each receipt needs an absolute URL. Receipts are evidence, not authority to merge, deploy, or release.
-- **Treat decisions as append-only.** `mission.update` `decisions` can only add open decisions. No tool action resolves one. In a goal mission, an unresolved decision becomes the fallback next ready action in each notice. Use decisions sparingly there; record them for escalation and audit, steer goal continuation through `state.nextReadyAction`, and close the mission when the question is settled.
+- **Resolve decisions explicitly.** `mission.update` `decisions` can only add open decisions; `mission.update` itself cannot resolve one — use the `mission.resolve-decision` action (decision `id` plus a non-empty `summary`) to settle and close it. In a goal mission, an unresolved decision becomes the fallback next ready action in each notice. Use decisions sparingly there; record them for escalation and audit, steer goal continuation through `state.nextReadyAction`, and close the mission when the question is settled.
 - **Close missions when done.** `mission.close` takes `missionStatus` `completed`, `failed`, or `cancelled` plus a concise `summary`, and ends any goal loop. Goal notices go only to the owning session and stop silently at `budget-exhausted` without closing or claiming success, so close explicitly. Terminal missions are pruned beyond configured retention, so store durable outputs as artifacts, receipts, and summary before closing.
 
 After compaction, restart, or confusing history, recover from durable state first: `mission.list` in the project, `mission.list` with `missionScope: "global"` for the user-local cross-project pointer index, then `mission.show` for the relevant mission. `mission.show` refreshes linked async status when available and returns warnings instead of hiding the mission if a linked status file is temporarily unreadable. Use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions. Project mission JSON remains authoritative over chat history.
@@ -308,6 +305,7 @@ subagent({ action: "mission.create", mission: { title: "Ship auth refresh", obje
 subagent({ workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved plan" })`, missionId: "<mission-id>" })
 subagent({ workflowScript: `return runs.run("main", { agent: "scout", task: "Quickly answer whether this file exists" })`, mission: false })
 subagent({ action: "mission.list", missionScope: "global" })
+subagent({ action: "mission.resolve-decision", missionId: "<mission-id>", id: "<decision-id>", summary: "Settled: ship the v2 API; no schema freeze needed." })
 subagent({ action: "project.open", cwd: "/path/to/other-repo", message: "Own this mission for the project and report back with receipts." })
 subagent({ action: "project.status", cwd: "/path/to/other-repo" })
 subagent({ action: "project.close", cwd: "/path/to/other-repo" })
@@ -356,8 +354,8 @@ worktree, first confirm dependencies were linked, installed, or provisioned by
 The intended oracle loop is:
 1. the main agent forks to `oracle`
 2. `oracle` reviews direction, drift, assumptions, and risks
-3. if the task is framed as asking or consulting the oracle and the bridge provides `contact_supervisor`, `oracle` asks one focused supervisor question or challenge when a material unknown remains; otherwise it returns its best recommendation and names the unresolved decision
-4. when the oracle asks through `contact_supervisor`, the main agent replies and decides what direction to approve
+3. `oracle` can coordinate back through `contact_supervisor` when the bridge injects it
+4. the main agent decides what direction to approve
 5. only then should `worker` implement
 
 ```typescript
@@ -376,7 +374,7 @@ subagent({
 a forked advisory thread that inherits the parent session history and uses that
 history as a baseline contract.
 
-Use `oracle` as a smart-friend escalation when the parent needs help with trajectory rather than diff inspection: architectural boundaries, model capability routing, merge conflicts, reviewer disagreement, context drift after long work, a worker about to invent a pattern, or fixes that require product/scope tradeoffs. Ask broad questions when the right concern is unclear, and let `oracle` point out missing context or files the parent should inspect before asking again. Prefer native `contact_supervisor` dialogue for consultation tasks when the bridge is available; request a one-shot report only when that is what you want. Keep `oracle` advisory unless it has been explicitly assigned the single writer role.
+Use `oracle` as a smart-friend escalation when the parent needs help with trajectory rather than diff inspection: architectural boundaries, model capability routing, merge conflicts, reviewer disagreement, context drift after long work, a worker about to invent a pattern, or fixes that require product/scope tradeoffs. Ask broad questions when the right concern is unclear, and let `oracle` point out missing context or files the parent should inspect before asking again. Keep `oracle` advisory unless it has been explicitly assigned the single writer role.
 
 ## Subagent + Intercom Coordination
 
@@ -384,7 +382,7 @@ Use `oracle` as a smart-friend escalation when the parent needs help with trajec
 
 This is separate from optional external completion delivery. Set `intercomBridge.resultDelivery: true` only when an external listener consumes and acknowledges `subagent:result-intercom` grouped results. It does not deliver results by itself, and it does not change native supervisor asks or progress updates.
 
-Most agents should not call generic `intercom` directly. Use it only when an external intercom provider explicitly supplies the tool and the task identifies a safe target. Do not invent a target. Prefer the tool from the injected bridge instructions.
+Most agents should not call generic `intercom` directly unless bridge instructions provide a target and `contact_supervisor` is unavailable. Do not invent a target. Prefer the tool from the injected bridge instructions.
 
 Use `contact_supervisor` with `reason: "need_decision"` when:
 - a subagent is blocked on a decision
@@ -426,6 +424,6 @@ Or inspects unresolved asks first:
 subagent_supervisor({ action: "pending" })
 ```
 
-Native supervisor coordination does not expose generic `intercom`. Prefer `subagent_supervisor` for parent replies because it never overrides installed `pi-intercom`.
+If no external `pi-intercom` tool owns the `intercom` name, native supervisor coordination may also expose `intercom` as a compatibility fallback. Prefer `subagent_supervisor` for parent replies because it never overrides installed `pi-intercom`.
 
 If intercom messages do not show up, run `subagent({ action: "doctor" })` or `/subagents-doctor`.
