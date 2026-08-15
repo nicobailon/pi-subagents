@@ -152,7 +152,17 @@ function assertScheduleRoot(root: string, projectCwd: string | undefined, create
 		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 		return;
 	}
-	const projectPath = fs.realpathSync(projectCwd);
+	let projectPath: string;
+	try {
+		projectPath = fs.realpathSync(projectCwd);
+	} catch (error) {
+		// The project directory no longer exists (e.g. it was deleted while a
+		// session bound to it stays open). Treat it as having no schedules:
+		// ids()/list() then see a missing root and return empty, and the
+		// bind-time restore becomes a no-op instead of crashing the extension.
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
 	let existing = root;
 	while (!fs.existsSync(existing)) {
 		const parent = path.dirname(existing);

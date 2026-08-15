@@ -166,6 +166,22 @@ describe("project schedule management", () => {
 		assert.match(text(listed), /other/);
 	});
 
+	it("tolerates a project directory that was deleted after bind", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-test-"));
+		roots.push(root);
+		const deleted = path.join(root, "vanished-project");
+		fs.mkdirSync(deleted, { recursive: true });
+		const storeDir = path.join(deleted, ".pi/subagents/schedules");
+		const scheduleDir = path.join(storeDir, "night-review");
+		fs.mkdirSync(scheduleDir, { recursive: true });
+		fs.writeFileSync(path.join(scheduleDir, "schedule.json"), JSON.stringify({ schemaVersion: 1, id: "night-review", name: "Night review", cwd: deleted, createdAt: "2030-01-01T00:00:00Z", updatedAt: "2030-01-01T00:00:00Z", paused: false, trigger: { kind: "once", at: "2030-01-02T00:00:00Z" }, target: { workflowScript: "return runs.run('main', { agent: 'reviewer' })" } }));
+		fs.rmSync(deleted, { recursive: true });
+		// The whole bind-time restore path (restore -> list -> ids ->
+		// assertScheduleRoot) must not crash the extension on a dead cwd.
+		const records = listScheduledRunSummaries(deleted);
+		assert.deepEqual(records, []);
+	});
+
 	it("rejects direct schedule targets and requires workflowScript", async () => {
 		const h = harness();
 		const result = await h.manager.handleToolCall({ action: "schedule.create", id: "direct", every: "1h", agent: "worker", task: "Review" }, h.ctx);
