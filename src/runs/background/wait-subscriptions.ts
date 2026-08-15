@@ -245,6 +245,24 @@ export function createWaitSubscriptionManager(
 				try {
 					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
 					if (!record || file !== `${record.token}.json`) continue;
+					// Sweep expired records armed by another session. Only the owning
+					// session can be woken, so restore() never loads a foreign record and
+					// reconcileRecord() returns before its timeout branch: nothing
+					// reconciles it, nothing expires it, and the file stays in this
+					// directory for the life of the machine. A session that arms a wait
+					// and never comes back (forked, renamed, deleted) leaks one file per
+					// wait, forever.
+					//
+					// The owning session keeps its own expired records so reconcileRecord()
+					// can still settle them with the "timed out" notice callers expect.
+					if (record.sessionId !== state.currentSessionId && now() >= record.expiresAt) {
+						try {
+							fs.unlinkSync(path.join(subscriptionsDir, file));
+						} catch (error) {
+							if (!isNotFound(error)) throw error;
+						}
+						continue;
+					}
 					if (record.sessionId === state.currentSessionId) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);

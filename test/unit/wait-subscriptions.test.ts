@@ -432,3 +432,133 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 });
+
+describe("wait subscriptions armed by another session", () => {
+	function subscriptionFiles(dir: string): string[] {
+		try {
+			return fs.readdirSync(dir).filter((file) => file.endsWith(".json"));
+		} catch {
+			return [];
+		}
+	}
+
+	it("sweeps an expired record whose owning session never came back", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-orphan-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		const pi = {
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		};
+		let now = 1_000;
+		const owner = makeState("session-a");
+		const armer = createWaitSubscriptionManager(pi as never, owner, {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-orphan", requestedId: "run-orphan", timeoutMs: 100 });
+			assert.equal(subscriptionFiles(subscriptionsDir).length, 1);
+			armer.dispose();
+
+			// A different session starts after the record has expired. Before this
+			// swept, the file was never loaded, never reconciled and never timed
+			// out, so it stayed on disk forever.
+			now = 1_101;
+			const other = makeState("session-b");
+			const restarted = createWaitSubscriptionManager(pi as never, other, {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				restarted.restore();
+				assert.deepEqual(subscriptionFiles(subscriptionsDir), [], "expired foreign record is removed");
+				assert.equal(sent.length, 0, "no wake is delivered to the wrong session");
+			} finally {
+				restarted.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps another session's record until it expires", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-foreign-live-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const pi = {
+			events: new TestBus(),
+			sendMessage() {},
+		};
+		let now = 1_000;
+		const owner = makeState("session-a");
+		const armer = createWaitSubscriptionManager(pi as never, owner, {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-live", requestedId: "run-live", timeoutMs: 10_000 });
+			armer.dispose();
+
+			now = 1_500; // still well inside the window
+			const other = makeState("session-b");
+			const restarted = createWaitSubscriptionManager(pi as never, other, {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				restarted.restore();
+				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "an unexpired record still belongs to its owner");
+			} finally {
+				restarted.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("still gives the owning session its timeout notice after a restart", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-owner-timeout-"));
+		const asyncRoot = path.join(root, "runs");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		const pi = {
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		};
+		let now = 1_000;
+		writeStatus(asyncRoot, "run-owned", "running", { sessionId: "session-a", pid: 999_997 });
+		const first = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+			asyncDirRoot: asyncRoot,
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+			kill: () => true,
+		});
+		try {
+			first.arm({ targetKind: "async", runId: "run-owned", requestedId: "run-owned", timeoutMs: 100 });
+			first.dispose();
+
+			now = 1_101; // expired, but this session owns it
+			const resumed = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+				asyncDirRoot: asyncRoot,
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+				kill: () => true,
+			});
+			try {
+				resumed.restore();
+				assert.match(sent.shift() ?? "", /timed out/, "the owner is still told its wait expired");
+				assert.deepEqual(subscriptionFiles(subscriptionsDir), []);
+			} finally {
+				resumed.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
