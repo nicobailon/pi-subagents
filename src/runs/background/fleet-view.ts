@@ -443,6 +443,8 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		: uniqueStrings([runOutputPath]);
 	const sessionFile = selected.index !== undefined ? selected.step?.sessionFile : status.sessionFile;
 	const eventsPath = path.join(asyncDir, "events.jsonl");
+	// Synthesized output paths can name files that were never written. Keep the unfiltered paths
+	// below so a present-but-unreadable file still reports its read error.
 
 	const context = contextModeLabel(status.context ?? summarizeContextModes((status.steps ?? []).map((step) => step.context)));
 	const lines = [
@@ -452,7 +454,7 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		stepStateLine(status.mode, selected.index, selected.step),
 		selected.hint,
 	].filter((line): line is string => Boolean(line));
-	appendKnownArtifacts(lines, { outputPaths, sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined });
+	appendKnownArtifacts(lines, { outputPaths: outputPaths.filter((outputPath) => fs.existsSync(outputPath)), sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined });
 
 	const warnings: string[] = [];
 	let transcriptLines: string[] = [];

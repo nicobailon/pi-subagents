@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Stop advertising an `output-<index>.log` artifact in run transcripts when that file was never written, so workflow runs no longer point at a path that cannot exist. Thanks to @lbijeau for #1124.
 - Keep FleetView working when a session file path is longer than a short identity, instead of failing external-job inspection on every poll. Thanks to @albertgwo for #1121 and @Don-Yin for #1122.
 
 ### Added

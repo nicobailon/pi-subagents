@@ -207,6 +207,41 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("does not advertise an output artifact that was never written", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-phantom-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-phantom-output");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			// A workflow run orchestrates children elsewhere and never writes output-<index>.log itself.
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-phantom-output",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				currentStep: 0,
+				steps: [{ agent: "delegate", status: "running", startedAt: 100, recentOutput: ["CHILD_RECENT"] }],
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-phantom-output", view: "transcript" }, {
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 250,
+			});
+
+			const text = textContent(result);
+			assert.equal(result.isError, undefined);
+			assert.doesNotMatch(text, /Output: .*output-0\.log/);
+			// The status.json fallback still supplies the transcript body.
+			assert.match(text, /Recent output from status\.json:/);
+			assert.match(text, /CHILD_RECENT/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses to tail status outputFile paths outside the async directory", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-transcript-escape-"));
 		try {
