@@ -163,17 +163,26 @@ export function resolveModelCandidate(
 	return model;
 }
 
-function resolveRequiredSubagentModelCandidate(
+function resolveSubagentModelCandidate(
 	model: string,
 	availableModels: AvailableModelInfo[] | undefined,
 	preferredProvider?: string,
-): string {
+): string | undefined {
 	if (!availableModels || availableModels.length === 0) return model;
 	const resolvedWhole = resolveBaseModelCandidate(model, availableModels, preferredProvider);
 	if (resolvedWhole) return resolvedWhole;
 	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
 	const resolvedBase = thinkingSuffix ? resolveBaseModelCandidate(baseModel, availableModels, preferredProvider) : undefined;
-	if (resolvedBase) return `${resolvedBase}${thinkingSuffix}`;
+	return resolvedBase ? `${resolvedBase}${thinkingSuffix}` : undefined;
+}
+
+function resolveRequiredSubagentModelCandidate(
+	model: string,
+	availableModels: AvailableModelInfo[] | undefined,
+	preferredProvider?: string,
+): string {
+	const resolved = resolveSubagentModelCandidate(model, availableModels, preferredProvider);
+	if (resolved) return resolved;
 	throw new Error(`Unknown subagent model '${model}' in the active Pi model registry.`);
 }
 
@@ -278,8 +287,15 @@ export function buildModelCandidates(
 	for (let index = 0; index < rawCandidates.length; index++) {
 		const raw = rawCandidates[index];
 		if (!raw) continue;
-		const normalized = resolveRequiredSubagentModelCandidate(raw.trim(), availableModels, preferredProvider);
-		if (!normalized || seen.has(normalized)) continue;
+		const model = raw.trim();
+		const normalized = index === 0
+			? resolveRequiredSubagentModelCandidate(model, availableModels, preferredProvider)
+			: resolveSubagentModelCandidate(model, availableModels, preferredProvider);
+		if (!normalized) {
+			console.warn(`[pi-subagents] Skipping fallback model '${model}' because it is unavailable in this environment.`);
+			continue;
+		}
+		if (seen.has(normalized)) continue;
 		if ((index > 0 || options?.scope?.strict === true) && options?.scope?.enforce) {
 			const violation = checkModelScope(normalized, options.scope, "inherited");
 			if (violation) {

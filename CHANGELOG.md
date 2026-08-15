@@ -6,6 +6,7 @@
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
 
 ### Fixed
+- Skip fallback models that are unavailable in the active registry, so shared agent configs still run where their primary model is available. Thanks to [@JPFrancoia](https://github.com/JPFrancoia) for #1147.
 - Keep `mcp:<server>` direct tools available when pi-mcp-adapter cache identity includes a request-header command. Thanks to [@xz-dev](https://github.com/xz-dev) for #1141.
 - Fall back from an implicit `defaultContext: fork` to `fresh` when the parent session file or current leaf is not available yet, instead of failing the first launch. Explicit `context: "fork"` remains fail-fast. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1137.
 - Preserve a child's file-only report when its output path also names the workflow summary output.

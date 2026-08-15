@@ -66,11 +66,22 @@ describe("model fallback helpers", () => {
 		);
 	});
 
-	it("rejects fallback models that the active registry cannot resolve", () => {
-		assert.throws(
-			() => buildModelCandidates("gpt-5-mini", ["does-not-exist"], availableModels),
-			/Unknown subagent model 'does-not-exist'/,
-		);
+	it("skips unavailable fallback models and warns once for each", () => {
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message: unknown) => warnings.push(String(message));
+		try {
+			assert.deepEqual(
+				buildModelCandidates("gpt-5-mini", ["does-not-exist", "also-unavailable"], availableModels),
+				["openai/gpt-5-mini"],
+			);
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.deepEqual(warnings, [
+			"[pi-subagents] Skipping fallback model 'does-not-exist' because it is unavailable in this environment.",
+			"[pi-subagents] Skipping fallback model 'also-unavailable' because it is unavailable in this environment.",
+		]);
 	});
 
 	it("detects retryable provider/model failures", () => {
