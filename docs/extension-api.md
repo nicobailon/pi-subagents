@@ -323,6 +323,25 @@ const closed = await closeProjectPane({ cwd: "/path/to/repo", requireIdle: true 
 
 The API returns discriminated structured results with canonical project root, binding path, pane identity, bounded Herdr runtime fields, and stable error codes. `requireIdle: true` fails closed unless Herdr explicitly reports `agent_status: "idle"`; use it when an owning extension must not close a working or blocked pane. The API deliberately reports `trust: "human-verification-required"`: it never bypasses or claims to attest Pi's project-trust prompt. `PROJECT_PANES_API_VERSION` is currently `1`.
 
+## Host session lifetime and completion wakes
+
+A host that embeds this extension owns whether completion wakes can be delivered at all.
+
+The wake path lives in the extension instance. `createWaitSubscriptionManager` reconciles on a one-second interval plus the async, foreground, control, and intercom event channels, and delivers through `pi.sendMessage(..., { triggerTurn: true })`. Dispose the session and that reconcile loop goes with it.
+
+Detached children do not stop when the session does. They are the host process's children, not the session's, so the run keeps going, completes, and notifies nobody. What is lost is the notification, not the work.
+
+This matters because "is the parent busy?" is the wrong idle signal. A parent that launches a detached run and hands control back — which is what the async launch output tells it to do — is not prompting, streaming, compacting, or running a shell command. A host that reaps sessions on those signals alone will dispose exactly the session that was waiting to be woken.
+
+If your host reclaims idle sessions, keep a session alive while it still has live detached work:
+
+- Read run state from the status files under the async run directory rather than from event traffic. A long, quiet workflow sends almost nothing to the parent, so recent-activity heuristics conclude the wrong thing.
+- Treat `queued`, `running`, and `paused` as live; `complete`, `failed`, `stopped`, and `rejected` are terminal.
+- Age runs out by `lastUpdate` so a wedged run cannot pin a session forever. Live runs rewrite `status.json` continuously.
+- Note that `sessionId` in `status.json` is the parent's session *file path*, not a bare session id.
+
+The symptom when this is missed is quiet and easy to misattribute: subagents appear never to report back, which looks like a fault in this extension rather than in the host that disposed the listener.
+
 ## Runtime files
 
 The main runtime files in this repository:
