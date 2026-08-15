@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_FILE_SYSTEM_RETRY_DELAYS_MS, runFileSystemOperationWithRetry, waitForFileSystemRetry } from "./file-system-retry.ts";
 
 type AtomicJsonFs = Pick<typeof fs, "mkdirSync" | "writeFileSync" | "renameSync" | "rmSync">;
+
+const MAX_PATH_COMPONENT_BYTES = 255;
 
 type AtomicJsonWriterOptions = {
 	fs?: AtomicJsonFs;
@@ -28,6 +31,13 @@ function renameWithRetry(
 	}, { retryDelaysMs, wait });
 }
 
+function tempBaseName(filePath: string, pid: number, nowMs: number, randomId: string): string {
+	const suffix = `.${pid}.${nowMs}.${randomId}.tmp`;
+	const preferred = `.${path.basename(filePath)}${suffix}`;
+	if (Buffer.byteLength(preferred, "utf-8") <= MAX_PATH_COMPONENT_BYTES) return preferred;
+	return `.${createHash("sha256").update(path.basename(filePath)).digest("hex")}${suffix}`;
+}
+
 export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (filePath: string, payload: object) => void {
 	const fsImpl = options.fs ?? fs;
 	const now = options.now ?? Date.now;
@@ -46,7 +56,7 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 		}, { retryDelaysMs: directoryRetryDelaysMs, wait });
 		const tempPath = path.join(
 			path.dirname(filePath),
-			`.${path.basename(filePath)}.${pid}.${now()}.${random().toString(36).slice(2)}.tmp`,
+			tempBaseName(filePath, pid, now(), random().toString(36).slice(2)),
 		);
 		try {
 			fsImpl.writeFileSync(tempPath, JSON.stringify(payload, null, 2), mode === undefined ? "utf-8" : { encoding: "utf-8", mode });

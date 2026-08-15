@@ -23,13 +23,13 @@ function isPortableSegment(value: string): boolean {
 		&& !WINDOWS_RESERVED_NAME.test(value);
 }
 
-export function encodeIndexSegment(value: string): string {
+export function encodeIndexSegment(value: string, maxBytes = MAX_INDEX_SEGMENT_BYTES): string {
 	let encoded: string;
 	try {
 		encoded = encodeURIComponent(value);
 	} catch {
 		return hashedSegment(value);
 	}
-	if (Buffer.byteLength(encoded, "utf-8") <= MAX_INDEX_SEGMENT_BYTES && isPortableSegment(encoded)) return encoded;
+	if (Buffer.byteLength(encoded, "utf-8") <= maxBytes && isPortableSegment(encoded)) return encoded;
 	return hashedSegment(value);
 }

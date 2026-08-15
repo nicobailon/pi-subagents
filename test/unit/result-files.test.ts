@@ -4,10 +4,14 @@ import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
 
+const JSON_EXTENSION = ".json";
+const MAX_JSON_FILE_STEM_BYTES = MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(JSON_EXTENSION, "utf-8");
+
 function pendingPath(resultsDir: string, sessionId: string, runId: string): string {
-	return path.join(resultsDir, "result-pending", encodeURIComponent(sessionId), `${encodeURIComponent(runId)}.json`);
+	return path.join(resultsDir, "result-pending", encodeIndexSegment(sessionId), `${encodeIndexSegment(runId, MAX_JSON_FILE_STEM_BYTES)}${JSON_EXTENSION}`);
 }
 
 describe("result file indexes", () => {
@@ -65,6 +69,56 @@ describe("result file indexes", () => {
 			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), ["pending-only.json"]);
 			assert.equal(resultPayloadPathForSessionRun(resultsDir, "session-a", "pending-only"), pendingPath(resultsDir, "session-a", "pending-only"));
 			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "pending-only"), pendingPath(resultsDir, "session-a", "pending-only"));
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps pending results for long session ids below filesystem component limits", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-long-session-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const sessionId = `/Users/zhouatie/.config/pi/sessions/${"界".repeat(100)}.jsonl`;
+			const runId = "pending-long-session";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			fs.mkdirSync(resultPath);
+
+			writePendingAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const payloadPath = pendingPath(resultsDir, sessionId, runId);
+			assert.ok(Buffer.byteLength(path.basename(path.dirname(payloadPath)), "utf-8") <= 255);
+			assert.equal(fs.existsSync(payloadPath), true);
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), payloadPath);
+			fs.rmSync(path.join(resultsDir, "result-index"), { recursive: true });
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, runId), payloadPath);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps pending results for near-limit run ids below filesystem component limits", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-long-run-"));
+		const originalError = console.error;
+		try {
+			console.error = () => {};
+			const sessionId = "session-a";
+			for (const runId of ["x".repeat(250), "y".repeat(251)]) {
+				const resultPath = path.join(resultsDir, `${runId}.json`);
+				if (runId.length === 250) fs.mkdirSync(resultPath);
+				writePendingAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+				const payloadPath = pendingPath(resultsDir, sessionId, runId);
+				const pendingFile = path.basename(payloadPath);
+				assert.ok(Buffer.byteLength(pendingFile, "utf-8") <= 255);
+				assert.equal(fs.existsSync(payloadPath), true);
+				assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), payloadPath);
+			}
+			assert.equal(path.basename(pendingPath(resultsDir, sessionId, "x".repeat(250))), `${"x".repeat(250)}.json`);
+			assert.match(path.basename(pendingPath(resultsDir, sessionId, "y".repeat(251))), /^~sha256-[a-f0-9]{64}\.json$/);
 		} finally {
 			console.error = originalError;
 			fs.rmSync(resultsDir, { recursive: true, force: true });

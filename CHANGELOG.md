@@ -6,6 +6,7 @@
 - Preserve a child's file-only report when its output path also names the workflow summary output.
 - Keep concurrent async result promotion from deleting a newer payload or another promoter's published result. Thanks to [@albertgwo](https://github.com/albertgwo) for #1130.
 - Bound opaque tool-call IDs used by async active-run and result indexes, preventing provider-generated IDs longer than the filesystem component limit from aborting background launches with `ENAMETOOLONG`. Optional active-run aliases now fail open without losing the authoritative run marker. Thanks to [@hlstwizard](https://github.com/hlstwizard) for #1131.
+- Bound async result session and run path segments so long identities do not make `subagent_wait` fail with `ENAMETOOLONG`. Thanks to [@zhouatie](https://github.com/zhouatie) for #1135.
 
 ### Changed
 - Clarify that subagent reviews and gates should stay async unless foreground behavior is the actual requirement.

@@ -105,6 +105,20 @@ describe("writeAtomicJson", () => {
 		assert.deepEqual([...fakeFs.writeOptions.values()], [{ encoding: "utf-8", mode: 0o600 }]);
 	});
 
+	it("keeps temporary names below the component limit for long target names", () => {
+		const fakeFs = new FakeFs();
+		const waits: number[] = [];
+		const writeAtomicJson = createWriter(fakeFs, waits);
+		const targetPath = path.join("/tmp", `${"x".repeat(250)}.json`);
+
+		writeAtomicJson(targetPath, { state: "running" });
+
+		const [tempPath] = fakeFs.writeOptions.keys();
+		assert.ok(tempPath);
+		assert.ok(Buffer.byteLength(path.basename(tempPath), "utf-8") <= 255);
+		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ state: "running" }, null, 2));
+	});
+
 	it("uses longer default retries for transient Windows rename locks", () => {
 		const fakeFs = new FakeFs();
 		fakeFs.failRenameCodes = ["EPERM", "EPERM", "EPERM", "EPERM", "EPERM", "EPERM"];

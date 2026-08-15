@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
-import { encodeIndexSegment } from "./index-segment.ts";
+import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "./index-segment.ts";
 
 const RESULT_INDEX_VERSION = 1;
 const RESULT_INDEX_DIR = "result-index";
@@ -11,6 +11,8 @@ const OBSERVER_INDEX_DIR = "observers";
 const TOOL_CALL_INDEX_DIR = "tool-calls";
 const RESULT_PENDING_DIR = "result-pending";
 const MISSION_OBSERVER = "mission";
+const JSON_EXTENSION = ".json";
+const MAX_JSON_FILE_STEM_BYTES = MAX_INDEX_SEGMENT_BYTES - Buffer.byteLength(JSON_EXTENSION, "utf-8");
 
 export interface ResultIndexEntry {
 	version: 1;
@@ -22,7 +24,11 @@ export interface ResultIndexEntry {
 }
 
 function encodeSegment(value: string): string {
-	return encodeURIComponent(value);
+	return encodeIndexSegment(value);
+}
+
+function encodedJsonFileName(value: string): string {
+	return `${encodeIndexSegment(value, MAX_JSON_FILE_STEM_BYTES)}${JSON_EXTENSION}`;
 }
 
 function nonEmptyString(value: unknown): string | undefined {
@@ -30,7 +36,7 @@ function nonEmptyString(value: unknown): string | undefined {
 }
 
 export function resultFileName(runId: string): string {
-	return `${runId}.json`;
+	return `${runId}${JSON_EXTENSION}`;
 }
 
 export function resultFilePath(resultsDir: string, runId: string): string {
@@ -42,11 +48,11 @@ function sessionIndexDir(resultsDir: string, sessionId: string): string {
 }
 
 function resultIndexPath(resultsDir: string, sessionId: string, runId: string): string {
-	return path.join(sessionIndexDir(resultsDir, sessionId), `${encodeSegment(runId)}.json`);
+	return path.join(sessionIndexDir(resultsDir, sessionId), encodedJsonFileName(runId));
 }
 
 function resultPendingPath(resultsDir: string, sessionId: string, runId: string): string {
-	return path.join(resultsDir, RESULT_PENDING_DIR, encodeSegment(sessionId), `${encodeSegment(runId)}.json`);
+	return path.join(resultsDir, RESULT_PENDING_DIR, encodeSegment(sessionId), encodedJsonFileName(runId));
 }
 
 function observerIndexDir(resultsDir: string, observer: string): string {
@@ -54,7 +60,7 @@ function observerIndexDir(resultsDir: string, observer: string): string {
 }
 
 function observerIndexPath(resultsDir: string, observer: string, runId: string): string {
-	return path.join(observerIndexDir(resultsDir, observer), `${encodeSegment(runId)}.json`);
+	return path.join(observerIndexDir(resultsDir, observer), encodedJsonFileName(runId));
 }
 
 function toolCallIndexDir(resultsDir: string, toolCallId: string): string {
@@ -62,7 +68,7 @@ function toolCallIndexDir(resultsDir: string, toolCallId: string): string {
 }
 
 function toolCallIndexPath(resultsDir: string, toolCallId: string, runId: string): string {
-	return path.join(toolCallIndexDir(resultsDir, toolCallId), `${encodeSegment(runId)}.json`);
+	return path.join(toolCallIndexDir(resultsDir, toolCallId), encodedJsonFileName(runId));
 }
 
 function parseResultIndexEntry(value: unknown): ResultIndexEntry | undefined {
@@ -247,14 +253,13 @@ function pendingResultLocationForIndexedRun(resultsDir: string, runId: string): 
 	}
 	for (const session of sessions) {
 		if (!session.isDirectory()) continue;
-		let sessionId: string;
+		const pendingPath = path.join(root, session.name, encodedJsonFileName(runId));
 		try {
-			sessionId = decodeURIComponent(session.name);
-		} catch {
-			continue;
+			const data = JSON.parse(fs.readFileSync(pendingPath, "utf-8")) as Record<string, unknown>;
+			if ((nonEmptyString(data.runId) ?? nonEmptyString(data.id)) === runId) return { file: resultFileName(runId), path: pendingPath, state: "pending" };
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Ignoring invalid pending async result '${pendingPath}':`, error);
 		}
-		const location = pendingResultLocationForSessionRun(resultsDir, sessionId, runId);
-		if (location) return location;
 	}
 	return undefined;
 }
@@ -310,7 +315,7 @@ export function resultPayloadPathForIndexedRun(resultsDir: string, runId: string
 	}
 	for (const session of sessions) {
 		if (!session.isDirectory()) continue;
-		const entryPath = path.join(root, session.name, `${encodeSegment(runId)}.json`);
+		const entryPath = path.join(root, session.name, encodedJsonFileName(runId));
 		try {
 			const entry = parseResultIndexEntry(JSON.parse(fs.readFileSync(entryPath, "utf-8")));
 			if (!entry || entry.runId !== runId) continue;
