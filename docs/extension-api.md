@@ -323,6 +323,26 @@ const closed = await closeProjectPane({ cwd: "/path/to/repo", requireIdle: true 
 
 The API returns discriminated structured results with canonical project root, binding path, pane identity, bounded Herdr runtime fields, and stable error codes. `requireIdle: true` fails closed unless Herdr explicitly reports `agent_status: "idle"`; use it when an owning extension must not close a working or blocked pane. The API deliberately reports `trust: "human-verification-required"`: it never bypasses or claims to attest Pi's project-trust prompt. `PROJECT_PANES_API_VERSION` is currently `1`.
 
+## Host session lifetime and completion wakes
+
+A host that embeds this extension owns whether completion wakes can be delivered at all.
+
+Ordinary async and foreground completion wakes use `registerSubagentNotify` and `sendCompletion`. They listen for completion events and deliver through `pi.sendMessage(..., { triggerTurn })`. Session shutdown stops the result watcher and disposes this completion notifier. `createWaitSubscriptionManager` is separate: it is the explicit non-blocking `subagent_wait` subscription path, not the ordinary completion wake path.
+
+Detached children do not stop when the session does. They are the host process's children, not the session's, so the run keeps going, completes, and notifies nobody. What is lost is the notification, not the work.
+
+This matters because "is the parent busy?" is the wrong idle signal. A parent that launches a detached run and hands control back — which is what the async launch output tells it to do — is not prompting, streaming, compacting, or running a shell command. A host that reaps sessions on those signals alone will dispose exactly the session that was waiting to be woken.
+
+If your host reclaims idle sessions, keep a session alive while it still has live detached work:
+
+- Read run state from the status files under the async run directory rather than from event traffic. A long, quiet workflow sends almost nothing to the parent, so recent-activity heuristics conclude the wrong thing.
+- Treat `queued` and `running` as live, matching `isActiveAsyncState`. `paused` is not: an interrupted run is finalized as paused.
+- Do not treat `lastUpdate` as a heartbeat. The runner advances it in memory every second but only rewrites `status.json` when the activity classification changes, so a live run inside one long quiet tool call leaves a stale file behind. Judging liveness by file age will reap exactly the run you meant to protect.
+- Prefer the recorded runner `pid`, which stays true through a silent tool call and goes false when the runner dies. Keep file age only as a fallback for runs that record no pid, and give it a wide window.
+- Match `sessionId` in `status.json` against both forms. It is resolved as `getSessionFile() ?? getSessionId()`, so it is normally the parent's session *file path*, but a session that is not persisted records a bare session id instead.
+
+The symptom when this is missed is quiet and easy to misattribute: subagents appear never to report back, which looks like a fault in this extension rather than in the host that disposed the listener.
+
 ## Runtime files
 
 The main runtime files in this repository:
