@@ -3300,9 +3300,10 @@ function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, art
 	return path.join(artifactsDir, "outputs", workflowRunId, `${workflowKey}.md`);
 }
 
-function writeWorkflowAggregateOutput(outputPath: string | undefined, text: string, childOutputPaths: ReadonlyMap<string, string>): string | undefined {
-	if (!outputPath || childOutputPaths.has(outputPath)) return undefined;
+function writeWorkflowAggregateOutput(outputPath: string | undefined, text: string, producedChildOutputPaths: ReadonlySet<string>): string | undefined {
+	if (!outputPath) return undefined;
 	try {
+		if (producedChildOutputPaths.has(outputPath)) return undefined;
 		fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 		fs.writeFileSync(outputPath, text, "utf-8");
 		return undefined;
@@ -5050,6 +5051,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId), configuredOutputBaseDir);
 					const claimedOutputPaths = new Map<string, string>();
+					const producedChildOutputPaths = new Set<string>();
 					const workflowSteps = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 					let projectedTraceLength = 0;
 					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
@@ -5191,6 +5193,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									}, ctx, preserveActiveSession);
 								});
 								workflowResults.push(...result.details.results);
+								for (const childResult of result.details.results) {
+									if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
+								}
 								const child = workflowChildResult(key, result);
 								const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 								if (step) {
@@ -5219,7 +5224,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
 						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
-						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, claimedOutputPaths);
+						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, summary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
 						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
@@ -5240,7 +5245,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}
 						}
 						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
-						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed."), claimedOutputPaths);
+						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed."), producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed."), outputWarning);
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: status.state, summary: resultSummary, error: status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.detached ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
@@ -5261,6 +5266,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id), configuredOutputBaseDir);
 			const claimedOutputPaths = new Map<string, string>();
+			const producedChildOutputPaths = new Set<string>();
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const sendWorkflowProgress = () => {
@@ -5322,6 +5328,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}, ctx, preserveActiveSession);
 						});
 						workflowResults.push(...result.details.results);
+						for (const childResult of result.details.results) {
+							if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
+						}
 						if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 						const child = workflowChildResult(key, result);
 						const childStatus = missionWorkflowChildStatus(result);
@@ -5344,7 +5353,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (workflow.console.length > 0) sections.push(`Console:\n${workflow.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				const workflowText = sections.join("\n\n");
-				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, claimedOutputPaths);
+				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
@@ -5359,7 +5368,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (partial.console.length > 0) sections.push(`Console:\n${partial.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n")}`);
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				const workflowText = sections.join("\n\n");
-				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, claimedOutputPaths);
+				const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, workflowText, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(workflowText, outputWarning);
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],

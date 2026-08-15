@@ -1564,6 +1564,40 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(fs.readFileSync(sharedOutput), Buffer.from(usefulReport));
 	});
 
+	it("replaces stale workflow output when a child claims its path but writes no report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sharedOutput = path.join(tempDir, "failed-review.md");
+		fs.writeFileSync(sharedOutput, "stale workflow output", "utf-8");
+		mockPi.onCall({ exitCode: 1, stderr: "review child failed before writing output" });
+		const executor = makeExecutor([makeAgent("reviewer", { completionGuard: false })]);
+
+		const result = await executor.execute(
+			"scripted-workflow-missing-child-output-collision",
+			{
+				async: false,
+				output: sharedOutput,
+				workflowScript: `
+					const child = await runs.run("review", {
+						agent: "reviewer",
+						task: "Write a review report.",
+						output: ${JSON.stringify(sharedOutput)},
+						outputMode: "file-only"
+					});
+					if (!child.ok) throw new Error(child.error);
+					return child;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /review child failed before writing output/);
+		const workflowOutput = fs.readFileSync(sharedOutput, "utf-8");
+		assert.match(workflowOutput, /Workflow failed:.*review child failed before writing output/s);
+		assert.doesNotMatch(workflowOutput, /stale workflow output/);
+	});
+
 	it("rejects sequential workflow child output collisions before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first report" });
 		const executor = makeExecutor([makeAgent("echo")]);
