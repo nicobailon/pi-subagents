@@ -60,7 +60,7 @@ import { isScheduledRunAction, type ScheduledRunAction } from "../background/sch
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
-import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
+import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
@@ -2175,11 +2175,10 @@ interface AgentDefaultContextPolicy {
 	usesFork: boolean;
 }
 
-function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: AgentConfig[], parentSessionFile?: string | null): AgentDefaultContextPolicy {
+function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: AgentConfig[], canUseDefaultFork = false): AgentDefaultContextPolicy {
 	if (params.context !== undefined) {
 		return resolveExplicitContextPolicy(params);
 	}
-	const canUseDefaultFork = Boolean(parentSessionFile);
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
 		canUseDefaultFork && byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
@@ -6048,10 +6047,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const turnBudget = resolveTurnBudgetConfig(effectiveParams.turnBudget ?? deps.config.turnBudget);
 		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
 		// An agent-level defaultContext is a preference, unlike an explicit request.
-		// A brand-new parent may not have a persisted session to fork yet; use fresh
-		// immediately instead of launching a guaranteed-to-fail fork and relying on
-		// the caller to retry. Explicit context:"fork" remains strict.
-		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents, parentSessionFile);
+		// Prefer fork only when the parent session is persisted and has a current leaf;
+		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.
+		// Explicit context:"fork" remains strict.
+		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents, canPreferFork(ctx.sessionManager));
 		effectiveParams = contextPolicy.params;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({

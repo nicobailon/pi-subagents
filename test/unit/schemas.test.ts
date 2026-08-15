@@ -166,8 +166,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const description = String(contextSchema.description ?? "");
 		assert.match(description, /fresh/);
 		assert.match(description, /fork/);
-		assert.match(description, /each requested agent/);
+		assert.match(description, /each agent uses its own defaultContext/);
 		assert.match(description, /overrides every child/);
+		assert.match(description, /implicit fork/);
+		assert.match(description, /else fresh/);
 	});
 
 	it("exposes a concise trusted inline workflow script mode", () => {

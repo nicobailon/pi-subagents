@@ -322,7 +322,7 @@ const SubagentParamProperties = {
 	step: Type.Optional(Type.Unsafe({ ...ChainItem, description: "One chain step for action='append-step' only. Not an execution mode." })),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork"],
-		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without defaultContext: 'fork' run fresh.",
+		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child. If omitted, each agent uses its own defaultContext; implicit fork needs a persisted parent session and leaf, else fresh.",
 	})),
 	async: Type.Optional(Type.Boolean({ description: "Run in background unless asyncByDefault:false. Set false only for foreground behavior." })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs." })),

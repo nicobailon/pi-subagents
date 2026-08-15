@@ -56,6 +56,34 @@ export function resolveSubagentContext(value: unknown): SubagentExecutionContext
 	return value === "fork" ? "fork" : "fresh";
 }
 
+export interface PreferredForkAvailability {
+	getSessionFile(): string | undefined;
+	getLeafId(): string | null;
+}
+
+export interface PreferredForkSnapshot {
+	parentSessionFile?: string | null;
+	leafId?: string | null;
+}
+
+/** True when an implicit `defaultContext: fork` can create a real branch now.
+ * Explicit `context: "fork"` stays strict and does not use this preference. */
+export function canPreferFork(sessionManager: PreferredForkAvailability): boolean {
+	return canPreferForkFromSnapshot({
+		parentSessionFile: sessionManager.getSessionFile(),
+		leafId: sessionManager.getLeafId(),
+	});
+}
+
+export function canPreferForkFromSnapshot(input: PreferredForkSnapshot): boolean {
+	if (!input.parentSessionFile || !input.leafId) return false;
+	try {
+		return fs.existsSync(input.parentSessionFile);
+	} catch {
+		return false;
+	}
+}
+
 /** Decide whether a resolved child model uses Anthropic's provider or message API, which
  * requires the sanitized fork to disable thinking. Unknown models stay conservative. */
 export function forkedChildRequiresThinkingOff(

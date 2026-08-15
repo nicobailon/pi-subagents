@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentContext } from "../../src/shared/fork-context.ts";
+import { canPreferFork, canPreferForkFromSnapshot, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentContext } from "../../src/shared/fork-context.ts";
 
 function writeMinimalSessionFile(filePath: string, id = "session"): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -51,6 +51,38 @@ describe("forkedChildRequiresThinkingOff", () => {
 		];
 		assert.equal(forkedChildRequiresThinkingOff("shared", availableModels, "anthropic"), true);
 		assert.equal(forkedChildRequiresThinkingOff("shared", availableModels, "openai"), false);
+	});
+});
+
+describe("canPreferFork", () => {
+	it("requires a persisted session file and a current leaf", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-prefer-fork-"));
+		try {
+			const parentSessionFile = path.join(tempDir, "parent.jsonl");
+			assert.equal(canPreferFork({
+				getSessionFile: () => undefined,
+				getLeafId: () => "leaf-123",
+			}), false);
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-123",
+			}), false);
+			writeMinimalSessionFile(parentSessionFile, "parent");
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => null,
+			}), false);
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-123",
+			}), true);
+			assert.equal(canPreferForkFromSnapshot({
+				parentSessionFile,
+				leafId: "leaf-123",
+			}), true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });
 
