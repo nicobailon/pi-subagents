@@ -29,8 +29,6 @@ EXECUTION:
 MANAGEMENT / CONTROL (use action; omit execution fields):
 • list, get, models, guide, children.list, create, update, delete, eject, disable, enable, reset, status, debug.run, doctor, grant-spawn-budget, worktree.discard, refine/refine.show/refine.rollback, mission.create/list/show/update/resolve-decision/attach-run/close, inspector.open/status/close, project.open/status/close, and watchdog actions remain available. Use {action:"guide", topic:"overview"} for packaged current-version help; topics are overview, workflows, agents, missions, observability, tool-reference, configuration, models, watchdog, and extension-api.
 • status, interrupt, stop, resume, and steer manage live or persisted runs. Use status view:"fleet" for an overview or view:"transcript" with id and optional index to tail output.
-• { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable legacy chain. step is control-only, not an execution mode.
-• approve-checkpoint and reject-checkpoint decide a paused durable legacy chain checkpoint.
 • Create durable project schedules with { action:"schedule.create", id?, name?, at:"+10m" | ISO, workflowScript:"return runs.run('main', {agent:'worker', task:'...'})" } or { every:"6h", workflowScript:"..." }. Manage them with schedule.list/show/history/pause/resume/run/run-due/delete. This first slice supports fixed intervals; calendar schedules and schedule mission attachment are deferred.
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;
@@ -46,7 +44,6 @@ EXECUTE:
 
 MANAGE / CONTROL:
 • Use action without execution fields for list/get/models/guide/authoring, refine/refine.show/refine.rollback, mission, watchdog, status, interrupt, stop, resume, steer, script-only scheduling, diagnostics, and other management actions. guide reads shipped current-version docs by topic.
-• append-step uses step:{...} only for an already-running durable legacy chain; step is not an execution mode.
 • A mission object needs exactly one non-empty title or summary; objective and labels are optional. goal may only be true and requires budget:{tokens}.
 
 ASYNC / SAFETY:
@@ -157,20 +154,7 @@ function withMandatorySafetyGuidance(description: string): string {
 		: SUBAGENT_SAFETY_GUIDANCE;
 }
 
-const LEGACY_CHAIN_CONTROL_GUIDANCE_LINES = new Set([
-	'• { action: "append-step", id: "...", step: {agent:"agent-c", task:"Use {previous}"} } appends one step to an already-running durable legacy chain. step is control-only, not an execution mode.',
-	"• approve-checkpoint and reject-checkpoint decide a paused durable legacy chain checkpoint.",
-	"• append-step uses step:{...} only for an already-running durable legacy chain; step is not an execution mode.",
-]);
-
-function withoutLegacyChainControlGuidance(description: string): string {
-	return description
-		.split("\n")
-		.filter((line) => !LEGACY_CHAIN_CONTROL_GUIDANCE_LINES.has(line.trim()))
-		.join("\n");
-}
-
-export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode" | "legacyChainControls"> = {}, options?: ToolDescriptionOptions): string {
+export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
 	const mode = resolveToolDescriptionMode(config, options);
 	let description: string;
 	if (mode === "compact") description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
@@ -182,5 +166,5 @@ export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "tool
 			description = FULL_SUBAGENT_TOOL_DESCRIPTION;
 		}
 	} else description = FULL_SUBAGENT_TOOL_DESCRIPTION;
-	return config.legacyChainControls === true ? description : withoutLegacyChainControlGuidance(description);
+	return description;
 }

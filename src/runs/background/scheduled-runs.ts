@@ -474,7 +474,7 @@ export class ScheduledRunManager {
 		const schedule: ScheduleRecord = {
 			schemaVersion: 1,
 			id,
-			name: params.name?.trim() || params.scheduleName?.trim() || targetLabel(target.target!),
+			name: params.name?.trim() || targetLabel(target.target!),
 			cwd: path.resolve(params.cwd ?? ctx.cwd),
 			trigger,
 			target: target.target!,

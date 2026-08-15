@@ -188,7 +188,7 @@ export const DynamicCollectSchema = Type.Object({
 
 // Flattened so chain steps do not need an object-shape anyOf/oneOf union.
 export const ChainItem = Type.Object({
-	checkpoint: Type.Optional(Type.String({ description: "Approval checkpoint name. Pauses the chain without launching a child until approve-checkpoint or reject-checkpoint is called." })),
+	checkpoint: Type.Optional(Type.String({ description: "Approval checkpoint name. Pauses the chain without launching a child until a checkpoint decision is delivered." })),
 	message: Type.Optional(Type.String({ description: "Optional approval message shown while the checkpoint is paused." })),
 	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
 	task: Type.Optional(Type.String({
@@ -264,10 +264,10 @@ const SubagentParamProperties = {
 	})),
 	name: Type.Optional(Type.String({ description: "Human-readable name for action='schedule.create'." })),
 	id: Type.Optional(Type.String({
-		description: "Run id/prefix for status/debug.run, interrupt, steer, append-step, approve-checkpoint, reject-checkpoint, or mission."
+		description: "Run id/prefix for status/debug.run, interrupt, steer, or mission.attach-run."
 	})),
 	runId: Type.Optional(Type.String({
-		description: "Target run ID for debug.run, interrupt, steer, append-step, or mission.attach-run. Prefer id."
+		description: "Target run ID for debug.run, interrupt, steer, or mission.attach-run. Prefer id."
 	})),
 	dir: Type.Optional(Type.String({
 		description: "Async run directory for status/debug.run, stop, resume, or steer."
@@ -288,8 +288,6 @@ const SubagentParamProperties = {
 	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for watchdog actions." })),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the new Herdr pane for inspector.open or project.open." })),
 	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
-	schedule: Type.Optional(Type.String({ deprecated: true, description: "Removed one-shot schedule field. Use action='schedule.create' with at." })),
-	scheduleName: Type.Optional(Type.String({ deprecated: true, description: "Removed schedule display field. Use name." })),
 	at: Type.Optional(Type.String({ description: "One-shot trigger for action='schedule.create': a relative delay such as '+10m' or an ISO timestamp with timezone." })),
 	every: Type.Optional(Type.String({ description: "Fixed recurring interval for action='schedule.create', such as '30m', '6h', '2d', or '2w'." })),
 	on: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "integer" }], description: "Calendar selector reserved for a later schedule slice." })),
@@ -319,7 +317,6 @@ const SubagentParamProperties = {
 	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Trusted inline JavaScript statement body. Normally async unless asyncByDefault:false; set async:true when async matters. Use async:false only for foreground behavior, never reviews or gates. Use explicit return for output. Use await runs.run(key, {agent, task, worktree?, gate?}) or runs.run(key, {resume, task}), runs.all([...]), runs.status(id), runs.ref(s), emit(value), console, and return. Mission workflows also have async state.get(key) and state.set(key, JSONValue). Compose sequential and parallel phases dynamically. Set worktree:true at workflow or child level for a separate managed worktree; child fields override workflow defaults. gate is one host-run command and cannot be combined with acceptance. runs.run accepts one child only. No filesystem, shell, Pi tools, or host globals." })),
 	chatProgress: Type.Optional(Type.String({ enum: ["auto", "off", "live-card"], description: "WorkflowScript chat progress projection. auto shows a live in-chat card only for watched foreground workflows in the same Git repository; it is off otherwise." })),
 	worktree: Type.Optional(Type.Boolean({ description: "Managed child isolation. true gives each workflow child a separate git worktree; an individual runs.run/runs.all item can override a workflow default with worktree:false." })),
-	step: Type.Optional(Type.Unsafe({ ...ChainItem, description: "One chain step for action='append-step' only. Not an execution mode." })),
 	context: Type.Optional(Type.String({
 		enum: ["fresh", "fork"],
 		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child. If omitted, each agent uses its own defaultContext; implicit fork needs a persisted parent session and leaf, else fresh.",
@@ -357,26 +354,12 @@ const SubagentParamProperties = {
 	gate: Type.Optional(Type.String({ minLength: 1, description: "Host gate command. Cannot be combined with acceptance." })),
 };
 
-const { step: _legacyChainStep, ...subagentParamPropertiesWithoutStep } = SubagentParamProperties;
-const trimmedSubagentParamProperties = {
-	...subagentParamPropertiesWithoutStep,
-	id: Type.Optional(Type.String({
-		description: "Run id/prefix for status/debug.run, interrupt, steer, or mission.attach-run."
-	})),
-	runId: Type.Optional(Type.String({
-		description: "Target run ID for debug.run, interrupt, steer, or mission.attach-run. Prefer id."
-	})),
-};
 const SubagentParamsSchema = Type.Object(SubagentParamProperties);
-const TrimmedSubagentParamsSchema = Type.Object(trimmedSubagentParamProperties);
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
-export const SubagentParamsWithoutLegacyChainControls = keepTopLevelParameterDescriptions(TrimmedSubagentParamsSchema);
 
-export function createSubagentParamsSchema(options: { legacyChainControls?: boolean } = {}): typeof SubagentParams | typeof SubagentParamsWithoutLegacyChainControls {
-	return options.legacyChainControls === true
-		? SubagentParams
-		: SubagentParamsWithoutLegacyChainControls;
+export function createSubagentParamsSchema(): typeof SubagentParams {
+	return SubagentParams;
 }
 
 const SubagentWaitParamsSchema = Type.Object({

@@ -344,15 +344,13 @@ describe("mission store", () => {
 		}
 	});
 
-	it("loads older records that do not have receipts or objective", () => {
+	it("loads older records that do not have receipts", () => {
 		const test = fixture();
 		try {
 			const created = createMission(test.location, { title: "Older record", objective: "Stay readable" });
 			const recordPath = path.join(test.location.missionDir, `${created.id}.json`);
 			const raw = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
 			delete raw.receipts;
-			delete raw.objective;
-			raw.goal = "Stay readable";
 			fs.writeFileSync(recordPath, JSON.stringify(raw), "utf-8");
 
 			const mission = readMission(test.location, created.id);

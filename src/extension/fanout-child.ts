@@ -171,13 +171,13 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		allowMutatingManagementActions: false,
 	});
 
-	const params = createSubagentParamsSchema(config);
+	const params = createSubagentParamsSchema();
 	const tool: ToolDefinition<typeof params, Details> = {
 		name: "subagent",
 		label: "Subagent",
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",
-			`Allowed management/control actions: list, get, status, interrupt, resume, steer${config.legacyChainControls === true ? ", append-step" : ""}, doctor.`,
+			"Allowed management/control actions: list, get, status, interrupt, resume, steer, doctor.",
 			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget) are blocked in this mode.",
 		].join("\n"),
 		parameters: params,

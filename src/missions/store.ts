@@ -77,11 +77,6 @@ function nonNegativeTokenCount(value: unknown, label: string): number {
 	return value as number;
 }
 
-function parseStoredGoal(value: unknown, label: string): { goal?: MissionGoal; legacyObjective?: string } {
-	if (typeof value === "string") return { legacyObjective: requiredString(value, label).trim() };
-	return { goal: parseGoal(value, label) };
-}
-
 function parseGoal(value: unknown, label: string): MissionGoal {
 	const input = asObject(value, label);
 	if (input.status !== "active" && input.status !== "paused" && input.status !== "budget-exhausted") throw new Error(`${label}.status is invalid`);
@@ -223,18 +218,18 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	const decisions = input.decisions as unknown[];
 	const artifacts = input.artifacts as unknown[];
 	const receipts = (input.receipts ?? []) as unknown[];
-	const parsedGoal = input.goal !== undefined ? parseStoredGoal(input.goal, `${source}.goal`) : {};
+	const goal = input.goal !== undefined ? parseGoal(input.goal, `${source}.goal`) : undefined;
 	const budget = input.budget !== undefined ? parseBudget(input.budget, `${source}.budget`) : undefined;
 	const usage = input.usage !== undefined ? parseUsage(input.usage, `${source}.usage`) : undefined;
-	const objective = optionalString(input.objective, `${source}.objective`)?.trim() ?? parsedGoal.legacyObjective;
+	const objective = optionalString(input.objective, `${source}.objective`)?.trim();
 	if (!objective) throw new Error(`${source}.objective must be a non-empty string`);
-	if (parsedGoal.goal && !budget) throw new Error(`${source}.budget is required for a goal mission`);
+	if (goal && !budget) throw new Error(`${source}.budget is required for a goal mission`);
 	return {
 		schemaVersion: 1,
 		id: validateMissionId(input.id, `${source}.id`),
 		title: requiredString(input.title, `${source}.title`),
 		objective,
-		...(parsedGoal.goal ? { goal: parsedGoal.goal } : {}),
+		...(goal ? { goal } : {}),
 		...(budget ? { budget } : {}),
 		...(usage ? { usage } : {}),
 		status: missionStatus(input.status, `${source}.status`),

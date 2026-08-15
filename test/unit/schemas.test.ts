@@ -199,19 +199,12 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(properties?.output, "output remains a workflow child default");
 	});
 
-	it("omits legacy chain controls by default and includes them when enabled", () => {
-		for (const name of ["tasks", "chain", "concurrency", "chainDir"]) {
+	it("omits removed legacy chain and schedule fields", () => {
+		for (const name of ["tasks", "chain", "concurrency", "chainDir", "step", "schedule", "scheduleName"]) {
 			assert.equal((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], undefined, `${name} should not be public`);
 		}
 
-		const trimmed = (schemas.createSubagentParamsSchema as (options?: { legacyChainControls?: boolean }) => SubagentParamsSchema)();
-		assert.equal(trimmed.properties?.step, undefined);
-		assert.doesNotMatch(JSON.stringify(trimmed), /append-step|approve-checkpoint|reject-checkpoint/);
-
-		const full = (schemas.createSubagentParamsSchema as (options: { legacyChainControls: boolean }) => SubagentParamsSchema)({ legacyChainControls: true });
-		const stepSchema = (full.properties as Record<string, JsonSchemaNode> | undefined)?.step;
-		assert.equal(stepSchema?.type, "object");
-		assert.match(String(stepSchema?.description ?? ""), /append-step.*only/i);
+		assert.doesNotMatch(JSON.stringify(SubagentParams), /append-step|approve-checkpoint|reject-checkpoint|scheduleName/);
 	});
 
 	it("allows runtime validation of management and control action strings", () => {
@@ -279,21 +272,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(idSchema.description ?? ""), /status/i);
 		assert.match(String(idSchema.description ?? ""), /interrupt/i);
 		assert.match(String(idSchema.description ?? ""), /steer/i);
-		assert.match(String(idSchema.description ?? ""), /append-step/i);
-		assert.match(String(idSchema.description ?? ""), /approve-checkpoint/i);
-		assert.match(String(idSchema.description ?? ""), /reject-checkpoint/i);
-
-		const stepSchema = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.step;
-		assert.equal((stepSchema?.properties as Record<string, JsonSchemaNode> | undefined)?.checkpoint?.type, "string");
-		assert.equal((stepSchema?.properties as Record<string, JsonSchemaNode> | undefined)?.message?.type, "string");
-
 		const runIdSchema = SubagentParams?.properties?.runId;
 		assert.ok(runIdSchema, "runId schema should exist");
 		assert.equal(runIdSchema.type, "string");
 		assert.match(String(runIdSchema.description ?? ""), /interrupt/i);
 		assert.match(String(runIdSchema.description ?? ""), /steer/i);
-		assert.match(String(runIdSchema.description ?? ""), /append-step/i);
-
 		const dirSchema = SubagentParams?.properties?.dir;
 		assert.ok(dirSchema, "dir schema should exist");
 		assert.equal(dirSchema.type, "string");
@@ -512,11 +495,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(acceptanceObjectBranch.additionalProperties, true);
 		assert.equal(JSON.stringify(acceptanceObjectBranch).includes('"anyOf"'), false);
 
-		const step = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.step;
-		assert.equal(step?.type, "object");
-		assert.equal(step?.additionalProperties, false);
-		assert.equal((step?.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.type, "string");
-
 	});
 
 	it("validates representative flexible field values with TypeBox compiler", { skip: !CompileSchema ? "typebox compiler not available" : undefined }, () => {
@@ -526,7 +504,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const validValues = [
 			{ skill: "review" },
 			{ workflowScript: "return await runs.run(\"one\", {agent: \"reviewer\", task: \"check\"})" },
-			{ action: "append-step", id: "run-1", step: { agent: "reviewer", task: "Continue" } },
 			{ skill: false },
 			{ action: "get", agent: "worker" },
 			{ workflowScript: "return runs.run('main', { agent: 'worker', task: 'Fix', acceptance: false })", timeoutMs: 1000 },

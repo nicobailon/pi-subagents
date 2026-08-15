@@ -101,9 +101,6 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.artifactDir !== undefined && !ARTIFACT_DIR_PREFERENCES.has(config.artifactDir as ArtifactDirPreference)) {
 		throw new Error(`config.artifactDir must be "project", "session", or "temp"`);
 	}
-	if (config.legacyChainControls !== undefined && typeof config.legacyChainControls !== "boolean") {
-		throw new Error("config.legacyChainControls must be a boolean");
-	}
 	if (config.maxActiveAsyncRunsPerSession !== undefined
 		&& (typeof config.maxActiveAsyncRunsPerSession !== "number"
 			|| !Number.isInteger(config.maxActiveAsyncRunsPerSession)

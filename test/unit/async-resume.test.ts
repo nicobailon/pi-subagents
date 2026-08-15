@@ -185,7 +185,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("accepts legacy resolved acceptance metadata in recovery descriptors", () => {
+	it("accepts current acceptance metadata in recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-acceptance-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -211,8 +211,6 @@ describe("async resume lookup", () => {
 				share: false,
 				acceptance: {
 					level: "attested",
-					explicit: true,
-					inferredReason: ["async write-capable or risky run"],
 					criteria: [{ id: "criterion-1", must: "Return evidence", evidence: ["manual-notes"], severity: "required" }],
 					evidence: ["manual-notes", "residual-risks"],
 					verify: [],
@@ -235,7 +233,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("rejects stale explicit reviewed acceptance metadata in recovery descriptors", () => {
+	it("rejects reviewed acceptance metadata in recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-reviewed-acceptance-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -261,8 +259,6 @@ describe("async resume lookup", () => {
 				share: false,
 				acceptance: {
 					level: "reviewed",
-					explicit: true,
-					inferredReason: ["async write-capable or risky run"],
 					criteria: ["Return evidence"],
 					evidence: ["validation-output"],
 					verify: [],
@@ -280,7 +276,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("drops inferred legacy acceptance metadata from recovery descriptors", () => {
+	it("rejects legacy acceptance metadata in recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-inferred-acceptance-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -305,21 +301,20 @@ describe("async resume lookup", () => {
 				maxSubagentDepth: 2,
 				share: false,
 				acceptance: {
-					level: "reviewed",
+					level: "attested",
 					explicit: false,
 					inferredReason: ["async write-capable or risky run"],
 					criteria: [],
 					evidence: [],
 					verify: [],
-					review: { agent: "reviewer", required: true },
 					stopRules: [],
 				},
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-inferred-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir });
-
-			assert.equal(target.kind, "revive");
-			assert.equal(target.recoveryDescriptor?.acceptance, undefined);
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-inferred-acceptance" }, { asyncDirRoot: asyncRoot, resultsDir }),
+				/recoveryDescriptor\.acceptance\.(explicit|inferredReason) is not supported/i,
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

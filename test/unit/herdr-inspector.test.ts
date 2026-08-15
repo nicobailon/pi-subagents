@@ -212,7 +212,7 @@ describe("Herdr inspector", () => {
 					schemaVersion: 1,
 					id: "mission-1",
 					title: "Ship inspector",
-					goal: "Inspect safely",
+					goal: { status: "active" },
 					status: "active",
 					createdAt: "2026-01-01T00:00:00.000Z",
 					updatedAt: "2026-01-01T00:00:00.000Z",

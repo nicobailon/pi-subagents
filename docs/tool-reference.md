@@ -194,7 +194,6 @@ subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a ne
 subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
 subagent({ action: "steer", id: "<run-id>", mode: "follow_up", message: "check this after the current turn" })
 subagent({ action: "steer", id: "<run-id>", index: 1, mode: "auto", message: "guidance for child 2" })
-subagent({ action: "append-step", id: "<run-id>", step: { agent: "worker", task: "Continue from {previous}" } })
 subagent({ action: "approve-checkpoint", id: "<run-id>" })
 subagent({ action: "reject-checkpoint", id: "<run-id>" })
 subagent({ action: "doctor" })
@@ -239,10 +238,6 @@ The optional `mode` is `steer` by default and keeps the current interrupt behavi
 Only a top-level single run may interrupt after the acknowledgment deadline and recover after a further 15-second pause/revival bound; durable multi-child and nested runs never auto-interrupt. Recovery launches a replacement only after the source is confirmed paused, a valid persisted session exists, and deadline, turn, and tool budgets remain. It preserves the original child contract and remaining limits; otherwise the source stays paused with an explicit failure. Late acceptance is recorded but cannot cancel committed recovery.
 
 The persisted `steering` ledger retains 20 requests and replaces the old `steerCount`/`lastSteerAt` fields.
-
-### append-step
-
-`append-step` requires `legacyChainControls: true`. The default registered model-facing schema omits this legacy control surface. When enabled, it accepts exactly one `step` object for an existing durable chain for a top-level async chain whose status is still `running`. The step is persisted in the run directory and becomes eligible only after the chain's already-queued steps finish. Completed, failed, rejected, paused, foreground, single, and non-chain runs reject appends.
 
 ## Acceptance gates
 

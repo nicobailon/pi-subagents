@@ -338,8 +338,6 @@ export interface SubagentParamsLike {
 	acceptance?: AcceptanceInput;
 	gate?: string;
 	agentContract?: AgentContract;
-	schedule?: string;
-	scheduleName?: string;
 	at?: string;
 	every?: string;
 	on?: string | number;

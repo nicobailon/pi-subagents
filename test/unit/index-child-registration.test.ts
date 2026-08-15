@@ -920,11 +920,10 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("trims legacy chain controls from the child-safe fanout tool by default", () => {
-		const readRegisteredTool = (legacyChainControls: boolean): { description: string; properties: string[]; id: string; runId: string } => {
+	it("omits legacy chain controls from the child-safe fanout tool", () => {
+		const readRegisteredTool = (): { description: string; properties: string[]; id: string; runId: string } => {
 			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fanout-schema-"));
 			fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
-			fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ legacyChainControls }), "utf-8");
 			const script = String.raw`
 				import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
 				import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
@@ -942,13 +941,9 @@ describe("subagent extension child mode", () => {
 			return JSON.parse(output) as { description: string; properties: string[]; id: string; runId: string };
 		};
 
-		const trimmed = readRegisteredTool(false);
-		assert.equal(trimmed.properties.includes("step"), false);
-		assert.doesNotMatch(`${trimmed.description}\n${trimmed.id}\n${trimmed.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
-
-		const legacy = readRegisteredTool(true);
-		assert.equal(legacy.properties.includes("step"), true);
-		assert.match(`${legacy.description}\n${legacy.id}\n${legacy.runId}`, /append-step/);
+		const tool = readRegisteredTool();
+		assert.equal(tool.properties.includes("step"), false);
+		assert.doesNotMatch(`${tool.description}\n${tool.id}\n${tool.runId}`, /append-step|approve-checkpoint|reject-checkpoint/);
 	});
 
 	it("lets fanout children call read-only list but blocks mutating management actions", () => {

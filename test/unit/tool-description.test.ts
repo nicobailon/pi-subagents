@@ -54,14 +54,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /status\.json/);
 	});
 
-	it("includes legacy chain-control guidance when enabled", () => {
-		const description = buildSubagentToolDescription({ legacyChainControls: true });
-		assert.match(description, /append-step.*step:/i);
-		assert.match(description, /approve-checkpoint|reject-checkpoint/);
-	});
-
 	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact", legacyChainControls: true });
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
 		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
 		assert.match(description, /SINGLE .*starts exactly one child through the workflow runtime/i);
@@ -166,7 +160,7 @@ describe("registered subagent tool description", () => {
 		const warnings: string[] = [];
 
 		const description = buildSubagentToolDescription(
-			{ toolDescriptionMode: "custom", legacyChainControls: true },
+			{ toolDescriptionMode: "custom" },
 			{ cwd, agentDir, warn: (message) => warnings.push(message) },
 		);
 
@@ -178,7 +172,7 @@ describe("registered subagent tool description", () => {
 		const warnings: string[] = [];
 
 		const description = buildSubagentToolDescription(
-			{ toolDescriptionMode: "tiny", legacyChainControls: true } as never,
+			{ toolDescriptionMode: "tiny" } as never,
 			{ warn: (message) => warnings.push(message) },
 		);
 
@@ -232,11 +226,11 @@ describe("registered subagent tool description", () => {
 
 	it("registers full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));
-		writeExtensionConfig(defaultAgentDir, { legacyChainControls: true });
+		writeExtensionConfig(defaultAgentDir, {});
 		assert.equal(readRegisteredTool(defaultAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 
 		const compactAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-"));
-		writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact", legacyChainControls: true });
+		writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact" });
 		assert.equal(readRegisteredTool(compactAgentDir).description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 
 		const customAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-custom-"));
@@ -247,11 +241,11 @@ describe("registered subagent tool description", () => {
 		assert.match(customDescription, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 
 		const missingCustomAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-missing-"));
-		writeExtensionConfig(missingCustomAgentDir, { toolDescriptionMode: "custom", legacyChainControls: true });
+		writeExtensionConfig(missingCustomAgentDir, { toolDescriptionMode: "custom" });
 		assert.equal(readRegisteredTool(missingCustomAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 
 		const invalidAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-invalid-"));
-		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny", legacyChainControls: true });
+		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny" });
 		assert.equal(readRegisteredTool(invalidAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 	});
 
@@ -260,13 +254,5 @@ describe("registered subagent tool description", () => {
 		const tool = readRegisteredTool(agentDir);
 		assert.equal(tool.properties.includes("step"), false);
 		assert.doesNotMatch(tool.description, /append-step|approve-checkpoint|reject-checkpoint/);
-	});
-
-	it("registers legacy chain controls when enabled", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-"));
-		writeExtensionConfig(agentDir, { legacyChainControls: true });
-		const tool = readRegisteredTool(agentDir);
-		assert.equal(tool.properties.includes("step"), true);
-		assert.match(tool.description, /append-step.*step:/i);
 	});
 });

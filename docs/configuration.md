@@ -28,14 +28,6 @@ Controls the parent-facing `subagent` tool description registered at startup. `f
 
 `custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
 
-## `legacyChainControls`
-
-```json
-{ "legacyChainControls": true }
-```
-
-Defaults to `false`. The default registered model-facing tool schema and description omit the legacy `append-step` `step` schema and legacy checkpoint controls. This does not change runtime support for existing durable legacy chains. Set this to `true` before directly managing a legacy chain with `append-step`, `approve-checkpoint`, or `reject-checkpoint`.
-
 ## `inlineToolDisplay`
 
 ```json

@@ -47,6 +47,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	}
 	if (normalizedAction !== undefined) {
 		const legacyAction = normalizedAction.toLowerCase();
+		if (legacyAction === "append-step") {
+			return { ok: false, error: "Legacy append-step control was removed from the public subagent tool; use current workflowScript orchestration.", mode: "management" };
+		}
 		if (legacyAction === "single") {
 			return { ok: false, error: "action='single' is not supported. Omit action and pass { agent, task } for one child.", mode: "workflow" };
 		}
@@ -71,7 +74,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: true, params: { ...params, action: normalizedAction } };
 	}
 	if (params.step !== undefined) {
-		return { ok: false, error: "step is only available with action='append-step'; it is not an execution mode.", mode: "workflow" };
+		return { ok: false, error: "step is not a public execution field; use workflowScript for orchestration.", mode: "workflow" };
 	}
 	if (params.workflowScript !== undefined && (params.agent !== undefined || params.task !== undefined)) {
 		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript.", mode: "workflow" };
