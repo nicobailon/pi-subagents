@@ -462,10 +462,10 @@ describe("wait subscriptions armed by another session", () => {
 			assert.equal(subscriptionFiles(subscriptionsDir).length, 1);
 			armer.dispose();
 
-			// A different session starts after the record has expired. Before this
+			// A different session starts well after the record expired. Before this
 			// swept, the file was never loaded, never reconciled and never timed
 			// out, so it stayed on disk forever.
-			now = 1_101;
+			now = 1_101 + 86400000;
 			const other = makeState("session-b");
 			const restarted = createWaitSubscriptionManager(pi as never, other, {
 				subscriptionsDir,
@@ -551,12 +551,46 @@ describe("wait subscriptions armed by another session", () => {
 				open.restore();
 				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "still live, so retained");
 
-				// The other session stays open past the record's expiry.
-				now = 1_000 + 30_000 + 120_000;
+				// The other session stays open past the record's expiry and grace.
+				now = 1_000 + 30_000 + 86400000 + 120_000;
 				open.reconcile();
 				assert.deepEqual(subscriptionFiles(subscriptionsDir), [], "expired record is swept without a restart");
 			} finally {
 				open.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps an expired foreign record through the grace window", () => {
+		// The owner settles its own expired records with a timeout notice on its next
+		// restore(). Sweeping the instant it expires would take that away from a
+		// session that had simply not resumed yet.
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-grace-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const pi = { events: new TestBus(), sendMessage() {} };
+		let now = 1_000;
+		const armer = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-grace", requestedId: "run-grace", timeoutMs: 100 });
+			armer.dispose();
+
+			now = 1_101 + 60_000; // expired, but well inside the grace window
+			const other = createWaitSubscriptionManager(pi as never, makeState("session-b"), {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				other.restore();
+				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "owner can still collect its timeout notice");
+			} finally {
+				other.dispose();
 			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

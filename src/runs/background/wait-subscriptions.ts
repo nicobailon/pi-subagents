@@ -27,6 +27,14 @@ const RECONCILE_INTERVAL_MS = 1_000;
  * directory read, and nothing depends on the sweep being prompt.
  */
 const FOREIGN_SWEEP_INTERVAL_MS = 60_000;
+/**
+ * How far past expiry a record armed by another session is kept before it is
+ * swept. The owning session settles its own expired records with a "timed out"
+ * notice on the next restore(), so removing one the moment it expires would take
+ * that notice away from a session that simply had not resumed yet. A day is long
+ * enough for an ordinary return and short enough to bound the directory.
+ */
+const FOREIGN_SWEEP_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export interface ArmWaitSubscriptionInput {
 	targetKind: "async" | "foreground";
@@ -112,6 +120,9 @@ export function createWaitSubscriptionManager(
 	 * a session that arms a wait and never comes back (forked, renamed, deleted)
 	 * leaves one file here per wait, forever.
 	 *
+	 * Kept for FOREIGN_SWEEP_GRACE_MS past expiry so an owner that resumes late
+	 * still finds its record and gets the timeout notice.
+	 *
 	 * Runs on the reconcile timer as well as at restore(), because a record that
 	 * is still live when another session starts would otherwise never be looked
 	 * at again: restore() only fires on session_start, and reconcile() walks the
@@ -144,7 +155,7 @@ export function createWaitSubscriptionManager(
 			// The owning session keeps its own expired records so reconcileRecord()
 			// can still settle them with the "timed out" notice callers expect.
 			if (record.sessionId === state.currentSessionId) continue;
-			if (sweptAt < record.expiresAt) continue;
+			if (sweptAt < record.expiresAt + FOREIGN_SWEEP_GRACE_MS) continue;
 			try {
 				fs.unlinkSync(filePath);
 			} catch (error) {
