@@ -218,6 +218,27 @@ describe("subagent run id resolver", () => {
 		}
 	});
 
+	it("resolves oversized workflow tool-call ids through bounded indexes", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-resolver-long-tool-call-index-"));
+		try {
+			const asyncRoot = path.join(root, "async");
+			const resultsDir = path.join(root, "results");
+			const toolCallId = `call_${"界".repeat(100)}`;
+			const activeDir = path.join(asyncRoot, "workflow-active-long");
+			fs.mkdirSync(activeDir, { recursive: true });
+			fs.writeFileSync(path.join(activeDir, "status.json"), JSON.stringify({ runId: "workflow-active-long", toolCallId, state: "running", mode: "workflow", startedAt: 1, lastUpdate: 1, steps: [] }), "utf-8");
+			updateActiveRunIndex(activeDir, "running", toolCallId);
+
+			assert.equal(resolveSubagentRunId(toolCallId, { asyncDirRoot: asyncRoot, resultsDir })?.id, "workflow-active-long");
+			releaseActiveRunIndex(activeDir);
+
+			writeAsyncResultFile(resultFilePath(resultsDir, "workflow-done-long"), { id: "workflow-done-long", runId: "workflow-done-long", toolCallId, sessionId: "session-a", state: "complete", success: true });
+			assert.equal(resolveSubagentRunId(toolCallId, { asyncDirRoot: asyncRoot, resultsDir })?.id, "workflow-done-long");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects unsafe nested id tokens before lookup", () => {
 		assert.throws(() => resolveSubagentRunId("../run"), /safe id token/);
 		assert.throws(() => resolveSubagentRunId("a/b"), /safe id token/);

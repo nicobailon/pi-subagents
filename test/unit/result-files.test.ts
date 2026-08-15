@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
+import { cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
 
 function pendingPath(resultsDir: string, sessionId: string, runId: string): string {
 	return path.join(resultsDir, "result-pending", encodeURIComponent(sessionId), `${encodeURIComponent(runId)}.json`);
@@ -177,6 +177,24 @@ describe("result file indexes", () => {
 			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "pending-cleanup")), false);
 		} finally {
 			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("indexes results with oversized provider tool-call ids", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-long-tool-call-"));
+		try {
+			const runId = "workflow-long-tool-call";
+			const toolCallId = `call_${"opaque/+=".repeat(80)}`;
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId: "session-a", toolCallId, success: true });
+
+			assert.deepEqual(resultFilesForToolCall(resultsDir, toolCallId), [`${runId}.json`]);
+			removeResultIndex(resultsDir, "session-a", runId, toolCallId);
+			assert.deepEqual(resultFilesForToolCall(resultsDir, toolCallId), []);
+			assert.equal(fs.existsSync(resultPath), true);
+		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});

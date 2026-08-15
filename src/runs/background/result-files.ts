@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
+import { encodeIndexSegment } from "./index-segment.ts";
 
 const RESULT_INDEX_VERSION = 1;
 const RESULT_INDEX_DIR = "result-index";
@@ -57,7 +58,7 @@ function observerIndexPath(resultsDir: string, observer: string, runId: string):
 }
 
 function toolCallIndexDir(resultsDir: string, toolCallId: string): string {
-	return path.join(resultsDir, RESULT_INDEX_DIR, TOOL_CALL_INDEX_DIR, encodeSegment(toolCallId));
+	return path.join(resultsDir, RESULT_INDEX_DIR, TOOL_CALL_INDEX_DIR, encodeIndexSegment(toolCallId));
 }
 
 function toolCallIndexPath(resultsDir: string, toolCallId: string, runId: string): string {

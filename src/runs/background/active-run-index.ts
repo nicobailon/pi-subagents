@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AsyncStatus } from "../../shared/types.ts";
+import { encodeIndexSegment } from "./index-segment.ts";
 
 export const ACTIVE_RUN_INDEX_DIR = ".active-runs";
 export const DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS = 24 * 60 * 60 * 1000;
@@ -12,7 +13,7 @@ function indexDir(asyncDirRoot: string): string {
 }
 
 function toolCallIndexDir(asyncDirRoot: string, toolCallId: string): string {
-	return path.join(indexDir(asyncDirRoot), TOOL_CALL_INDEX_DIR, encodeURIComponent(toolCallId));
+	return path.join(indexDir(asyncDirRoot), TOOL_CALL_INDEX_DIR, encodeIndexSegment(toolCallId));
 }
 
 function toolCallIndexPath(asyncDir: string, toolCallId: string): string {
@@ -45,8 +46,11 @@ function releaseToolCallAliases(asyncDir: string): void {
 	try {
 		entries = fs.readdirSync(root, { withFileTypes: true });
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-		throw error;
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT" && code !== "ENOTDIR") {
+			console.error(`Failed to inspect async active-run tool-call index root '${root}':`, error);
+		}
+		return;
 	}
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
@@ -75,9 +79,15 @@ export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state
 		fs.mkdirSync(path.dirname(marker), { recursive: true });
 		fs.writeFileSync(marker, "", { flag: "a" });
 		if (toolCallId) {
-			const toolCallMarker = toolCallIndexPath(asyncDir, toolCallId);
-			fs.mkdirSync(path.dirname(toolCallMarker), { recursive: true });
-			fs.writeFileSync(toolCallMarker, "", { flag: "a" });
+			try {
+				const toolCallMarker = toolCallIndexPath(asyncDir, toolCallId);
+				fs.mkdirSync(path.dirname(toolCallMarker), { recursive: true });
+				fs.writeFileSync(toolCallMarker, "", { flag: "a" });
+			} catch (error) {
+				// Tool-call aliases are optional. The authoritative active-run marker
+				// must keep the launch discoverable even when alias indexing fails.
+				console.error(`Failed to write async active-run tool-call index for '${asyncDir}':`, error);
+			}
 		}
 		return;
 	}
@@ -110,7 +120,8 @@ export function readActiveRunToolCallIndex(asyncDirRoot: string, toolCallId: str
 			.filter((entry) => entry.isFile())
 			.map((entry) => entry.name);
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return [];
 		throw error;
 	}
 }
