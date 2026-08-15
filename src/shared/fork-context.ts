@@ -58,7 +58,7 @@ export function resolveSubagentContext(value: unknown): SubagentExecutionContext
 
 export interface PreferredForkAvailability {
 	getSessionFile(): string | undefined;
-	getLeafId(): string | null;
+	getLeafId?: () => string | null;
 }
 
 export interface PreferredForkSnapshot {
@@ -71,7 +71,7 @@ export interface PreferredForkSnapshot {
 export function canPreferFork(sessionManager: PreferredForkAvailability): boolean {
 	return canPreferForkFromSnapshot({
 		parentSessionFile: sessionManager.getSessionFile(),
-		leafId: sessionManager.getLeafId(),
+		leafId: sessionManager.getLeafId?.() ?? null,
 	});
 }
 

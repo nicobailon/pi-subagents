@@ -70,6 +70,9 @@ describe("canPreferFork", () => {
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			assert.equal(canPreferFork({
 				getSessionFile: () => parentSessionFile,
+			}), false);
+			assert.equal(canPreferFork({
+				getSessionFile: () => parentSessionFile,
 				getLeafId: () => null,
 			}), false);
 			assert.equal(canPreferFork({
