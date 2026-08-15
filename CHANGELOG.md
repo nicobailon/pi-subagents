@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- Preserve a child's file-only report when its output path also names the workflow summary output.
+- Keep concurrent async result promotion from deleting a newer payload or another promoter's published result. Thanks to [@albertgwo](https://github.com/albertgwo) for #1130.
+
 ### Changed
 - Clarify that subagent reviews and gates should stay async unless foreground behavior is the actual requirement.
 - Remove `prompts.render` from `workflowScript`; pass explicit task text to `runs.run` or use `/prompt-workflow` for reusable prompt templates.

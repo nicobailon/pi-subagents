@@ -1526,55 +1526,42 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.match(child.error ?? "", new RegExp(escapeRegExp(path.join(tempDir, relativeDuplicateOutput))));
 		}
 		assert.equal(mockPi.callCount(), 0);
+	});
 
-		const aggregate = await executor.execute(
-			"scripted-workflow-aggregate-child-output",
+	it("preserves a rejected file-only child report when its path matches workflow output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const usefulReport = "# Review findings\n\nThe implementation loses the final report.";
+		const sharedOutput = path.join(tempDir, "review.md");
+		mockPi.onCall({ stdoutRaw: `${JSON.stringify(events.assistantMessage(usefulReport))}\n` });
+		const executor = makeExecutor([makeAgent("reviewer", { tools: ["read"], completionGuard: false })]);
+
+		const result = await executor.execute(
+			"scripted-workflow-file-only-acceptance-collision",
 			{
 				async: false,
 				output: sharedOutput,
-				workflowScript: `return await runs.all([
-					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(sharedOutput)} },
-					{ key: "monitor", agent: "echo", task: "Monitor" }
-				]);`,
+				workflowScript: `
+					const child = await runs.run("review", {
+						agent: "reviewer",
+						task: "Write a structured review report.",
+						output: ${JSON.stringify(sharedOutput)},
+						outputMode: "file-only",
+						acceptance: { level: "checked", criteria: ["Return the structured review report"] }
+					});
+					if (!child.ok) throw new Error(child.error);
+					return child;
+				`,
 			},
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(aggregate.isError, undefined, aggregate.content[0]?.text ?? "workflow failed");
-		const aggregateChildren = aggregate.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
-		assert.deepEqual(aggregateChildren.map(({ ok }) => ok), [false, false]);
-		for (const child of aggregateChildren) {
-			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
-			assert.match(child.error ?? "", new RegExp(escapeRegExp(sharedOutput)));
-		}
-		assert.equal(mockPi.callCount(), 0);
-
-		const relativeAggregateOutput = "relative-aggregate.md";
-		const relativeAggregate = await executor.execute(
-			"scripted-workflow-relative-aggregate-child-output",
-			{
-				async: false,
-				output: relativeAggregateOutput,
-				workflowScript: `return await runs.all([
-					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(relativeAggregateOutput)} },
-					{ key: "monitor", agent: "echo", task: "Monitor" }
-				]);`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(relativeAggregate.isError, undefined, relativeAggregate.content[0]?.text ?? "workflow failed");
-		const relativeAggregateChildren = relativeAggregate.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
-		assert.deepEqual(relativeAggregateChildren.map(({ ok }) => ok), [false, false]);
-		for (const child of relativeAggregateChildren) {
-			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
-			assert.match(child.error ?? "", new RegExp(escapeRegExp(path.join(tempDir, relativeAggregateOutput))));
-		}
-		assert.equal(mockPi.callCount(), 0);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", new RegExp(escapeRegExp(sharedOutput)));
+		assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
+		assert.match(result.details.results[0]?.acceptance?.runtimeChecks[0]?.message ?? "", /Structured acceptance report not found/);
+		assert.equal(result.details.results[0]?.savedOutputPath, sharedOutput);
+		assert.deepEqual(fs.readFileSync(sharedOutput), Buffer.from(usefulReport));
 	});
 
 	it("rejects sequential workflow child output collisions before launch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1610,31 +1597,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const configuredBase = path.join(tempDir, "configured-outputs");
 		const workflowOutput = "shared.md";
 
-		const aggregateResult = await makeExecutor([makeAgent("echo")], { singleRunOutputBaseDir: configuredBase }).execute(
-			"scripted-workflow-configured-output-base-collision",
-			{
-				async: false,
-				output: workflowOutput,
-				workflowScript: `return await runs.all([
-					{ key: "review", agent: "echo", task: "Review", output: ${JSON.stringify(workflowOutput)} },
-					{ key: "monitor", agent: "echo", task: "Monitor" }
-				]);`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(aggregateResult.isError, undefined, aggregateResult.content[0]?.text ?? "workflow failed");
-		const aggregateChildren = aggregateResult.details.workflow?.value as Array<{ ok: boolean; error?: string }>;
-		assert.deepEqual(aggregateChildren.map(({ ok }) => ok), [false, false]);
 		const resolvedSharedOutput = path.join(configuredBase, workflowOutput);
-		for (const child of aggregateChildren) {
-			assert.match(child.error ?? "", /Workflow child 'review' output resolves to the workflow aggregate output path/);
-			assert.match(child.error ?? "", new RegExp(escapeRegExp(resolvedSharedOutput)));
-		}
-		assert.equal(mockPi.callCount(), 0);
-
 		const agentDefaultResult = await makeExecutor([makeAgent("echo", { output: workflowOutput })], { singleRunOutputBaseDir: configuredBase }).execute(
 			"scripted-workflow-configured-agent-default-output-collision",
 			{

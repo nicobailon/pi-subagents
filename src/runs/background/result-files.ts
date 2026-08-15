@@ -199,10 +199,23 @@ export function promotePendingResultFile(resultsDir: string, sessionId: string, 
 	if (!existingResultFile(pendingPath)) return "none";
 	const resultPath = path.join(resultsDir, file);
 	try {
-		fs.rmSync(resultPath, { force: true });
+		// POSIX rename replaces the destination atomically. Deleting it first lets a
+		// losing promoter unlink the result that another promoter just published.
 		fs.renameSync(pendingPath, resultPath);
 		return existingResultFile(resultPath) ? "promoted" : "pending";
 	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "EEXIST" || code === "EPERM" || code === "EACCES") {
+			const pendingExists = existingResultFile(pendingPath);
+			const resultExists = existingResultFile(resultPath);
+			if (pendingExists) {
+				if (!resultExists && options.logFailure !== false) console.error(`Failed to promote pending async result '${pendingPath}' to '${resultPath}':`, error);
+				return "pending";
+			}
+			if (resultExists) return "promoted";
+			if (options.logFailure !== false) console.error(`Pending async result '${pendingPath}' disappeared without a promoted result at '${resultPath}'.`);
+			return "none";
+		}
 		if (options.logFailure !== false) console.error(`Failed to promote pending async result '${pendingPath}' to '${resultPath}':`, error);
 		return "pending";
 	}

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -132,6 +133,32 @@ describe("result file indexes", () => {
 			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, true);
 		} finally {
 			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a newer pending payload readable when Windows cannot replace the public result", (t) => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-windows-pending-wins-"));
+		try {
+			const resultPath = path.join(resultsDir, "blocked.json");
+			writeAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: false });
+			writePendingAsyncResultFile(resultPath, { id: "blocked", runId: "blocked", sessionId: "session-a", success: true });
+
+			t.mock.method(fsDefault, "renameSync", () => {
+				const error = new Error("destination exists") as NodeJS.ErrnoException;
+				error.code = "EEXIST";
+				throw error;
+			});
+			syncBuiltinESMExports();
+
+			const payloadPath = resultPayloadPathForSessionRun(resultsDir, "session-a", "blocked");
+			assert.equal(payloadPath, pendingPath(resultsDir, "session-a", "blocked"));
+			assert.equal(JSON.parse(fs.readFileSync(payloadPath, "utf-8")).success, true);
+			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, false);
+			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "blocked")), true);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});
