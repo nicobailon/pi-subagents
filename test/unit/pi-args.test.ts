@@ -909,7 +909,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		);
 	});
 
-	it("matches pi-mcp-adapter 2.20.1 metadata cache hashes", () => {
+	it("matches pi-mcp-adapter 2.26.0 metadata cache hashes", () => {
 		process.env.MCP_HASH_ROOT = "/tmp/mcp-root";
 		process.env.MCP_HASH_TOKEN = "token-value";
 
@@ -930,15 +930,21 @@ describe("buildPiArgs system prompt mode wiring", () => {
 						Authorization: "Bearer ${MCP_HASH_TOKEN}",
 						Secret: "!op read test",
 					},
+					requestHeadersCommand: {
+						command: "headers --token $env:MCP_HASH_TOKEN",
+						args: ["--root", "{env:MCP_HASH_ROOT}"],
+						env: { TOKEN: "${MCP_HASH_TOKEN}", SECRET_COMMAND: "!op read test" },
+						timeoutMs: 2500,
+					},
 					auth: "bearer",
 					bearerTokenEnv: "MCP_HASH_TOKEN",
 				}),
 				computeMcpServerHash({ socket: "{env:MCP_HASH_ROOT}/rmcp.sock" }),
 			],
 			[
-				"e78fc93f972eabed6a17c81a253765e013089b082dc8c0a05e9dfe6cb0cb8248",
-				"90c5d968d664477fe0c72f3978c744ae9e44c8b0adc529685d0c5f337061b4a5",
-				"a1d6c326455134aa82feb4523939d6f987f85577fa4cae410f6fb8408cbf750d",
+				"2c6d629872df1d4243906b17c57ebf688d8be0426e471bc2b0c956d952823c63",
+				"a7d142f0300b3fc6cce3039823eab3d9da9635a20f8d0c5d1c414d6c2da83968",
+				"592c6a094c7ba78133bffa5498e268e70dac7b9c450f9c23d9a46585a54edb50",
 			],
 		);
 	});
@@ -985,7 +991,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		writeMcpFixture(fixture, {
 			serverName: "github",
 			definition: { command: "github-mcp", protocolVersion: "2025-03-26" },
-			configHash: "25b77b7189f1c5fe80b028cb84eb393532528231ac39081fe97c4e2ee7fa086b",
+			configHash: "e2be19d9c42c791c8c125397cc9a5c1b592effe15c422a7f7d5fbf2eb6397251",
 			tools: [{ name: "search_repositories" }],
 		});
 

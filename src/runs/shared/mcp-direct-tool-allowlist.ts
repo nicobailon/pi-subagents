@@ -32,6 +32,12 @@ interface ServerEntry {
 	cwd?: string;
 	url?: string;
 	headers?: Record<string, string>;
+	requestHeadersCommand?: {
+		command: string;
+		args?: string[];
+		env?: Record<string, string>;
+		timeoutMs?: number;
+	};
 	auth?: "oauth" | "bearer" | false;
 	bearerToken?: string;
 	bearerTokenEnv?: string;
@@ -279,6 +285,14 @@ export function computeMcpServerHash(definition: ServerEntry): string {
 		cwd: resolveConfigPath(definition.cwd),
 		url: resolveServerUrl(definition),
 		headers: interpolateEnvRecord(definition.headers),
+		requestHeadersCommand: definition.requestHeadersCommand
+			? {
+				command: interpolateEnvVars(definition.requestHeadersCommand.command),
+				args: definition.requestHeadersCommand.args?.map(interpolateEnvVars),
+				env: interpolateEnvRecord(definition.requestHeadersCommand.env),
+				timeoutMs: definition.requestHeadersCommand.timeoutMs,
+			}
+			: undefined,
 		auth: definition.auth,
 		bearerToken: resolveBearerToken(definition),
 		bearerTokenEnv: definition.bearerTokenEnv,
