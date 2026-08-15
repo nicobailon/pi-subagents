@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { DIRS, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { findAsyncRunPrefixMatches, type AsyncRunLocation } from "./async-resume.ts";
-import { resultFilePath, resultFilesForToolCall } from "./result-files.ts";
+import { resultCandidateFilesForToolCall, resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { readActiveRunToolCallIndex } from "./active-run-index.ts";
 import { assertSafeNestedId, findNestedRunMatchesById, type NestedRoute, type NestedRunMatch, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 
@@ -21,11 +21,12 @@ export interface ResolveSubagentRunIdDeps {
 
 function exactAsyncLocation(id: string, asyncDirRoot: string, resultsDir: string): AsyncRunLocation | undefined {
 	const asyncDir = path.join(asyncDirRoot, id);
-	const resultPath = resultFilePath(resultsDir, id);
-	if (!fs.existsSync(asyncDir) && !fs.existsSync(resultPath)) return undefined;
+	const asyncDirExists = fs.existsSync(asyncDir);
+	const resultPath = resultPathFor(resultsDir, id);
+	if (!asyncDirExists && !resultPath) return undefined;
 	return {
-		asyncDir: fs.existsSync(asyncDir) ? asyncDir : null,
-		resultPath: fs.existsSync(resultPath) ? resultPath : null,
+		asyncDir: asyncDirExists ? asyncDir : null,
+		resultPath,
 		resolvedId: id,
 	};
 }
@@ -55,7 +56,7 @@ function readWorkflowResultIdentity(resultPath: string): WorkflowResultIdentity 
 }
 
 function resultPathFor(resultsDir: string, runId: string): string | null {
-	const resultPath = resultFilePath(resultsDir, runId);
+	const resultPath = resultPayloadPathForIndexedRun(resultsDir, runId) ?? resultFilePath(resultsDir, runId);
 	return fs.existsSync(resultPath) ? resultPath : null;
 }
 
@@ -72,11 +73,12 @@ function indexedToolCallIdAsyncLocations(toolCallId: string, asyncDirRoot: strin
 		const runId = status.runId || entry;
 		byId.set(runId, { asyncDir, resultPath: resultPathFor(resultsDir, runId), resolvedId: runId });
 	}
-	for (const entry of resultFilesForToolCall(resultsDir, toolCallId)) {
-		const resultPath = path.join(resultsDir, entry);
+	for (const entry of resultCandidateFilesForToolCall(resultsDir, toolCallId)) {
+		const runIdFromFile = entry.slice(0, -".json".length);
+		const resultPath = resultPayloadPathForIndexedRun(resultsDir, runIdFromFile) ?? path.join(resultsDir, entry);
 		const identity = readWorkflowResultIdentity(resultPath);
 		if (!identity || !toolCallIdMatches(identity.toolCallId, toolCallId)) continue;
-		const runId = identity.runId ?? identity.id ?? entry.slice(0, -".json".length);
+		const runId = identity.runId ?? identity.id ?? runIdFromFile;
 		const asyncDir = path.join(asyncDirRoot, runId);
 		byId.set(runId, { asyncDir: fs.existsSync(asyncDir) ? asyncDir : null, resultPath, resolvedId: runId });
 	}

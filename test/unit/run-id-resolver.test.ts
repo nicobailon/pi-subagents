@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { resultFilePath, writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { resultFilePath, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 
@@ -179,6 +180,40 @@ describe("subagent run id resolver", () => {
 			assert.equal(done?.kind, "async");
 			assert.equal(done?.id, "workflow-done");
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("prefers a newer pending payload when resolving run and tool-call ids", (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-resolver-pending-payload-"));
+		try {
+			const asyncRoot = path.join(root, "async");
+			const resultsDir = path.join(root, "results");
+			const resultPath = resultFilePath(resultsDir, "workflow-done");
+			writeAsyncResultFile(resultPath, { id: "workflow-done", runId: "workflow-done", toolCallId: "call-done", sessionId: "session-a", success: false });
+			writePendingAsyncResultFile(resultPath, { id: "workflow-done", runId: "workflow-done", toolCallId: "call-done", sessionId: "session-a", success: true });
+
+			t.mock.method(fsDefault, "renameSync", () => {
+				const error = new Error("destination exists") as NodeJS.ErrnoException;
+				error.code = "EEXIST";
+				throw error;
+			});
+			syncBuiltinESMExports();
+
+			const pendingPath = path.join(resultsDir, "result-pending", "session-a", "workflow-done.json");
+			const byRunId = resolveSubagentRunId("workflow-done", { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(byRunId?.kind, "async");
+			assert.equal(byRunId?.kind === "async" ? byRunId.location.resultPath : undefined, pendingPath);
+
+			const byToolCallId = resolveSubagentRunId("call-done", { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(byToolCallId?.kind, "async");
+			assert.equal(byToolCallId?.id, "workflow-done");
+			assert.equal(byToolCallId?.kind === "async" ? byToolCallId.location.resultPath : undefined, pendingPath);
+			assert.equal(JSON.parse(fs.readFileSync(pendingPath, "utf-8")).success, true);
+			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).success, false);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

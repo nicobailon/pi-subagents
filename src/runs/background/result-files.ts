@@ -399,6 +399,10 @@ export function resultFilesForToolCall(resultsDir: string, toolCallId: string): 
 	return resultFilesFromIndexDir(resultsDir, toolCallIndexDir(resultsDir, toolCallId));
 }
 
+export function resultCandidateFilesForToolCall(resultsDir: string, toolCallId: string): string[] {
+	return resultFilesFromIndexDir(resultsDir, toolCallIndexDir(resultsDir, toolCallId), true);
+}
+
 export function missionObserverResultFiles(resultsDir: string): string[] {
 	return resultFilesFromIndexDir(resultsDir, observerIndexDir(resultsDir, MISSION_OBSERVER));
 }
