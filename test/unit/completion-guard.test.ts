@@ -59,6 +59,12 @@ function revivedTask(followUp: string): string {
 }
 
 const implementationChallengeTask = revivedTask("Run implementation challenge pass two and implement any better current-scope change.");
+const explicitNoEditChallengeTask = revivedTask([
+	"Implementation challenge pass 1 for issue #1147.",
+	"Are you absolutely sure this is the optimal current-scope architecture and implementation for the accepted contract?",
+	"If not, revise to a smaller or better-fitting shape. Do not add scope, public surface, config, abstractions, future-proofing, broad rewrites, or broader tests.",
+	"If the current solution is best, make no file changes and explain why. Re-run only focused checks affected by any change. Report whether changes were made.",
+].join("\n"));
 
 test("implementation challenges may complete with explicit no-change reports", () => {
 	for (const report of [
@@ -104,6 +110,14 @@ test("implementation challenges may complete with explicit no-change reports", (
 			triggered: false,
 		});
 	}
+});
+
+test("explicit no-edit challenge follow-ups accept no-further-change reports", () => {
+	assert.equal(evaluateCompletionMutationGuard({
+		agent: "worker",
+		task: explicitNoEditChallengeTask,
+		messages: [assistantText("Implemented no further changes.")],
+	}).triggered, false);
 });
 
 test("implementation challenge reports require both a kept-current rationale and no-change statement", () => {

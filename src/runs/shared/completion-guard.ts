@@ -24,9 +24,11 @@ const CURSOR_FILE_MUTATION_THINKING =
 
 const REVIVED_TASK_PREFIX = /^You are reviving a previous subagent conversation\.\n\nOriginal run: .+\nOriginal agent: .+(?:\nOriginal session file: .+)?\n\nUse the stored session context as background\. Answer the orchestrator's follow-up below\. Do not assume the original child process is still alive\.\n\nFollow-up:\n/;
 const IMPLEMENTATION_CHALLENGE_FOLLOW_UP_PATTERN = /^(?:Run )?implementation challenge pass (?:one|two|\d+)(?:\s+and implement any better current[- ]scope change\.?|\s+for the accepted candidate\.\s+Reconsider it and implement any better current[- ]scope change\.?)?$/i;
+const EXPLICIT_NO_EDIT_CHALLENGE_FOLLOW_UP_PATTERN = /^implementation challenge pass (?:one|two|\d+) for issue #\d+\.\n[\s\S]*\bif the current solution is best, make no file changes and explain why\.[\s\S]*$/i;
 const NO_BETTER_CHANGE_NEEDED_PATTERN = /^\s*no (?:better|further|additional) (?:current[- ]scope )?(?:code |source |file )?(?:change|changes|edit|edits|patch|patches) (?:is|are) needed\b/i;
 const KEPT_CURRENT_IMPLEMENTATION_PATTERN = /\b(?:kept (?:the )?current (?:implementation|candidate|shape)|(?:the )?current (?:implementation|candidate|shape) was kept)\b/i;
 const NO_CHANGE_MADE_PATTERN = /\bno (?:new )?(?:(?:code|source|file|test)(?:\s*(?:,\s*or|,|\/|or)\s*(?:code|source|file|test))* changes?|changes?) (?:were|was) made\b/i;
+const IMPLEMENTED_NO_FURTHER_CHANGE_PATTERN = /\bimplemented no (?:further|additional) (?:code |source |file |test )?(?:changes?|edits?|patches?)\b/i;
 const NO_BETTER_CHANGE_QUALIFIER_PATTERN = /\b(?:do\s+not|don't|dont|not|never|cannot|can't|cant|unable|uncertain|unsure|unclear|disagree|wrong|false|reject|rejected|rejecting|maybe|might|may|\w+n['’]t)\b/i;
 const REPORT_SENTENCE_PATTERN = /[^.!?]+(?:[.!?]+(?=(?:["”'’]?\s)|["”'’]?$)|$)/g;
 const QUOTED_CLAIM_PATTERN = /["“]([^"”]+)["”]([.!?]?\s*[^.!?]*)/g;
@@ -162,8 +164,9 @@ function explicitlyRejectsQuotedClaim(report: string): boolean {
 }
 
 function isImplementationChallengeTask(task: string): boolean {
-	const followUp = task.replace(REVIVED_TASK_PREFIX, "");
-	return followUp !== task && IMPLEMENTATION_CHALLENGE_FOLLOW_UP_PATTERN.test(followUp.trim());
+	const followUp = task.replace(REVIVED_TASK_PREFIX, "").trim();
+	return followUp !== task && (IMPLEMENTATION_CHALLENGE_FOLLOW_UP_PATTERN.test(followUp)
+		|| EXPLICIT_NO_EDIT_CHALLENGE_FOLLOW_UP_PATTERN.test(followUp));
 }
 
 function reportsNoBetterChallengeChange(messages: Message[]): boolean {
@@ -181,6 +184,8 @@ function reportsNoBetterChallengeChange(messages: Message[]): boolean {
 	if (noBetterIndex >= 0) return !hasLaterClaimRetraction(sentences, noBetterIndex);
 	const keptIndex = unqualifiedClaimIndex(report, sentences, KEPT_CURRENT_IMPLEMENTATION_PATTERN);
 	const noChangeIndex = unqualifiedClaimIndex(report, sentences, NO_CHANGE_MADE_PATTERN);
+	const implementedNoFurtherChangeIndex = unqualifiedClaimIndex(report, sentences, IMPLEMENTED_NO_FURTHER_CHANGE_PATTERN);
+	if (implementedNoFurtherChangeIndex >= 0) return !hasLaterClaimRetraction(sentences, implementedNoFurtherChangeIndex);
 	return keptIndex >= 0
 		&& noChangeIndex >= 0
 		&& !hasLaterClaimRetraction(sentences, Math.min(keptIndex, noChangeIndex));
