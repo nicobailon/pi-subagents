@@ -17,6 +17,7 @@ import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
 import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
+import { canPreferForkFromSnapshot } from "../shared/fork-context.ts";
 import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindingDigest } from "../shared/launch-contract.ts";
 import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
@@ -60,6 +61,8 @@ export interface SubagentLaunchContractInput {
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
 	parentSessionFile?: string | null;
+	/** Current parent leaf required before an implicit `defaultContext: fork` stays `fork`. */
+	parentLeafId?: string | null;
 	sessionRoot?: string;
 	sessionDir?: string;
 	runId?: string;
@@ -190,6 +193,15 @@ function normalizeAvailableModels(models: SubagentLaunchContractInput["available
 	return (models ?? []).map((model) => ({ ...model, fullId: model.fullId ?? `${model.provider}/${model.id}` }));
 }
 
+function resolveLaunchContractContext(input: SubagentLaunchContractInput, agent: AgentConfig): "fresh" | "fork" {
+	if (input.context !== undefined) return input.context;
+	if (agent.defaultContext !== "fork") return agent.defaultContext ?? "fresh";
+	return canPreferForkFromSnapshot({
+		parentSessionFile: input.parentSessionFile,
+		leafId: input.parentLeafId,
+	}) ? "fork" : "fresh";
+}
+
 function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string): SubagentLaunchContractAgentCandidate[] {
 	const all = discoverAgentsAll(cwd);
 	return [...all.builtin, ...all.package, ...all.user, ...all.project]
@@ -222,9 +234,6 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (input.artifactDir !== undefined && input.artifactDir !== "project" && input.artifactDir !== "session" && input.artifactDir !== "temp") {
 		return { ok: false, code: "invalid_artifact_dir", message: `Unsupported artifactDir '${String(input.artifactDir)}'; expected 'project', 'session', or 'temp'.`, diagnostics };
 	}
-	if (input.context === "fork") {
-		diagnostics.push({ code: "host_required", severity: "host-required", message: "Exact fork session branching and fork-thinking downgrade checks require Pi host session and model-registry snapshots." });
-	}
 	const scope = resolveExecutionAgentScope(input.agentScope);
 	const discovered = discoverAgents(effectiveCwd, scope);
 	const resolvedAgent = resolveAgentName(input.agent, discovered.agents);
@@ -235,6 +244,10 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "missing_agent", message: `Unknown agent: ${input.agent}`, diagnostics };
 	}
 	const agent = resolvedAgent.agent;
+	const context = resolveLaunchContractContext(input, agent);
+	if (context === "fork") {
+		diagnostics.push({ code: "host_required", severity: "host-required", message: "Exact fork session branching and fork-thinking downgrade checks require Pi host session and model-registry snapshots." });
+	}
 	const effectiveCapabilityCeiling = intersectSubagentCapabilityCeilings(input.capabilityCeiling, input.inheritedCapabilityCeiling);
 	const restrictionMessage = capabilityCeilingAgentRestrictionMessage(agent.name, effectiveCapabilityCeiling);
 	if (restrictionMessage) return { ok: false, code: "restricted_agent", message: restrictionMessage, diagnostics };
@@ -335,7 +348,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			definitionDigest,
 			shadowedCandidates,
 		},
-		context: input.context ?? agent.defaultContext ?? "fresh",
+		context,
 		...(model ? { model } : {}),
 		modelCandidates,
 		...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),

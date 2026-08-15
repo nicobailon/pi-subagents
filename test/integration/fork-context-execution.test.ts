@@ -354,6 +354,56 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /delegated subagent running from a fork/);
 	});
 
+	it("falls back mixed parallel implicit forks to fresh without a persisted parent session", async () => {
+		const { manager } = makeSessionManagerRecorder({ sessionFile: undefined, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+				{ name: "second", description: "Second" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ tasks: [{ agent: "worker", task: "one" }, { agent: "second", task: "two" }] },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.deepEqual(result.details?.results?.map((entry) => entry.context), ["fresh", "fresh"]);
+		assert.doesNotMatch(readCallArgsForTask("one").at(-1) ?? "", /delegated subagent running from a fork/);
+		assert.doesNotMatch(readCallArgsForTask("two").at(-1) ?? "", /delegated subagent running from a fork/);
+	});
+
+	it("falls back mixed chain implicit forks to fresh without a persisted parent session", async () => {
+		const { manager } = makeSessionManagerRecorder({ sessionFile: undefined, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "echo", description: "Echo" },
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ chain: [{ agent: "echo", task: "scan" }, { agent: "worker", task: "write" }], clarify: false },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.deepEqual(result.details?.results?.map((entry) => entry.context), ["fresh", "fresh"]);
+		assert.doesNotMatch(readCallArgsForTask("scan").at(-1) ?? "", /delegated subagent running from a fork/);
+		assert.doesNotMatch(readCallArgsForTask("write").at(-1) ?? "", /delegated subagent running from a fork/);
+	});
+
 	it("uses agent defaultContext fork when launch context is omitted", async () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager, openedPaths, branchedLeafIds } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
@@ -1129,6 +1179,77 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /persisted parent session/);
+	});
+
+	it("falls back to fresh when an implicit default fork has a session path that is not persisted yet", async () => {
+		const parentSessionFile = path.join(tempDir, "unpersisted-parent.jsonl");
+		const { manager } = makeSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.equal(result.details?.results?.[0]?.context, "fresh");
+		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /delegated subagent running from a fork/);
+	});
+
+	it("falls back to fresh when an implicit default fork has no current leaf", async () => {
+		const parentSessionFile = path.join(tempDir, "parent-no-leaf.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+		const { manager } = makeSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: null });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.context, "fresh");
+		assert.equal(result.details?.results?.[0]?.context, "fresh");
+		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /delegated subagent running from a fork/);
+	});
+
+	it("keeps explicit fork fail-fast even when the agent defaults to fork", async () => {
+		const { manager } = makeSessionManagerRecorder({ sessionFile: undefined, leafId: "leaf-current" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [
+				{ name: "worker", description: "Worker", defaultContext: "fork" },
+			],
+			projectAgentsDir: null,
+		}));
+
+		const result = await executor.execute(
+			"id",
+			{ agent: "worker", task: "test", context: "fork" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(manager),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /persisted parent session/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("fails fast when context=fork and leaf is missing", async () => {

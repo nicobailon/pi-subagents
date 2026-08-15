@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Fall back from an implicit `defaultContext: fork` to `fresh` when the parent session file or current leaf is not available yet, instead of failing the first launch. Explicit `context: "fork"` remains fail-fast.
 - Preserve a child's file-only report when its output path also names the workflow summary output.
 - Keep concurrent async result promotion from deleting a newer payload or another promoter's published result. Thanks to [@albertgwo](https://github.com/albertgwo) for #1130.
 
