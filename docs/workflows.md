@@ -48,6 +48,99 @@ subagent({ workflowScript: `
 ` });
 ```
 
+Chaining is still supported. The supported form is scripted chaining: await one `runs.run(...)` result, then pass its output into the next step. Parallel fanout uses `runs.all(...)` inside the same script.
+
+```js
+subagent({ workflowScript: `
+  const plan = await runs.run("plan", { agent: "scout", task: "Plan the migration" });
+  const patch = await runs.run("patch", { agent: "worker", task: "Implement this plan:\n" + plan.output });
+  return patch.output;
+` });
+```
+
+Use named outputs when later workflow steps need structured data or durable references:
+
+```js
+subagent({ workflowScript: `
+  const inventory = await runs.run("inventory", {
+    agent: "scout",
+    task: "List the files that need review.",
+    outputSchema: {
+      type: "object",
+      properties: { files: { type: "array", items: { type: "string" } } },
+      required: ["files"],
+      additionalProperties: false
+    }
+  });
+  return runs.run("review", {
+    agent: "reviewer",
+    task: "Review these files: " + inventory.structuredOutput.files.join(", ")
+  });
+` });
+```
+
+For dynamic fanout, have one step return a structured list, check it in JavaScript, then map the bounded entries into `runs.all(...)`:
+
+```js
+subagent({ workflowScript: `
+  const targets = await runs.run("targets", {
+    agent: "scout",
+    task: "Return up to five source files that need review.",
+    outputSchema: {
+      type: "object",
+      properties: { files: { type: "array", items: { type: "string" }, maxItems: 5 } },
+      required: ["files"],
+      additionalProperties: false
+    }
+  });
+  const files = targets.structuredOutput.files.slice(0, 5);
+  return runs.all(files.map((file, index) => ({
+    key: "review-" + index,
+    agent: "reviewer",
+    task: "Review " + file
+  })));
+` });
+```
+
+For intermediate data that only later steps need, prefer the prior child's returned output or `structuredOutput` instead of writing shared files:
+
+```js
+subagent({ workflowScript: `
+  const scan = await runs.run("scan", { agent: "scout", task: "Find the files that need fixes." });
+  return runs.run("fix", { agent: "worker", task: "Implement these findings:\n" + scan.output });
+` });
+```
+
+`{chain_dir}` remains available inside scripted workflow step templates for legacy-compatible path templates. It expands to the workflow cwd, not to private temporary storage.
+
+### Migrating old chain shapes
+
+Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`, `/run-chain`, and durable `.chain.md` execution are no longer the public workflow API. Rewrite them as JavaScript:
+
+```js
+// Old shape, no longer supported:
+// { chain: [{ agent: "scout", task: "Scan" }, { agent: "worker", task: "Fix from {previous}" }] }
+
+// Current shape:
+{ workflowScript: `
+  const scan = await runs.run("scan", { agent: "scout", task: "Scan" });
+  return runs.run("fix", { agent: "worker", task: "Fix from: " + scan.output });
+` }
+```
+
+```js
+// Old shape, no longer supported:
+// { tasks: [{ agent: "reviewer", task: "Review API" }, { agent: "reviewer", task: "Review UI" }] }
+
+// Current shape:
+{ workflowScript: `
+  return runs.all([
+    { key: "api", agent: "reviewer", task: "Review API" },
+    { key: "ui", agent: "reviewer", task: "Review UI" }
+  ]);
+` }
+```
+
 For long task text with Markdown fences or shell blocks, use quoted lines instead of a raw template literal:
 
 ````js

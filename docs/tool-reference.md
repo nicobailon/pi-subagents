@@ -4,6 +4,8 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 
 ## Execution examples
 
+Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `runs.all(...)` for parallel fanout. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported.
+
 ```js
 // One child; return the child promise explicitly
 { workflowScript: `return runs.run("main", { agent: "scout", task: "Analyze the auth flow" })` }

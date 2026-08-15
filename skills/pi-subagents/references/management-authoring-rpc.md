@@ -6,7 +6,7 @@ This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
 The `subagent(...)` tool also supports management actions.
 
-### List available agents and chains
+### List available agents and legacy chain records
 
 ```typescript
 subagent({ action: "list" })
@@ -85,7 +85,7 @@ subagent({ action: "reset", agent: "reviewer" })
 Use management actions when the system needs to create or edit subagents on
 demand without dropping into raw file editing.
 
-Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and chain steps. For small builtin changes such as a model swap, prefer `subagents.agentOverrides` in settings.
+Management actions create or update user/project agent files. `config.name` is the local frontmatter name; optional `config.package` registers and looks up the runtime name as `{package}.{name}`. Use the dotted runtime name for `get`, `update`, `delete`, slash commands, and scripted workflow steps. For small builtin changes such as a model swap, prefer `subagents.agentOverrides` in settings. Durable `.chain.md` definitions are legacy records, not a current authoring target; use `workflowScript` or `/prompt-workflow` for repeatable orchestration.
 
 ## Creating and Editing Agents by File
 
@@ -129,7 +129,7 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 
 `aliases` is an optional comma-separated or block-list set of alternate names for selecting an agent. Aliases resolve to the canonical `name` for execution, status, persistence, and config. Exact canonical names take precedence over aliases, and alias collisions between distinct canonical agents fail as ambiguous. Management create/update accepts a comma-separated string, string array, or `false`/empty string to clear aliases.
 
-`acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; chain and parallel acceptance remains configured on the task or step. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
+`acceptance` is a single-agent launch default. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. An explicit tool-call value wins; scripted workflow child acceptance remains configured on the `runs.run` or `runs.all` item. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default (`false` remains the deprecated disabled-policy shorthand).
 
 `acceptanceRole` is `read-only` or `writer` and controls automatic acceptance inference only. Explicit task mutation or no-edit intent wins; otherwise the role replaces agent-name guessing. Omission preserves the current name heuristics. The field does not grant or revoke tools. Management accepts `false` or an empty string to clear it.
 

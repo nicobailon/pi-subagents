@@ -2,7 +2,7 @@
 name: pi-subagents
 description: |
   Delegate work to builtin or custom subagents with single-agent, parallel,
-  scripted, compatibility-chain, async, forked-context, and coordinated workflows. Use
+  scripted-chaining, async, forked-context, and coordinated workflows. Use
   for advisory review, implementation handoffs, and multi-step tasks where a
   single agent should stay in control while other agents contribute context,
   planning, or execution.
@@ -12,7 +12,7 @@ description: |
 
 This skill is for the main parent orchestrator only. Do not inject or follow it inside spawned child subagents. The parent session owns delegation, orchestration, review fanout, and final fix-worker launches. Ordinary children should not run their own subagent workflows; the explicit exception is a delegated fanout child whose resolved builtin `tools` includes `subagent`, and that child may use `subagent` only for the fanout work the parent assigned.
 
-Use this skill when the parent orchestrator needs one specialized child or composed orchestration. Use `workflowScript` for all execution, including one isolated child. Use `return runs.run("main", { agent, task })` for one child and `runs.all([...])` for coordinated waves: sequence, parallelism, branching, retries, gate monitors, and aggregation. Scripted workflows normally start asynchronously unless config sets `asyncByDefault:false`; set `async:true` explicitly when async behavior matters. Pass `async:false` only when foreground behavior is the actual requirement, such as a user-requested live child transcript, a foreground renderer/detach test, or another foreground-only control surface. Do not use foreground for final reviews, backlog gates, run-to-completion convenience, or because no other work is available.
+Use this skill when the parent orchestrator needs one specialized child or composed orchestration. Use `workflowScript` for all execution, including one isolated child. Chaining is still supported, but it is code-driven: use `await runs.run(...)` for sequential steps, `runs.all([...])` for parallel fanout, and ordinary JavaScript for branching, retries, gate monitors, and aggregation. Do not use legacy top-level `chain` / `tasks` inputs or durable `.chain.md` execution. Scripted workflows normally start asynchronously unless config sets `asyncByDefault:false`; set `async:true` explicitly when async behavior matters. Pass `async:false` only when foreground behavior is the actual requirement, such as a user-requested live child transcript, a foreground renderer/detach test, or another foreground-only control surface. Do not use foreground for final reviews, backlog gates, run-to-completion convenience, or because no other work is available.
 
 ## How to use this router
 
@@ -22,7 +22,7 @@ Read the matching reference file before acting. Paths are relative to this `SKIL
 | --- | --- |
 | Decide whether to delegate, choose agents, compare tool versus slash commands, apply prompt techniques, or understand builtin roles | `references/prompting-and-roles.md` |
 | Run one-child, scripted, async, scheduled, mission-backed, forked, watchdog, oracle, or intercom-coordinated workflows | `references/execution-controls.md` |
-| List/create/update/delete/eject/disable agents or chains, edit agent files, use prompt-template integration, or expose extension RPC | `references/management-authoring-rpc.md` |
+| List/create/update/delete/eject/disable agents, inspect legacy chain records, edit agent files, use prompt-template integration, or expose extension RPC | `references/management-authoring-rpc.md` |
 | Check safety constraints, best practices, standard workflows, or error handling | `references/constraints-and-recipes.md` |
 
 For broad or uncertain requests, read more than one reference. For complex work, start with `references/prompting-and-roles.md` and `references/execution-controls.md`, then consult `references/constraints-and-recipes.md` before launching or reviewing child work.
