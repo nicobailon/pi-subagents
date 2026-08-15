@@ -520,6 +520,49 @@ describe("wait subscriptions armed by another session", () => {
 		}
 	});
 
+	it("sweeps a foreign record that expires while another session stays open", () => {
+		// restore() only fires on session_start and reconcile() walks the in-memory
+		// map, which holds current-session records only. A record that is still live
+		// when the next session starts is therefore retained by restore() and, without
+		// a periodic sweep, never looked at again once it expires.
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-late-expiry-"));
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const pi = {
+			events: new TestBus(),
+			sendMessage() {},
+		};
+		let now = 1_000;
+		const armer = createWaitSubscriptionManager(pi as never, makeState("session-a"), {
+			subscriptionsDir,
+			pollIntervalMs: 60_000,
+			now: () => now,
+		});
+		try {
+			armer.arm({ targetKind: "async", runId: "run-late", requestedId: "run-late", timeoutMs: 30_000 });
+			armer.dispose();
+
+			const other = makeState("session-b");
+			const open = createWaitSubscriptionManager(pi as never, other, {
+				subscriptionsDir,
+				pollIntervalMs: 60_000,
+				now: () => now,
+			});
+			try {
+				open.restore();
+				assert.equal(subscriptionFiles(subscriptionsDir).length, 1, "still live, so retained");
+
+				// The other session stays open past the record's expiry.
+				now = 1_000 + 30_000 + 120_000;
+				open.reconcile();
+				assert.deepEqual(subscriptionFiles(subscriptionsDir), [], "expired record is swept without a restart");
+			} finally {
+				open.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("still gives the owning session its timeout notice after a restart", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-owner-timeout-"));
 		const asyncRoot = path.join(root, "runs");
