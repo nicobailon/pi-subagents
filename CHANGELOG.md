@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Clarify that subagent reviews and gates should stay async unless foreground behavior is the actual requirement.
 - Remove `prompts.render` from `workflowScript`; pass explicit task text to `runs.run` or use `/prompt-workflow` for reusable prompt templates.
 
 ## [0.50.0] - 2026-08-15
