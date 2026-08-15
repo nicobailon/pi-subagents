@@ -5,6 +5,9 @@
 ### Changed
 - Remove `prompts.render` from `workflowScript`; pass explicit task text to `runs.run` or use `/prompt-workflow` for reusable prompt templates.
 
+### Fixed
+- Bound opaque tool-call IDs used by async active-run and result indexes, preventing provider-generated IDs longer than the filesystem component limit from aborting background launches with `ENAMETOOLONG`. Optional active-run aliases now fail open without losing the authoritative run marker.
+
 ## [0.50.0] - 2026-08-15
 
 ### Added
