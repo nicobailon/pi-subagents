@@ -12,12 +12,14 @@ const tempDirs: string[] = [];
 afterEach(() => {
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
 	for (const dir of tempDirs.splice(0)) {
-		const key = createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 20);
+		let scope = path.resolve(dir);
+		try { scope = fs.realpathSync(dir); } catch { /* use the lexical path */ }
+		const key = createHash("sha256").update(scope).digest("hex").slice(0, 20);
 		fs.rmSync(path.join(progressDir, `counter-${key}`), { force: true });
 		fs.rmSync(path.join(progressDir, `counter-${key}.lock`), { recursive: true, force: true });
 		if (fs.existsSync(progressDir)) {
 			for (const name of fs.readdirSync(progressDir)) {
-				if (name.startsWith(`create-${key}-`) && name.endsWith(".ready")) fs.rmSync(path.join(progressDir, name), { force: true });
+				if (name.startsWith(`create-${key}-`) && (name.endsWith(".ready") || name.endsWith(".pending"))) fs.rmSync(path.join(progressDir, name), { force: true });
 			}
 		}
 		fs.rmSync(dir, { recursive: true, force: true });
