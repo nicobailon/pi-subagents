@@ -138,6 +138,13 @@ export async function runExternalJob(input: {
 		current = status;
 		input.onExternalJob?.(status);
 	};
+	const localCancellation = () => {
+		if (!timedOut && !stopped) return undefined;
+		const message = stopped
+			? input.stopMessage ?? `Subagent stopped locally before external provider '${provider}' returned a job id. The provider start may still be running.`
+			: input.timeoutMessage ?? `Subagent timed out locally before external provider '${provider}' returned a job id. The provider start may still be running.`;
+		return new ExternalJobProviderError(message, { code: stopped ? "local-stop" : "local-timeout" });
+	};
 	try {
 		let handle: ExternalJobHandle;
 		if (current?.providerJobId) {
@@ -156,7 +163,7 @@ export async function runExternalJob(input: {
 				return { output: message, exitCode: 1, error: message, externalJob: status };
 			}
 			publish({ provider, promptDigest, options, state: "queued", startedAt, updatedAt: Date.now() });
-			handle = await requestExternalJobOperation<ExternalJobHandle>(input.asyncDir, {
+				handle = await requestExternalJobOperation<ExternalJobHandle>(input.asyncDir, {
 				operation: "start",
 				provider,
 				start: {
@@ -169,7 +176,7 @@ export async function runExternalJob(input: {
 					options,
 					...(input.sessionId ? { sessionId: input.sessionId } : {}),
 				},
-			});
+			}, undefined, localCancellation);
 		}
 		publish(statusFromHandle({ provider, promptDigest, options, startedAt, previous: current, handle }));
 		while (!terminal(handle.state)) {
@@ -201,7 +208,7 @@ export async function runExternalJob(input: {
 		const message = formatError(providerError, provider);
 		const status = failureStatus({ provider, promptDigest, options, previous: current, code: providerError.code, message, ...(providerError.blockingJobId ? { blockingJobId: providerError.blockingJobId } : {}) });
 		publish(status);
-		return { output: message, exitCode: 1, error: message, externalJob: status };
+		return { output: message, exitCode: 1, error: message, ...(timedOut ? { timedOut: true } : {}), ...(stopped ? { stopped: true } : {}), externalJob: status };
 	} finally {
 		input.registerTimeout?.(undefined);
 		input.registerStop?.(undefined);

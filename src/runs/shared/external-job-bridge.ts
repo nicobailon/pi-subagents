@@ -57,6 +57,8 @@ type ExternalJobBridgeResponse = {
 	completedAt: number;
 };
 
+export type ExternalJobBridgeCancel = () => ExternalJobProviderError | undefined;
+
 const inFlight = new Set<string>();
 
 function requestDir(asyncDir: string): string {
@@ -354,7 +356,7 @@ function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
 	fs.rmSync(requestPath(asyncDir, request.id), { force: true });
 }
 
-export async function requestExternalJobOperation<T extends ExternalJobHandle | ExternalJobResult>(asyncDir: string, request: Omit<ExternalJobBridgeRequest, "id" | "createdAt">, timeoutMs = DEFAULT_OPERATION_TIMEOUT_MS): Promise<T> {
+export async function requestExternalJobOperation<T extends ExternalJobHandle | ExternalJobResult>(asyncDir: string, request: Omit<ExternalJobBridgeRequest, "id" | "createdAt">, timeoutMs = DEFAULT_OPERATION_TIMEOUT_MS, cancel?: ExternalJobBridgeCancel): Promise<T> {
 	const id = randomUUID();
 	fs.mkdirSync(requestDir(asyncDir), { recursive: true });
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
@@ -362,6 +364,11 @@ export async function requestExternalJobOperation<T extends ExternalJobHandle | 
 	const deadline = request.operation === "start" ? undefined : Date.now() + timeoutMs;
 	const outPath = responsePath(asyncDir, id);
 	while (!fs.existsSync(outPath)) {
+		const canceled = cancel?.();
+		if (canceled) {
+			fs.rmSync(requestPath(asyncDir, id), { force: true });
+			throw canceled;
+		}
 		if (deadline !== undefined && Date.now() >= deadline) {
 			throw new ExternalJobProviderError(
 				`External-job provider bridge did not respond to ${request.operation} for provider '${request.provider}' within ${timeoutMs}ms.`,

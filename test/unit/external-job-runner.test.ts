@@ -394,6 +394,44 @@ describe("external-job runner bridge", () => {
 		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
 	});
 
+	it("stops waiting for start when local timeout fires before a provider job id", async () => {
+		const dir = tempDir("pi-external-job-start-local-timeout-");
+		let starts = 0;
+		let timeout: (() => void) | undefined;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => {
+				starts += 1;
+				return new Promise(() => {});
+			},
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+
+		const operation = runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-local-timeout",
+			agent: "gpt-pro",
+			registerTimeout: (registered) => { timeout = registered; },
+		});
+		serviceExternalJobBridgeRequests(dir);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		timeout!();
+		const result = await operation;
+
+		assert.equal(starts, 1);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.timedOut, true);
+		assert.equal(result.externalJob.failureCode, "local-timeout");
+		assert.match(result.error ?? "", /timed out locally/);
+	});
+
 	it("waits for a slow start response instead of timing out without provider job id", async () => {
 		const dir = tempDir("pi-external-job-slow-start-");
 		let starts = 0;
