@@ -652,6 +652,7 @@ describe("recurring schedule execution", () => {
 		assert.equal(h.launches.length, 1);
 		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "workflow", results: [], asyncId: "workflow-1" } });
 		assert.match(text(await firstPromise), /async workflow-1/);
+		assert.deepEqual([...h.manager.referencedAsyncRunIds()], ["workflow-1"]);
 		const second = await h.manager.handleToolCall({ action: "schedule.run", id: "manual" }, h.ctx);
 		assert.match(text(second), /skipped/);
 		assert.equal(h.launches.length, 1);
@@ -670,6 +671,7 @@ describe("recurring schedule execution", () => {
 		h.launches[1]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "async-fail" } });
 		await second;
 		h.manager.handleAsyncCompletion({ id: "async-fail", success: false, summary: "child failed" });
+		assert.deepEqual([...h.manager.referencedAsyncRunIds()], ["async-fail"]);
 		const history = await h.manager.handleToolCall({ action: "schedule.history", id: "failures" }, h.ctx);
 		assert.match(text(history), /failed_run.*async async-fail/);
 		assert.match(text(history), /failed_launch/);

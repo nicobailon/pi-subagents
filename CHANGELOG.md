@@ -11,6 +11,7 @@
 - Keep structured delegation integration coverage active when the test process inherits a subagent-child environment marker.
 - Bound repeated async-state queries to active, exact-id, and recent-terminal indexes instead of scanning the historical async root (#1162).
 - Keep retained workflow children resumable when their managed worktree cwd is preserved in the handoff manifest (#1172).
+- Reclaim proven-safe async run and orphan result state after 30 days in bounded, locked cleanup passes with rename-first tombstones (#1163).
 - Restore and list schedules after their project directory is deleted, and skip orphan schedule directories without letting create reuse their stale state. Thanks to [@ELA718](https://github.com/ELA718) for #1171 and [@colinb4987](https://github.com/colinb4987) for #1167.
 - Isolate test async state from the user temp root and write each missing-mission sync diagnostic only once (#1164, #1165).
 - Show FleetView transcript fallbacks for trusted session roots instead of warning about an untrusted session file. Thanks to [@aliceisjustplaying](https://github.com/aliceisjustplaying) for #1154.

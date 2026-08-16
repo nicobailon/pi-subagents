@@ -853,8 +853,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(handoff.groups?.[0]?.children?.[0]?.patch?.changed, true);
 			assert.equal(handoff.groups?.[0]?.children?.[0]?.patch?.filesChanged, 1);
 		} finally {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
-			if (revivedId) fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
+			fs.rmSync(asyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			if (revivedId) fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			if (revivedId) fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
 			fs.rmSync(sessionFile, { force: true });
 		}

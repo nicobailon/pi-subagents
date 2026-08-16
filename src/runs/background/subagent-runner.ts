@@ -2257,7 +2257,7 @@ async function runSubagent(
 		runId: id,
 		...(config.sessionId ? { sessionId: config.sessionId } : {}),
 		mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
-		...(config.nestedRoute ? { isNested: true } : {}),
+		...(config.nestedSelf ? { isNested: true } : {}),
 		state: "running",
 		steering: createSteeringStatus(),
 		lastActivityAt: overallStartTime,

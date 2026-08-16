@@ -425,6 +425,18 @@ export class ScheduledRunManager {
 		return new Set(this.observedAsyncIds);
 	}
 
+	referencedAsyncRunIds(): Set<string> {
+		const runIds = new Set(this.observedAsyncIds);
+		for (const store of this.stores.values()) {
+			for (const scheduleId of store.ids()) {
+				for (const run of store.history(scheduleId)) {
+					if (run.asyncId) runIds.add(run.asyncId);
+				}
+			}
+		}
+		return runIds;
+	}
+
 	handleAsyncCompletion(payload: unknown): void {
 		if (!payload || typeof payload !== "object") return;
 		const data = payload as { id?: unknown; runId?: unknown; success?: unknown; state?: unknown; summary?: unknown };

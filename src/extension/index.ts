@@ -32,6 +32,7 @@ import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foregro
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { cleanupResultIndexes } from "../runs/background/result-files.ts";
+import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
@@ -471,9 +472,26 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
 		},
 	);
+	const asyncRetentionTimer = setTimeout(() => {
+		try {
+			cleanupAsyncRetention({
+				asyncDirRoot: DIRS.async,
+				resultsDir: DIRS.results,
+				protectedRunIds: new Set([
+					...state.asyncJobs.keys(),
+					...(state.workflowControllers?.keys() ?? []),
+					...scheduledRunManager.referencedAsyncRunIds(),
+				]),
+			});
+		} catch (error) {
+			console.error("Failed to clean retained async subagent state:", error);
+		}
+	}, ASYNC_RETENTION_DELAY_MS);
+	asyncRetentionTimer.unref?.();
 
 	const runtimeCleanup = () => {
 		clearTimeout(resultIndexCleanupTimer);
+		clearTimeout(asyncRetentionTimer);
 		stopResultWatcher();
 		state.currentSessionId = null;
 		completionNotifier.dispose();
@@ -880,6 +898,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async () => {
 		state.widgetsSuspended = false;
 		clearTimeout(resultIndexCleanupTimer);
+		clearTimeout(asyncRetentionTimer);
 		stopResultWatcher();
 		state.currentSessionId = null;
 		state.parentSessionFile = null;
