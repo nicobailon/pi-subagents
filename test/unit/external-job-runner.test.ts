@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, ExternalJobProviderError, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
-import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequestFile, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, requestExternalJobOperation, serviceExternalJobBridgeRequestFile, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
 import { externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
 
 const tempDirs: string[] = [];
@@ -343,5 +343,46 @@ describe("external-job runner bridge", () => {
 		assert.equal(result.externalJob.failureCode, "start-redispatch-blocked");
 		assert.match(result.error ?? "", /Refusing to redispatch/);
 		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
+	});
+
+	it("waits for a slow start response instead of timing out without provider job id", async () => {
+		const dir = tempDir("pi-external-job-slow-start-");
+		let starts = 0;
+		let settled = false;
+		let resolveStart: ((value: { providerJobId: string; state: "completed" }) => void) | undefined;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => {
+				starts += 1;
+				return new Promise((resolve) => { resolveStart = resolve; });
+			},
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const operation = requestExternalJobOperation(dir, {
+			operation: "start",
+			provider: "surf-oracle",
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-slow",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}, 1).finally(() => { settled = true; });
+
+		serviceExternalJobBridgeRequests(dir);
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		assert.equal(starts, 1);
+		assert.equal(settled, false);
+
+		resolveStart!({ providerJobId: "job-slow", state: "completed" });
+		const result = await serviceUntil(dir, operation);
+
+		assert.equal(result.providerJobId, "job-slow");
+		assert.equal(starts, 1);
 	});
 });

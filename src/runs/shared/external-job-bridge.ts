@@ -234,10 +234,10 @@ export async function requestExternalJobOperation<T extends ExternalJobHandle | 
 	fs.mkdirSync(requestDir(asyncDir), { recursive: true });
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
 	writeAtomicJson(requestPath(asyncDir, id), { ...request, id, createdAt: Date.now() } satisfies ExternalJobBridgeRequest);
-	const deadline = Date.now() + timeoutMs;
+	const deadline = request.operation === "start" ? undefined : Date.now() + timeoutMs;
 	const outPath = responsePath(asyncDir, id);
 	while (!fs.existsSync(outPath)) {
-		if (Date.now() >= deadline) {
+		if (deadline !== undefined && Date.now() >= deadline) {
 			throw new ExternalJobProviderError(
 				`External-job provider bridge did not respond to ${request.operation} for provider '${request.provider}' within ${timeoutMs}ms.`,
 				{ code: "bridge-timeout" },
