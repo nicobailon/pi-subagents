@@ -26,7 +26,8 @@ const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	"const previous=process.argv[4],done=process.argv[5],command=process.argv[6],args=process.argv.slice(7);",
 	"function mark(){try{fs.writeFileSync(done.replace(/\\.pending$/,'.ready'),'')}catch{}}",
 	"function exists(file){try{return fs.existsSync(file)}catch{return false}}",
-	"function predecessorReady(){if(previous==='-')return true;if(exists(previous.replace(/\\.pending$/,'.ready')))return true;return !exists(previous)}",
+	"function keepQueued(){try{const now=new Date();fs.utimesSync(done,now,now)}catch{}}",
+	"function predecessorReady(){if(previous==='-')return true;if(exists(previous.replace(/\\.pending$/,'.ready')))return true;try{return Date.now()-fs.statSync(previous).mtimeMs>=waitTimeout}catch{return true}}",
 	"function start(){",
 	" try{",
 	"  const child=spawn(command,args,{stdio:'ignore',windowsHide:true});",
@@ -38,7 +39,7 @@ const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	" }catch{mark();process.exitCode=1}",
 	"}",
 	"if(predecessorReady())start();",
-	"else{const waitStart=Date.now();(function waitPrev(){if(predecessorReady()||Date.now()-waitStart>=waitTimeout)return start();setTimeout(waitPrev,20)})();}",
+	"else{(function waitPrev(){keepQueued();if(predecessorReady())return start();setTimeout(waitPrev,20)})();}",
 ].join("");
 
 const ORCA_CLEANUP_WATCHDOG_SCRIPT = [

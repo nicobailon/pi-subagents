@@ -45,8 +45,8 @@ function tempDir(): string {
 	return dir;
 }
 
-async function waitForFile(file: string): Promise<void> {
-	const deadline = Date.now() + 5_000;
+async function waitForFile(file: string, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
 	while (!fs.existsSync(file)) {
 		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
 		await new Promise((resolve) => setTimeout(resolve, 20));
@@ -397,10 +397,12 @@ test("a missing predecessor marker does not delay the next tab", { skip: process
 	tab.finish("failed");
 });
 
-test("later same-worktree creates wait only for their immediate predecessor", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+test("queued same-worktree creates start their timeout when the predecessor becomes active", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
 	const dir = tempDir();
 	fs.mkdirSync(path.join(dir, ".git"));
 	const order = path.join(dir, "order.txt");
+	const active = path.join(dir, "active.lock");
+	const overlap = path.join(dir, "overlap.txt");
 	const firstCapture = path.join(dir, "first.json");
 	const secondCapture = path.join(dir, "second.json");
 	const thirdCapture = path.join(dir, "third.json");
@@ -408,21 +410,34 @@ test("later same-worktree creates wait only for their immediate predecessor", { 
 		"const fs=require('fs');",
 		"const args=process.argv.slice(2);",
 		"const title=args[args.indexOf('--title')+1];",
-		"if(title.endsWith(' · 1')){const until=Date.now()+700;while(Date.now()<until){};fs.writeFileSync(process.env.ORCA_TEST_FIRST,JSON.stringify(args));}",
-		"else if(title.endsWith(' · 2')){const until=Date.now()+400;while(Date.now()<until){};fs.writeFileSync(process.env.ORCA_TEST_SECOND,JSON.stringify(args));}",
-		"else fs.writeFileSync(process.env.ORCA_TEST_THIRD,JSON.stringify(args));",
-		"fs.appendFileSync(process.env.ORCA_TEST_ORDER,title+'\\n');",
+		"let ownsLock=false;try{fs.writeFileSync(process.env.ORCA_TEST_ACTIVE,title,{flag:'wx'});ownsLock=true}catch{fs.appendFileSync(process.env.ORCA_TEST_OVERLAP,title+'\\n')}",
+		"fs.appendFileSync(process.env.ORCA_TEST_ORDER,'start '+title+'\\n');",
+		"const delay=title.endsWith(' · 1')||title.endsWith(' · 2')?14000:0;",
+		"setTimeout(()=>{",
+		" const capture=title.endsWith(' · 1')?process.env.ORCA_TEST_FIRST:title.endsWith(' · 2')?process.env.ORCA_TEST_SECOND:process.env.ORCA_TEST_THIRD;",
+		" fs.writeFileSync(capture,JSON.stringify(args));",
+		" fs.appendFileSync(process.env.ORCA_TEST_ORDER,'end '+title+'\\n');",
+		" if(ownsLock)fs.rmSync(process.env.ORCA_TEST_ACTIVE,{force:true});",
+		"},delay);",
 	].join(""));
-	const env = { ...process.env, ORCA_TEST_FIRST: firstCapture, ORCA_TEST_SECOND: secondCapture, ORCA_TEST_THIRD: thirdCapture, ORCA_TEST_ORDER: order };
+	const env = { ...process.env, ORCA_TEST_FIRST: firstCapture, ORCA_TEST_SECOND: secondCapture, ORCA_TEST_THIRD: thirdCapture, ORCA_TEST_ORDER: order, ORCA_TEST_ACTIVE: active, ORCA_TEST_OVERLAP: overlap };
 	const first = createOrcaProgressTab({ cwd: dir, runId: "queued-first", agent: "worker", index: 0, config: { enabled: true }, command: fakeOrca, env });
 	const second = createOrcaProgressTab({ cwd: dir, runId: "queued-second", agent: "reviewer", index: 0, config: { enabled: true }, command: fakeOrca, env });
 	const third = createOrcaProgressTab({ cwd: dir, runId: "queued-third", agent: "scout", index: 0, config: { enabled: true }, command: fakeOrca, env });
 	assert.ok(first);
 	assert.ok(second);
 	assert.ok(third);
-	await waitForFile(thirdCapture);
-	const titles = fs.readFileSync(order, "utf-8").trim().split("\n");
-	assert.deepEqual(titles, ["subagent · worker · 1", "subagent · reviewer · 2", "subagent · scout · 3"]);
+	await waitForFile(thirdCapture, 35_000);
+	assert.equal(fs.existsSync(overlap), false, "same-worktree Orca create invocations overlapped");
+	const events = fs.readFileSync(order, "utf-8").trim().split("\n");
+	assert.deepEqual(events, [
+		"start subagent · worker · 1",
+		"end subagent · worker · 1",
+		"start subagent · reviewer · 2",
+		"end subagent · reviewer · 2",
+		"start subagent · scout · 3",
+		"end subagent · scout · 3",
+	]);
 	first.finish("failed");
 	second.finish("failed");
 	third.finish("failed");
