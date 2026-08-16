@@ -6,6 +6,7 @@ import { parseMissionRecord } from "../../missions/store.ts";
 import type { MissionRecord } from "../../missions/types.ts";
 import { requestAsyncSteer, requestAsyncStop } from "../../runs/background/control-channel.ts";
 import { formatAsyncRunTranscript } from "../../runs/background/fleet-view.ts";
+import { steeringReceipt } from "../../runs/background/steering.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 
@@ -112,7 +113,7 @@ export function submitInspectorControl(options: RunnerOptions, line: string): st
 			...(targetIndex !== undefined ? { targetIndex } : { targetIndexes: runningIndexes }),
 			source: "herdr-inspector",
 		});
-		return `Steering queued for run ${options.runId}.`;
+		return steeringReceipt(message, `Steering queued for run ${options.runId}.`);
 	}
 	if (command.startsWith("reply ")) throw new Error("Supervisor replies are owned by the parent Pi session; use subagent_supervisor/intercom there.");
 	throw new Error("Unknown control. Use steer <message>, stop, or status.");

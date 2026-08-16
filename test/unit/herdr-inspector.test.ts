@@ -225,7 +225,7 @@ describe("Herdr inspector", () => {
 			assert.match(dashboard, /decision-1: Choose UX/);
 			assert.match(dashboard, /closing it does not stop the run/i);
 
-			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "steer keep going"), /queued/);
+			assert.match(submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500 }, "steer keep going"), /Steering queued for run run-123\. Message: "keep going"/);
 			assert.deepEqual(consumeSteerRequests(asyncDir).map((request) => ({ message: request.message, targetIndex: request.targetIndex, source: request.source })), [
 				{ message: "keep going", targetIndex: 0, source: "herdr-inspector" },
 			]);
