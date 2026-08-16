@@ -152,7 +152,13 @@ function assertScheduleRoot(root: string, projectCwd: string | undefined, create
 		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 		return;
 	}
-	const projectPath = fs.realpathSync(projectCwd);
+	let projectPath: string;
+	try {
+		projectPath = fs.realpathSync(projectCwd);
+	} catch (error) {
+		if (!create && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
 	let existing = root;
 	while (!fs.existsSync(existing)) {
 		const parent = path.dirname(existing);
@@ -235,7 +241,7 @@ class ScheduleStore {
 	}
 
 	list(): ScheduleRecord[] {
-		return this.ids().map((id) => this.get(id));
+		return this.ids().map((id) => this.find(id)).filter((record): record is ScheduleRecord => record !== undefined);
 	}
 
 	get(id: string): ScheduleRecord {
@@ -461,7 +467,7 @@ export class ScheduledRunManager {
 		if (this.deps.resolveCapabilityCeiling?.(sessionId)) return textResult("Cannot persist a schedule while a capability ceiling is active.", undefined, undefined, true);
 		if (store.list().length >= resolveMaxPending(this.deps.config)) return textResult(`Schedule limit reached (${resolveMaxPending(this.deps.config)}).`, undefined, undefined, true);
 		const id = validateScheduleId((params.id?.trim() || this.randomId()));
-		if (store.list().some((item) => item.id === id)) return textResult(`Schedule '${id}' already exists.`, undefined, undefined, true);
+		if (store.ids().includes(id)) return textResult(`Schedule '${id}' already exists.`, undefined, undefined, true);
 		const now = this.now();
 		let trigger: ScheduleTrigger;
 		if (at) {
