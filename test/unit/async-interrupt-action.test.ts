@@ -586,25 +586,27 @@ describe("async interrupt action", () => {
 		}
 	});
 
-	it("rejects interrupt for a running external CLI run without writing a pause request", async () => {
-		const state = createState();
-		const runId = `interrupt-external-${Date.now().toString(36)}`;
-		const asyncDir = createRunningAsync(state, runId, { track: false });
-		const statusPath = path.join(asyncDir, "status.json");
-		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
-		status.steps[0].runner = { type: "external-cli" };
-		fs.writeFileSync(statusPath, JSON.stringify(status), "utf-8");
-		try {
-			const result = await executorWithKill(state, () => {
-				throw new Error("external interrupt should not signal the runner");
-			}).execute("interrupt", { action: "interrupt", id: runId }, new AbortController().signal, undefined, ctx());
+	it("rejects interrupt for a running external runner without writing a pause request", async () => {
+		for (const runner of [{ type: "external-cli" }, { type: "external-job", provider: "surf-oracle", options: {} }]) {
+			const state = createState();
+			const runId = `interrupt-external-${runner.type}-${Date.now().toString(36)}`;
+			const asyncDir = createRunningAsync(state, runId, { track: false });
+			const statusPath = path.join(asyncDir, "status.json");
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			status.steps[0].runner = runner;
+			fs.writeFileSync(statusPath, JSON.stringify(status), "utf-8");
+			try {
+				const result = await executorWithKill(state, () => {
+					throw new Error("external interrupt should not signal the runner");
+				}).execute("interrupt", { action: "interrupt", id: runId }, new AbortController().signal, undefined, ctx());
 
-			assert.equal(result.isError, true);
-			assert.match(text(result), /Interrupt is unsupported for one-shot external CLI async run/);
-			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
-			assert.equal(JSON.parse(fs.readFileSync(statusPath, "utf-8")).state, "running");
-		} finally {
-			cleanup(runId, asyncDir);
+				assert.equal(result.isError, true);
+				assert.match(text(result), new RegExp(`Interrupt is unsupported for external async run ${runId}; use stop instead\\.`));
+				assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
+				assert.equal(JSON.parse(fs.readFileSync(statusPath, "utf-8")).state, "running");
+			} finally {
+				cleanup(runId, asyncDir);
+			}
 		}
 	});
 

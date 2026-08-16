@@ -13,7 +13,7 @@ interface WriteRunOptions {
 	state?: "complete" | "failed" | "paused" | "stopped";
 	stepStatus?: "complete" | "completed" | "failed" | "paused" | "stopped";
 	sessionFile?: "present" | "missing" | "omitted";
-	runner?: "external-cli";
+	runner?: "external-cli" | "external-job";
 	recoveryDescriptor?: "present" | "missing" | "invalid";
 	recoverySourceRunId?: string;
 	recoveryAgent?: string;
@@ -47,6 +47,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			description: `  Task ${index}  with   spacing ${"x".repeat(140)}  `,
 			endedAt: 1_000 + index,
 			...(options.runner === "external-cli" ? { runner: { type: "external-cli", command: "codex", args: [], promptDelivery: "stdin", capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false } } } : {}),
+			...(options.runner === "external-job" ? { runner: { type: "external-job", provider: "surf-oracle", options: {}, capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false } } } : {}),
 			...(options.sessionFile === "omitted" ? {} : { sessionFile }),
 			tokens: { input: index, output: index + 1, total: index * 2 + 1 },
 		}],
@@ -140,16 +141,18 @@ describe("retained child roster", () => {
 			writeRetainedRun(root, 6, { recoveryDescriptor: "invalid" });
 			writeRetainedRun(root, 7, { recoverySourceRunId: "other-run" });
 			writeRetainedRun(root, 8, { recoveryAgent: "reviewer" });
+			writeRetainedRun(root, 9, { runner: "external-job" });
 
 			const children = listRetainedChildren(path.join(root, "runs"), "parent-a");
 			const formatted = formatRetainedChildren(children);
 
 			assert.deepEqual(children.map((child) => [child.runId, child.resumability]), [
+				["child-9", { state: "not-resumable", reason: "external runner" }],
 				["child-8", { state: "not-resumable", reason: "recovery descriptor belongs to agent reviewer" }],
 				["child-7", { state: "not-resumable", reason: "recovery descriptor belongs to run other-run" }],
 				["child-6", { state: "not-resumable", reason: `invalid recovery descriptor: Invalid async recovery descriptor '${path.join(root, "runs", "child-6", "recovery-descriptor.json")}': version must be 1.` }],
 				["child-5", { state: "not-resumable", reason: "missing recovery descriptor" }],
-				["child-4", { state: "not-resumable", reason: "external CLI runner" }],
+				["child-4", { state: "not-resumable", reason: "external runner" }],
 				["child-3", { state: "not-resumable", reason: "stopped run" }],
 				["child-2", { state: "not-resumable", reason: `persisted session file is missing: ${path.join(root, "sessions", "child-2.jsonl")}` }],
 				["child-1", { state: "not-resumable", reason: "no persisted session file" }],
@@ -158,7 +161,7 @@ describe("retained child roster", () => {
 			assert.match(formatted, /resumability: not resumable \(recovery descriptor belongs to run other-run\)/);
 			assert.match(formatted, /resumability: not resumable \(invalid recovery descriptor:/);
 			assert.match(formatted, /resumability: not resumable \(missing recovery descriptor\)/);
-			assert.match(formatted, /resumability: not resumable \(external CLI runner\)/);
+			assert.match(formatted, /resumability: not resumable \(external runner\)/);
 			assert.match(formatted, /resumability: not resumable \(stopped run\)/);
 			assert.match(formatted, /resumability: not resumable \(no persisted session file\)/);
 			assert.doesNotMatch(formatted, /resume: subagent/);
