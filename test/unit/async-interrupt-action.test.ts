@@ -266,7 +266,7 @@ describe("async interrupt action", () => {
 		}
 	});
 
-	it("returns missed when a keyed async child is terminal", async () => {
+	it("returns missed when a terminal keyed child cannot accept a retained follow-up", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-key-terminal-${Date.now().toString(36)}`;
 		const childRunId = `${workflowRunId}-child`;
@@ -275,15 +275,20 @@ describe("async interrupt action", () => {
 		const workflowStatus = JSON.parse(fs.readFileSync(path.join(workflowDir, "status.json"), "utf-8"));
 		workflowStatus.steps = [{ agent: "worker", status: "completed", workflowKey: "writer", runId: childRunId, async: true }];
 		writeJson(path.join(workflowDir, "status.json"), workflowStatus);
+		const sessionFile = path.join(childDir, "child.jsonl");
+		fs.writeFileSync(sessionFile, "", "utf-8");
 		const childStatus = JSON.parse(fs.readFileSync(path.join(childDir, "status.json"), "utf-8"));
 		childStatus.state = "complete";
-		childStatus.steps[0].status = "complete";
+		childStatus.parentWorkflowRunId = workflowRunId;
+		childStatus.steps = [{ agent: "worker", status: "complete", sessionFile }];
 		writeJson(path.join(childDir, "status.json"), childStatus);
 		try {
-			const result = await steerWorkflowChildByKey({ state, workflowRunId, key: "writer", message: "Too late.", options: { ackTimeoutMs: 20 } });
+			const result = await steerWorkflowChildByKey({ state, workflowRunId, key: "writer", message: "Too late.", options: { mode: "follow_up", index: 1, ackTimeoutMs: 20 } });
 			assert.equal(result.state, "missed");
 			assert.match(result.error ?? "", /is complete/);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(childRunId));
 			assert.equal(consumeSteerRequests(childDir).length, 0);
+			assert.equal(fs.existsSync(path.join(childDir, "control", "revival-briefs")), false);
 		} finally {
 			cleanup(workflowRunId, workflowDir);
 			cleanup(childRunId, childDir);

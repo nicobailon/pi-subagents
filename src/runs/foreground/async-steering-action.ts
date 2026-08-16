@@ -10,6 +10,16 @@ import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringReceipt, updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
 
+export function canQueueRetainedAsyncFollowUp(status: AsyncStatus, index?: number): boolean {
+	const steps = status.steps ?? [];
+	return status.state === "complete"
+		&& Boolean(status.parentWorkflowRunId)
+		&& steps.length === 1
+		&& (steps[0]?.status === "complete" || steps[0]?.status === "completed")
+		&& Boolean(steps[0]?.sessionFile ?? status.sessionFile)
+		&& (index === undefined || index === 0);
+}
+
 export async function steerAsyncRun(input: {
 	state: SubagentState;
 	runId: string;
@@ -51,16 +61,13 @@ export async function steerAsyncRun(input: {
 	}
 	const steps = status.steps ?? [];
 	if (status.state !== "running" && status.state !== "queued") {
-		const retained = input.mode === "follow_up" && status.state === "complete" && Boolean(status.parentWorkflowRunId) && steps.length === 1 && (steps[0]?.status === "complete" || steps[0]?.status === "completed") && Boolean(steps[0]?.sessionFile ?? status.sessionFile);
+		const retained = input.mode === "follow_up" && canQueueRetainedAsyncFollowUp(status, input.index);
 		if (!retained) {
 			return {
 				content: [{ type: "text", text: `Async run '${input.runId}' is not running or queued and cannot be steered.` }],
 				isError: true,
 				details: { mode: "management", results: [] },
 			};
-		}
-		if (input.index !== undefined && input.index !== 0) {
-			return { content: [{ type: "text", text: `Retained async run '${status.runId}' has one child. Index ${input.index} is out of range.` }], isError: true, details: { mode: "management", results: [] } };
 		}
 		const request: SteerRequest = { type: "steer", id: randomUUID(), ts: Date.now(), message: input.message.trim(), mode: "follow_up", targetIndex: 0, source: "steer-action" };
 		try {

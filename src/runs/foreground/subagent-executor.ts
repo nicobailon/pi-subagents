@@ -88,7 +88,7 @@ import {
 import { applySteeringRecoveryAgentConfig, buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocation } from "../background/async-resume.ts";
 import { deliverInterruptRequest, readRevivalBriefs, requestAsyncSteer, type SteerDeliveryMode } from "../background/control-channel.ts";
 import { updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
-import { steerAsyncRun } from "./async-steering-action.ts";
+import { canQueueRetainedAsyncFollowUp, steerAsyncRun } from "./async-steering-action.ts";
 import {
 	removeWorkflowForegroundSteeringRoute,
 	resolveWorkflowForegroundSteeringTarget,
@@ -3539,7 +3539,7 @@ export async function steerWorkflowChildByKey(input: {
 		if (childRunId) {
 			const asyncDir = path.join(asyncDirRoot, childRunId);
 			const childStatus = readStatus(asyncDir);
-			if (childStatus && childStatus.state !== "running" && childStatus.state !== "queued" && input.options.mode !== "follow_up") {
+			if (childStatus && childStatus.state !== "running" && childStatus.state !== "queued" && (input.options.mode !== "follow_up" || !canQueueRetainedAsyncFollowUp(childStatus, input.options.index))) {
 				return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${childStatus.state}.` };
 			}
 			if (childStatus) {
