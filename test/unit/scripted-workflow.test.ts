@@ -697,7 +697,7 @@ describe("scripted workflow runtime", () => {
 				async steer(key) { return { key, state: "delivered" }; },
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError
-				&& error.message.includes("unawaited runs.steer call(s): 'missing'")
+				&& (error.message.includes("unawaited runs.steer call(s): 'missing'") || error.message.includes("runs.steer('missing') requires a prior runs.run/runs.all launch with that key"))
 				&& error.partial.trace.some((entry) => entry.operation === "steer" && entry.state === "failed"),
 		);
 	});
