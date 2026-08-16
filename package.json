@@ -89,6 +89,7 @@
     }
   },
   "dependencies": {
+    "acorn": "8.18.0",
     "jiti": "2.7.0",
     "typebox": "1.1.38",
     "yaml": "2.8.3"

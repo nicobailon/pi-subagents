@@ -4,7 +4,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 
 ## Execution examples
 
-Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `runs.all(...)` for parallel fanout. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported.
+Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `runs.all(...)` for parallel fanout. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun.
 
 ```js
 // One child; return the child promise explicitly

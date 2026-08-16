@@ -48,6 +48,18 @@ subagent({ workflowScript: `
 ` });
 ```
 
+Keep helper functions portable across Node and Bun. Use top-level `await`, plain helper functions that return `runs.run(...)`, or explicit Promise chains. Do not define nested `async function` helpers, async arrows, or async methods inside `workflowScript`; native async helpers hide child-launch observation in Bun and are rejected.
+
+```js
+subagent({ workflowScript: `
+  function scan() {
+    return runs.run("scan", { agent: "scout", task: "Scan the codebase" });
+  }
+  const result = await scan();
+  return result.output;
+` });
+```
+
 Chaining is still supported. The supported form is scripted chaining: await one `runs.run(...)` result, then pass its output into the next step. Parallel fanout uses `runs.all(...)` inside the same script.
 
 ```js

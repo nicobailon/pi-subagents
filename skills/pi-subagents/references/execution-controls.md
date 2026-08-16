@@ -53,7 +53,7 @@ its resolved launch context as `[fresh]` or `[fork]`. Aggregate headers show
 
 ### Scripted workflows
 
-`workflowScript` is the sole public execution surface. Use `runs.run(key, { agent, task, ... })` for one child, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together.
+`workflowScript` is the sole public execution surface. Use `runs.run(key, { agent, task, ... })` for one child, `runs.all([...])` for parallel children, and ordinary JavaScript for sequence, branching, filtering, retries, and aggregation. Scripts are ordinary JavaScript statement bodies, so use an explicit return such as `workflowScript: "return runs.run('main', { agent: 'worker', task: '...' })"` for a useful one-child result. Use top-level `await`, plain helper functions, or explicit Promise chains; nested `async function` helpers, async arrows, and async methods are rejected. Prefer a single scripted workflow whenever the parent is starting a coordinated wave, such as multiple reviews, review plus gate monitor, worker then monitor setup, cross-repo prep lanes, or a fanout that the parent will consume together.
 
 ```js
 subagent({

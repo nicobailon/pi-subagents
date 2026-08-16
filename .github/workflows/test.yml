@@ -31,3 +31,21 @@ jobs:
       - name: E2E tests
         timeout-minutes: 5
         run: npm run test:e2e
+
+  bun-workflow-script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install devDependencies
+        run: npm ci --ignore-scripts
+      - name: WorkflowScript Bun parity tests
+        run: >-
+          bun test test/unit/scripted-workflow.test.ts
+          --test-name-pattern "portable workflow parity|regex literals|template expressions|portable plain helper|nested plain helper|unawaited child launch|unawaited runs.all|directly returned runs.run|docs-style awaited|awaited native Promise|Promise.resolve|Promise.all|then chain|new Promise wrapper"

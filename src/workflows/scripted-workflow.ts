@@ -4,11 +4,24 @@ const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 const WORKER_SOURCE = String.raw`
 const { parentPort } = require("node:worker_threads");
-const { promiseHooks } = require("node:v8");
 const vm = require("node:vm");
 const { inspect } = require("node:util");
+const { parse } = require("acorn");
 
-if (!promiseHooks || typeof promiseHooks.createHook !== "function") throw new Error("workflowScript requires node:v8 promiseHooks.createHook support.");
+let promiseHooks;
+try {
+  ({ promiseHooks } = require("node:v8"));
+} catch {}
+
+function createWorkflowPromiseHook(callbacks) {
+  if (!promiseHooks || typeof promiseHooks.createHook !== "function") return () => {};
+  try {
+    return promiseHooks.createHook(callbacks);
+  } catch (error) {
+    if (error?.name !== "NotImplementedError") throw error;
+    return () => {};
+  }
+}
 
 let nextCallId = 0;
 let topLevelWorkflowPromise;
@@ -309,7 +322,7 @@ const capturedConsole = Object.freeze(Object.fromEntries(
 ));
 
 function formatWorkflowScriptSyntaxError(error) {
-  const details = error && error.stack ? error.stack : String(error);
+  const details = formatWorkflowScriptError(error);
   return [
     "workflowScript must be valid JavaScript.",
     "If task text contains Markdown fences or backticks, use an array joined with \"\\n\" or escaped strings instead of a raw backtick template literal.",
@@ -317,6 +330,52 @@ function formatWorkflowScriptSyntaxError(error) {
     "Original SyntaxError:",
     details,
   ].join("\n");
+}
+
+function formatWorkflowScriptError(error) {
+  const message = error && typeof error.message === "string" ? error.message : String(error);
+  const stack = error && typeof error.stack === "string" ? error.stack : "";
+  if (!stack) return message;
+  return stack.includes(message) ? stack : message + "\n" + stack;
+}
+
+function isSyntaxError(error) {
+  return error instanceof SyntaxError || error?.name === "SyntaxError";
+}
+
+const NESTED_ASYNC_WORKFLOW_ERROR = "workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains so workflows stay portable across Node and Bun.";
+const AST_SCALAR_KEYS = new Set(["type", "start", "end"]);
+
+function assertPortableWorkflowScript(source) {
+  const wrapped = "(async () => {\n" + source + "\n})()";
+  const ast = parse(wrapped, { ecmaVersion: "latest", sourceType: "script" });
+  const wrapper = workflowWrapperFunction(ast);
+  walkWorkflowAst(wrapper.body, wrapper);
+}
+
+function workflowWrapperFunction(ast) {
+  const wrapper = ast.body?.[0]?.expression?.callee;
+  if (!wrapper || wrapper.type !== "ArrowFunctionExpression") throw new Error("workflowScript wrapper parse invariant failed.");
+  return wrapper;
+}
+
+function isAsyncFunctionNode(node) {
+  return node.async === true && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression");
+}
+
+function walkWorkflowAst(node, allowedAsyncFunction) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) walkWorkflowAst(item, allowedAsyncFunction);
+    return;
+  }
+  if (node !== allowedAsyncFunction && isAsyncFunctionNode(node)) {
+    throw new Error(NESTED_ASYNC_WORKFLOW_ERROR);
+  }
+  for (const [key, child] of Object.entries(node)) {
+    if (AST_SCALAR_KEYS.has(key)) continue;
+    walkWorkflowAst(child, allowedAsyncFunction);
+  }
 }
 
 function assertJsonValue(value, path = "emit", seen = new Set()) {
@@ -382,10 +441,10 @@ parentPort.on("message", async (message) => {
     contextObjectPrototype = vm.runInContext("Object.prototype", context);
     let compiled;
     try {
+      assertPortableWorkflowScript(message.script);
       compiled = new vm.Script("(async () => {\n" + message.script + "\n})()", { filename: "workflow-script.js" });
     } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      parentPort.postMessage({ type: "error", error: formatWorkflowScriptSyntaxError(error) });
+      parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error) });
       return;
     }
     const nativePromisePrototype = vm.runInContext("(async () => {})().constructor.prototype", context);
@@ -404,7 +463,7 @@ parentPort.on("message", async (message) => {
           return Reflect.apply(nativeThen, this, args);
         },
       });
-      stopWorkflowPromiseHook = promiseHooks.createHook({
+      stopWorkflowPromiseHook = createWorkflowPromiseHook({
         before(promise) {
           activeNativePromises.push(promise);
         },
@@ -449,7 +508,7 @@ parentPort.on("message", async (message) => {
     assertJsonValue(persistedValue, "return");
     parentPort.postMessage({ type: "complete", value: persistedValue });
   } catch (error) {
-    parentPort.postMessage({ type: "error", error: error && error.stack ? error.stack : String(error), ...(error && error.workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
+    parentPort.postMessage({ type: "error", error: isSyntaxError(error) ? formatWorkflowScriptSyntaxError(error) : formatWorkflowScriptError(error), ...(error && error.workflowErrorKind === "detached-child" ? { errorKind: "detached-child" } : {}) });
   }
 });
 `;
