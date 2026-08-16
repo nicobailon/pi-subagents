@@ -346,6 +346,13 @@ export function createOrcaProgressTab(input: {
 			failObserver();
 		}
 	};
+	let createSettled = false;
+	let cleanupPaths: string[] | undefined;
+	const scheduleDeferredCleanup = () => {
+		if (!createSettled || cleanupPaths === undefined) return;
+		scheduleCleanup(nodeExecutable, cleanupPaths);
+		cleanupPaths = undefined;
+	};
 	try {
 		const watchdog = spawn(nodeExecutable, [
 			"-e", ORCA_CREATE_WATCHDOG_SCRIPT,
@@ -368,11 +375,15 @@ export function createOrcaProgressTab(input: {
 			env: input.env ?? process.env,
 		});
 		watchdog.once("close", (code) => {
+			createSettled = true;
 			if (code !== 0) failObserver();
+			scheduleDeferredCleanup();
 		});
 		watchdog.once("error", () => {
 			markCreateReady();
+			createSettled = true;
 			failObserver();
+			scheduleDeferredCleanup();
 		});
 		watchdog.unref();
 	} catch {
@@ -418,7 +429,8 @@ export function createOrcaProgressTab(input: {
 			logStream.end(footer, () => {
 				if (!available) return;
 				try { fs.writeFileSync(donePath, `${status}\n`, { encoding: "utf-8", mode: 0o600 }); } catch { /* best effort */ }
-				scheduleCleanup(nodeExecutable, [logPath, donePath]);
+				cleanupPaths = [logPath, donePath];
+				scheduleDeferredCleanup();
 			});
 		},
 	};
