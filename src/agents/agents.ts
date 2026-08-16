@@ -138,6 +138,7 @@ export interface AgentConfig {
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
+	discoveryPriority?: number;
 	skills?: string[];
 	skillPath?: string[];
 	extensions?: string[];
@@ -213,8 +214,45 @@ export interface ChainDiscoveryDiagnostic {
 	error: string;
 }
 
+export interface AgentDiscoveryDiagnostic extends ChainDiscoveryDiagnostic {
+	name?: string;
+	runtimeName?: string;
+	packageSpecified?: boolean;
+	discoveryPriority?: number;
+}
+
+const AGENT_SOURCE_PRIORITY: Record<AgentSource, number> = {
+	builtin: 0,
+	package: 1,
+	user: 2,
+	project: 3,
+};
+
+function agentDefinitionPriority(definition: Pick<AgentConfig | AgentDiscoveryDiagnostic, "source" | "discoveryPriority">): number {
+	return AGENT_SOURCE_PRIORITY[definition.source] * 1_000_000
+		+ (definition.discoveryPriority ?? 0);
+}
+
+export function findBlockingAgentDiagnostic(name: string, agent: AgentConfig | readonly AgentConfig[] | undefined, diagnostics: AgentDiscoveryDiagnostic[] | undefined): AgentDiscoveryDiagnostic | undefined {
+	const normalizedName = name.trim();
+	const agents = Array.isArray(agent) ? agent : agent ? [agent] : [];
+	let match: AgentDiscoveryDiagnostic | undefined;
+	for (const diagnostic of diagnostics ?? []) {
+		if ((diagnostic.runtimeName === normalizedName
+			|| (diagnostic.name === normalizedName && (!diagnostic.packageSpecified
+				|| diagnostic.runtimeName === undefined
+				|| agents.some((agent) => agent.name === diagnostic.runtimeName && agent.localName === diagnostic.name))))
+			&& (!match || agentDefinitionPriority(diagnostic) > agentDefinitionPriority(match))) {
+			match = diagnostic;
+		}
+	}
+	const highestPriority = Math.max(...agents.map(agentDefinitionPriority), -Infinity);
+	return !agents.length || (match && agentDefinitionPriority(match) > highestPriority) ? match : undefined;
+}
+
 interface AgentDiscoveryResult {
 	agents: AgentConfig[];
+	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	projectAgentsDir: string | null;
 	modelScope?: ModelScopeConfig;
 }
@@ -1535,8 +1573,9 @@ function parseAgentAcceptanceFrontmatter(raw: string | undefined, agentName: str
 	return parsed as AcceptanceInput;
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
 	const agents: AgentConfig[] = [];
+	const diagnostics: AgentDiscoveryDiagnostic[] = [];
 
 	for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
 		if (isLegacyAgentSkillPath(dir, filePath)) {
@@ -1550,6 +1589,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			continue;
 		}
 
+		let name: string | undefined;
+		let runtimeName: string | undefined;
+		let packageSpecified = false;
+		try {
 		const { frontmatter, body } = parseFrontmatter(content);
 
 		if (!frontmatter.name || !frontmatter.description) {
@@ -1557,10 +1600,12 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		}
 
 		const localName = frontmatter.name;
+		name = localName;
 		const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
-		if (parsedPackage.error) continue;
+		packageSpecified = parsedPackage.packageName !== undefined || parsedPackage.error !== undefined;
+		if (parsedPackage.error) throw new Error(parsedPackage.error);
 		const packageName = parsedPackage.packageName;
-		const runtimeName = buildRuntimeName(localName, packageName);
+		runtimeName = buildRuntimeName(localName, packageName);
 
 		const runner = parseAgentRunnerFrontmatter(frontmatter.runner, localName);
 		validateExternalRunnerProfile(frontmatter, localName, runner);
@@ -1689,6 +1734,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			systemPrompt: body,
 			source,
 			filePath,
+			...(discoveryPriority !== undefined ? { discoveryPriority } : {}),
 			...(skills?.length ? { skills } : {}),
 			...(skillPath?.length ? { skillPath } : {}),
 			...(extensions !== undefined ? { extensions } : {}),
@@ -1706,9 +1752,12 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 		};
 		agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
 		agents.push(agent);
+		} catch (error) {
+			diagnostics.push({ source, filePath, ...(name ? { name } : {}), ...(runtimeName && runtimeName !== name ? { runtimeName } : {}), ...(packageSpecified ? { packageSpecified: true } : {}), ...(discoveryPriority !== undefined ? { discoveryPriority } : {}), error: error instanceof Error ? error.message : String(error) });
+		}
 	}
 
-	return agents;
+	return { agents, diagnostics };
 }
 
 function loadChainsFromDir(dir: string, source: AgentSource): { chains: ChainConfig[]; diagnostics: ChainDiscoveryDiagnostic[] } {
@@ -1806,34 +1855,42 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		includeProject: scope !== "user",
 	});
 
+	const builtinLoaded = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
 	const builtinAgents = applyBuiltinOverrides(
-		applySubagentDefaults(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"), defaultModel, defaultThinking, defaultExtensions),
+		applySubagentDefaults(builtinLoaded.agents, defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
 
-	const userAgentsExtra = scope === "project" ? [] : extraUserAgentDirs().flatMap((dir) => loadAgentsFromDir(dir, "user"));
-	const userAgentsOld = scope === "project" ? [] : loadAgentsFromDir(userDirOld, "user");
-	const userAgentsNew = scope === "project" ? [] : loadAgentsFromDir(userDirNew, "user");
+	const userLoaded = scope === "project" ? [] : [...extraUserAgentDirs(), userDirOld, userDirNew]
+		.map((dir, discoveryPriority) => loadAgentsFromDir(dir, "user", discoveryPriority));
 	const userAgents = applyCustomAgentOverrides(
-		applySubagentDefaults([...userAgentsExtra, ...userAgentsOld, ...userAgentsNew], defaultModel, defaultThinking, defaultExtensions),
+		applySubagentDefaults(userLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
 
+	const projectLoaded = scope === "user" ? [] : projectAgentDirs.map((dir) => loadAgentsFromDir(dir, "project", dir === projectAgentsDir ? 1 : 0));
 	const projectAgents = applyCustomAgentOverrides(
-		applySubagentDefaults(scope === "user" ? [] : projectAgentDirs.flatMap((dir) => loadAgentsFromDir(dir, "project")), defaultModel, defaultThinking, defaultExtensions),
+		applySubagentDefaults(projectLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
+	const packageLoaded = packageSubagentPaths.agents.map((dir, index) => loadAgentsFromDir(dir, "package", packageSubagentPaths.agents.length - index));
+	const packageMap = new Map<string, AgentConfig>();
+	for (const loaded of packageLoaded) {
+		for (const agent of loaded.agents) {
+			if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
+		}
+	}
 	const packageAgents = applyCustomAgentOverrides(
-		applySubagentDefaults(packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package")), defaultModel, defaultThinking, defaultExtensions),
+		applySubagentDefaults(Array.from(packageMap.values()), defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
@@ -1842,7 +1899,13 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents)
 		.filter((agent) => agent.disabled !== true);
 
-	return { agents, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}) };
+	const agentDiagnostics = [
+		...builtinLoaded.diagnostics,
+		...userLoaded.flatMap((loaded) => loaded.diagnostics),
+		...projectLoaded.flatMap((loaded) => loaded.diagnostics),
+		...packageLoaded.flatMap((loaded) => loaded.diagnostics),
+	];
+	return { agents, agentDiagnostics, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}) };
 }
 
 export function discoverAgentsAll(cwd: string): {
@@ -1850,6 +1913,7 @@ export function discoverAgentsAll(cwd: string): {
 	package: AgentConfig[];
 	user: AgentConfig[];
 	project: AgentConfig[];
+	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	chains: ChainConfig[];
 	chainDiagnostics: ChainDiscoveryDiagnostic[];
 	userDir: string;
@@ -1873,27 +1937,29 @@ export function discoverAgentsAll(cwd: string): {
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd);
 
+	const builtinLoaded = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
 	const builtin = applyBuiltinOverrides(
-		applySubagentDefaults(loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin"), defaultModel, defaultThinking, defaultExtensions),
+		applySubagentDefaults(builtinLoaded.agents, defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
+	const userLoaded = [...extraUserAgentDirs(), userDirOld, userDirNew]
+		.map((dir, discoveryPriority) => loadAgentsFromDir(dir, "user", discoveryPriority));
 	const user = applyCustomAgentOverrides(
-		applySubagentDefaults([
-			...extraUserAgentDirs().flatMap((dir) => loadAgentsFromDir(dir, "user")),
-			...loadAgentsFromDir(userDirOld, "user"),
-			...loadAgentsFromDir(userDirNew, "user"),
-		], defaultModel, defaultThinking, defaultExtensions),
+		applySubagentDefaults(userLoaded.flatMap((loaded) => loaded.agents), defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
 		projectSettings,
 		userSettingsPath,
 		projectSettingsPath,
 	);
 	const packageMap = new Map<string, AgentConfig>();
-	for (const dir of packageSubagentPaths.agents) {
-		for (const agent of loadAgentsFromDir(dir, "package")) {
+	const packageAgentDiagnostics: AgentDiscoveryDiagnostic[] = [];
+	for (const [index, dir] of packageSubagentPaths.agents.entries()) {
+		const loaded = loadAgentsFromDir(dir, "package", packageSubagentPaths.agents.length - index);
+		packageAgentDiagnostics.push(...loaded.diagnostics);
+		for (const agent of loaded.agents) {
 			if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
 		}
 	}
@@ -1905,8 +1971,11 @@ export function discoverAgentsAll(cwd: string): {
 		projectSettingsPath,
 	);
 	const projectMap = new Map<string, AgentConfig>();
+	const projectAgentDiagnostics: AgentDiscoveryDiagnostic[] = [];
 	for (const dir of projectDirs) {
-		for (const agent of loadAgentsFromDir(dir, "project")) {
+		const loaded = loadAgentsFromDir(dir, "project", dir === projectDir ? 1 : 0);
+		projectAgentDiagnostics.push(...loaded.diagnostics);
+		for (const agent of loaded.agents) {
 			projectMap.set(agent.name, agent);
 		}
 	}
@@ -1947,8 +2016,14 @@ export function discoverAgentsAll(cwd: string): {
 		...userChains.diagnostics,
 		...projectChainDiagnostics,
 	];
+	const agentDiagnostics = [
+		...builtinLoaded.diagnostics,
+		...userLoaded.flatMap((loaded) => loaded.diagnostics),
+		...packageAgentDiagnostics,
+		...projectAgentDiagnostics,
+	];
 
 	const userDir = process.env.PI_CODING_AGENT_DIR ? userDirOld : fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
-	return { builtin, package: packageAgents, user, project, chains, chainDiagnostics, userDir, projectDir, userChainDir, projectChainDir, userSettingsPath, projectSettingsPath };
+	return { builtin, package: packageAgents, user, project, agentDiagnostics, chains, chainDiagnostics, userDir, projectDir, userChainDir, projectChainDir, userSettingsPath, projectSettingsPath };
 }

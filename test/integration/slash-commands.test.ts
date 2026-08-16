@@ -636,6 +636,36 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		assert.equal(sessionManager.flushed, true);
 	});
 
+	it("/run reports malformed agent configuration", async () => {
+		await withTempProject("pi-slash-invalid-agent-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+
+			const run = await captureSlashCommandParams("run", "broken", root);
+			assert.equal(run.params, undefined);
+			assert.match(run.notifications[0] ?? "", /Agent 'broken' has invalid configuration: Agent 'broken' has invalid runner\.type/);
+		});
+	});
+
+	it("/run blocks a malformed project agent from falling back to builtin", async () => {
+		await withTempProject("pi-slash-invalid-agent-shadow-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: Broken reviewer\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+
+			const run = await captureSlashCommandParams("run", "reviewer", root);
+			assert.equal(run.params, undefined);
+			assert.match(run.notifications[0] ?? "", /Agent 'reviewer' has invalid configuration: Agent 'reviewer' has invalid runner\.type/);
+		});
+	});
+
+	it("/run reports malformed packaged agent configuration by runtime name", async () => {
+		await withTempProject("pi-slash-invalid-packaged-agent-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "code-analysis.zeta-worker.md"), "---\nname: zeta-worker\npackage: code-analysis\ndescription: Broken packaged worker\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+
+			const run = await captureSlashCommandParams("run", "code-analysis.zeta-worker", root);
+			assert.equal(run.params, undefined);
+			assert.match(run.notifications[0] ?? "", /Agent 'code-analysis\.zeta-worker' has invalid configuration: Agent 'zeta-worker' has invalid runner\.type/);
+		});
+	});
+
 	it("/run preserves existing relative reads and omits missing reads", async () => {
 		await withTempProject("pi-slash-reads-", async (root) => {
 			fs.writeFileSync(path.join(root, ".pi", "agents", "scout.md"), `---
@@ -824,6 +854,38 @@ Inspect
 				const completions = commands.get("run")!.getArgumentCompletions!("code-") as Array<{ value: string }>;
 				assert.deepEqual(completions.map(({ value }) => value), ["code-analysis.scout"]);
 			});
+		});
+	});
+
+	it("/run reports malformed packaged local-name fallback configuration", async () => {
+		await withTempProject("pi-packaged-agent-local-slash-", async (root) => {
+			const highPackage = path.join(root, "high-package");
+			const lowPackage = path.join(root, "low-package");
+			for (const packageRoot of [highPackage, lowPackage]) {
+				fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+				fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
+			}
+			fs.writeFileSync(path.join(highPackage, "agents", "foo.md"), `---
+name: foo
+package: acme
+description: Broken high package foo
+runner:
+  type: unknown
+---
+Broken foo.
+`, "utf-8");
+			fs.writeFileSync(path.join(lowPackage, "agents", "foo.md"), `---
+name: foo
+package: acme
+description: Valid low package foo
+---
+Valid foo.
+`, "utf-8");
+			fs.writeFileSync(path.join(root, ".pi", "settings.json"), JSON.stringify({ packages: [highPackage, lowPackage] }));
+
+			const run = await captureSlashCommandParams("run", "foo Investigate", root);
+			assert.equal(run.params, undefined);
+			assert.match(run.notifications[0] ?? "", /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
 		});
 	});
 

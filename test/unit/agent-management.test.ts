@@ -4,7 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
+import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
+import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 
 let tempDir = "";
 let oldAgentDir: string | undefined;
@@ -57,6 +59,37 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("lists valid agents and diagnoses malformed agent definitions", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		fs.writeFileSync(path.join(agentsDir, "working.md"), "---\nname: working\ndescription: Working\n---\nWorking agent.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const listed = handleList({}, ctx);
+		assert.equal(listed.isError, false);
+		assert.match(readText(listed), /- working \(project/);
+		assert.match(readText(listed), /Invalid agent definitions:\n- broken \(project\): Agent 'broken' has invalid runner\.type/);
+
+		const invalid = handleManagementAction("get", { agent: "broken" }, ctx);
+		assert.equal(invalid.isError, true);
+		assert.match(readText(invalid), /Agent 'broken' has invalid configuration: Agent 'broken' has invalid runner\.type/);
+		fs.writeFileSync(path.join(agentsDir, "bad-agent.md"), "---\nname: bad-agent\ndescription: Bad agent\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		const normalizedInvalid = handleManagementAction("get", { agent: "Bad Agent" }, ctx);
+		assert.equal(normalizedInvalid.isError, true);
+		assert.match(readText(normalizedInvalid), /Agent 'Bad Agent' has invalid configuration: Agent 'bad-agent' has invalid runner\.type/);
+
+		fs.writeFileSync(path.join(agentsDir, "code-analysis.zeta-worker.md"), "---\nname: zeta-worker\npackage: code-analysis\ndescription: Broken packaged worker\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		const invalidPackaged = handleManagementAction("get", { agent: "code-analysis.zeta-worker" }, ctx);
+		assert.equal(invalidPackaged.isError, true);
+		assert.match(readText(invalidPackaged), /Agent 'code-analysis\.zeta-worker' has invalid configuration: Agent 'zeta-worker' has invalid runner\.type/);
+
+		fs.writeFileSync(path.join(agentsDir, "reviewer.md"), "---\nname: reviewer\ndescription: Broken reviewer\nrunner:\n  type: unknown\n---\nBroken agent.\n");
+		const invalidShadow = handleManagementAction("get", { agent: "reviewer" }, ctx);
+		assert.equal(invalidShadow.isError, true);
+		assert.match(readText(invalidShadow), /Agent 'reviewer' has invalid configuration: Agent 'reviewer' has invalid runner\.type/);
+	});
+
 	it("gets only the effective agent detail and respects explicit scope", () => {
 		const projectAgentsDir = path.join(tempDir, ".pi", "agents");
 		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
@@ -80,6 +113,160 @@ describe("agent management config parsing", () => {
 		assert.match(userScoped, /Description: User worker override/);
 		assert.doesNotMatch(userScoped, /Project worker override|Implementation agent for normal tasks/);
 
+	});
+
+	it("does not apply a malformed project diagnostic to an explicit user get", () => {
+		const projectAgentsDir = path.join(tempDir, ".pi", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(userAgentsDir, "worker.md"), "---\nname: worker\ndescription: User worker\n---\nUser worker.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "worker.md"), "---\nname: worker\ndescription: Broken project worker\nrunner:\n  type: unknown\n---\nBroken worker.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const userScoped = handleManagementAction("get", { agent: "worker", agentScope: "user" }, ctx);
+		assert.equal(userScoped.isError, false);
+		assert.match(readText(userScoped), /Agent: worker \(user\)/);
+		assert.match(readText(userScoped), /Description: User worker/);
+	});
+
+	it("blocks a malformed higher-precedence user agent from an extra user agent", () => {
+		const previousExtraDirs = process.env[EXTRA_AGENT_DIRS_ENV];
+		const extraAgentsDir = path.join(tempDir, "extra-agents");
+		try {
+			process.env[EXTRA_AGENT_DIRS_ENV] = extraAgentsDir;
+			fs.mkdirSync(extraAgentsDir, { recursive: true });
+			fs.writeFileSync(path.join(extraAgentsDir, "foo.md"), "---\nname: foo\ndescription: Extra user foo\n---\nExtra user foo.\n");
+			fs.mkdirSync(path.join(process.env.PI_CODING_AGENT_DIR!, "agents"), { recursive: true });
+			fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR!, "agents", "foo.md"), "---\nname: foo\ndescription: Broken configured user foo\nrunner:\n  type: unknown\n---\nBroken user foo.\n");
+			const result = handleManagementAction("get", { agent: "foo", agentScope: "user" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, true);
+			assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		} finally {
+			if (previousExtraDirs === undefined) delete process.env[EXTRA_AGENT_DIRS_ENV];
+			else process.env[EXTRA_AGENT_DIRS_ENV] = previousExtraDirs;
+		}
+	});
+
+	it("blocks a malformed higher-precedence package agent from a lower package agent", () => {
+		const highPackage = path.join(tempDir, "high-package");
+		const lowPackage = path.join(tempDir, "low-package");
+		for (const packageRoot of [highPackage, lowPackage]) {
+			fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
+		}
+		fs.writeFileSync(path.join(highPackage, "agents", "foo.md"), "---\nname: foo\npackage: acme\ndescription: Broken high package foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+		fs.writeFileSync(path.join(lowPackage, "agents", "foo.md"), "---\nname: foo\npackage: acme\ndescription: Valid low package foo\n---\nValid foo.\n");
+		fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".pi", "settings.json"), JSON.stringify({ packages: [highPackage, lowPackage] }));
+
+		const result = handleManagementAction("get", { agent: "acme.foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'acme\.foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		const localResult = handleManagementAction("get", { agent: "foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(localResult.isError, true);
+		assert.match(readText(localResult), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+	});
+
+	it("reports a malformed project agent before lower-priority ambiguity", () => {
+		const packageRoot = path.join(tempDir, "package");
+		fs.mkdirSync(path.join(packageRoot, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ "pi-subagents": { agents: ["agents"] } }));
+		fs.writeFileSync(path.join(packageRoot, "agents", "foo.md"), "---\nname: foo\npackage: acme\ndescription: Package foo\n---\nPackage foo.\n");
+		fs.mkdirSync(path.join(tempDir, ".pi", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".pi", "settings.json"), JSON.stringify({ packages: [packageRoot] }));
+		fs.writeFileSync(path.join(tempDir, ".pi", "agents", "foo.md"), "---\nname: foo\ndescription: Broken project foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+		fs.mkdirSync(path.join(process.env.PI_CODING_AGENT_DIR!, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR!, "agents", "foo.md"), "---\nname: foo\ndescription: User foo\n---\nUser foo.\n");
+		const result = handleManagementAction("get", { agent: "foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+	});
+
+	it("does not let malformed packaged diagnostics block an un-packaged local name", () => {
+		const projectAgentsDir = path.join(tempDir, ".pi", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(userAgentsDir, "foo.md"), "---\nname: foo\ndescription: User foo\n---\nUser foo.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "acme.foo.md"), "---\nname: foo\npackage: acme\ndescription: Broken packaged foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const local = handleManagementAction("get", { agent: "foo" }, ctx);
+		assert.equal(local.isError, false);
+		assert.match(readText(local), /Agent: foo \(user\)/);
+		const packaged = handleManagementAction("get", { agent: "acme.foo" }, ctx);
+		assert.equal(packaged.isError, true);
+		assert.match(readText(packaged), /Agent 'acme\.foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+	});
+
+	it("blocks a malformed invalid-package override of a local agent", () => {
+		const projectAgentsDir = path.join(tempDir, ".pi", "agents");
+		const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+		fs.mkdirSync(projectAgentsDir, { recursive: true });
+		fs.mkdirSync(userAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(userAgentsDir, "foo.md"), "---\nname: foo\ndescription: User foo\n---\nUser foo.\n");
+		fs.writeFileSync(path.join(projectAgentsDir, "foo.md"), "---\nname: foo\npackage: !!!\ndescription: Broken package\n---\nBroken foo.\n");
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const result = handleManagementAction("get", { agent: "foo" }, ctx);
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' package is invalid after sanitization/);
+	});
+
+	it("blocks a malformed .pi agent from falling back to a legacy project agent", () => {
+		const canonicalAgentsDir = path.join(tempDir, ".pi", "agents");
+		const legacyAgentsDir = path.join(tempDir, ".agents");
+		fs.mkdirSync(canonicalAgentsDir, { recursive: true });
+		fs.mkdirSync(legacyAgentsDir, { recursive: true });
+		fs.writeFileSync(path.join(legacyAgentsDir, "shared.md"), "---\nname: shared\ndescription: Legacy shared\n---\nLegacy shared.\n");
+		fs.writeFileSync(path.join(canonicalAgentsDir, "shared.md"), "---\nname: shared\ndescription: Broken canonical shared\nrunner:\n  type: unknown\n---\nBroken shared.\n");
+		const result = handleManagementAction("get", { agent: "shared" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(result.isError, true);
+		assert.match(readText(result), /Agent 'shared' has invalid configuration: Agent 'shared' has invalid runner\.type/);
+	});
+
+	it("blocks a malformed custom canonical agent directory from falling back to legacy", () => {
+		const previousPackageRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		const packageRoot = path.join(tempDir, "coding-agent-root");
+		try {
+			fs.mkdirSync(packageRoot, { recursive: true });
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", piConfig: { configDir: ".custom-pi" } }));
+			process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = packageRoot;
+			const canonicalAgentsDir = path.join(tempDir, ".custom-pi", "agents");
+			const legacyAgentsDir = path.join(tempDir, ".agents");
+			fs.mkdirSync(canonicalAgentsDir, { recursive: true });
+			fs.mkdirSync(legacyAgentsDir, { recursive: true });
+			fs.writeFileSync(path.join(legacyAgentsDir, "shared.md"), "---\nname: shared\ndescription: Legacy shared\n---\nLegacy shared.\n");
+			fs.writeFileSync(path.join(canonicalAgentsDir, "shared.md"), "---\nname: shared\ndescription: Broken canonical shared\nrunner:\n  type: unknown\n---\nBroken shared.\n");
+			const result = handleManagementAction("get", { agent: "shared" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, true);
+			assert.match(readText(result), /Agent 'shared' has invalid configuration: Agent 'shared' has invalid runner\.type/);
+		} finally {
+			if (previousPackageRoot === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+			else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = previousPackageRoot;
+		}
+	});
+
+	it("blocks a malformed canonical .agents/agents definition from legacy .agents", () => {
+		const previousPackageRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+		const packageRoot = path.join(tempDir, "coding-agent-root");
+		try {
+			fs.mkdirSync(packageRoot, { recursive: true });
+			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", piConfig: { configDir: ".agents" } }));
+			process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = packageRoot;
+			const legacyAgentsDir = path.join(tempDir, ".agents");
+			const canonicalAgentsDir = path.join(legacyAgentsDir, "agents");
+			fs.mkdirSync(canonicalAgentsDir, { recursive: true });
+			fs.writeFileSync(path.join(legacyAgentsDir, "foo.md"), "---\nname: foo\ndescription: Legacy foo\n---\nLegacy foo.\n");
+			fs.writeFileSync(path.join(canonicalAgentsDir, "foo.md"), "---\nname: foo\ndescription: Broken canonical foo\nrunner:\n  type: unknown\n---\nBroken foo.\n");
+			const result = handleManagementAction("get", { agent: "foo" }, { cwd: tempDir, modelRegistry: { getAvailable: () => [] } });
+			assert.equal(result.isError, true);
+			assert.match(readText(result), /Agent 'foo' has invalid configuration: Agent 'foo' has invalid runner\.type/);
+		} finally {
+			if (previousPackageRoot === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+			else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = previousPackageRoot;
+		}
 	});
 
 	it("surfaces JSON parse errors for update config strings", () => {

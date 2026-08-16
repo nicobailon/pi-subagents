@@ -4,6 +4,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type AgentConfig,
+	type AgentDiscoveryDiagnostic,
 	type AgentScope,
 	type AgentSource,
 	BUILTIN_AGENT_NAMES,
@@ -12,6 +13,7 @@ import {
 	defaultSystemPromptMode,
 	discoverAgentsAll,
 	buildRuntimeName,
+	findBlockingAgentDiagnostic,
 	frontmatterNameForConfig,
 	parsePackageName,
 	mergeBuiltinAgentOverride,
@@ -109,12 +111,15 @@ function allAgents(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: Ag
 	return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
-function availableAgentNames(cwd: string): string[] {
-	return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
+function availableAgentNamesFromDiscovery(d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }): string[] {
+	return [...new Set(allAgents(d).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
 }
 
-function findAgents(name: string, cwd: string, scope: AgentScope = "both"): AgentConfig[] {
-	const d = discoverAgentsAll(cwd);
+function availableAgentNames(cwd: string): string[] {
+	return availableAgentNamesFromDiscovery(discoverAgentsAll(cwd));
+}
+
+function findAgentsInDiscovery(name: string, d: { builtin: AgentConfig[]; package: AgentConfig[]; user: AgentConfig[]; project: AgentConfig[] }, scope: AgentScope = "both"): AgentConfig[] {
 	const raw = name.trim();
 	const sanitized = sanitizeName(raw);
 	const scoped = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package);
@@ -125,6 +130,16 @@ function findAgents(name: string, cwd: string, scope: AgentScope = "both"): Agen
 		.filter((agent) => Boolean(resolveAgentName(raw, [agent]).agent)
 			|| (sanitized !== raw && Boolean(resolveAgentName(sanitized, [agent]).agent)))
 		.sort((a, b) => a.source.localeCompare(b.source));
+}
+
+function findAgents(name: string, cwd: string, scope: AgentScope = "both"): AgentConfig[] {
+	return findAgentsInDiscovery(name, discoverAgentsAll(cwd), scope);
+}
+
+function diagnosticsForScope(diagnostics: AgentDiscoveryDiagnostic[] | undefined, scope: AgentScope): AgentDiscoveryDiagnostic[] | undefined {
+	if (scope === "both") return diagnostics;
+	const excludedSource = scope === "user" ? "project" : "user";
+	return diagnostics?.filter((diagnostic) => diagnostic.source !== excludedSource);
 }
 
 const AGENT_SOURCE_PRECEDENCE: Record<AgentSource, number> = { builtin: 0, package: 1, user: 2, project: 3 };
@@ -618,6 +633,11 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 			`Restricted agents (not executable in this session${restrictedSources?.length ? `; capability ceiling: ${restrictedSources.join(", ")}` : ""}):`,
 			...restrictedAgents.map((a) => `- ${a.name} (${a.source}${a.aliases?.length ? `, aliases: ${a.aliases.join(", ")}` : ""}): ${a.description}`),
 		] : []),
+		...(d.agentDiagnostics?.length ? [
+			"",
+			"Invalid agent definitions:",
+			...d.agentDiagnostics.map((diagnostic) => `- ${diagnostic.name ?? diagnostic.filePath} (${diagnostic.source}): ${diagnostic.error}`),
+		] : []),
 		...(proactiveSuggestions.length ? ["", ...proactiveSuggestions] : []),
 	];
 	return result(lines.join("\n"));
@@ -708,10 +728,19 @@ function handleGet(params: ManagementParams, ctx: ManagementContext): AgentToolR
 	if (!params.agent) return result("Specify 'agent' for get.", true);
 	const scope = normalizeListScope(params.agentScope);
 	if (!scope) return result("agentScope must be 'user', 'project', or 'both' for get.", true);
-	const matches = findAgents(params.agent, ctx.cwd, scope);
+	const discovered = discoverAgentsAll(ctx.cwd);
+	const matches = findAgentsInDiscovery(params.agent, discovered, scope);
+	const diagnostics = diagnosticsForScope(discovered.agentDiagnostics, scope);
+	const rawName = params.agent.trim();
+	const normalizedName = sanitizeName(rawName);
+	const diagnostic = findBlockingAgentDiagnostic(rawName, matches, diagnostics)
+		?? (normalizedName !== rawName ? findBlockingAgentDiagnostic(normalizedName, matches, diagnostics) : undefined);
+	if (diagnostic) return result(`Agent '${params.agent}' has invalid configuration: ${diagnostic.error}`, true);
 	const distinctNames = [...new Set(matches.map((agent) => agent.name))];
 	if (distinctNames.length > 1) return result(`Ambiguous agent alias or name '${params.agent}': ${distinctNames.sort((a, b) => a.localeCompare(b)).join(", ")}`, true);
-	if (!matches.length) return result(`Agent '${params.agent}' not found. Available: ${availableAgentNames(ctx.cwd).join(", ") || "none"}.`, true);
+	if (!matches.length) {
+		return result(`Agent '${params.agent}' not found. Available: ${availableAgentNamesFromDiscovery(discovered).join(", ") || "none"}.`, true);
+	}
 	return result(matches.map(formatAgentDetail).join("\n\n"));
 }
 

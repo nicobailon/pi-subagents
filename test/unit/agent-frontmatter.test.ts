@@ -249,12 +249,48 @@ Review carefully.`);
 			const project = fs.mkdtempSync(path.join(os.tmpdir(), `pi-subagents-invalid-runner-${index}-`));
 			tempDirs.push(project);
 			writeAgent(path.join(project, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  ${runner}\n---\nBody`);
-			assert.throws(() => discoverAgents(project, "project"), /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'|provider string|options must be a JSON-serializable object/);
+			const discovered = discoverAgents(project, "project");
+			assert.equal(discovered.agents.some((agent) => agent.name === "external"), false);
+			assert.match(discovered.agentDiagnostics?.[0]?.error ?? "", /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'|provider string|options must be a JSON-serializable object/);
 		}
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-pi-only-"));
 		tempDirs.push(project);
 		writeAgent(path.join(project, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  type: external-cli\n  command: node\nmodel: provider/model\n---\nBody`);
-		assert.throws(() => discoverAgents(project, "project"), /unsupported Pi-only fields: model/);
+		assert.match(discoverAgents(project, "project").agentDiagnostics?.[0]?.error ?? "", /unsupported Pi-only fields: model/);
+	}));
+
+	it("keeps valid agents executable when another agent is malformed", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-agent-isolation-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "broken.md"), "---\nname: broken\ndescription: Broken\nrunner:\n  type: unknown\n---\nBody");
+		writeAgent(path.join(project, ".pi", "agents", "working.md"), "---\nname: working\ndescription: Working\n---\nBody");
+
+		const discovered = discoverAgents(project, "project");
+		assert.ok(discovered.agents.some((agent) => agent.name === "working"));
+		assert.equal(discovered.agentDiagnostics?.[0]?.name, "broken");
+	}));
+
+	it("keeps a lower-priority agent available when a project override is malformed", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-agent-shadow-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "reviewer.md"), "---\nname: reviewer\ndescription: Broken reviewer\nrunner:\n  type: unknown\n---\nBody");
+
+		const discovered = discoverAgents(project, "both");
+		assert.equal(discovered.agents.find((agent) => agent.name === "reviewer")?.source, "builtin");
+		assert.equal(discovered.agentDiagnostics?.find((diagnostic) => diagnostic.name === "reviewer")?.source, "project");
+	}));
+
+	it("records the runtime name for malformed packaged agents", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-packaged-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "code-analysis.zeta-worker.md"), "---\nname: zeta-worker\npackage: code-analysis\ndescription: Broken packaged worker\nrunner:\n  type: unknown\n---\nBody");
+
+		const discovered = discoverAgents(project, "project");
+		assert.equal(discovered.agents.some((agent) => agent.name === "code-analysis.zeta-worker"), false);
+		assert.deepEqual(discovered.agentDiagnostics?.[0] && { name: discovered.agentDiagnostics[0].name, runtimeName: discovered.agentDiagnostics[0].runtimeName }, {
+			name: "zeta-worker",
+			runtimeName: "code-analysis.zeta-worker",
+		});
 	}));
 });
 
@@ -439,10 +475,10 @@ Do work
 		const agentsDir = path.join(dir, ".pi", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });
 		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---\nname: worker\ndescription: Worker\npermission:\n  bash: deny\n---\n`, "utf-8");
-		assert.throws(() => discoverAgents(dir, "project"), /pi-guard/);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /pi-guard/);
 
 		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---\nname: worker\ndescription: Worker\npermission:\n  write: ask\npermissions:\n  edit: deny\n---\n`, "utf-8");
-		assert.throws(() => discoverAgents(dir, "project"), /cannot declare both permission and permissions/);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /cannot declare both permission and permissions/);
 	});
 });
 
@@ -578,10 +614,7 @@ acceptance: none
 
 Do work
 `);
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' acceptance frontmatter level "none" requires a reason/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' acceptance frontmatter level "none" requires a reason/);
 	});
 
 	it("parses, serializes, and validates acceptance roles", () => {
@@ -610,10 +643,7 @@ acceptanceRole: observer
 
 Explore the codebase
 `);
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'explorer' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'explorer' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'/);
 	});
 
 	it("rejects invalid launch defaults instead of silently ignoring them", () => {
@@ -628,10 +658,7 @@ async: sometimes
 Do work
 `);
 
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' has invalid async frontmatter; expected true or false/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' has invalid async frontmatter; expected true or false/);
 	});
 
 	it("rejects oversized toolTimeoutMs frontmatter at discovery", () => {
@@ -646,10 +673,7 @@ toolTimeoutMs: 2147483648
 Do work
 `);
 
-		assert.throws(
-			() => discoverAgents(dir, "project"),
-			/Agent 'worker' has invalid toolTimeoutMs frontmatter; expected a positive integer no larger than 2147483647/,
-		);
+		assert.match(discoverAgents(dir, "project").agentDiagnostics?.[0]?.error ?? "", /Agent 'worker' has invalid toolTimeoutMs frontmatter; expected a positive integer no larger than 2147483647/);
 	});
 });
 
@@ -1757,6 +1781,7 @@ Review
 
 		const result = discoverAgentsAll(dir);
 		assert.equal(result.project.some((agent) => agent.filePath.endsWith("scout.md")), false);
+		assert.match(result.agentDiagnostics?.find((diagnostic) => diagnostic.filePath.endsWith("scout.md"))?.error ?? "", /Agent 'scout' package is invalid after sanitization/);
 		assert.equal(result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")), false);
 	});
 });

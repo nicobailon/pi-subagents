@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, type Component, type KeyId, type TUI } from "@earendil-works/pi-tui";
-import { BUILTIN_AGENT_NAMES, discoverAgents } from "../agents/agents.ts";
+import { BUILTIN_AGENT_NAMES, discoverAgents, findBlockingAgentDiagnostic, resolveAgentName } from "../agents/agents.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import {
 	DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS,
@@ -671,8 +671,16 @@ export function registerSlashCommands(
 			const task = firstSpace === -1 ? "" : input.slice(firstSpace + 1).trim();
 
 			if (!state.baseCwd) { ctx.ui.notify("Subagent session cwd is not initialized yet", "error"); return; }
-			const agents = discoverAgents(state.baseCwd, "both").agents;
-			if (!agents.find((a) => a.name === agentName)) { ctx.ui.notify(`Unknown agent: ${agentName}`, "error"); return; }
+			const discovered = discoverAgents(state.baseCwd, "both");
+			const resolvedAgent = resolveAgentName(agentName, discovered.agents);
+			const candidates = resolvedAgent.error
+				? discovered.agents.filter((agent) => resolveAgentName(agentName, [agent]).agent)
+				: resolvedAgent.agent;
+			const diagnostic = findBlockingAgentDiagnostic(agentName, candidates, discovered.agentDiagnostics);
+			if (diagnostic || resolvedAgent.error || !resolvedAgent.agent) {
+				ctx.ui.notify(diagnostic ? `Agent '${agentName}' has invalid configuration: ${diagnostic.error}` : resolvedAgent.error ?? `Unknown agent: ${agentName}`, "error");
+				return;
+			}
 
 			let finalTask = task;
 			if (inline.reads && Array.isArray(inline.reads) && inline.reads.length > 0) {

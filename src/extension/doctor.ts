@@ -142,7 +142,11 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 				user: discovered.user.length,
 				project: discovered.project.length,
 			};
-			return `- agents: total ${agentCounts.builtin + agentCounts.package + agentCounts.user + agentCounts.project} (${formatSourceCounts(agentCounts)})`;
+			const diagnostics = discovered.agentDiagnostics ?? [];
+			return [
+				`- agents: total ${agentCounts.builtin + agentCounts.package + agentCounts.user + agentCounts.project} (${formatSourceCounts(agentCounts)})`,
+				...diagnostics.map((diagnostic) => `- invalid agent ${diagnostic.name ?? diagnostic.filePath} (${diagnostic.source}): ${diagnostic.error}`),
+			].join("\n");
 		}),
 		lineFromCheck("skills", () => {
 			const skills = deps.discoverAvailableSkills(input.cwd);
