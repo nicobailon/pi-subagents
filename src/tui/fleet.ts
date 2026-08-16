@@ -478,10 +478,15 @@ function externalElapsedEnd(run: ExternalRun): number {
 	return terminal ? (run.endedAt ?? run.updatedAt ?? Date.now()) : Date.now();
 }
 
-function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
+function asyncDetail(item: Extract<FleetItem, { kind: "async" }>, state: SubagentState): string[] {
 	const status = readStatus(item.run.asyncDir);
 	if (status) {
-		return formatAsyncRunTranscript(status, item.run.asyncDir, { index: item.index, lines: TRANSCRIPT_LINES }).split("\n");
+		const trackedJob = state.fleetJobs?.get(item.runId) ?? state.asyncJobs.get(item.runId);
+		return formatAsyncRunTranscript(status, item.run.asyncDir, {
+			index: item.index,
+			lines: TRANSCRIPT_LINES,
+			sessionRoots: uniquePaths([...(state.trustedSessionRoots ?? []), trackedJob?.sessionRoot]),
+		}).split("\n");
 	}
 	const outputPath = item.index !== undefined ? path.join(item.run.asyncDir, `output-${item.index}.log`) : undefined;
 	return [
@@ -527,7 +532,7 @@ function detailLines(item: FleetItem | undefined, error: string | undefined, sta
 			? foregroundRecentDetail(item, state)
 			: item.kind === "external"
 				? externalDetail(item)
-				: asyncDetail(item);
+				: asyncDetail(item, state);
 	if (error) lines.unshift(`Fleet scan warning: ${error}`, "");
 	return lines;
 }

@@ -876,6 +876,33 @@ describe("native subagent fleet", () => {
 		}
 	});
 
+	it("passes current-session trusted roots to async session transcript fallback", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-session-fallback-"));
+		try {
+			const asyncDir = writeAsyncRun(root, { id: "async-session-fallback" });
+			const sessionFile = path.join(asyncDir, "worker.jsonl");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ role: "assistant", content: "TRUSTED SESSION FALLBACK" })}\n`, "utf-8");
+			const state = stateForTest();
+			state.trustedSessionRoots = [asyncDir];
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 32, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000 },
+			);
+			try {
+				const rendered = component.render(100).join("\n");
+				assert.match(rendered, /TRUSTED SESSION FALLBACK/);
+				assert.doesNotMatch(rendered, /without a trusted root|Session read failed/);
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("renders structured tool activity and assistant Markdown when a child transcript is available", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-structured-"));
 		try {
