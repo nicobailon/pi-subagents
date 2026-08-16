@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { Worker } from "node:worker_threads";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
 import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
@@ -47,16 +48,24 @@ interface ResultCandidate {
 	cursor: ResultCursorTarget;
 }
 
-interface StreamedDirEntry {
+interface DiscoveredRunCandidate {
+	name: string;
 	relative: string;
-	entry: fs.Dirent;
 }
 
-interface StreamedDirWindow {
-	entries: StreamedDirEntry[];
+type CursorOperation =
+	| { type: "set"; key: Exclude<keyof RetentionCursor, "version" | "resultPendingAfterBySession">; value: string }
+	| { type: "delete"; key: Exclude<keyof RetentionCursor, "version" | "resultPendingAfterBySession"> }
+	| { type: "set-pending"; session: string; value: string }
+	| { type: "delete-pending"; session: string };
+
+interface RetentionDiscovery {
+	discoveryDurationMs: number;
 	rawReads: number;
-	exhausted: boolean;
-	cursorCleared: boolean;
+	sourceExhausted: Record<string, boolean>;
+	runCandidates: DiscoveredRunCandidate[];
+	resultCandidates: Array<Omit<ResultCandidate, "path">>;
+	cursorOps: CursorOperation[];
 }
 
 interface RetentionLockOwner {
@@ -84,7 +93,8 @@ export interface AsyncRetentionOptions {
 	processStartIdentity?: string;
 	isProcessAlive?: (pid: number) => boolean | undefined;
 	getProcessStartIdentity?: (pid: number) => string | undefined;
-	opendirSync?: typeof fs.opendirSync;
+	signal?: AbortSignal;
+	discoveryWorkerUrl?: URL;
 }
 
 export interface AsyncRetentionResult {
@@ -97,6 +107,10 @@ export interface AsyncRetentionResult {
 	errors: string[];
 	rawReads: number;
 	sourceExhausted: Record<string, boolean>;
+	discoveryDurationMs: number;
+	commitDurationMs: number;
+	cancelled: boolean;
+	workerFailed: boolean;
 	durationMs: number;
 }
 
@@ -116,56 +130,6 @@ function listDir(dir: string): fs.Dirent[] {
 		if (isNotFound(error)) return [];
 		throw error;
 	}
-}
-
-function compareRelative(left: string, right: string): number {
-	if (left < right) return -1;
-	if (left > right) return 1;
-	return 0;
-}
-
-function insertSmallest(entries: StreamedDirEntry[], candidate: StreamedDirEntry, limit: number): void {
-	if (limit <= 0) return;
-	const index = entries.findIndex((entry) => compareRelative(candidate.relative, entry.relative) < 0);
-	if (index === -1) entries.push(candidate);
-	else entries.splice(index, 0, candidate);
-	if (entries.length > limit) entries.pop();
-}
-
-function streamDirWindow(dir: string, limit: number, after: string | undefined, relativePath: (entry: fs.Dirent) => string, usable: (entry: fs.Dirent, relative: string) => boolean, opendirSync = fs.opendirSync): StreamedDirWindow {
-	if (limit <= 0) return { entries: [], rawReads: 0, exhausted: true, cursorCleared: false };
-	let handle: fs.Dir | undefined;
-	try {
-		handle = opendirSync(dir);
-		const next: StreamedDirEntry[] = [];
-		const wrapped: StreamedDirEntry[] = [];
-		let rawReads = 0;
-		// Directories cannot be resumed by raw position through Node. The delayed
-		// cleanup pass enumerates to EOF, while this helper keeps only a bounded
-		// top-k selection so memory and mutations stay bounded by the batch.
-		while (true) {
-			const entry = handle.readSync();
-			if (!entry) break;
-			rawReads += 1;
-			const relative = relativePath(entry);
-			if (!usable(entry, relative)) continue;
-			const candidate = { relative, entry };
-			insertSmallest(wrapped, candidate, limit);
-			if (after === undefined || compareRelative(relative, after) > 0) insertSmallest(next, candidate, limit);
-		}
-		const cursorCleared = after !== undefined && next.length === 0;
-		return { entries: cursorCleared ? wrapped : next, rawReads, exhausted: true, cursorCleared };
-	} catch (error) {
-		if (isNotFound(error)) return { entries: [], rawReads: 0, exhausted: true, cursorCleared: false };
-		throw error;
-	} finally {
-		handle?.closeSync();
-	}
-}
-
-function recordSourceScan(result: AsyncRetentionResult, source: string, scan: Pick<StreamedDirWindow, "rawReads" | "exhausted">): void {
-	result.rawReads += scan.rawReads;
-	result.sourceExhausted[source] = scan.exhausted;
 }
 
 function readJson(filePath: string): Record<string, unknown> | undefined {
@@ -350,69 +314,6 @@ function parseWaitRunIds(dir: string): { runIds: Set<string>; safe: boolean } {
 function readCursor(root: string): RetentionCursor {
 	const value = readJson(path.join(root, CURSOR_NAME));
 	return value?.version === 1 ? value as unknown as RetentionCursor : { version: 1 };
-}
-
-function prunePendingSessionCursors(cursor: RetentionCursor, pendingRoot: string): void {
-	const cursors = cursor.resultPendingAfterBySession;
-	if (cursors === undefined) return;
-	for (const session of Object.keys(cursors)) {
-		if (!fs.existsSync(path.join(pendingRoot, session))) delete cursors[session];
-	}
-	if (Object.keys(cursors).length === 0) delete cursor.resultPendingAfterBySession;
-}
-
-function resultCandidates(resultsDir: string, cursor: RetentionCursor, pendingDirLimit: number, limit: number, result: AsyncRetentionResult, opendirSync: typeof fs.opendirSync): ResultCandidate[] {
-	const candidates: ResultCandidate[] = [];
-	const sourceLimit = Math.max(1, Math.ceil(limit / 4));
-	const addFiles = (dir: string, kind: ResultCandidate["kind"], cursorTarget: ResultCursorTarget, source: string, budget = sourceLimit): number => {
-		const remaining = Math.min(budget, limit - candidates.length);
-		if (remaining <= 0) return 0;
-		const before = candidates.length;
-		const after = cursorTarget.type === "pending" ? cursor.resultPendingAfterBySession?.[cursorTarget.session] : cursor[cursorTarget.key];
-		const scan = streamDirWindow(
-			dir,
-			remaining,
-			after,
-			(value) => path.relative(resultsDir, path.join(dir, value.name)),
-			(entry) => entry.isFile() && (entry.name.startsWith(RESULT_TOMBSTONE_PREFIX) || entry.name.endsWith(".json")),
-			opendirSync,
-		);
-		recordSourceScan(result, source, scan);
-		if (scan.cursorCleared) {
-			if (cursorTarget.type === "pending") delete cursor.resultPendingAfterBySession?.[cursorTarget.session];
-			else delete cursor[cursorTarget.key];
-		}
-		for (const { entry } of scan.entries.slice(0, remaining)) {
-			const fullPath = path.join(dir, entry.name);
-			const tombstone = entry.name.startsWith(RESULT_TOMBSTONE_PREFIX);
-			candidates.push({ path: fullPath, relative: path.relative(resultsDir, fullPath), kind: tombstone ? "tombstone" : kind, cursor: cursorTarget });
-		}
-		return candidates.length - before;
-	};
-	addFiles(resultsDir, "public", { type: "result", key: "resultPublicAfter" }, "results.public");
-	const pendingRoot = path.join(resultsDir, "result-pending");
-	prunePendingSessionCursors(cursor, pendingRoot);
-	const pendingRemaining = Math.min(pendingDirLimit, sourceLimit, limit - candidates.length);
-	const pendingScan = streamDirWindow(
-		pendingRoot,
-		pendingRemaining,
-		cursor.pendingSessionAfter,
-		(entry) => entry.name,
-		(entry) => entry.isDirectory(),
-		opendirSync,
-	);
-	recordSourceScan(result, "results.pendingSessions", pendingScan);
-	if (pendingScan.cursorCleared) delete cursor.pendingSessionAfter;
-	const pendingSessions = pendingScan.entries.slice(0, Math.min(pendingDirLimit, sourceLimit, limit - candidates.length));
-	let pendingFileBudget = Math.min(sourceLimit, limit - candidates.length);
-	for (const session of pendingSessions) {
-		if (pendingFileBudget <= 0) break;
-		cursor.pendingSessionAfter = session.relative;
-		pendingFileBudget -= addFiles(path.join(pendingRoot, session.entry.name), "pending", { type: "pending", session: session.relative }, `results.pending.${session.entry.name}`, pendingFileBudget);
-	}
-	addFiles(path.join(resultsDir, "completion-replay"), "replay", { type: "result", key: "resultReplayAfter" }, "results.replay");
-	addFiles(path.join(resultsDir, "output-archives"), "archive", { type: "result", key: "resultArchiveAfter" }, "results.archive");
-	return candidates;
 }
 
 function processStartIdentity(pid: number): string | undefined {
@@ -612,6 +513,10 @@ function appendMaintenanceLog(root: string, result: AsyncRetentionResult, now: n
 		errors: result.errors.length,
 		rawReads: result.rawReads,
 		sourceExhausted: result.sourceExhausted,
+		discoveryDurationMs: result.discoveryDurationMs,
+		commitDurationMs: result.commitDurationMs,
+		cancelled: result.cancelled,
+		workerFailed: result.workerFailed,
 		durationMs: result.durationMs,
 	})}\n`, "utf-8");
 }
@@ -620,7 +525,117 @@ function increment(record: Record<string, number>, key: string): void {
 	record[key] = (record[key] ?? 0) + 1;
 }
 
-export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRetentionResult {
+
+class RetentionCancelledError extends Error {}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function safeRelative(relative: string): boolean {
+	return relative.length > 0 && !path.isAbsolute(relative) && !relative.split(path.sep).includes("..");
+}
+
+function parseDiscoveryResult(message: unknown, passId: string, runBudget: number, resultBudget: number): RetentionDiscovery {
+	if (!isRecord(message) || message.type !== "result" || message.passId !== passId) throw new Error("Retention discovery worker returned a stale or malformed pass id.");
+	if (!Number.isFinite(message.discoveryDurationMs) || (message.discoveryDurationMs as number) < 0) throw new Error("Retention discovery worker returned an invalid duration.");
+	if (!Number.isInteger(message.rawReads) || (message.rawReads as number) < 0) throw new Error("Retention discovery worker returned an invalid raw-read count.");
+	if (!isRecord(message.sourceExhausted) || Object.values(message.sourceExhausted).some((value) => typeof value !== "boolean")) throw new Error("Retention discovery worker returned invalid source telemetry.");
+	if (!Array.isArray(message.runCandidates) || message.runCandidates.length > runBudget) throw new Error("Retention discovery worker exceeded the run budget.");
+	if (!Array.isArray(message.resultCandidates) || message.resultCandidates.length > resultBudget) throw new Error("Retention discovery worker exceeded the result budget.");
+	if (!Array.isArray(message.cursorOps) || message.cursorOps.length > runBudget + resultBudget + 8) throw new Error("Retention discovery worker returned invalid cursor operations.");
+	for (const candidate of message.runCandidates) {
+		if (!isRecord(candidate) || typeof candidate.name !== "string" || typeof candidate.relative !== "string" || !validRunId(candidate.name) || candidate.relative !== candidate.name) throw new Error("Retention discovery worker returned an unsafe run candidate.");
+	}
+	const resultKinds = new Set(["public", "pending", "replay", "archive", "tombstone"]);
+	const resultKeys = new Set(["resultPublicAfter", "resultReplayAfter", "resultArchiveAfter"]);
+	for (const candidate of message.resultCandidates) {
+		if (!isRecord(candidate) || typeof candidate.name !== "string" || typeof candidate.relative !== "string" || path.basename(candidate.name) !== candidate.name || !safeRelative(candidate.relative) || path.basename(candidate.relative) !== candidate.name || !resultKinds.has(candidate.kind as string) || !isRecord(candidate.cursor)) throw new Error("Retention discovery worker returned an unsafe result candidate.");
+		const cursor = candidate.cursor;
+		if (cursor.type === "pending") {
+			if (typeof cursor.session !== "string" || !validRunId(cursor.session) || path.dirname(candidate.relative) !== path.join("result-pending", cursor.session)) throw new Error("Retention discovery worker returned an invalid pending candidate.");
+		} else if (cursor.type === "result") {
+			if (typeof cursor.key !== "string" || !resultKeys.has(cursor.key)) throw new Error("Retention discovery worker returned an invalid result cursor.");
+			const expectedDir = cursor.key === "resultPublicAfter" ? "." : cursor.key === "resultReplayAfter" ? "completion-replay" : "output-archives";
+			if (path.dirname(candidate.relative) !== expectedDir) throw new Error("Retention discovery worker returned a result from the wrong source.");
+		} else throw new Error("Retention discovery worker returned an invalid result cursor target.");
+	}
+	const scalarKeys = new Set(["runAfter", "resultPublicAfter", "resultReplayAfter", "resultArchiveAfter", "pendingSessionAfter"]);
+	for (const operation of message.cursorOps) {
+		if (!isRecord(operation) || typeof operation.type !== "string") throw new Error("Retention discovery worker returned a malformed cursor operation.");
+		if (operation.type === "set" || operation.type === "delete") {
+			if (typeof operation.key !== "string" || !scalarKeys.has(operation.key) || (operation.type === "set" && (typeof operation.value !== "string" || !safeRelative(operation.value)))) throw new Error("Retention discovery worker returned an invalid scalar cursor operation.");
+		} else if (operation.type === "set-pending" || operation.type === "delete-pending") {
+			if (typeof operation.session !== "string" || !validRunId(operation.session) || (operation.type === "set-pending" && (typeof operation.value !== "string" || !safeRelative(operation.value)))) throw new Error("Retention discovery worker returned an invalid pending cursor operation.");
+		} else throw new Error("Retention discovery worker returned an unknown cursor operation.");
+	}
+	return message as unknown as RetentionDiscovery;
+}
+
+function runRetentionDiscovery(input: {
+	passId: string;
+	asyncDirRoot: string;
+	resultsDir: string;
+	cursor: RetentionCursor;
+	runBudget: number;
+	resultBudget: number;
+	workerUrl: URL;
+	signal?: AbortSignal;
+}): Promise<RetentionDiscovery> {
+	return new Promise((resolve, reject) => {
+		if (input.signal?.aborted) {
+			reject(new RetentionCancelledError("Retention discovery was cancelled."));
+			return;
+		}
+		const worker = new Worker(input.workerUrl);
+		let settled = false;
+		const cleanup = (): void => {
+			input.signal?.removeEventListener("abort", onAbort);
+			void worker.terminate();
+		};
+		const fail = (error: Error): void => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(error);
+		};
+		const onAbort = (): void => fail(new RetentionCancelledError("Retention discovery was cancelled."));
+		input.signal?.addEventListener("abort", onAbort, { once: true });
+		worker.once("error", (error) => fail(error));
+		worker.once("exit", (code) => {
+			if (!settled) fail(new Error(`Retention discovery worker exited before replying (${code}).`));
+		});
+		worker.once("message", (message: unknown) => {
+			if (settled) return;
+			try {
+				if (isRecord(message) && message.type === "error" && message.passId === input.passId) throw new Error(`Retention discovery failed: ${String(message.error)}`);
+				const discovery = parseDiscoveryResult(message, input.passId, input.runBudget, input.resultBudget);
+				settled = true;
+				cleanup();
+				resolve(discovery);
+			} catch (error) {
+				fail(error instanceof Error ? error : new Error(String(error)));
+			}
+		});
+		worker.postMessage({ type: "discover", passId: input.passId, asyncDirRoot: input.asyncDirRoot, resultsDir: input.resultsDir, cursor: input.cursor, runBudget: input.runBudget, resultBudget: input.resultBudget });
+	});
+}
+
+function applyCursorOperations(cursor: RetentionCursor, operations: CursorOperation[]): void {
+	for (const operation of operations) {
+		if (operation.type === "set") cursor[operation.key] = operation.value;
+		else if (operation.type === "delete") delete cursor[operation.key];
+		else if (operation.type === "set-pending") {
+			cursor.resultPendingAfterBySession ??= {};
+			cursor.resultPendingAfterBySession[operation.session] = operation.value;
+		} else {
+			delete cursor.resultPendingAfterBySession?.[operation.session];
+			if (cursor.resultPendingAfterBySession && Object.keys(cursor.resultPendingAfterBySession).length === 0) delete cursor.resultPendingAfterBySession;
+		}
+	}
+}
+
+export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Promise<AsyncRetentionResult> {
 	const startedWall = Date.now();
 	const now = options.now ?? Date.now;
 	const currentTime = now();
@@ -635,22 +650,37 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 	const hostname = options.hostname ?? os.hostname();
 	const getProcessStartIdentity = options.getProcessStartIdentity ?? processStartIdentity;
 	const currentProcessStartIdentity = options.processStartIdentity ?? getProcessStartIdentity(pid) ?? (pid === process.pid ? `runtime:${Math.round(Date.now() - process.uptime() * 1000)}` : undefined);
-	const lockOwner: RetentionLockOwner = {
-		version: 1,
-		token: lockToken,
-		pid,
-		hostname,
-		startedAt: currentTime,
-		...(currentProcessStartIdentity ? { processStartIdentity: currentProcessStartIdentity } : {}),
-	};
+	const lockOwner: RetentionLockOwner = { version: 1, token: lockToken, pid, hostname, startedAt: currentTime, ...(currentProcessStartIdentity ? { processStartIdentity: currentProcessStartIdentity } : {}) };
 	const lockOptions = { hostname, isProcessAlive: options.isProcessAlive ?? processIsAlive, getProcessStartIdentity };
-	const result: AsyncRetentionResult = { acquired: false, scanned: 0, deletedRuns: 0, deletedResults: 0, reapedTombstones: 0, skipped: {}, errors: [], rawReads: 0, sourceExhausted: {}, durationMs: 0 };
-	const opendirSync = options.opendirSync ?? fs.opendirSync;
+	const result: AsyncRetentionResult = {
+		acquired: false,
+		scanned: 0,
+		deletedRuns: 0,
+		deletedResults: 0,
+		reapedTombstones: 0,
+		skipped: {},
+		errors: [],
+		rawReads: 0,
+		sourceExhausted: {},
+		discoveryDurationMs: 0,
+		commitDurationMs: 0,
+		cancelled: false,
+		workerFailed: false,
+		durationMs: 0,
+	};
 	const deletedIds: string[] = [];
+	let commitStartedAt: number | undefined;
 	const finish = (): AsyncRetentionResult => {
+		if (commitStartedAt !== undefined) result.commitDurationMs = Math.max(0, Date.now() - commitStartedAt);
 		result.durationMs = Math.max(0, Date.now() - startedWall);
 		appendMaintenanceLog(maintenanceRoot, result, currentTime, deletedIds);
 		return result;
+	};
+	const markCancelled = (): boolean => {
+		if (!options.signal?.aborted) return false;
+		result.cancelled = true;
+		increment(result.skipped, "cancelled");
+		return true;
 	};
 	fs.mkdirSync(maintenanceRoot, { recursive: true });
 	if (!acquireRetentionLock(lockDir, lockOwner, lockOptions)) {
@@ -659,23 +689,58 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 	}
 	result.acquired = true;
 	try {
-		const waitReferences = parseWaitRunIds(options.waitSubscriptionsDir ?? path.join(maintenanceRoot, "wait-subscriptions"));
-		if (!waitReferences.safe) {
-			increment(result.skipped, "wait-references-unknown");
-			return finish();
-		}
+		if (markCancelled()) return finish();
 		const protectedRunIds = new Set(options.protectedRunIds ?? []);
 		const cutoff = currentTime - retentionMs;
 		const cursor = readCursor(maintenanceRoot);
 		const runBudget = Math.ceil(batchSize / 2);
 		const resultBudget = batchSize - runBudget;
-		const runScan = streamDirWindow(options.asyncDirRoot, runBudget, cursor.runAfter, (entry) => entry.name, (entry) => entry.isDirectory() && entry.name !== ACTIVE_RUN_INDEX_DIR, opendirSync);
-		recordSourceScan(result, "runs", runScan);
-		if (runScan.cursorCleared) delete cursor.runAfter;
-		const selectedRuns = runScan.entries.slice(0, runBudget);
-		for (const { entry, relative } of selectedRuns) {
+		const discoveryStartedAt = Date.now();
+		let discovery: RetentionDiscovery;
+		try {
+			discovery = await runRetentionDiscovery({
+				passId: randomUUID(),
+				asyncDirRoot: options.asyncDirRoot,
+				resultsDir: options.resultsDir,
+				cursor,
+				runBudget,
+				resultBudget,
+				workerUrl: options.discoveryWorkerUrl ?? new URL("../../../async-retention-discovery-worker.mjs", import.meta.url),
+				signal: options.signal,
+			});
+		} catch (error) {
+			result.discoveryDurationMs = Math.max(0, Date.now() - discoveryStartedAt);
+			if (error instanceof RetentionCancelledError) {
+				result.cancelled = true;
+				increment(result.skipped, "cancelled");
+			} else {
+				result.workerFailed = true;
+				increment(result.skipped, "worker-failure");
+				result.errors.push(compactError(error));
+			}
+			return finish();
+		}
+		result.discoveryDurationMs = Math.max(0, Date.now() - discoveryStartedAt);
+		result.rawReads = discovery.rawReads;
+		result.sourceExhausted = discovery.sourceExhausted;
+		commitStartedAt = Date.now();
+		if (markCancelled()) return finish();
+		if (parseLockOwner(lockDir)?.token !== lockToken) {
+			increment(result.skipped, "lock-owner-changed");
+			return finish();
+		}
+		const waitSubscriptionsDir = options.waitSubscriptionsDir ?? path.join(maintenanceRoot, "wait-subscriptions");
+		// This safety scan stays on the commit thread. Wait records are the active,
+		// swept subscription set. Each destructive action re-reads it to close the
+		// race with a newly armed wait.
+		const waitReferences = parseWaitRunIds(waitSubscriptionsDir);
+		if (!waitReferences.safe) {
+			increment(result.skipped, "wait-references-unknown");
+			return finish();
+		}
+		for (const entry of discovery.runCandidates) {
+			if (markCancelled()) return finish();
 			result.scanned += 1;
-			cursor.runAfter = relative;
 			const runDir = path.join(options.asyncDirRoot, entry.name);
 			try {
 				const stat = fs.lstatSync(runDir);
@@ -698,10 +763,8 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 						increment(result.skipped, "tombstone-grace");
 						continue;
 					}
-					const freshWaitReferences = parseWaitRunIds(options.waitSubscriptionsDir ?? path.join(maintenanceRoot, "wait-subscriptions"));
-					const finalReason = freshWaitReferences.safe
-						? runSkipReason({ runDir, status, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds })
-						: "wait-references-unknown";
+					const freshWaitReferences = parseWaitRunIds(waitSubscriptionsDir);
+					const finalReason = freshWaitReferences.safe ? runSkipReason({ runDir, status, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds }) : "wait-references-unknown";
 					if (finalReason) {
 						increment(result.skipped, `recheck-${finalReason}`);
 						continue;
@@ -721,10 +784,8 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 					throw error;
 				}
 				const recheckStatus = readStatus(tombstone);
-				const freshWaitReferences = parseWaitRunIds(options.waitSubscriptionsDir ?? path.join(maintenanceRoot, "wait-subscriptions"));
-				const recheckReason = freshWaitReferences.safe
-					? runSkipReason({ runDir: tombstone, status: recheckStatus, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds })
-					: "wait-references-unknown";
+				const freshWaitReferences = parseWaitRunIds(waitSubscriptionsDir);
+				const recheckReason = freshWaitReferences.safe ? runSkipReason({ runDir: tombstone, status: recheckStatus, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds }) : "wait-references-unknown";
 				if (recheckReason) {
 					if (!fs.existsSync(runDir)) fs.renameSync(tombstone, runDir);
 					removeRunTombstoneMarker(maintenanceRoot, status!.runId);
@@ -739,13 +800,10 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 				if (!isNotFound(error)) result.errors.push(compactError(error));
 			}
 		}
-		const selectedResults = resultCandidates(options.resultsDir, cursor, resultBudget, resultBudget, result, opendirSync);
-		for (const candidate of selectedResults) {
+		for (const discoveredCandidate of discovery.resultCandidates) {
+			if (markCancelled()) return finish();
 			result.scanned += 1;
-			if (candidate.cursor.type === "pending") {
-				cursor.resultPendingAfterBySession ??= {};
-				cursor.resultPendingAfterBySession[candidate.cursor.session] = candidate.relative;
-			} else cursor[candidate.cursor.key] = candidate.relative;
+			const candidate: ResultCandidate = { ...discoveredCandidate, path: path.join(options.resultsDir, discoveredCandidate.relative) };
 			try {
 				const stat = fs.lstatSync(candidate.path);
 				if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -763,10 +821,8 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 						increment(result.skipped, "tombstone-grace");
 						continue;
 					}
-					const freshWaitReferences = parseWaitRunIds(options.waitSubscriptionsDir ?? path.join(maintenanceRoot, "wait-subscriptions"));
-					const finalReason = freshWaitReferences.safe
-						? resultSkipReason({ candidate, data, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, maintenanceRoot, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds })
-						: "wait-references-unknown";
+					const freshWaitReferences = parseWaitRunIds(waitSubscriptionsDir);
+					const finalReason = freshWaitReferences.safe ? resultSkipReason({ candidate, data, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, maintenanceRoot, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds }) : "wait-references-unknown";
 					if (finalReason) {
 						increment(result.skipped, `recheck-${finalReason}`);
 						continue;
@@ -780,10 +836,8 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 				fs.renameSync(candidate.path, tombstone);
 				const tombstoneCandidate = { ...candidate, path: tombstone, kind: "tombstone" as const };
 				const recheckData = readJson(tombstone);
-				const freshWaitReferences = parseWaitRunIds(options.waitSubscriptionsDir ?? path.join(maintenanceRoot, "wait-subscriptions"));
-				const recheckReason = freshWaitReferences.safe
-					? resultSkipReason({ candidate: tombstoneCandidate, data: recheckData, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, maintenanceRoot, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds })
-					: "wait-references-unknown";
+				const freshWaitReferences = parseWaitRunIds(waitSubscriptionsDir);
+				const recheckReason = freshWaitReferences.safe ? resultSkipReason({ candidate: tombstoneCandidate, data: recheckData, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, maintenanceRoot, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds }) : "wait-references-unknown";
 				if (recheckReason) {
 					if (!fs.existsSync(candidate.path)) fs.renameSync(tombstone, candidate.path);
 					increment(result.skipped, `recheck-${recheckReason}`);
@@ -796,6 +850,16 @@ export function cleanupAsyncRetention(options: AsyncRetentionOptions): AsyncRete
 				if (!isNotFound(error)) result.errors.push(compactError(error));
 			}
 		}
+		if (result.errors.length > 0) {
+			increment(result.skipped, "commit-failure");
+			return finish();
+		}
+		if (markCancelled()) return finish();
+		if (parseLockOwner(lockDir)?.token !== lockToken) {
+			increment(result.skipped, "lock-owner-changed");
+			return finish();
+		}
+		applyCursorOperations(cursor, discovery.cursorOps);
 		writeAtomicJson(path.join(maintenanceRoot, CURSOR_NAME), cursor);
 		return finish();
 	} finally {

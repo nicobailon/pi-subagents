@@ -472,11 +472,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
 		},
 	);
-	const asyncRetentionTimer = setTimeout(() => {
+	const asyncRetentionAbort = new AbortController();
+	const asyncRetentionTimer = setTimeout(async () => {
 		try {
-			cleanupAsyncRetention({
+			await cleanupAsyncRetention({
 				asyncDirRoot: DIRS.async,
 				resultsDir: DIRS.results,
+				signal: asyncRetentionAbort.signal,
 				protectedRunIds: new Set([
 					...state.asyncJobs.keys(),
 					...(state.workflowControllers?.keys() ?? []),
@@ -492,6 +494,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const runtimeCleanup = () => {
 		clearTimeout(resultIndexCleanupTimer);
 		clearTimeout(asyncRetentionTimer);
+		asyncRetentionAbort.abort();
 		stopResultWatcher();
 		state.currentSessionId = null;
 		completionNotifier.dispose();
@@ -899,6 +902,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.widgetsSuspended = false;
 		clearTimeout(resultIndexCleanupTimer);
 		clearTimeout(asyncRetentionTimer);
+		asyncRetentionAbort.abort();
 		stopResultWatcher();
 		state.currentSessionId = null;
 		state.parentSessionFile = null;

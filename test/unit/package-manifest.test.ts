@@ -47,6 +47,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 
 	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 	assert.equal(packageJson.files?.includes("index.ts"), true);
+	assert.equal(packageJson.files?.includes("*.mjs"), true);
+	assert.equal(fs.existsSync(path.join(projectRoot, "async-retention-discovery-worker.mjs")), true);
 	assert.equal(
 		fs.readFileSync(path.join(projectRoot, "index.ts"), "utf-8").trim(),
 		'export { default } from "./src/extension/index.ts";',

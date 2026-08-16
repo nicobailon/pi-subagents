@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import { ASYNC_RETENTION_BATCH_SIZE, cleanupAsyncRetention } from "../../src/runs/background/async-retention.ts";
 
@@ -62,19 +63,8 @@ function writeRunTombstoneMarker(roots: ReturnType<typeof makeRoots>, runId: str
 	return markerPath;
 }
 
-function opendirWithRawOrder(targetDir: string, names: string[]): typeof fs.opendirSync {
-	const realOpendir = fs.opendirSync;
-	return ((dir: fs.PathLike, options?: Parameters<typeof fs.opendirSync>[1]) => {
-		if (path.resolve(String(dir)) !== path.resolve(targetDir)) return realOpendir(dir, options);
-		const entriesByName = new Map(fs.readdirSync(targetDir, { withFileTypes: true }).map((entry) => [entry.name, entry]));
-		const entries = names.map((name) => entriesByName.get(name)).filter((entry): entry is fs.Dirent => entry !== undefined);
-		let index = 0;
-		return { readSync: () => entries[index++] ?? null, closeSync: () => undefined } as unknown as fs.Dir;
-	}) as typeof fs.opendirSync;
-}
-
 describe("async retention cleanup", () => {
-	it("deletes old proven-terminal runs and orphan results through tombstones", () => {
+	it("deletes old proven-terminal runs and orphan results through tombstones", async () => {
 		const roots = makeRoots();
 		try {
 			const runDir = writeOldRun(roots.asyncDirRoot, "old-run");
@@ -91,7 +81,7 @@ describe("async retention cleanup", () => {
 			fs.utimesSync(resolvedHandoffDir, OLD / 1000, OLD / 1000);
 			const resultPath = writeOldResult(roots.resultsDir, "orphan-result");
 
-			const result = cleanupAsyncRetention(cleanupOptions(roots));
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
 
 			assert.equal(result.acquired, true);
 			assert.equal(result.deletedRuns, 4);
@@ -115,7 +105,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("fails closed for live, recent, resumable, wait, mission, workflow, handoff, and runtime references", () => {
+	it("fails closed for live, recent, resumable, wait, mission, workflow, handoff, and runtime references", async () => {
 		const roots = makeRoots();
 		try {
 			writeOldRun(roots.asyncDirRoot, "active", { state: "running" });
@@ -153,7 +143,7 @@ describe("async retention cleanup", () => {
 			fs.writeFileSync(path.join(roots.waitsDir, "wait.json"), JSON.stringify({ runId: "waited", expiresAt: NOW + DAY_MS }));
 			writeOldRun(roots.asyncDirRoot, "runtime");
 
-			const result = cleanupAsyncRetention({ ...cleanupOptions(roots), protectedRunIds: ["runtime"] });
+			const result = await cleanupAsyncRetention({ ...cleanupOptions(roots), protectedRunIds: ["runtime"] });
 
 			for (const runId of ["active", "paused", "recent", "resumable", "status-session", "step-session", "uninspectable-session", "malformed-ended-at", "malformed-last-update", "missing-mode", "non-finite-ended-at", "mission", "workflow", "nested", "handoff", "waited", "runtime"]) {
 				assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, runId)), true, runId);
@@ -176,28 +166,28 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("uses one cleaner, reaps stale tombstones safely, and limits processed runs", () => {
+	it("uses one cleaner, reaps stale tombstones safely, and limits processed runs", async () => {
 		const roots = makeRoots();
 		try {
 			fs.mkdirSync(path.join(roots.root, ".async-retention.lock"));
-			const locked = cleanupAsyncRetention(cleanupOptions(roots));
+			const locked = await cleanupAsyncRetention(cleanupOptions(roots));
 			assert.equal(locked.acquired, false);
 			assert.equal(locked.skipped["lock-busy"], 1);
 			fs.rmSync(path.join(roots.root, ".async-retention.lock"), { recursive: true });
 			const liveLock = path.join(roots.root, ".async-retention.lock");
 			fs.mkdirSync(liveLock);
 			fs.writeFileSync(path.join(liveLock, "owner.json"), JSON.stringify({ pid: process.pid, startedAt: NOW - 6 * 60 * 1000 }));
-			const liveLockResult = cleanupAsyncRetention(cleanupOptions(roots));
+			const liveLockResult = await cleanupAsyncRetention(cleanupOptions(roots));
 			assert.equal(liveLockResult.acquired, false);
 			assert.equal(liveLockResult.skipped["lock-busy"], 1);
 			fs.rmSync(liveLock, { recursive: true });
 			fs.mkdirSync(liveLock);
 			fs.writeFileSync(path.join(liveLock, "owner.json"), JSON.stringify({ version: 1, token: "old-token", pid: process.pid, hostname: "test-host", processStartIdentity: "old-process", startedAt: NOW - 60_000 }));
-			const reusedPidLockResult = cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
+			const reusedPidLockResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
 			assert.equal(reusedPidLockResult.acquired, true);
 			fs.mkdirSync(liveLock);
 			fs.writeFileSync(path.join(liveLock, "owner.json"), JSON.stringify({ version: 1, token: "other-token", pid: process.pid, hostname: "test-host", processStartIdentity: "current-process", startedAt: NOW - 60_000 }));
-			const protectedLockResult = cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
+			const protectedLockResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
 			assert.equal(protectedLockResult.acquired, false);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(liveLock, "owner.json"), "utf-8")).token, "other-token");
 			fs.rmSync(liveLock, { recursive: true });
@@ -212,21 +202,25 @@ describe("async retention cleanup", () => {
 			const mutatingReferences = (function* () {
 				fs.writeFileSync(path.join(liveLock, "owner.json"), JSON.stringify(replacementOwner));
 			})();
-			const changedOwnerResult = cleanupAsyncRetention({ ...cleanupOptions(roots), randomId: () => "owned-token", protectedRunIds: mutatingReferences, hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
+			const cursorPath = path.join(roots.root, ".async-retention-cursor.json");
+			const cursorBeforeOwnerChange = fs.readFileSync(cursorPath, "utf-8");
+			const changedOwnerResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), randomId: () => "owned-token", protectedRunIds: mutatingReferences, hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
 			assert.equal(changedOwnerResult.acquired, true);
+			assert.equal(changedOwnerResult.skipped["lock-owner-changed"], 1);
+			assert.equal(fs.readFileSync(cursorPath, "utf-8"), cursorBeforeOwnerChange);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(liveLock, "owner.json"), "utf-8")).token, "successor-token");
 			fs.rmSync(liveLock, { recursive: true });
 			const staleLock = path.join(roots.root, ".async-retention.lock");
 			fs.mkdirSync(staleLock);
 			fs.writeFileSync(path.join(staleLock, "owner.json"), JSON.stringify({ startedAt: NOW - 25 * 60 * 60 * 1000 }));
 			fs.utimesSync(staleLock, (NOW - 25 * 60 * 60 * 1000) / 1000, (NOW - 25 * 60 * 60 * 1000) / 1000);
-			const staleLockResult = cleanupAsyncRetention(cleanupOptions(roots));
+			const staleLockResult = await cleanupAsyncRetention(cleanupOptions(roots));
 			assert.equal(staleLockResult.acquired, true);
 
 			const tombstone = writeOldRun(roots.asyncDirRoot, ".deleting-run-stale", { runId: "stale-run" });
 			writeRunTombstoneMarker(roots, "stale-run", tombstone);
 			for (let index = 0; index < 110; index += 1) writeOldRun(roots.asyncDirRoot, `old-${String(index).padStart(3, "0")}`);
-			const result = cleanupAsyncRetention({ ...cleanupOptions(roots), randomId: () => `delete-${Math.random()}` });
+			const result = await cleanupAsyncRetention({ ...cleanupOptions(roots), randomId: () => `delete-${Math.random()}` });
 
 			assert.ok(result.scanned <= ASYNC_RETENTION_BATCH_SIZE);
 			assert.equal(fs.existsSync(tombstone), false);
@@ -237,13 +231,13 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("limits result candidates to the cleanup batch", () => {
+	it("limits result candidates to the cleanup batch", async () => {
 		const roots = makeRoots();
 		try {
 			for (let index = 0; index < 90; index += 1) writeOldResult(roots.resultsDir, `recent-result-${String(index).padStart(3, "0")}`, { endedAt: NOW - DAY_MS });
 			const stalePath = writeOldResult(roots.resultsDir, "zz-stale-result");
-			let result = cleanupAsyncRetention(cleanupOptions(roots));
-			for (let pass = 0; pass < 10 && fs.existsSync(stalePath); pass += 1) result = cleanupAsyncRetention(cleanupOptions(roots));
+			let result = await cleanupAsyncRetention(cleanupOptions(roots));
+			for (let pass = 0; pass < 10 && fs.existsSync(stalePath); pass += 1) result = await cleanupAsyncRetention(cleanupOptions(roots));
 			assert.equal(fs.existsSync(stalePath), false);
 			assert.ok(result.scanned <= ASYNC_RETENTION_BATCH_SIZE);
 			assert.ok(fs.readdirSync(roots.resultsDir).filter((name) => name.endsWith(".json")).length >= 60);
@@ -252,7 +246,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("keeps replay cleanup fair when pending results fill their source budget", () => {
+	it("keeps replay cleanup fair when pending results fill their source budget", async () => {
 		const roots = makeRoots();
 		try {
 			const pendingRoot = path.join(roots.resultsDir, "result-pending");
@@ -273,7 +267,7 @@ describe("async retention cleanup", () => {
 			fs.writeFileSync(replayPath, JSON.stringify({ version: 1, runId: "stale-replay", createdAt: OLD, expiresAt: OLD, completion: { runId: "stale-replay", mode: "single" } }));
 			fs.utimesSync(replayPath, OLD / 1000, OLD / 1000);
 
-			const result = cleanupAsyncRetention(cleanupOptions(roots));
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
 
 			assert.equal(fs.existsSync(replayPath), false);
 			assert.equal(result.deletedResults, 1);
@@ -283,18 +277,16 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("uses full delayed discovery so retained raw-order prefixes cannot starve stale runs", () => {
+	it("uses full delayed discovery so retained raw-order prefixes cannot starve stale runs", async () => {
 		const roots = makeRoots();
 		try {
 			for (const runId of ["recent-a", "recent-b", "recent-c", "recent-d"]) writeOldRun(roots.asyncDirRoot, runId, { endedAt: NOW - DAY_MS });
 			const victim = writeOldRun(roots.asyncDirRoot, "zz-old-victim");
-			const opendirSync = opendirWithRawOrder(roots.asyncDirRoot, ["recent-a", "recent-b", "recent-c", "recent-d", "zz-old-victim"]);
-
-			let result = cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 4, opendirSync });
+			let result = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 4 });
 			for (let pass = 0; pass < 5 && fs.existsSync(victim); pass += 1) {
 				assert.ok(result.scanned <= ASYNC_RETENTION_BATCH_SIZE);
 				assert.ok(result.rawReads >= 5);
-				result = cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 4, opendirSync });
+				result = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 4 });
 			}
 
 			assert.equal(fs.existsSync(victim), false);
@@ -303,15 +295,13 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("uses the same ordering for mixed-case cursor filtering and selection", () => {
+	it("uses the same ordering for mixed-case cursor filtering and selection", async () => {
 		const roots = makeRoots();
 		try {
 			writeOldRun(roots.asyncDirRoot, "a", { endedAt: NOW - DAY_MS });
 			const victim = writeOldRun(roots.asyncDirRoot, "B");
-			const opendirSync = opendirWithRawOrder(roots.asyncDirRoot, ["a", "B"]);
-
-			cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 1, opendirSync });
-			for (let pass = 0; pass < 3 && fs.existsSync(victim); pass += 1) cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 1, opendirSync });
+			await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 1 });
+			for (let pass = 0; pass < 3 && fs.existsSync(victim); pass += 1) await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 1 });
 
 			assert.equal(fs.existsSync(victim), false);
 		} finally {
@@ -319,12 +309,12 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("wraps a cursor and makes progress when no usable entries are after it", () => {
+	it("wraps a cursor and makes progress when no usable entries are after it", async () => {
 		const roots = makeRoots();
 		try {
 			const runDir = writeOldRun(roots.asyncDirRoot, "cursor-wrap");
 			fs.writeFileSync(path.join(roots.root, ".async-retention-cursor.json"), JSON.stringify({ version: 1, runAfter: "zzzz" }));
-			const wrapped = cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 1 });
+			const wrapped = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 1 });
 			assert.equal(fs.existsSync(runDir), false);
 			assert.equal(wrapped.rawReads, 1);
 			assert.equal(wrapped.deletedRuns, 1);
@@ -333,7 +323,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("uses exact run tombstone markers for result blocking", () => {
+	it("uses exact run tombstone markers for result blocking", async () => {
 		const roots = makeRoots();
 		try {
 			const blockedResult = writeOldResult(roots.resultsDir, "blocked-result");
@@ -342,7 +332,7 @@ describe("async retention cleanup", () => {
 			fs.mkdirSync(blockingTombstone);
 			writeRunTombstoneMarker(roots, "blocked-result", blockingTombstone);
 
-			const result = cleanupAsyncRetention(cleanupOptions(roots));
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
 
 			assert.equal(fs.existsSync(blockedResult), true);
 			assert.equal(fs.existsSync(freeResult), false);
@@ -352,13 +342,13 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("removes a stray run tombstone marker when its tombstone is gone", () => {
+	it("removes a stray run tombstone marker when its tombstone is gone", async () => {
 		const roots = makeRoots();
 		try {
 			const resultPath = writeOldResult(roots.resultsDir, "stray-marker-result");
 			const markerPath = writeRunTombstoneMarker(roots, "stray-marker-result", path.join(roots.root, "missing-tombstone"));
 
-			const result = cleanupAsyncRetention(cleanupOptions(roots));
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
 
 			assert.equal(fs.existsSync(resultPath), false);
 			assert.equal(fs.existsSync(markerPath), false);
@@ -368,7 +358,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("advances pending result session windows beyond the first batch", () => {
+	it("advances pending result session windows beyond the first batch", async () => {
 		const roots = makeRoots();
 		try {
 			const pendingRoot = path.join(roots.resultsDir, "result-pending");
@@ -383,8 +373,8 @@ describe("async retention cleanup", () => {
 			for (let index = 0; index < 60; index += 1) writePending(`session-${String(index).padStart(3, "0")}`, `recent-${index}`, NOW - DAY_MS);
 			const stalePath = writePending("session-zz", "stale-pending", OLD);
 
-			let result = cleanupAsyncRetention(cleanupOptions(roots));
-			for (let pass = 0; pass < 5 && fs.existsSync(stalePath); pass += 1) result = cleanupAsyncRetention(cleanupOptions(roots));
+			let result = await cleanupAsyncRetention(cleanupOptions(roots));
+			for (let pass = 0; pass < 5 && fs.existsSync(stalePath); pass += 1) result = await cleanupAsyncRetention(cleanupOptions(roots));
 
 			assert.equal(fs.existsSync(stalePath), false);
 			assert.ok(result.scanned <= ASYNC_RETENTION_BATCH_SIZE);
@@ -393,7 +383,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("keeps pending result file cursors separate per session", () => {
+	it("keeps pending result file cursors separate per session", async () => {
 		const roots = makeRoots();
 		try {
 			const pendingRoot = path.join(roots.resultsDir, "result-pending");
@@ -409,10 +399,10 @@ describe("async retention cleanup", () => {
 			const stalePath = writePending("session-a", "zz-stale", OLD);
 			writePending("session-b", "recent-b", NOW - DAY_MS);
 
-			let result = cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 8 });
+			let result = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 8 });
 			for (let pass = 0; pass < 20 && fs.existsSync(stalePath); pass += 1) {
 				assert.ok(result.scanned <= ASYNC_RETENTION_BATCH_SIZE);
-				result = cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 8 });
+				result = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 8 });
 			}
 
 			assert.equal(fs.existsSync(stalePath), false);
@@ -421,7 +411,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("prunes pending result cursors for removed session directories", () => {
+	it("prunes pending result cursors for removed session directories", async () => {
 		const roots = makeRoots();
 		try {
 			const pendingRoot = path.join(roots.resultsDir, "result-pending");
@@ -438,7 +428,7 @@ describe("async retention cleanup", () => {
 				},
 			}));
 
-			cleanupAsyncRetention(cleanupOptions(roots));
+			await cleanupAsyncRetention(cleanupOptions(roots));
 
 			const cursor = JSON.parse(fs.readFileSync(path.join(roots.root, ".async-retention-cursor.json"), "utf-8")) as { resultPendingAfterBySession?: Record<string, string> };
 			assert.equal(cursor.resultPendingAfterBySession?.["removed-session"], undefined);
@@ -448,7 +438,7 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("keeps orphan results with recoverability or durable references", () => {
+	it("keeps orphan results with recoverability or durable references", async () => {
 		const roots = makeRoots();
 		try {
 			writeOldResult(roots.resultsDir, "waited-result");
@@ -485,7 +475,7 @@ describe("async retention cleanup", () => {
 			fs.utimesSync(replayPath, OLD / 1000, OLD / 1000);
 			fs.utimesSync(archivePath, OLD / 1000, OLD / 1000);
 
-			const result = cleanupAsyncRetention({ ...cleanupOptions(roots), protectedRunIds: ["runtime-result"] });
+			const result = await cleanupAsyncRetention({ ...cleanupOptions(roots), protectedRunIds: ["runtime-result"] });
 
 			for (const runId of ["waited-result", "workflow-result", "resumable-result", "mission-result", "recent-result", "malformed-age-result", "non-finite-age-result", "non-finite-timestamp-result", "uninspectable-session-result", "runtime-result"]) {
 				assert.equal(fs.existsSync(path.join(roots.resultsDir, `${runId}.json`)), true, runId);
@@ -501,6 +491,63 @@ describe("async retention cleanup", () => {
 			assert.equal(result.skipped.recent, 1);
 			assert.equal(result.skipped["unknown-age"], 3);
 			assert.equal(result.skipped["runtime-reference"], 1);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the cursor unchanged for failed, malformed, and cancelled workers", async () => {
+		const roots = makeRoots();
+		try {
+			const cursorPath = path.join(roots.root, ".async-retention-cursor.json");
+			const cursorBytes = '{"version":1,"runAfter":"keep-me"}\n';
+			fs.writeFileSync(cursorPath, cursorBytes);
+			const malformedWorker = path.join(roots.root, "malformed-worker.mjs");
+			fs.writeFileSync(malformedWorker, 'import { parentPort } from "node:worker_threads"; parentPort.on("message", () => parentPort.postMessage({ type: "result", passId: "stale" }));');
+
+			const malformed = await cleanupAsyncRetention({ ...cleanupOptions(roots), discoveryWorkerUrl: pathToFileURL(malformedWorker) });
+
+			assert.equal(malformed.workerFailed, true);
+			assert.equal(malformed.skipped["worker-failure"], 1);
+			assert.equal(fs.readFileSync(cursorPath, "utf-8"), cursorBytes);
+
+			const failedWorker = path.join(roots.root, "failed-worker.mjs");
+			fs.writeFileSync(failedWorker, 'throw new Error("worker crash");');
+			const failed = await cleanupAsyncRetention({ ...cleanupOptions(roots), discoveryWorkerUrl: pathToFileURL(failedWorker) });
+			assert.equal(failed.workerFailed, true);
+			assert.match(failed.errors[0] ?? "", /worker crash/);
+			assert.equal(fs.readFileSync(cursorPath, "utf-8"), cursorBytes);
+
+			const hangingWorker = path.join(roots.root, "hanging-worker.mjs");
+			fs.writeFileSync(hangingWorker, 'import { parentPort } from "node:worker_threads"; parentPort.on("message", () => {});');
+			const abort = new AbortController();
+			const pending = cleanupAsyncRetention({ ...cleanupOptions(roots), discoveryWorkerUrl: pathToFileURL(hangingWorker), signal: abort.signal });
+			setImmediate(() => abort.abort());
+			const cancelled = await pending;
+
+			assert.equal(cancelled.cancelled, true);
+			assert.equal(cancelled.skipped.cancelled, 1);
+			assert.equal(fs.readFileSync(cursorPath, "utf-8"), cursorBytes);
+			assert.equal(fs.existsSync(path.join(roots.root, ".async-retention.lock")), false);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
+	it("yields the extension event loop during full directory discovery", async () => {
+		const roots = makeRoots();
+		try {
+			for (let index = 0; index < 2_000; index += 1) fs.mkdirSync(path.join(roots.asyncDirRoot, `run-${index}`));
+			let yielded = false;
+			setImmediate(() => { yielded = true; });
+
+			const result = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 2 });
+
+			assert.equal(yielded, true);
+			assert.ok(result.rawReads >= 2_000);
+			assert.equal(result.sourceExhausted.runs, true);
+			assert.equal(typeof result.discoveryDurationMs, "number");
+			assert.equal(typeof result.commitDurationMs, "number");
 		} finally {
 			fs.rmSync(roots.root, { recursive: true, force: true });
 		}
