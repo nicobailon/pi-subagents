@@ -17,6 +17,8 @@ import {
 	type ActivityState,
 	type ArtifactConfig,
 	type ExternalCliRunnerStatus,
+	type ExternalJobRunnerStatus,
+	type ExternalJobStatus,
 	type ExternalProcessStatus,
 	type ArtifactPaths,
 	type AsyncParallelGroupStatus,
@@ -135,6 +137,7 @@ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
+import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import {
@@ -249,8 +252,9 @@ interface StepResult {
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 	writerProcesses?: PiWriterProcessInstanceExitV1[];
 	writerAttemptCount?: number;
-	runner?: ExternalCliRunnerStatus;
+	runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 	externalProcess?: ExternalProcessStatus;
+	externalJob?: ExternalJobStatus;
 }
 
 function persistStepArtifacts(input: {
@@ -1183,6 +1187,7 @@ interface SingleStepContext {
 	onChildEvent?: (event: ChildEvent) => void;
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void;
 	onExternalProcess?: (process: ExternalProcessStatus) => void;
+	onExternalJob?: (status: ExternalJobStatus) => void;
 	skipAcceptance?: () => boolean;
 	orcaProgressTab?: OrcaProgressTab;
 }
@@ -1357,6 +1362,69 @@ async function runSingleStepInner(
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			externalProcess: external.externalProcess,
+		});
+	}
+
+	if (step.runner?.type === "external-job") {
+		const runner: ExternalJobRunnerStatus = {
+			type: "external-job",
+			provider: step.runner.provider,
+			options: step.runner.options ?? {},
+			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
+		};
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const external = await runExternalJob(omitUndefinedProperties({
+			provider: runner.provider,
+			options: runner.options,
+			cwd: step.cwd ?? ctx.cwd,
+			prompt: buildExternalCliPrompt(step.systemPrompt ?? "", task),
+			asyncDir: path.dirname(ctx.outputFile),
+			stepIndex: ctx.flatIndex,
+			runId: ctx.id,
+			agent: step.agent,
+			sessionId: step.parentSessionId,
+			registerTimeout: ctx.registerTimeout,
+			registerStop: ctx.registerStop,
+			timeoutMessage: ctx.timeoutMessage,
+			stopMessage: ctx.stopMessage,
+			onExternalJob: ctx.onExternalJob,
+		}));
+		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
+		const resolvedOutput = step.outputPath && external.exitCode === 0
+			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot)
+			: { fullOutput: external.output };
+		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
+		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
+			fullOutput: resolvedOutput.fullOutput,
+			outputPath: step.outputPath,
+			outputMode: step.outputMode,
+			exitCode: external.exitCode,
+			savedPath: resolvedOutput.savedPath,
+			outputReference,
+			saveError: resolvedOutput.saveError,
+		}));
+		const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
+			? persistStepArtifacts({
+				artifactPaths,
+				artifactConfig: ctx.artifactConfig,
+				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
+				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+			})
+			: {};
+		return omitUndefinedProperties({
+			agent: step.agent,
+			context: step.context,
+			output: finalizedOutput.displayOutput,
+			outputState: external.output.trim() ? "present" : "absent",
+			exitCode: external.exitCode,
+			error: external.error,
+			timedOut: external.timedOut,
+			stopped: external.stopped,
+			artifactPaths,
+			outputSaveError: artifactErrors.outputSaveError,
+			metadataSaveError: artifactErrors.metadataSaveError,
+			runner,
+			externalJob: external.externalJob,
 		});
 	}
 
@@ -1891,15 +1959,25 @@ type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 	description?: string;
 };
 
-function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunnerStatus | undefined {
-	if (runner?.type !== "external-cli") return undefined;
-	return {
-		type: "external-cli",
-		command: runner.command,
-		args: runner.args ?? [],
-		promptDelivery: runner.promptDelivery ?? "stdin",
-		capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
-	};
+function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
+	if (runner?.type === "external-cli") {
+		return {
+			type: "external-cli",
+			command: runner.command,
+			args: runner.args ?? [],
+			promptDelivery: runner.promptDelivery ?? "stdin",
+			capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
+		};
+	}
+	if (runner?.type === "external-job") {
+		return {
+			type: "external-job",
+			provider: runner.provider,
+			options: runner.options ?? {},
+			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
+		};
+	}
+	return undefined;
 }
 
 function appendCapabilityCeilingAppliedEvent(eventsPath: string, runId: string, stepIndex: number, agent: string, result: StepResult): void {
@@ -2437,6 +2515,11 @@ async function runSubagent(
 	};
 	const updateExternalProcess = (index: number, process: ExternalProcessStatus): void => {
 		requiredStatusStep(statusPayload, index).externalProcess = process;
+		statusPayload.lastUpdate = Date.now();
+		writeStatusPayload();
+	};
+	const updateExternalJob = (index: number, externalJob: ExternalJobStatus): void => {
+		requiredStatusStep(statusPayload, index).externalJob = externalJob;
 		statusPayload.lastUpdate = Date.now();
 		writeStatusPayload();
 	};
@@ -3727,6 +3810,7 @@ async function runSubagent(
 					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 					onWriterProcess,
 					onExternalProcess: (process) => updateExternalProcess(fi, process),
+					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 					skipAcceptance: () => timedOut || stopped,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
@@ -4111,6 +4195,7 @@ async function runSubagent(
 							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
 							onWriterProcess,
 							onExternalProcess: (process) => updateExternalProcess(fi, process),
+							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 							skipAcceptance: () => timedOut || stopped,
 						}), config.deadlineAt);
 						if (task.sessionFile) {
@@ -4431,6 +4516,7 @@ async function runSubagent(
 				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
 				onWriterProcess,
 				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
+				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
 				skipAcceptance: () => timedOut || stopped,
 				}), config.deadlineAt);
 			} catch (error) {
@@ -4485,6 +4571,7 @@ async function runSubagent(
 				toolBudgetBlocked: singleResult.toolBudgetBlocked,
 				runner: singleResult.runner,
 				externalProcess: singleResult.externalProcess,
+				externalJob: singleResult.externalJob,
 			}));
 			if (seqStep.outputName) {
 				outputs[seqStep.outputName] = outputEntryFromAsyncResult({
@@ -4824,6 +4911,7 @@ async function runSubagent(
 				runtimeAcknowledgedExtensions: r.runtimeAcknowledgedExtensions,
 				runner: r.runner,
 				externalProcess: r.externalProcess,
+				externalJob: r.externalJob,
 				execution: r.execution,
 				review: r.review,
 				effects: r.effects,

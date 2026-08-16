@@ -1290,6 +1290,11 @@ export type AgentRunnerConfig =
 		command: string;
 		args?: string[];
 		promptDelivery?: "stdin";
+	}
+	| {
+		type: "external-job";
+		provider: string;
+		options?: Record<string, unknown>;
 	};
 
 export interface ExternalCliRunnerStatus {
@@ -1304,6 +1309,35 @@ export interface ExternalCliRunnerStatus {
 		structuredOutput: false;
 		toolEvents: false;
 	};
+}
+
+export interface ExternalJobRunnerStatus {
+	type: "external-job";
+	provider: string;
+	options: Record<string, unknown>;
+	capabilities: {
+		stop: false;
+		steer: false;
+		resume: false;
+		structuredOutput: false;
+		toolEvents: false;
+	};
+}
+
+export interface ExternalJobStatus {
+	provider: string;
+	providerJobId?: string;
+	promptDigest: string;
+	options: Record<string, unknown>;
+	handleUrl?: string;
+	conversationUrl?: string;
+	resultArtifactPath?: string;
+	state: "queued" | "running" | "completed" | "failed" | "stopped" | "blocked";
+	failureCode?: string;
+	failureMessage?: string;
+	blockingJobId?: string;
+	startedAt?: number;
+	updatedAt?: number;
 }
 
 export interface ExternalProcessStatus {
@@ -1371,8 +1405,9 @@ export interface AsyncStatus {
 	workflowKey?: string;
 	steps?: Array<{
 		agent: string;
-		runner?: ExternalCliRunnerStatus;
+		runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 		externalProcess?: ExternalProcessStatus;
+		externalJob?: ExternalJobStatus;
 		/** Resolved launch context for this child step. */
 		context?: "fresh" | "fork";
 		/** Short caller-facing task/goal shown in fleet surfaces when available. */

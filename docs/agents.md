@@ -41,11 +41,44 @@ Builtins load at the lowest priority, so a user or project agent with the same n
 | `worker` | Implementation work, including approved oracle handoffs. It edits files, validates, and escalates unapproved decisions instead of guessing. |
 | `reviewer` | Code review and small fixes. It checks the implementation against the task/plan, tests, edge cases, and simplicity. |
 | `oracle` | A second opinion before acting. It challenges assumptions, catches drift, and recommends the safest next move without editing. |
+| `gpt-pro` | Read-only Surf GPT Pro advice through the `surf-oracle` external-job provider bridge. |
 | `delegate` | A lightweight general delegate when you want a child agent that behaves close to the parent session. |
 
 Rule of thumb: `scout` before you understand the code, `researcher` before you trust external facts, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
 
 `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `advisor` is the same bundled role under the Claude Code-compatible name.
+
+`gpt-pro` uses `runner.type: external-job` with provider `surf-oracle`. It starts through the same `subagent({ agent: "gpt-pro" })` mental model as any other agent, but the work is owned by Surf through the external-job provider bridge. The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
+
+Claude Code can be configured as a read-only advisor with `runner.type: external-cli` when the Claude Code CLI is installed and you have verified the flags for your local version. pi-subagents does not ship or enforce Claude Code flags. Use a project or user agent like this only after checking your CLI help:
+
+```yaml
+---
+name: claude-advisor
+description: Read-only Claude Code advisor through the local CLI
+runner:
+  type: external-cli
+  command: claude
+  args: ["<verified-read-only-flags>"]
+  promptDelivery: stdin
+async: true
+---
+
+Review the task and return advice only. Do not edit files.
+```
+
+### Advisory runner data boundary
+
+Native `oracle` runs inside Pi and can use its configured read tools. `claude-advisor` sends the assembled prompt to the configured local external CLI through stdin. `gpt-pro` sends the assembled prompt to the registered Surf provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
+
+### External-job state table
+
+| Durable file | Owner | States | Release predicate | Rollback predicate | Stale-head behavior | Fail-closed cases |
+|--------------|-------|--------|-------------------|--------------------|---------------------|-------------------|
+| `status.json` step `runner` and `externalJob` | pi-subagents async runner | `queued`, `running`, `completed`, `failed`, `stopped`, `blocked` | Provider `result` returns terminal data and the async result is written | Provider start/status/result/reattach returns an error | If a status file already has a provider job id, recovery calls `reattach` and `result`; it refuses to start a new prompt when the provider or prompt digest differs | Missing provider, capacity conflict, malformed provider response, bridge timeout, prompt digest mismatch |
+| `result.json` or session result payload | pi-subagents async runner | `complete`, `failed`, `stopped` | All steps reach terminal state and result publication succeeds or is recoverably indexed | Result write fails and pending result repair records the terminal state | Stale status can repair from an existing result file | Unindexed sessionless stale failure |
+| `external-job-requests/` and `external-job-responses/` | Host-mediated provider bridge | pending request, terminal response | Host process writes a matching response and removes the request | Bridge timeout or malformed request response | Requests are operation-scoped. Recovery sends `reattach`/`result`, not `start`, when job metadata exists | Provider not registered, host bridge not loaded, malformed request, provider exception |
+| Provider artifact path | External provider | provider-defined terminal artifact | Provider returns `artifactPath`, or Pi writes returned text to `external-job-<index>.result.md` | Provider reports failure or no result | Existing artifact path is retained in `status.json` | Missing artifact with no text output returns a terminal message instead of inventing content |
 
 The `researcher` builtin uses `web_search`, `fetch_content`, and `get_search_content`. Those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
 

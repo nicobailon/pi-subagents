@@ -263,6 +263,26 @@ Semantics:
 
 Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
 
+## External job provider bridge
+
+Extensions that own long-running advisor jobs can register a process-local provider for `runner.type: external-job` agents:
+
+```ts
+import { registerExternalJobProvider } from "pi-subagents/external-job-provider";
+
+const dispose = registerExternalJobProvider({
+  name: "surf-oracle",
+  start: ({ prompt, promptDigest, cwd, runId, stepIndex, agent, options }) => startSurfJob({ prompt, promptDigest, cwd, runId, stepIndex, agent, options }),
+  status: (providerJobId) => getSurfJobStatus(providerJobId),
+  result: (providerJobId) => getSurfJobResult(providerJobId),
+  reattach: (providerJobId) => reattachSurfJob(providerJobId),
+});
+```
+
+The provider returns handles with `providerJobId`, `state`, optional `handleUrl`/`conversationUrl`, optional `failureCode`/`failureMessage`, and optional `blockingJobId` for capacity conflicts. `result` can also return `output` and/or `artifactPath`.
+
+The async runner process does not import provider internals. It writes operation requests into its async run directory. The parent Pi process services those requests against the registered provider and writes operation responses. If the provider is not registered, the bridge fails closed with an actionable error. If a run is recovered after provider job metadata exists, the runner calls `reattach` and `result`; it does not call `start` again.
+
 ## Herdr integration
 
 When Pi runs inside [Herdr](https://herdr.dev), pi-subagents automatically reports active async-run counts through Herdr pane metadata.

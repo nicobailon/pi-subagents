@@ -992,9 +992,9 @@ function interruptAsyncRun(
 		};
 	}
 	const activeSteps = status.steps?.filter((step) => step.status === "running") ?? [];
-	if (activeSteps.length > 0 && activeSteps.every((step) => step.runner?.type === "external-cli")) {
+	if (activeSteps.length > 0 && activeSteps.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job")) {
 		return {
-			content: [{ type: "text", text: `Interrupt is unsupported for one-shot external CLI async run ${target.asyncId}; use stop instead.` }],
+			content: [{ type: "text", text: `Interrupt is unsupported for external async run ${target.asyncId}; use stop instead.` }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -1406,10 +1406,10 @@ async function steerNestedRun(input: { target: ResolvedSubagentRunId & { kind: "
 
 function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"): AgentToolResult<Details> | undefined {
 	const status = readStatus(asyncDir);
-	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli")) return undefined;
+	if (!status?.steps?.length || !status.steps.every((step) => step.runner?.type === "external-cli" || step.runner?.type === "external-job")) return undefined;
 	const message = action === "steer"
-		? "One-shot external CLI runners do not accept live steer messages."
-		: "One-shot external CLI runners do not persist sessions and cannot be resumed.";
+		? "External runners do not accept live steer messages."
+		: "External runners do not persist Pi sessions and cannot be resumed.";
 	return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 }
 
@@ -2524,7 +2524,7 @@ function resolveStaticLaunchSummary(input: {
 	thinkingOverrideForTask: ForkThinkingOverrideForTask;
 }): StaticLaunchSummary {
 	const agentConfig = input.agents.find((agent) => agent.name === input.agent);
-	const externalRunner = agentConfig?.runner?.type === "external-cli";
+	const externalRunner = agentConfig?.runner?.type === "external-cli" || agentConfig?.runner?.type === "external-job";
 	const model = externalRunner
 		? undefined
 		: resolveEffectiveSubagentModel(
@@ -2760,10 +2760,10 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 		const normalizedSkills = normalizeSkillInput(params.skill);
 		const skills = normalizedSkills === false ? [] : normalizedSkills;
 		const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, a.maxSubagentDepth);
-		const externalRunnerWithoutExplicitModel = a.runner?.type === "external-cli"
+		const externalRunnerWithoutExplicitModel = (a.runner?.type === "external-cli" || a.runner?.type === "external-job")
 			&& params.model === undefined
 			&& (a.model === undefined || (a.modelSource?.type === "subagents.defaultModel" && a.model === a.modelSource.model));
-		const modelOverride = a.runner?.type === "external-cli"
+		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
 		return executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
@@ -4964,7 +4964,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const parentModel = requestParentModel;
 			prepareForkThinking = (agentName, index, modelOverride) => {
 				const agentConfig = agents.find((agent) => agent.name === agentName);
-				if (agentConfig?.runner?.type === "external-cli") {
+				if (agentConfig?.runner?.type === "external-cli" || agentConfig?.runner?.type === "external-job") {
 					forkThinkingRequirements.set(index, true);
 					return;
 				}
@@ -5005,9 +5005,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
 		const externalAgent = selectedAgentNames
 			.map((name) => agents.find((agent) => agent.name === name))
-			.find((agent) => agent?.runner?.type === "external-cli");
+			.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
 		if (externalAgent && (!effectiveAsync || effectiveParams.foregroundOnly === true)) {
-			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='external-cli', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
+			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='${externalAgent.runner?.type}', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
 		}
 		const foregroundTimeout = resolveSingleAgentLaunchTimeout(
 			effectiveParams,

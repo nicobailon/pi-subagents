@@ -51,7 +51,7 @@ function retainedSessionFile(sessionFile: string | undefined): RetainedChildResu
 
 function childResumability(run: AsyncRunSummary, step: AsyncRunSummary["steps"][number]): RetainedChildResumability {
 	if (run.state === "stopped" || step.status === "stopped") return { state: "not-resumable", reason: "stopped run" };
-	if (step.runner?.type === "external-cli") return { state: "not-resumable", reason: "external CLI runner" };
+	if (step.runner?.type === "external-cli" || step.runner?.type === "external-job") return { state: "not-resumable", reason: "external runner" };
 	const session = retainedSessionFile(step.sessionFile ?? run.sessionFile);
 	if (session.state === "not-resumable") return session;
 	let recoveryDescriptor: ReturnType<typeof readAsyncRecoveryDescriptor>;

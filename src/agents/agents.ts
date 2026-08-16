@@ -38,6 +38,7 @@ export interface AgentMemoryConfig {
 export const BUILTIN_AGENT_NAMES = [
 	"advisor",
 	"delegate",
+	"gpt-pro",
 	"oracle",
 	"researcher",
 	"reviewer",
@@ -1448,6 +1449,14 @@ function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
 	return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
 
+function isJsonSerializable(value: unknown): boolean {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(isJsonSerializable);
+	if (value && typeof value === "object") return Object.values(value).every(isJsonSerializable);
+	return false;
+}
+
 function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string): AgentRunnerConfig | undefined {
 	if (raw === undefined || !raw.trim()) return undefined;
 	let parsed: unknown;
@@ -1464,8 +1473,24 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 		if (Object.keys(runner).some((key) => key !== "type")) throw new Error(`Agent '${agentName}' has invalid Pi runner frontmatter; only 'type' is supported.`);
 		return { type: "pi" };
 	}
+	if (runner.type === "external-job") {
+		if (typeof runner.provider !== "string" || !runner.provider.trim() || runner.provider.trim() !== runner.provider) {
+			throw new Error(`Agent '${agentName}' external-job runner requires a non-empty trimmed provider string.`);
+		}
+		if (runner.options !== undefined && (!runner.options || typeof runner.options !== "object" || Array.isArray(runner.options) || !isJsonSerializable(runner.options))) {
+			throw new Error(`Agent '${agentName}' external-job runner options must be a JSON-serializable object.`);
+		}
+		const supported = new Set(["type", "provider", "options"]);
+		const unknown = Object.keys(runner).filter((key) => !supported.has(key));
+		if (unknown.length > 0) throw new Error(`Agent '${agentName}' external-job runner has unsupported fields: ${unknown.join(", ")}.`);
+		return {
+			type: "external-job",
+			provider: runner.provider,
+			...(runner.options ? { options: runner.options as Record<string, unknown> } : {}),
+		};
+	}
 	if (runner.type !== "external-cli") {
-		throw new Error(`Agent '${agentName}' has invalid runner.type; expected 'pi' or 'external-cli'.`);
+		throw new Error(`Agent '${agentName}' has invalid runner.type; expected 'pi', 'external-cli', or 'external-job'.`);
 	}
 	if (typeof runner.command !== "string" || !runner.command.trim()) {
 		throw new Error(`Agent '${agentName}' external-cli runner requires a non-empty command string.`);
@@ -1489,11 +1514,11 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 }
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
-	if (runner?.type !== "external-cli") return;
+	if (runner?.type !== "external-cli" && runner?.type !== "external-job") return;
 	const unsupported = ["tools", "model", "fallbackModels", "thinking", "extensions", "subagentOnlyExtensions", "maxSubagentDepth", "completionGuard", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
 		.filter((field) => frontmatter[field] !== undefined);
 	if (unsupported.length > 0) {
-		throw new Error(`Agent '${agentName}' uses runner.type='external-cli' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
+		throw new Error(`Agent '${agentName}' uses runner.type='${runner.type}' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
 	}
 }
 

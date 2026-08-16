@@ -215,6 +215,26 @@ Review carefully.`.replace(" description:", "description:"));
 		assert.deepEqual(discoverAgents(project, "project").agents.find((agent) => agent.name === "external")?.runner, external.runner);
 	}));
 
+	it("parses and serializes an external-job runner", () => withTempHome(() => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-job-agent-"));
+		tempDirs.push(project);
+		writeAgent(path.join(project, ".pi", "agents", "gpt-pro.md"), `---
+name: gpt-pro
+description: Surf GPT Pro advisor
+runner:
+  type: external-job
+  provider: surf-oracle
+  options:
+    tier: pro
+async: true
+---
+Review carefully.`);
+
+		const gptPro = discoverAgents(project, "project").agents.find((agent) => agent.name === "gpt-pro")!;
+		assert.deepEqual(gptPro.runner, { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } });
+		assert.match(serializeAgent(gptPro), /runner:\n  type: external-job\n  provider: surf-oracle/);
+	}));
+
 	it("rejects invalid and Pi-only external runner fields", () => withTempHome(() => {
 		const invalidCases = [
 			"type: unknown\n  command: node",
@@ -222,12 +242,14 @@ Review carefully.`.replace(" description:", "description:"));
 			"type: external-cli\n  command: node\n  args: nope",
 			"type: external-cli\n  command: node\n  args: [ok, 1]",
 			"type: external-cli\n  command: node\n  promptDelivery: argv",
+			"type: external-job\n  provider: ''",
+			"type: external-job\n  provider: surf-oracle\n  options: []",
 		];
 		for (const [index, runner] of invalidCases.entries()) {
 			const project = fs.mkdtempSync(path.join(os.tmpdir(), `pi-subagents-invalid-runner-${index}-`));
 			tempDirs.push(project);
 			writeAgent(path.join(project, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  ${runner}\n---\nBody`);
-			assert.throws(() => discoverAgents(project, "project"), /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'/);
+			assert.throws(() => discoverAgents(project, "project"), /invalid runner\.type|non-empty command|args must be an array of strings|promptDelivery must be 'stdin'|provider string|options must be a JSON-serializable object/);
 		}
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-pi-only-"));
 		tempDirs.push(project);
@@ -1481,6 +1503,7 @@ Do work
 			const builtins = discoverAgentsAll(dir).builtin;
 			assert.ok(builtins.length > 0);
 			for (const agent of builtins) {
+				if (agent.runner?.type === "external-cli" || agent.runner?.type === "external-job") continue;
 				assert.ok(agent.tools && agent.tools.length > 0, `${agent.name} should have explicit tools frontmatter`);
 			}
 		} finally {

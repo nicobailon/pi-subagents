@@ -20,6 +20,7 @@ import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -327,6 +328,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		};
 		try {
 			emitNewControlEvents(job);
+			serviceExternalJobBridgeRequests(job.asyncDir);
 			try {
 				if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
 			} catch (error) {
@@ -453,7 +455,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					const rawFileName = file?.toString();
 					const fileName = rawFileName ?? path.basename(watchPath);
 					const nestedEventFile = nestedEventSink && (!rawFileName || rawFileName.endsWith(".json") || rawFileName.endsWith(".jsonl"));
-					if (fileName === "status.json" || fileName === "events.jsonl" || nestedEventFile) {
+					if (fileName === "status.json" || fileName === "events.jsonl" || fileName === EXTERNAL_JOB_BRIDGE_REQUEST_DIR || fileName.endsWith(".json") || nestedEventFile) {
 						scheduleJobRefresh(job.asyncId);
 					}
 					if (watchPath !== job.asyncDir && !nestedEventSink) {
@@ -480,6 +482,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const statusWatched = watchPath(statusPath);
 		if (statusWatched && !hadStatusWatcher) scheduleJobRefresh(job.asyncId);
 		watchPath(path.join(job.asyncDir, "events.jsonl"));
+		watchPath(path.join(job.asyncDir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR));
 		if (job.nestedRoute) watchPath(job.nestedRoute.eventSink);
 		if (!statusWatched && active && !watched.retryTimer) {
 			watched.retryTimer = setTimeout(() => {

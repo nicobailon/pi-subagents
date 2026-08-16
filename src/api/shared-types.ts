@@ -9,6 +9,8 @@ export {
 	type ControlEvent,
 	type Details,
 	type ExecutionProjection,
+	type ExternalJobRunnerStatus,
+	type ExternalJobStatus,
 	type JsonSchemaObject,
 	type OutputMode,
 	type ReviewProjection,

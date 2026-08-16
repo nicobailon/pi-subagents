@@ -72,6 +72,14 @@ function hasKey(obj: Record<string, unknown>, key: string): boolean {
 	return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function isJsonSerializable(value: unknown): boolean {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(isJsonSerializable);
+	if (value && typeof value === "object") return Object.values(value).every(isJsonSerializable);
+	return false;
+}
+
 function asDisambiguationScope(scope: unknown): ManagementScope | undefined {
 	if (scope === "user" || scope === "project") return scope;
 	return undefined;
@@ -332,7 +340,11 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 				&& Object.keys(runner).every((key) => ["type", "command", "args", "promptDelivery"].includes(key))) {
 				const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
 				target.runner = { type: "external-cli", command: runner.command.trim(), ...(runnerArgs?.length ? { args: runnerArgs } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" } : {}) };
-			} else return "config.runner must be { type: 'pi' } or { type: 'external-cli', command: string, args?: string[], promptDelivery?: 'stdin' }.";
+			} else if (runner.type === "external-job" && typeof runner.provider === "string" && runner.provider.trim() === runner.provider && runner.provider
+				&& (runner.options === undefined || (runner.options && typeof runner.options === "object" && !Array.isArray(runner.options) && isJsonSerializable(runner.options)))
+				&& Object.keys(runner).every((key) => ["type", "provider", "options"].includes(key))) {
+				target.runner = { type: "external-job", provider: runner.provider, ...(runner.options ? { options: runner.options as Record<string, unknown> } : {}) };
+			} else return "config.runner must be { type: 'pi' }, { type: 'external-cli', command: string, args?: string[], promptDelivery?: 'stdin' }, or { type: 'external-job', provider: string, options?: object }.";
 		} else return "config.runner must be an object, false, or empty string when provided.";
 	}
 	if (hasKey(cfg, "model")) {
@@ -492,7 +504,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.toolBudget = cfg.toolBudget as ToolBudgetConfig;
 		}
 	}
-	if (target.runner?.type === "external-cli") {
+	if (target.runner?.type === "external-cli" || target.runner?.type === "external-job") {
 		const unsupported = [
 			target.tools?.length || target.mcpDirectTools?.length ? "tools" : undefined,
 			target.model ? "model" : undefined,
@@ -505,7 +517,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 			target.completionGuard !== undefined ? "completionGuard" : undefined,
 			target.toolBudget ? "toolBudget" : undefined,
 		].filter((field): field is string => Boolean(field));
-		if (unsupported.length > 0) return `config.runner type 'external-cli' does not support Pi-only fields: ${unsupported.join(", ")}.`;
+		if (unsupported.length > 0) return `config.runner type '${target.runner.type}' does not support Pi-only fields: ${unsupported.join(", ")}.`;
 	}
 	return undefined;
 }
