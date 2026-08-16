@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import {
 	ASYNC_DIR,
@@ -53,6 +56,28 @@ describe("resolveTempScopeId", () => {
 });
 
 describe("shared temp paths", () => {
+	it("uses the explicit temp root before shared paths resolve", () => {
+		const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-temp-override-"));
+		const override = path.join(fixture, "async state");
+		const isolatedHome = path.join(fixture, "home");
+		try {
+			const moduleUrl = new URL("../../src/shared/types.ts", import.meta.url).href;
+			const script = `import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR } from ${JSON.stringify(moduleUrl)}; console.log(JSON.stringify({ ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR }));`;
+			const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+				encoding: "utf-8",
+				env: { ...process.env, HOME: isolatedHome, USERPROFILE: isolatedHome, PI_SUBAGENTS_TEMP_ROOT: override },
+			});
+			assert.equal(result.status, 0, result.stderr);
+			assert.deepEqual(JSON.parse(result.stdout.trim()), {
+				ASYNC_DIR: path.join(override, "async-subagent-runs"),
+				RESULTS_DIR: path.join(override, "async-subagent-results"),
+				TEMP_ROOT_DIR: override,
+			});
+		} finally {
+			fs.rmSync(fixture, { recursive: true, force: true });
+		}
+	});
+
 	it("anchors shared temp directories under one scoped root", () => {
 		assert.equal(path.dirname(RESULTS_DIR), TEMP_ROOT_DIR);
 		assert.equal(path.dirname(ASYNC_DIR), TEMP_ROOT_DIR);

@@ -232,8 +232,16 @@ describe("mission launch lifecycle", () => {
 				state: "complete",
 				success: true,
 			});
+			const repeated = syncMissionFromAsyncCompletion({
+				runId: "async-missing-mission",
+				asyncDir,
+				mode: "single",
+				state: "complete",
+				success: true,
+			});
 
 			assert.equal(completed, undefined);
+			assert.equal(repeated, undefined);
 			const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
 			assert.deepEqual(events, [{
 				type: "subagent.mission.sync.skipped",
@@ -244,6 +252,7 @@ describe("mission launch lifecycle", () => {
 				missionPath: path.join(binding.location.missionDir, `${binding.missionId}.json`),
 			}]);
 			assert.equal(typeof events[0]?.ts, "number");
+			assert.equal(fs.readdirSync(asyncDir).filter((name) => name.startsWith(".mission-sync-skipped-")).length, 1);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}

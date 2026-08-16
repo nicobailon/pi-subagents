@@ -171,6 +171,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 	const envSnapshot = new Map([
 		["HOME", process.env.HOME],
 		["USERPROFILE", process.env.USERPROFILE],
+		["PI_SUBAGENTS_TEMP_ROOT", process.env.PI_SUBAGENTS_TEMP_ROOT],
 		["PI_CODING_AGENT_DIR", process.env.PI_CODING_AGENT_DIR],
 		["PI_SUBAGENT_EXTRA_AGENT_DIRS", process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS],
 		["PI_SUBAGENT_CHILD", process.env.PI_SUBAGENT_CHILD],
@@ -207,6 +208,7 @@ export async function runRealSubagentSession(options: RealSessionRunOptions): Pr
 		process.chdir(cwd);
 		process.env.HOME = home;
 		process.env.USERPROFILE = home;
+		process.env.PI_SUBAGENTS_TEMP_ROOT ??= path.join(home, "pi-subagents-temp");
 		process.env.PI_CODING_AGENT_DIR = home;
 		delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
 		delete process.env.PI_SUBAGENT_CHILD;

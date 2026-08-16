@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { PROMPT_REDACTED } from "../shared/utils.ts";
@@ -294,13 +295,17 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 		current = readMission(binding.location, binding.missionId);
 	} catch (error) {
 		if (!(error instanceof MissionNotFoundError)) throw error;
+		const reason = "mission-record-missing";
+		const markerId = createHash("sha256").update(JSON.stringify([runId, binding.missionId, reason])).digest("hex");
+		const markerPath = path.join(event.asyncDir, `.mission-sync-skipped-${markerId}.json`);
 		try {
+			fs.writeFileSync(markerPath, `${JSON.stringify({ runId, missionId: binding.missionId, reason })}\n`, { encoding: "utf-8", mode: 0o600, flag: "wx" });
 			fs.appendFileSync(path.join(event.asyncDir, "events.jsonl"), `${JSON.stringify({
 				type: "subagent.mission.sync.skipped",
 				ts: Date.now(),
 				runId,
 				missionId: binding.missionId,
-				reason: "mission-record-missing",
+				reason,
 				missionPath: missionRecordPath(binding.location, binding.missionId),
 			})}\n`, "utf-8");
 		} catch {

@@ -11,5 +11,6 @@
  */
 
 import { register } from "node:module";
+import "./isolated-temp-root.mjs";
 
 register(new URL("./ts-loader.mjs", import.meta.url));
