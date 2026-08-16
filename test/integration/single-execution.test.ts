@@ -536,6 +536,33 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("runs isolation none outside Git and keeps worktree isolation strict", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		assert.equal(fs.existsSync(path.join(tempDir, ".git")), false);
+		mockPi.onCall({ output: "shared cwd" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const script = `return runs.run("main", { agent: "echo", task: "work" })`;
+
+		const shared = await executor.executePublic(
+			"isolation-none",
+			{ async: false, isolation: "none", workflowScript: script },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(shared.isError, undefined, shared.content[0]?.text ?? "shared workflow failed");
+
+		const isolated = await executor.executePublic(
+			"isolation-worktree",
+			{ async: false, isolation: "worktree", workflowScript: script },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(isolated.isError, true);
+		assert.match(isolated.content[0]?.text ?? "", /worktree isolation requires a git repository/i);
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("allows schedule.create to carry the required workflowScript target", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		let forwarded;
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, async (params) => {

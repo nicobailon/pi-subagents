@@ -11,6 +11,7 @@
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
 
 ### Fixed
+- Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while retaining strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
 - Skip malformed agent definitions during discovery so valid agents still list and launch, while showing their configuration errors in management diagnostics (#1200).
 - Resolve `/subagents-generate-profiles` provider probes through the shared Pi executable resolver so configured and Windows-specific Pi commands work. Thanks to [@Wumpf](https://github.com/Wumpf) for #1199.
 - Serialize same-worktree Orca progress-tab creation so numbered tabs appear left to right in sequence instead of racing in the UI. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1196.

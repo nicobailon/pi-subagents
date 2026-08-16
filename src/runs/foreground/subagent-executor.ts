@@ -284,6 +284,7 @@ export interface SubagentParamsLike {
 	mode?: SteerDeliveryMode;
 	workflowScript?: string;
 	chatProgress?: "auto" | "off" | "live-card";
+	isolation?: "none" | "worktree";
 	step?: ChainStep;
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;

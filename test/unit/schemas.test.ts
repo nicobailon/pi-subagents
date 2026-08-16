@@ -187,6 +187,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const worktree = SubagentParams?.properties?.worktree;
 		assert.equal(worktree?.type, "boolean");
 		assert.match(String(worktree?.description ?? ""), /each workflow child/i);
+		const isolation = SubagentParams?.properties?.isolation;
+		assert.equal(isolation?.type, "string");
+		assert.deepEqual(isolation?.enum, ["none", "worktree"]);
 		const gate = SubagentParams?.properties?.gate;
 		assert.equal(gate?.type, "string");
 		assert.equal(gate?.minLength, 1);

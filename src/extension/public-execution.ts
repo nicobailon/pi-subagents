@@ -11,6 +11,8 @@ export interface PublicSubagentExecutionParams {
 	chainName?: unknown;
 	config?: unknown;
 	workflowScript?: unknown;
+	isolation?: unknown;
+	worktree?: unknown;
 	output?: unknown;
 	resume?: unknown;
 	clarify?: unknown;
@@ -29,6 +31,17 @@ export type PublicSubagentExecutionNormalization<T> =
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
 export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T): PublicSubagentExecutionNormalization<T> {
+	if (params.isolation !== undefined) {
+		if (params.isolation !== "none" && params.isolation !== "worktree") {
+			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
+		}
+		const isolationWorktree = params.isolation === "worktree";
+		if (params.worktree !== undefined && params.worktree !== isolationWorktree) {
+			return { ok: false, error: `isolation '${params.isolation}' conflicts with worktree: ${String(params.worktree)}.`, mode: params.workflowScript !== undefined ? "workflow" : "management" };
+		}
+		const { isolation: _isolation, ...normalizedParams } = params;
+		params = { ...normalizedParams, worktree: isolationWorktree } as T;
+	}
 	if (params.runFanoutBudget !== undefined || params.runFanoutAdmitted !== undefined) {
 		return { ok: false, error: "Public execution does not accept internal run fan-out fields.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
 	}
