@@ -53,6 +53,7 @@ import {
 import { discoverAvailableSkills, normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, workflowAwaitedAsyncResultPath } from "../background/async-execution.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
+import { steeringReceipt } from "../background/steering.ts";
 import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession, transferActiveAsyncCapacity, type ActiveAsyncCapacityHandle } from "../background/active-async-capacity.ts";
 import { isScheduledRunAction, type ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
@@ -1368,12 +1369,12 @@ async function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & {
 	const targets = targetIndexes.map((index) => ({ index, state: steps[index]?.status === "pending" ? "scheduled" as const : "pending" as const }));
 	if (targets.every((target) => target.state === "scheduled")) {
 		const scheduled = { requestId, state: "scheduled" as const, deliveryStatus: "queued" as const, sourceRunId: run.id, targets };
-		return { content: [{ type: "text", text: `Steering scheduled for nested async run ${run.id} (request ${requestId}).` }], details: { mode: "management", results: [], steering: scheduled } };
+		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering scheduled for nested async run ${run.id} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: scheduled } };
 	}
 	const waited = await waitForSteeringAction(omitUndefinedProperties({ asyncDir, sourceRunId: run.id, requestId, timeoutMs: 3_000, signal: input.signal }));
 	const result = waited ?? { requestId, state: "pending" as const, deliveryStatus: "queued" as const, sourceRunId: run.id, targets };
 	const stateText = result.state === "failed" ? "failed" : result.state === "partial" ? "partial" : result.deliveryStatus === "queued" ? "queued" : result.state === "delivered" ? "delivered" : "pending";
-	return { content: [{ type: "text", text: `Steering ${stateText} for nested async run ${run.id} (request ${requestId}).` }], ...(result.state === "failed" || result.state === "partial" ? { isError: true } : {}), details: { mode: "management", results: [], steering: result } };
+	return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering ${stateText} for nested async run ${run.id} (request ${requestId}).`) }], ...(result.state === "failed" || result.state === "partial" ? { isError: true } : {}), details: { mode: "management", results: [], steering: result } };
 }
 
 async function interruptNestedRun(target: ResolvedSubagentRunId & { kind: "nested" }): Promise<AgentToolResult<Details>> {

@@ -2735,8 +2735,16 @@ async function runSubagent(
 		.sort((left, right) => left.startedAt - right.startedAt)[0];
 	const supervisorAttentionSteps = new Map<number, ActivityState | undefined>();
 	const mutatingFailureWindowMs = 5 * 60_000;
-	const appendControlEvent = (event: ReturnType<typeof buildControlEvent>) => {
+	const appendControlEvent = (rawEvent: ReturnType<typeof buildControlEvent>) => {
 		if (!controlConfig.enabled) return;
+		const contextStep = statusPayload.steps[rawEvent.index ?? statusPayload.currentStep ?? 0];
+		const event = {
+			...rawEvent,
+			...(contextStep?.workflowKey ?? statusPayload.workflowKey ? { workflowKey: contextStep?.workflowKey ?? statusPayload.workflowKey } : {}),
+			...(contextStep?.phase ? { phase: contextStep.phase } : {}),
+			...(contextStep?.label ? { label: contextStep.label } : {}),
+			...(contextStep?.description ? { taskPreview: contextStep.description } : {}),
+		};
 		const childIntercomTarget = config.childIntercomTargets?.[event.index ?? statusPayload.currentStep];
 		const channels = event.type === "active_long_running"
 			? controlConfig.notifyChannels.filter((channel) => channel !== "intercom")

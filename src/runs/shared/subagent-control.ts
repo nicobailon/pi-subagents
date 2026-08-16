@@ -7,6 +7,8 @@ import {
 	type ResolvedControlConfig,
 } from "../../shared/types.ts";
 import { isToolTimeoutExempt } from "./tool-timeout.ts";
+import { createHash } from "node:crypto";
+import { previewDisplayText } from "../../shared/display-text.ts";
 
 const CONTROL_EVENT_TYPES: ControlEventType[] = ["active_long_running", "needs_attention"];
 const CONTROL_NOTIFICATION_CHANNELS: ControlNotificationChannel[] = ["event", "async", "intercom"];
@@ -116,6 +118,10 @@ export function buildControlEvent(input: {
 	currentPath?: string;
 	elapsedMs?: number;
 	recentFailureSummary?: string;
+	workflowKey?: string;
+	phase?: string;
+	label?: string;
+	taskPreview?: string;
 }): ControlEvent {
 	const ts = input.ts ?? Date.now();
 	const type = input.type ?? (input.to === "active_long_running" ? "active_long_running" : "needs_attention");
@@ -144,6 +150,10 @@ export function buildControlEvent(input: {
 		...(input.currentPath ? { currentPath: input.currentPath } : {}),
 		...(elapsedMs !== undefined ? { elapsedMs } : {}),
 		...(input.recentFailureSummary ? { recentFailureSummary: input.recentFailureSummary } : {}),
+		...(input.workflowKey ? { workflowKey: input.workflowKey } : {}),
+		...(input.phase ? { phase: input.phase } : {}),
+		...(input.label ? { label: input.label } : {}),
+		...(input.taskPreview ? { taskPreview: previewDisplayText(input.taskPreview, 160) } : {}),
 	};
 }
 
@@ -153,7 +163,8 @@ export function shouldNotifyControlEvent(config: ResolvedControlConfig, event: C
 
 export function controlNotificationKey(event: ControlEvent, childIntercomTarget?: string): string {
 	const childKey = childIntercomTarget ?? (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
-	return `${childKey}:${event.type}:${event.reason ?? "idle"}`;
+	const contextHash = createHash("sha256").update(formatControlNudge(event)).digest("hex").slice(0, 8);
+	return `${childKey}:${event.type}:${event.reason ?? "idle"}:${contextHash}`;
 }
 
 export function claimControlNotification(config: ResolvedControlConfig, event: ControlEvent, seenKeys: Set<string>, childIntercomTarget?: string): boolean {
@@ -175,6 +186,17 @@ function formatLongRunningFacts(event: ControlEvent): string | undefined {
 	return facts.length > 0 ? facts.join(" | ") : undefined;
 }
 
+export function formatControlNudge(event: ControlEvent): string {
+	const scope = event.label ?? event.phase ?? event.workflowKey ?? event.taskPreview;
+	if (event.recentFailureSummary) return previewDisplayText(`Resolve the recent failure${scope ? ` for ${scope}` : ""}: ${event.recentFailureSummary}. Report the smallest next step or ask for a decision.`, 160);
+	if (event.currentTool || event.currentPath) {
+		const current = [event.currentTool ? `tool ${event.currentTool}` : undefined, event.currentPath ? `path ${event.currentPath}` : undefined].filter(Boolean).join(" at ");
+		return previewDisplayText(`Check ${current}${scope ? ` for ${scope}` : ""}. Report the smallest next step or ask for a decision.`, 160);
+	}
+	if (scope) return previewDisplayText(`Continue ${scope}. Report the smallest next step or ask for a decision.`, 160);
+	return "What are you blocked on? Reply with the smallest next step or ask for a decision.";
+}
+
 export function formatControlNoticeMessage(event: ControlEvent, childIntercomTarget?: string): string {
 	const runTarget = event.runId;
 	if (event.reason === "completion_guard") {
@@ -187,9 +209,9 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 		].filter((line): line is string => Boolean(line)).join("\n");
 	}
 
-	const nudgeMessage = "What are you blocked on? Reply with the smallest next step or ask for a decision.";
-	const steerCommand = `subagent({ action: "steer", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: "${nudgeMessage}" })`;
-	const nestedResumeCommand = `subagent({ action: "resume", id: "${runTarget}", message: "${nudgeMessage}" })`;
+	const nudgeMessage = formatControlNudge(event);
+	const steerCommand = `subagent({ action: "steer", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: ${JSON.stringify(nudgeMessage)} })`;
+	const nestedResumeCommand = `subagent({ action: "resume", id: "${runTarget}", message: ${JSON.stringify(nudgeMessage)} })`;
 	if (event.type === "active_long_running") {
 		const facts = formatLongRunningFacts(event);
 		return [

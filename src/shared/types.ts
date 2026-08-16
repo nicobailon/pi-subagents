@@ -214,6 +214,10 @@ export interface ControlEvent {
 	currentPath?: string;
 	elapsedMs?: number;
 	recentFailureSummary?: string;
+	workflowKey?: string;
+	phase?: string;
+	label?: string;
+	taskPreview?: string;
 }
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "stopped" | "detached";

@@ -13,9 +13,19 @@ import type {
 	SteeringTargetStatus,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { previewDisplayText } from "../../shared/display-text.ts";
+import { redactSecretValues } from "../shared/permissions.ts";
 
 export const MAX_STEERING_REQUESTS = 20;
 export const STEERING_MESSAGE_PREVIEW_LIMIT = 160;
+
+export function steeringMessagePreview(message: string): string {
+	return previewDisplayText(redactSecretValues(message), STEERING_MESSAGE_PREVIEW_LIMIT);
+}
+
+export function steeringReceipt(message: string, receipt: string): string {
+	return `${receipt} Message: ${JSON.stringify(steeringMessagePreview(message))}`;
+}
 
 export function createSteeringStatus(): SteeringStatus {
 	return { requested: 0, scheduled: 0, pending: 0, delivered: 0, failed: 0, recovered: 0, recent: [] };
@@ -35,7 +45,7 @@ export function recordSteeringRequest(
 		id: input.id,
 		requestedAt: input.requestedAt,
 		...(input.source ? { source: input.source } : {}),
-		messagePreview: input.message.slice(0, STEERING_MESSAGE_PREVIEW_LIMIT),
+		messagePreview: steeringMessagePreview(input.message),
 		targets: input.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}) })),
 	};
 	status.requested++;

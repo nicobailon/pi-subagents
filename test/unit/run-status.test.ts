@@ -1099,6 +1099,25 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("does not advertise a workflow steering command without a live foreground route", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-route-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "workflow-live");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-live", sessionId: "session", mode: "workflow", state: "running", pid: 12345,
+				startedAt: 100, lastUpdate: 100, steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			}));
+			const result = inspectSubagentStatus({ id: "workflow-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true, now: () => 200 });
+			const text = textContent(result);
+			assert.match(text, /Steer: unavailable; no live foreground route is registered in the active session\./);
+			assert.doesNotMatch(text, /action: "steer", id: "workflow-live"/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects ambiguous async run id prefixes", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-ambiguous-"));
 		try {

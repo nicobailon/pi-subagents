@@ -783,6 +783,7 @@ async function runSingleAttempt(
 				currentToolDurationMs: input.currentToolDurationMs ?? currentToolDurationMs(now),
 				currentPath: input.currentPath ?? progress.currentPath,
 				recentFailureSummary: input.recentFailureSummary,
+				taskPreview: task,
 			});
 			emitControlEvent(event);
 			return previous !== "needs_attention";
@@ -809,6 +810,7 @@ async function runSingleAttempt(
 				currentToolDurationMs: currentToolDurationMs(now),
 				currentPath: progress.currentPath,
 				elapsedMs: now - startTime,
+				taskPreview: task,
 			}));
 			return true;
 		};

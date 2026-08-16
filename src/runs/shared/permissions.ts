@@ -14,6 +14,10 @@ const MAX_PREVIEW_BYTES = 2048;
 const SECRET_KEY = /(?:authorization|cookie|credential|password|secret|token|api[-_]?key)/i;
 const SECRET_VALUE = /\b(?:Bearer\s+\S+|(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{8,})\b/gi;
 
+export function redactSecretValues(value: string): string {
+	return value.replace(SECRET_VALUE, "[redacted]");
+}
+
 export function validatePermissionRules(value: unknown, label: string): PermissionRules | undefined {
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object mapping tool names to allow, ask, or deny.`);
@@ -66,7 +70,7 @@ function redact(value: unknown, key = "", depth = 0): unknown {
 	if (Array.isArray(value)) return value.slice(0, 10).map((item) => redact(item, "", depth + 1));
 	if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 20).map(([entryKey, entryValue]) => [entryKey, redact(entryValue, entryKey, depth + 1)]));
 	if (typeof value === "string") {
-		const redacted = value.replace(SECRET_VALUE, "[redacted]");
+		const redacted = redactSecretValues(value);
 		return redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
 	}
 	return value;

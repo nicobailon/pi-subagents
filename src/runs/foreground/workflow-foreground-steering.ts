@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Details, ForegroundRunControl, SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { steeringReceipt } from "../background/steering.ts";
 import {
 	consumeSteerAckFromDir,
 	readSteerCapability,
@@ -146,18 +147,18 @@ export async function steerWorkflowForegroundTarget(input: {
 		targets: [target],
 	};
 	if (input.signal?.aborted) {
-		return { content: [{ type: "text", text: `Steering pending for foreground run ${control.runId} (request ${request.id}); caller aborted before acknowledgment.` }], details: { mode: "management", results: [], steering } };
+		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering pending for foreground run ${control.runId} (request ${request.id}); caller aborted before acknowledgment.`) }], details: { mode: "management", results: [], steering } };
 	}
 	if (ack?.state === "delivered") {
-		return { content: [{ type: "text", text: `Steering delivered for foreground run ${control.runId} (request ${request.id}).` }], details: { mode: "management", results: [], steering } };
+		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering delivered for foreground run ${control.runId} (request ${request.id}).`) }], details: { mode: "management", results: [], steering } };
 	}
 	if (ack?.state === "queued") {
-		return { content: [{ type: "text", text: `Steering queued for foreground run ${control.runId} (request ${request.id}).` }], details: { mode: "management", results: [], steering } };
+		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering queued for foreground run ${control.runId} (request ${request.id}).`) }], details: { mode: "management", results: [], steering } };
 	}
 	if (ack?.state === "failed") {
-		return { content: [{ type: "text", text: `Steering failed for foreground run ${control.runId} (request ${request.id}): ${ack.message}` }], isError: true, details: { mode: "management", results: [], steering } };
+		return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering failed for foreground run ${control.runId} (request ${request.id}): ${ack.message}`) }], isError: true, details: { mode: "management", results: [], steering } };
 	}
-	return { content: [{ type: "text", text: `Steering pending for foreground run ${control.runId} (request ${request.id}); no acknowledgment was received.` }], details: { mode: "management", results: [], steering } };
+	return { content: [{ type: "text", text: steeringReceipt(request.message, `Steering pending for foreground run ${control.runId} (request ${request.id}); no acknowledgment was received.`) }], details: { mode: "management", results: [], steering } };
 }
 
 export function workflowForegroundSteeringDir(asyncDirRoot: string, workflowRunId: string, childRunId: string): string {

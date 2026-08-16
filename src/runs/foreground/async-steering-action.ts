@@ -8,7 +8,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { consumeSteerAcks, deliverInterruptRequest, queueRevivalBrief, requestAsyncSteer, type SteerDeliveryMode, type SteerRequest } from "../background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
-import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
+import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringReceipt, updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
 
 export async function steerAsyncRun(input: {
 	state: SubagentState;
@@ -72,7 +72,7 @@ export async function steerAsyncRun(input: {
 		recordSteeringRequest(status.steering, { id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets: [{ index: 0, state: "scheduled" }] });
 		writeAtomicJson(path.join(asyncDir, "status.json"), status);
 		const queued = { requestId: request.id, state: "scheduled" as const, deliveryStatus: "queued" as const, sourceRunId: status.runId, targets: [{ index: 0, state: "scheduled" as const }] };
-		return { content: [{ type: "text", text: `Follow-up queued for the next resume of retained async run ${status.runId} (request ${request.id}).` }], details: { mode: "management", results: [], steering: queued } };
+		return { content: [{ type: "text", text: steeringReceipt(request.message, `Follow-up queued for the next resume of retained async run ${status.runId} (request ${request.id}).`) }], details: { mode: "management", results: [], steering: queued } };
 	}
 	if (input.index !== undefined) {
 		if (input.index < 0 || input.index >= steps.length) {
@@ -135,17 +135,17 @@ export async function steerAsyncRun(input: {
 	const targets = targetIndexes.map((index) => ({ index, state: status.steps?.[index]?.status === "pending" ? "scheduled" as const : "pending" as const }));
 	if (targets.every((target) => target.state === "scheduled")) {
 		const scheduled = { requestId, state: "scheduled" as const, deliveryStatus: "queued" as const, sourceRunId: status.runId, targets };
-		return { content: [{ type: "text", text: `Steering scheduled for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: scheduled } };
+		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering scheduled for async run ${status.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: scheduled } };
 	}
 	const waited = await waitForSteeringAction({ asyncDir, sourceRunId: status.runId, requestId, timeoutMs: input.ackTimeoutMs ?? 3_000, signal: input.signal });
 	const result = waited ?? { requestId, state: "pending" as const, deliveryStatus: "queued" as const, sourceRunId: status.runId, targets };
 	if (input.signal?.aborted) {
-		return { content: [{ type: "text", text: `Steering pending for async run ${status.runId} (request ${requestId}); caller aborted before recovery.` }], details: { mode: "management", results: [], steering: result } };
+		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering pending for async run ${status.runId} (request ${requestId}); caller aborted before recovery.`) }], details: { mode: "management", results: [], steering: result } };
 	}
 	const finalStatus = readStatus(asyncDir);
 	const finalResult = finalStatus?.steering ? actionResultFromSteeringStatus(finalStatus.steering, status.runId, requestId) : undefined;
 	if (finalResult?.state === "delivered") {
-		return { content: [{ type: "text", text: `Steering delivered for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: finalResult } };
+		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering delivered for async run ${status.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: finalResult } };
 	}
 	const running = (finalStatus?.steps ?? status.steps ?? []).filter((step) => step.status === "running");
 	const recoveryAllowed = (input.mode ?? "steer") === "steer" && status.mode === "single" && status.isNested !== true && running.length === 1 && Boolean(finalStatus?.steering) && (input.index === undefined || input.index === 0);
@@ -160,7 +160,7 @@ export async function steerAsyncRun(input: {
 		try {
 			const latest = readStatus(asyncDir);
 			const latestResult = latest?.steering ? actionResultFromSteeringStatus(latest.steering, status.runId, requestId) : undefined;
-			if (latestResult?.state === "delivered") return { content: [{ type: "text", text: `Steering delivered for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: latestResult } };
+			if (latestResult?.state === "delivered") return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering delivered for async run ${status.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: latestResult } };
 			const committedAt = Date.now();
 			input.onBeforeRecoveryClaim?.(requestId, committedAt);
 			const { claimPath, markerPath } = claimSteeringRecovery(asyncDir, { requestId, sourceRunId: status.runId, committedAt });
@@ -170,7 +170,7 @@ export async function steerAsyncRun(input: {
 			if (preCommitResult?.state === "delivered" && preCommitResult.targets.every((target) => target.deliveredAt !== undefined && target.deliveredAt <= committedAt)) {
 				fs.rmSync(markerPath, { force: true });
 				fs.rmSync(claimPath, { force: true });
-				return { content: [{ type: "text", text: `Steering delivered for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: preCommitResult } };
+				return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering delivered for async run ${status.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: preCommitResult } };
 			}
 			try {
 				deliverInterruptRequest({ asyncDir, source: "steering-recovery" });
@@ -228,7 +228,7 @@ export async function steerAsyncRun(input: {
 			}
 			const recovered = paused.steering ? actionResultFromSteeringStatus(paused.steering, status.runId, requestId, revived.details.asyncId) : undefined;
 			appendSteeringNotice("recovered", `Steering recovered for run ${status.runId}; replacement ${revived.details.asyncId} launched.`);
-			return { content: [{ type: "text", text: `Steering recovered for async run ${status.runId}; replacement ${revived.details.asyncId} launched after the source paused.` }], details: { mode: "management", results: [], steering: recovered ?? { requestId, state: "recovered", sourceRunId: status.runId, replacementRunId: revived.details.asyncId, deliveryStatus: "delivered", targets: [{ index: input.index ?? 0, state: "recovered" }] } } };
+			return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering recovered for async run ${status.runId}; replacement ${revived.details.asyncId} launched after the source paused.`) }], details: { mode: "management", results: [], steering: recovered ?? { requestId, state: "recovered", sourceRunId: status.runId, replacementRunId: revived.details.asyncId, deliveryStatus: "delivered", targets: [{ index: input.index ?? 0, state: "recovered" }] } } };
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			const failedStatus = readStatus(asyncDir);
@@ -242,13 +242,13 @@ export async function steerAsyncRun(input: {
 			}
 			const failed = failedStatus?.steering ? actionResultFromSteeringStatus(failedStatus.steering, status.runId, requestId) : undefined;
 			appendSteeringNotice("failed", `Steering failed for run ${status.runId}: ${reason}`);
-			return { content: [{ type: "text", text: `Steering failed for async run ${status.runId} (request ${requestId}): ${reason}` }], isError: true, details: { mode: "management", results: [], steering: failed ?? { requestId, state: "failed", sourceRunId: status.runId, deliveryStatus: "queued", targets: [{ index: input.index ?? 0, state: "failed", reason }] } } };
+			return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering failed for async run ${status.runId} (request ${requestId}): ${reason}`) }], isError: true, details: { mode: "management", results: [], steering: failed ?? { requestId, state: "failed", sourceRunId: status.runId, deliveryStatus: "queued", targets: [{ index: input.index ?? 0, state: "failed", reason }] } } };
 		}
 	}
 	const stateText = result.state === "failed" ? "failed" : result.state === "partial" ? "partial" : result.deliveryStatus === "queued" ? "queued" : result.state === "delivered" ? "delivered" : result.state === "scheduled" ? "scheduled" : result.state === "recovered" ? "recovered" : "pending";
 	const isError = result.state === "failed" || result.state === "partial";
 	return {
-		content: [{ type: "text", text: `Steering ${stateText} for async run ${status.runId} (request ${requestId}).` }],
+		content: [{ type: "text", text: steeringReceipt(input.message, `Steering ${stateText} for async run ${status.runId} (request ${requestId}).`) }],
 		...(isError ? { isError: true } : {}),
 		details: { mode: "management", results: [], steering: result },
 	};
