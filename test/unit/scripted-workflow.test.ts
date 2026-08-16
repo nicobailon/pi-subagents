@@ -642,6 +642,25 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("rejects nested async helpers before launching children", async () => {
+		let launches = 0;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `async function patchLane(key) { const writer = await runs.run(key, { agent: "worker", task: "write" }); return runs.run(key + "-review", { agent: "reviewer", task: writer.output }); } await Promise.all([patchLane("lane")]);`,
+				timeoutMs: 2_000,
+				async launch(key) {
+					launches++;
+					return { key, ok: true, output: "unexpected", artifactPaths: [] };
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("does not support nested async functions")
+				&& error.partial.children.length === 0,
+		);
+		assert.equal(launches, 0);
+	});
+
 	it("ignores async-looking text in regex literals", async () => {
 		const result = await runWorkflowScript({
 			script: [
@@ -687,6 +706,16 @@ describe("scripted workflow runtime", () => {
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 		});
 		assert.equal(result.value, "helper output");
+	});
+
+	it("accepts Promise.all over a portable plain helper wrapper", async () => {
+		const result = await runWorkflowScript({
+			script: `function helper() { return runs.run("plain-helper-all", { agent: "worker", task: "run" }); } const children = await Promise.all([helper()]); return children[0].output;`,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, output: "helper all output", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.equal(result.value, "helper all output");
 	});
 
 	it("accepts awaited and returned handlers on portable plain helper wrappers", async () => {
