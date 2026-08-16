@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
@@ -18,6 +21,23 @@ describe("scripted workflow runtime", () => {
 
 		assert.equal(implicit.value, null);
 		assert.deepEqual(explicit.value, { answer: 42 });
+	});
+
+	it("resolves the workflow parser from pi-subagents outside the project cwd", async () => {
+		const originalCwd = process.cwd();
+		const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-no-acorn-"));
+		try {
+			process.chdir(emptyCwd);
+			const result = await runWorkflowScript({
+				script: `return "done";`,
+				async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			});
+			assert.equal(result.value, "done");
+		} finally {
+			process.chdir(originalCwd);
+			fs.rmSync(emptyCwd, { recursive: true, force: true });
+		}
 	});
 
 	it("guides invalid JavaScript caused by Markdown fence backticks", async () => {

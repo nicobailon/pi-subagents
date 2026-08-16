@@ -8,6 +8,7 @@
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
 
 ### Fixed
+- Resolve the workflowScript parser from pi-subagents instead of the caller's working directory, so workflows start in projects that do not install Acorn.
 - Keep structured delegation integration coverage active when the test process inherits a subagent-child environment marker.
 - Bound repeated async-state queries to active, exact-id, and recent-terminal indexes instead of scanning the historical async root (#1162).
 - Keep retained workflow children resumable when their managed worktree cwd is preserved in the handoff manifest (#1172).
