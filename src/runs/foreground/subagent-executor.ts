@@ -3538,7 +3538,7 @@ export async function steerWorkflowChildByKey(input: {
 		const childRunId = step?.runId ?? input.resolveRunId?.();
 		if (childRunId) {
 			const asyncDir = path.join(asyncDirRoot, childRunId);
-			const childStatus = readStatus(asyncDir);
+			const childStatus = reconcileAsyncRun(asyncDir).status;
 			if (childStatus && childStatus.state !== "running" && childStatus.state !== "queued" && (input.options.mode !== "follow_up" || !canQueueRetainedAsyncFollowUp(childStatus, input.options.index))) {
 				return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${childStatus.state}.` };
 			}

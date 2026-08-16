@@ -295,6 +295,28 @@ describe("async interrupt action", () => {
 		}
 	});
 
+	it("returns missed when a keyed child's raw running status reconciles terminal", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-key-reconciled-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const workflowDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const childDir = createRunningAsync(state, childRunId, { track: false });
+		const workflowStatus = JSON.parse(fs.readFileSync(path.join(workflowDir, "status.json"), "utf-8"));
+		workflowStatus.steps = [{ agent: "worker", status: "completed", workflowKey: "writer", runId: childRunId, async: true }];
+		writeJson(path.join(workflowDir, "status.json"), workflowStatus);
+		writeJson(path.join(RESULTS_DIR, `${childRunId}.json`), { runId: childRunId, mode: "single", success: false, error: "terminal", results: [] });
+		try {
+			const result = await steerWorkflowChildByKey({ state, workflowRunId, key: "writer", message: "Too late.", options: { ackTimeoutMs: 20 } });
+			assert.equal(result.state, "missed");
+			assert.match(result.error ?? "", /is failed/);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(childRunId));
+			assert.equal(consumeSteerRequests(childDir).length, 0);
+		} finally {
+			cleanup(workflowRunId, workflowDir);
+			cleanup(childRunId, childDir);
+		}
+	});
+
 	it("rejects a steer request when its workflow foreground route is already removed", async () => {
 		const state = createState();
 		const workflowRunId = `workflow-missing-route-${Date.now().toString(36)}`;
