@@ -4,6 +4,7 @@
 
 ### Added
 - Add stable-key `runs.steer` to `workflowScript`, with foreground and async transport routing, structured receipts, trace entries, and unawaited-call enforcement (#1186).
+- Document and cover rolling `workflowScript` fanout with `runs.run`, `Promise.race`, `runs.steer`, and `Promise.all` instead of adding separate child-run event helpers (#1187).
 - Add `defaultSubagentContext: "fork"` to prefer forked context for all launches that omit an explicit context (#1161).
 - Allow `defaultSubagentContext: "fresh"` to override agent fork defaults for launches that omit an explicit context.
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.

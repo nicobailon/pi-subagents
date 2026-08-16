@@ -622,6 +622,52 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(result.trace.filter((entry) => entry.operation === "steer").map(({ state }) => state), ["started", "delivered"]);
 	});
 
+	it("uses Promise.race to roll through child completions and steer the remaining work", async () => {
+		let resolveBeta!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		let resolveGamma!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		const result = await runWorkflowScript({
+			script: `
+				let pending = [
+					{ key: "alpha", promise: runs.run("alpha", { agent: "worker", task: "alpha" }).then((result) => ({ key: "alpha", result })) },
+					{ key: "beta", promise: runs.run("beta", { agent: "worker", task: "beta" }).then((result) => ({ key: "beta", result })) },
+					{ key: "gamma", promise: runs.run("gamma", { agent: "worker", task: "gamma" }).then((result) => ({ key: "gamma", result })) },
+				];
+				const first = await Promise.race(pending.map((child) => child.promise));
+				pending = pending.filter((child) => child.key !== first.key);
+				const target = pending.find((child) => child.key === "gamma") ?? pending[0];
+				const receipt = await runs.steer(target.key, "Challenge the first result: " + first.result.output, { mode: "auto", ackTimeoutMs: 100 });
+				const second = await Promise.race(pending.map((child) => child.promise));
+				pending = pending.filter((child) => child.key !== second.key);
+				const rest = await Promise.all(pending.map((child) => child.promise));
+				return { first: first.key, second: second.key, rest: rest.map((child) => child.key), receipt };
+			`,
+			launch(key) {
+				if (key === "alpha") return Promise.resolve({ key, ok: true, output: "alpha done", artifactPaths: [] });
+				if (key === "beta") return new Promise((resolve) => { resolveBeta = resolve; });
+				return new Promise((resolve) => { resolveGamma = resolve; });
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			async steer(key, message, options) {
+				assert.equal(key, "gamma");
+				assert.equal(message, "Challenge the first result: alpha done");
+				assert.deepEqual(options, { mode: "auto", ackTimeoutMs: 100 });
+				resolveGamma({ key, ok: true, output: "gamma done", artifactPaths: [] });
+				setTimeout(() => resolveBeta({ key: "beta", ok: true, output: "beta done", artifactPaths: [] }), 5);
+				return { key, state: "delivered", requestId: "request-rolling", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] };
+			},
+		});
+
+		assert.deepEqual(result.value, {
+			first: "alpha",
+			second: "gamma",
+			rest: ["beta"],
+			receipt: { key: "gamma", state: "delivered", requestId: "request-rolling", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] },
+		});
+		assert.deepEqual(result.children.map((child) => child.key), ["alpha", "beta", "gamma"]);
+		assert.deepEqual(result.trace.filter((entry) => entry.operation === "run" && entry.state === "completed").map((entry) => entry.key), ["alpha", "gamma", "beta"]);
+		assert.deepEqual(result.trace.filter((entry) => entry.operation === "steer").map(({ key, state }) => ({ key, state })), [{ key: "gamma", state: "started" }, { key: "gamma", state: "delivered" }]);
+	});
+
 	it("waits for and rejects an unawaited runs.steer side effect", async () => {
 		let steerSettled = false;
 		await assert.rejects(

@@ -78,6 +78,23 @@ In workflow runs that omit `context`, each `runs.run` child follows the global `
 
 The workflow trace records the attempt and receipt. Always await, return, or include the promise in an awaited standard Promise combinator. Unawaited steering calls reject workflow completion after the side effect settles. `Promise.race` remains the rolling primitive. This slice reuses the foreground and async steering transports and disables steering recovery.
 
+For rolling fanout, keep the launched `runs.run` promises in ordinary JavaScript data. `Promise.race` gives the next completed child, `runs.steer` can challenge a still-running keyed sibling, and `Promise.all` collects the rest. No separate `runs.start`, `runs.next`, or `runs.collect` API is exposed.
+
+```js
+{ workflowScript: `
+  let pending = [
+    { key: "writer", promise: runs.run("writer", { agent: "worker", task: "Draft the fix" }).then((result) => ({ key: "writer", result })) },
+    { key: "reviewer", promise: runs.run("reviewer", { agent: "reviewer", task: "Review likely risks" }).then((result) => ({ key: "reviewer", result })) }
+  ];
+  const first = await Promise.race(pending.map((child) => child.promise));
+  pending = pending.filter((child) => child.key !== first.key);
+  const target = pending[0];
+  const receipt = await runs.steer(target.key, "Use this early review:\n" + first.result.output, { mode: "auto" });
+  const rest = await Promise.all(pending.map((child) => child.promise));
+  return { first: first.key, rest: rest.map((child) => child.key), receipt };
+` }
+```
+
 ### Output mode details
 
 Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging.
