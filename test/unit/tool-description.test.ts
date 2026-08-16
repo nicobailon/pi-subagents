@@ -7,9 +7,13 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
 	buildSubagentToolDescription,
+	buildSubagentToolPromptMetadata,
 	COMPACT_SUBAGENT_TOOL_DESCRIPTION,
+	DEFAULT_SUBAGENT_TOOL_DESCRIPTION,
 	FULL_SUBAGENT_TOOL_DESCRIPTION,
 	SUBAGENT_SAFETY_GUIDANCE,
+	SUBAGENT_TOOL_PROMPT_GUIDELINES,
+	SUBAGENT_TOOL_PROMPT_SNIPPET,
 } from "../../src/extension/tool-description.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
@@ -28,8 +32,27 @@ function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 }
 
 describe("registered subagent tool description", () => {
-	it("describes structured single-child execution and workflow orchestration", () => {
+	it("uses split metadata by default", () => {
 		const description = buildSubagentToolDescription();
+		const metadata = buildSubagentToolPromptMetadata();
+		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(Buffer.byteLength(description), 635);
+		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
+		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
+		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 741);
+		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /runs\.all, not runs\.run promises.*\.output/i);
+	});
+
+	it("keeps the full description when configured", () => {
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "full" });
+		assert.equal(buildSubagentToolPromptMetadata({ toolDescriptionMode: "full" }).promptSnippet, undefined);
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
 		assert.match(description, /SINGLE CHILD:.*starts exactly one child through the workflow runtime/i);
 		assert.match(description, /Do not combine agent\/task with action or workflowScript/i);
@@ -185,7 +208,7 @@ describe("registered subagent tool description", () => {
 		assert.ok(warnings.some((message) => message.includes("Ignoring invalid toolDescriptionMode")));
 	});
 
-	function readRegisteredTool(agentDir: string): { description: string; properties: string[] } {
+	function readRegisteredTool(agentDir: string): { description: string; promptSnippet?: string; promptGuidelines?: string[]; properties: string[] } {
 		const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -206,7 +229,7 @@ describe("registered subagent tool description", () => {
 			});
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			process.stdout.write(JSON.stringify({ description: registeredTool.description, properties: Object.keys(registeredTool.parameters.properties) }));
+			process.stdout.write(JSON.stringify({ description: registeredTool.description, promptSnippet: registeredTool.promptSnippet, promptGuidelines: registeredTool.promptGuidelines, properties: Object.keys(registeredTool.parameters.properties) }));
 		`;
 		const output = execFileSync(
 			process.execPath,
@@ -220,7 +243,7 @@ describe("registered subagent tool description", () => {
 			],
 			{ cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" },
 		);
-		return JSON.parse(output) as { description: string; properties: string[] };
+		return JSON.parse(output) as { description: string; promptSnippet?: string; promptGuidelines?: string[]; properties: string[] };
 	}
 
 	function writeExtensionConfig(agentDir: string, config: Record<string, unknown>): void {
@@ -229,14 +252,27 @@ describe("registered subagent tool description", () => {
 		fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
 	}
 
-	it("registers full, compact, custom, and fallback descriptions from extension config", () => {
+	it("registers split, full, compact, custom, and fallback descriptions from extension config", () => {
 		const defaultAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"));
 		writeExtensionConfig(defaultAgentDir, {});
-		assert.equal(readRegisteredTool(defaultAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
+		const defaultTool = readRegisteredTool(defaultAgentDir);
+		assert.equal(defaultTool.description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(defaultTool.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
+		assert.deepEqual(defaultTool.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
+
+		const fullAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-full-"));
+		writeExtensionConfig(fullAgentDir, { toolDescriptionMode: "full" });
+		const fullTool = readRegisteredTool(fullAgentDir);
+		assert.equal(fullTool.description, FULL_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(fullTool.promptSnippet, undefined);
+		assert.equal(fullTool.promptGuidelines, undefined);
 
 		const compactAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-"));
 		writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact" });
-		assert.equal(readRegisteredTool(compactAgentDir).description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+		const compactTool = readRegisteredTool(compactAgentDir);
+		assert.equal(compactTool.description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(compactTool.promptSnippet, undefined);
+		assert.equal(compactTool.promptGuidelines, undefined);
 
 		const customAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-custom-"));
 		writeExtensionConfig(customAgentDir, { toolDescriptionMode: "custom" });

@@ -6,6 +6,19 @@ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
 
+export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to configured subagents. For execution, omit action and use {agent, task?} for one child or workflowScript for orchestration. For multi-step or parallel work, make exactly one top-level subagent call with workflowScript and async:true; launch children only inside that script and do not make another top-level call for them. Use runs.run('key',{agent,task}) for one child, runs.all([{key:'a',agent:'reviewer',task:'...'},{key:'b',agent:'reviewer',task:'...'}]) for parallel children, and pass child results via .output. Use action only for management/control. Use guide or the pi-subagents skill for advanced workflow details.`;
+
+export const SUBAGENT_TOOL_PROMPT_SNIPPET = "Delegate to subagents; orchestrate in one workflowScript call.";
+
+export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
+	"Use subagent only when delegation is needed. Before executing, call { action: \"list\" } and run only executable, non-disabled agents.",
+	"Omit action for execution. Use { agent, task? } only for one child; use workflowScript for multi-step or parallel work.",
+	"workflowScript means exactly one top-level subagent tool call with async:true. Inside it, use runs.run/runs.all to launch children; do not make another top-level subagent call for those children.",
+	"For parallel work, pass descriptor objects to runs.all, not runs.run promises, and consume child results through .output.",
+	"Keep one writer per cwd/worktree unless writers run in isolated worktrees.",
+	"Use guide or the pi-subagents skill for advanced scheduling, missions, steering, and retention.",
+];
+
 export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Use { action: "list" } before execution and only run executable/non-disabled agents.
 • Keep execution and management separate: omit action for structured single-child or workflowScript execution; use action only for management/control.
@@ -65,6 +78,19 @@ export interface ToolDescriptionOptions {
 	cwd?: string;
 	agentDir?: string;
 	warn?: (message: string) => void;
+}
+
+export interface SubagentToolPromptMetadata {
+	promptSnippet?: string;
+	promptGuidelines?: string[];
+}
+
+export function buildSubagentToolPromptMetadata(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}): SubagentToolPromptMetadata {
+	if (config.toolDescriptionMode !== undefined) return {};
+	return {
+		promptSnippet: SUBAGENT_TOOL_PROMPT_SNIPPET,
+		promptGuidelines: SUBAGENT_TOOL_PROMPT_GUIDELINES,
+	};
 }
 
 export function resolveToolDescriptionMode(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): ToolDescriptionMode {
@@ -155,6 +181,7 @@ function withMandatorySafetyGuidance(description: string): string {
 }
 
 export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
+	if (config.toolDescriptionMode === undefined) return DEFAULT_SUBAGENT_TOOL_DESCRIPTION;
 	const mode = resolveToolDescriptionMode(config, options);
 	let description: string;
 	if (mode === "compact") description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;

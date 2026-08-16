@@ -36,6 +36,7 @@
 - Preserve workflow child task output when neither the workflow nor child configures an output file (#1136).
 
 ### Changed
+- Register the default `subagent` tool prompt as split metadata: a short description plus `promptSnippet` and `promptGuidelines`, while keeping explicit `full`, `compact`, and `custom` description modes.
 - Keep `worktree: true` workflow children on the single-child path while preserving managed patch handoffs, and remove unused foreground chain/parallel execution and durable chain management surfaces.
 - Document scripted chaining as the supported workflow API, with migration examples for removed top-level chain/task inputs.
 - Document that a host's session lifetime owns completion wakes, and how to key an idle check on live run state rather than parent activity. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1144.
