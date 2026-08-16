@@ -22,12 +22,14 @@ function removeProgressFiles(prefix: string): void {
 afterEach(() => {
 	const progressRoot = path.join(TEMP_ROOT_DIR, "orca-progress");
 	for (const dir of tempDirs.splice(0)) {
-		const key = createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 20);
+		let scope = path.resolve(dir);
+		try { scope = fs.realpathSync(dir); } catch { /* use the lexical path */ }
+		const key = createHash("sha256").update(scope).digest("hex").slice(0, 20);
 		fs.rmSync(path.join(progressRoot, `counter-${key}`), { force: true });
 		fs.rmSync(path.join(progressRoot, `counter-${key}.lock`), { recursive: true, force: true });
 		if (fs.existsSync(progressRoot)) {
 			for (const name of fs.readdirSync(progressRoot)) {
-				if (name.startsWith(`create-${key}-`) && name.endsWith(".ready")) fs.rmSync(path.join(progressRoot, name), { force: true });
+				if (name.startsWith(`create-${key}-`) && (name.endsWith(".ready") || name.endsWith(".pending"))) fs.rmSync(path.join(progressRoot, name), { force: true });
 			}
 		}
 		fs.rmSync(dir, { recursive: true, force: true });
@@ -365,6 +367,65 @@ test("same-worktree Orca creates wait for the previous numbered tab", { skip: pr
 	assert.deepEqual(titles, ["subagent · worker · 1", "subagent · reviewer · 2"]);
 	first.finish("failed");
 	second.finish("failed");
+});
+
+test("a missing predecessor marker does not delay the next tab", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const key = createHash("sha256").update(fs.realpathSync(dir)).digest("hex").slice(0, 20);
+	const progressRoot = path.join(TEMP_ROOT_DIR, "orca-progress");
+	fs.mkdirSync(progressRoot, { recursive: true, mode: 0o700 });
+	const stalePending = path.join(progressRoot, `create-${key}-stale.pending`);
+	fs.writeFileSync(path.join(progressRoot, `counter-${key}`), `4\n${stalePending}\n`, { encoding: "utf-8", mode: 0o600 });
+	const capture = path.join(dir, "capture.json");
+	const fakeOrca = writeCaptureOrca(dir);
+	const startedAt = Date.now();
+	const tab = createOrcaProgressTab({
+		cwd: dir,
+		runId: "stale-predecessor",
+		agent: "worker",
+		index: 0,
+		config: { enabled: true },
+		command: fakeOrca,
+		env: { ...process.env, ORCA_TEST_CAPTURE: capture },
+	});
+	assert.ok(tab);
+	await waitForFile(capture);
+	assert.ok(Date.now() - startedAt < 2_000, "a missing predecessor delayed tab creation");
+	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
+	assert.equal(args[args.indexOf("--title") + 1], "subagent · worker · 5");
+	tab.finish("failed");
+});
+
+test("later same-worktree creates wait only for their immediate predecessor", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
+	const dir = tempDir();
+	fs.mkdirSync(path.join(dir, ".git"));
+	const order = path.join(dir, "order.txt");
+	const firstCapture = path.join(dir, "first.json");
+	const secondCapture = path.join(dir, "second.json");
+	const thirdCapture = path.join(dir, "third.json");
+	const fakeOrca = writeNodeCommand(dir, "orca", [
+		"const fs=require('fs');",
+		"const args=process.argv.slice(2);",
+		"const title=args[args.indexOf('--title')+1];",
+		"if(title.endsWith(' · 1')){const until=Date.now()+700;while(Date.now()<until){};fs.writeFileSync(process.env.ORCA_TEST_FIRST,JSON.stringify(args));}",
+		"else if(title.endsWith(' · 2')){const until=Date.now()+400;while(Date.now()<until){};fs.writeFileSync(process.env.ORCA_TEST_SECOND,JSON.stringify(args));}",
+		"else fs.writeFileSync(process.env.ORCA_TEST_THIRD,JSON.stringify(args));",
+		"fs.appendFileSync(process.env.ORCA_TEST_ORDER,title+'\\n');",
+	].join(""));
+	const env = { ...process.env, ORCA_TEST_FIRST: firstCapture, ORCA_TEST_SECOND: secondCapture, ORCA_TEST_THIRD: thirdCapture, ORCA_TEST_ORDER: order };
+	const first = createOrcaProgressTab({ cwd: dir, runId: "queued-first", agent: "worker", index: 0, config: { enabled: true }, command: fakeOrca, env });
+	const second = createOrcaProgressTab({ cwd: dir, runId: "queued-second", agent: "reviewer", index: 0, config: { enabled: true }, command: fakeOrca, env });
+	const third = createOrcaProgressTab({ cwd: dir, runId: "queued-third", agent: "scout", index: 0, config: { enabled: true }, command: fakeOrca, env });
+	assert.ok(first);
+	assert.ok(second);
+	assert.ok(third);
+	await waitForFile(thirdCapture);
+	const titles = fs.readFileSync(order, "utf-8").trim().split("\n");
+	assert.deepEqual(titles, ["subagent · worker · 1", "subagent · reviewer · 2", "subagent · scout · 3"]);
+	first.finish("failed");
+	second.finish("failed");
+	third.finish("failed");
 });
 
 test("mirror output truncates at a finite byte bound", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {

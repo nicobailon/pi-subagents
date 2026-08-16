@@ -24,9 +24,9 @@ const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	"const fs=require('node:fs');",
 	"const timeout=Number(process.argv[1]),grace=Number(process.argv[2]),waitTimeout=Number(process.argv[3]);",
 	"const previous=process.argv[4],done=process.argv[5],command=process.argv[6],args=process.argv.slice(7);",
-	"function mark(){try{fs.writeFileSync(done,'')}catch{}}",
-	"function ready(){if(previous==='-')return true;try{return fs.existsSync(previous)}catch{return false}}",
-	"const waitStart=Date.now();",
+	"function mark(){try{fs.writeFileSync(done.replace(/\\.pending$/,'.ready'),'')}catch{}}",
+	"function exists(file){try{return fs.existsSync(file)}catch{return false}}",
+	"function predecessorReady(){if(previous==='-')return true;if(exists(previous.replace(/\\.pending$/,'.ready')))return true;return !exists(previous)}",
 	"function start(){",
 	" try{",
 	"  const child=spawn(command,args,{stdio:'ignore',windowsHide:true});",
@@ -37,8 +37,8 @@ const ORCA_CREATE_WATCHDOG_SCRIPT = [
 	"  child.once('close',code=>{clear();process.exitCode=code===0?0:1});",
 	" }catch{mark();process.exitCode=1}",
 	"}",
-	"function waitPrev(){if(ready()||Date.now()-waitStart>=waitTimeout)return start();setTimeout(waitPrev,20)}",
-	"waitPrev();",
+	"if(predecessorReady())start();",
+	"else{const waitStart=Date.now();(function waitPrev(){if(predecessorReady()||Date.now()-waitStart>=waitTimeout)return start();setTimeout(waitPrev,20)})();}",
 ].join("");
 
 const ORCA_CLEANUP_WATCHDOG_SCRIPT = [
@@ -126,7 +126,7 @@ function progressRoot(): string {
 function pruneStaleProgressFiles(root: string, now = Date.now()): void {
 	try {
 		for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-			if (!entry.isFile() || (!entry.name.endsWith(".log") && !entry.name.endsWith(".done") && !entry.name.endsWith(".ready"))) continue;
+			if (!entry.isFile() || (!entry.name.endsWith(".log") && !entry.name.endsWith(".done") && !entry.name.endsWith(".ready") && !entry.name.endsWith(".pending"))) continue;
 			const file = path.join(root, entry.name);
 			try {
 				if (now - fs.statSync(file).mtimeMs > STALE_PROGRESS_MAX_AGE_MS) fs.rmSync(file, { force: true });
@@ -191,10 +191,18 @@ function withSequenceLock<T>(root: string, key: string, fn: () => T): T | undefi
 	}
 }
 
+function predecessorMarker(pathValue: string | undefined): string | undefined {
+	if (!pathValue) return undefined;
+	const ready = pathValue.endsWith(".pending") ? pathValue.replace(/\.pending$/, ".ready") : pathValue;
+	const pending = ready.replace(/\.ready$/, ".pending");
+	if (fs.existsSync(ready) || fs.existsSync(pending)) return pending;
+	return undefined;
+}
+
 function reserveTabSequence(root: string, cwd: string): { sequence: number; previousCreateDone?: string; createDone: string } | undefined {
 	const key = sequenceKey(cwd);
 	const counterPath = path.join(root, `counter-${key}`);
-	const createDone = path.join(root, `create-${key}-${randomUUID()}.ready`);
+	const createDone = path.join(root, `create-${key}-${randomUUID()}.pending`);
 	return withSequenceLock(root, key, () => {
 		let current = 0;
 		let previousCreateDone: string | undefined;
@@ -203,13 +211,15 @@ function reserveTabSequence(root: string, cwd: string): { sequence: number; prev
 			const [countLine, previousLine] = raw.split("\n");
 			const parsed = Number.parseInt(countLine ?? "", 10);
 			if (Number.isSafeInteger(parsed) && parsed >= 0) current = parsed;
-			if (previousLine?.trim()) previousCreateDone = previousLine.trim();
+			previousCreateDone = predecessorMarker(previousLine?.trim());
 		} catch { /* first tab for this worktree */ }
 		const next = current + 1;
 		try {
+			fs.writeFileSync(createDone, "", { encoding: "utf-8", mode: 0o600 });
 			fs.writeFileSync(counterPath, `${next}\n${createDone}\n`, { encoding: "utf-8", mode: 0o600 });
 			return { sequence: next, previousCreateDone, createDone };
 		} catch {
+			try { fs.rmSync(createDone, { force: true }); } catch { /* best effort */ }
 			return undefined;
 		}
 	});
@@ -297,11 +307,14 @@ export function createOrcaProgressTab(input: {
 	const logPath = path.join(root, `${stem}.log`);
 	const donePath = path.join(root, `${stem}.done`);
 	const title = `subagent · ${agent} · ${tabSequence}`;
+	const markCreateReady = () => {
+		try { fs.writeFileSync(reservation.createDone.replace(/\.pending$/, ".ready"), ""); } catch { /* unblock later tabs */ }
+	};
 	try {
 		fs.writeFileSync(logPath, `pi-subagents / ${agent}\nrun ${runId} · child ${index + 1}\n${"─".repeat(48)}\n`, { encoding: "utf-8", mode: 0o600 });
 		fs.rmSync(donePath, { force: true });
 	} catch {
-		try { fs.writeFileSync(reservation.createDone, ""); } catch { /* unblock later tabs */ }
+		markCreateReady();
 		return undefined;
 	}
 
@@ -357,12 +370,12 @@ export function createOrcaProgressTab(input: {
 			if (code !== 0) failObserver();
 		});
 		watchdog.once("error", () => {
-			try { fs.writeFileSync(reservation.createDone, ""); } catch { /* unblock later tabs */ }
+			markCreateReady();
 			failObserver();
 		});
 		watchdog.unref();
 	} catch {
-		try { fs.writeFileSync(reservation.createDone, ""); } catch { /* unblock later tabs */ }
+		markCreateReady();
 		failObserver();
 		return undefined;
 	}
