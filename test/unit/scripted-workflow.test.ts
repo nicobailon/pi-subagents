@@ -566,6 +566,96 @@ describe("scripted workflow runtime", () => {
 		);
 	});
 
+	it("validates runs.steer input before calling the host", async () => {
+		for (const script of [
+			`return runs.steer("bad key", "guide");`,
+			`return runs.steer("writer", " ");`,
+			`return runs.steer("writer", "guide", { mode: "later" });`,
+			`return runs.steer("writer", "guide", { index: -1 });`,
+			`return runs.steer("writer", "guide", { ackTimeoutMs: 0 });`,
+			`return runs.steer("writer", "guide", { runId: "raw-id" });`,
+		]) {
+			let steerCalls = 0;
+			await assert.rejects(
+				runWorkflowScript({
+					script,
+					async launch(key) { return { key, ok: true, output: "done", artifactPaths: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+					async steer(key) { steerCalls++; return { key, state: "delivered" }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /runs\.steer/.test(error.message),
+			);
+			assert.equal(steerCalls, 0);
+		}
+	});
+
+	it("steers a still-running sibling after Promise.race and awaits both children", async () => {
+		let resolveSlow!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		const result = await runWorkflowScript({
+			script: `
+				const fast = runs.run("fast", { agent: "worker", task: "fast" });
+				const slow = runs.run("slow", { agent: "worker", task: "slow" });
+				const first = await Promise.race([fast, slow]);
+				const receipt = await runs.steer("slow", "Focus on tests.", { mode: "auto", index: 0, ackTimeoutMs: 100 });
+				const children = await Promise.all([fast, slow]);
+				return { first: first.key, receipt, children: children.map((child) => child.key) };
+			`,
+			launch(key) {
+				if (key === "fast") return Promise.resolve({ key, ok: true, output: "fast", artifactPaths: [] });
+				return new Promise((resolve) => { resolveSlow = resolve; });
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			async steer(key, message, options) {
+				assert.equal(key, "slow");
+				assert.equal(message, "Focus on tests.");
+				assert.deepEqual(options, { mode: "auto", index: 0, ackTimeoutMs: 100 });
+				resolveSlow({ key, ok: true, output: "slow", artifactPaths: [] });
+				return { key, state: "delivered", requestId: "request-1", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] };
+			},
+		});
+
+		assert.deepEqual(result.value, {
+			first: "fast",
+			receipt: { key: "slow", state: "delivered", requestId: "request-1", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] },
+			children: ["fast", "slow"],
+		});
+		assert.deepEqual(result.trace.filter((entry) => entry.operation === "steer").map(({ state }) => state), ["started", "delivered"]);
+	});
+
+	it("waits for and rejects an unawaited runs.steer side effect", async () => {
+		let steerSettled = false;
+		await assert.rejects(
+			runWorkflowScript({
+				script: `await runs.run("writer", { agent: "worker", task: "work" }); runs.steer("writer", "Checkpoint."); return "done";`,
+				async launch(key) { return { key, ok: true, output: "done", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async steer(key) {
+					await new Promise((resolve) => setTimeout(resolve, 10));
+					steerSettled = true;
+					return { key, state: "queued" };
+				},
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("unawaited runs.steer call(s): 'writer'")
+				&& error.partial.trace.some((entry) => entry.operation === "steer" && entry.state === "queued"),
+		);
+		assert.equal(steerSettled, true);
+	});
+
+	it("rejects an unawaited runs.steer host-invariant failure", async () => {
+		await assert.rejects(
+			runWorkflowScript({
+				script: `runs.steer("missing", "Checkpoint."); return "done";`,
+				async launch(key) { return { key, ok: true, output: "done", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				async steer(key) { return { key, state: "delivered" }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("unawaited runs.steer call(s): 'missing'")
+				&& error.partial.trace.some((entry) => entry.operation === "steer" && entry.state === "failed"),
+		);
+	});
+
 	it("rejects and aborts an unawaited child launch when the script completes", async () => {
 		let childAborted = false;
 		await assert.rejects(

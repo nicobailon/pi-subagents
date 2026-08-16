@@ -70,6 +70,23 @@ subagent({ workflowScript: `
 ` });
 ```
 
+### Steering a workflow child
+
+Use `await runs.steer(key, message, options?)` after `runs.run` or `runs.all` has launched that stable key. Scripts do not target raw run ids. The optional fields are `mode: "steer" | "follow_up" | "auto"`, a non-negative child `index`, and a positive `ackTimeoutMs`.
+
+```js
+subagent({ workflowScript: `
+  const writer = runs.run("writer", { agent: "worker", task: "Implement the change" });
+  const evidence = await runs.run("evidence", { agent: "scout", task: "Find the exact contract" });
+  const receipt = await runs.steer("writer", "Also check: " + evidence.output, { mode: "follow_up" });
+  return { writer: await writer, receipt };
+` });
+```
+
+The receipt state is `queued`, `delivered`, `missed`, or `failed`. `delivered` means the child Pi session accepted the input. It does not mean the model followed it. `missed` means the keyed child became terminal or had no live route before delivery. This first slice uses the existing foreground and async steering transports but does not start steering recovery. Workflow traces include one steering attempt entry and one receipt entry.
+
+Always await or return a `runs.steer` promise. The workflow waits for an observed steering side effect to settle before it exits and rejects fire-and-forget calls. Use ordinary `Promise.race` when the first child or steering receipt should advance the script. There is no callback API or child inbox access.
+
 Use named outputs when later workflow steps need structured data or durable references:
 
 ```js

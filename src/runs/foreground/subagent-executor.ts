@@ -114,7 +114,7 @@ import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
 import { handleHerdrInspectorAction, HERDR_INSPECTOR_ACTIONS } from "../../inspectors/herdr/actions.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
-import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../workflows/scripted-workflow.ts";
+import { previewSimpleWorkflowRun, runWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { resolveWorkflowChatProgress, type WorkflowChatProgressProjection } from "../../workflows/chat-progress.ts";
 import {
 	cleanupWorktrees,
@@ -3486,6 +3486,89 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 	};
 }
 
+function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): WorkflowSteerResult {
+	const steering = result.details.steering;
+	const error = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n") || undefined;
+	if (!steering) return { key, state: "failed", ...(error ? { error } : {}) };
+	const state = result.isError === true || steering.state === "failed" || steering.state === "partial"
+		? "failed"
+		: steering.deliveryStatus === "delivered" ? "delivered" : "queued";
+	return {
+		key,
+		state,
+		requestId: steering.requestId,
+		deliveryStatus: steering.deliveryStatus,
+		targets: steering.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}) })),
+		...(state === "failed" && error ? { error } : {}),
+	};
+}
+
+export async function steerWorkflowChildByKey(input: {
+	state: SubagentState;
+	workflowRunId: string;
+	key: string;
+	message: string;
+	options: WorkflowSteerOptions;
+	signal?: AbortSignal;
+	asyncDirRoot?: string;
+	resolveRunId?: () => string | undefined;
+}): Promise<WorkflowSteerResult> {
+	const asyncDirRoot = input.asyncDirRoot ?? DIRS.async;
+	const ackTimeoutMs = input.options.ackTimeoutMs ?? 3_000;
+	const deadline = Date.now() + ackTimeoutMs;
+	while (true) {
+		const control = [...input.state.foregroundControls.values()].find((candidate) => candidate.parentWorkflowRunId === input.workflowRunId
+			&& candidate.workflowKey === input.key
+			&& Boolean(candidate.workflowSteeringDir)
+			&& (candidate.activeChildren?.size ?? 0) > 0);
+		if (control) {
+			const result = await steerWorkflowForegroundTarget({
+				target: { control, workflowRunId: input.workflowRunId, sourceRunId: control.runId },
+				message: input.message,
+				mode: input.options.mode,
+				index: input.options.index,
+				ackTimeoutMs: Math.max(1, deadline - Date.now()),
+				signal: input.signal,
+			});
+			return workflowSteerReceipt(input.key, result);
+		}
+
+		const workflowStatus = readStatus(path.join(asyncDirRoot, input.workflowRunId));
+		const step = workflowStatus?.steps?.find((candidate) => candidate.workflowKey === input.key);
+		const childRunId = step?.runId ?? input.resolveRunId?.();
+		if (childRunId) {
+			const asyncDir = path.join(asyncDirRoot, childRunId);
+			const childStatus = readStatus(asyncDir);
+			if (childStatus && childStatus.state !== "running" && childStatus.state !== "queued" && input.options.mode !== "follow_up") {
+				return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${childStatus.state}.` };
+			}
+			if (childStatus) {
+				const result = await steerAsyncRun({
+					state: input.state,
+					runId: childRunId,
+					message: input.message,
+					mode: input.options.mode,
+					index: input.options.index,
+					ackTimeoutMs: Math.max(1, deadline - Date.now()),
+					location: { asyncDir },
+					signal: input.signal,
+				});
+				return workflowSteerReceipt(input.key, result);
+			}
+		}
+		if (step && step.status !== "running" && step.status !== "pending") {
+			return { key: input.key, state: "missed", error: `Workflow child '${input.key}' is ${step.status}.` };
+		}
+		if (workflowStatus && workflowStatus.state !== "running" && workflowStatus.state !== "queued") {
+			return { key: input.key, state: "missed", error: `Workflow '${input.workflowRunId}' is ${workflowStatus.state}.` };
+		}
+		if (input.signal?.aborted || Date.now() >= deadline) {
+			return { key: input.key, state: "missed", error: `Workflow child '${input.key}' had no live steering route.` };
+		}
+		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10, Math.max(1, deadline - Date.now()))));
+	}
+}
+
 export function prepareWorkflowLaunchParams(
 	workflowDefaults: SubagentParamsLike,
 	childParams: Record<string, unknown>,
@@ -3868,6 +3951,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				void Promise.resolve().then(async () => {
 					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 					const workflowResults: SingleResult[] = [];
+					const workflowChildRunIds = new Map<string, string>();
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
@@ -4019,6 +4103,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									if (childResult.savedOutputPath) producedChildOutputPaths.add(childResult.savedOutputPath);
 								}
 								const child = workflowChildResult(key, result);
+								if (child.runId) workflowChildRunIds.set(key, child.runId);
 								const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 								if (step) {
 									step.async = Boolean(result.details.asyncId || result.details.asyncDir);
@@ -4042,6 +4127,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								return child;
 							},
 							status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
+							steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 						});
 						const returnPreview = formatWorkflowValue(workflow.value).slice(0, 1_000);
 						const emitPreview = workflow.emits.length > 0 ? ` Emitted: ${workflow.emits.map(formatWorkflowValue).join(", ").slice(0, 1_000)}` : "";
@@ -4090,6 +4176,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const claimedOutputPaths = new Map<string, string>();
 			const producedChildOutputPaths = new Set<string>();
 			const workflowResults: SingleResult[] = [];
+			const workflowChildRunIds = new Map<string, string>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 			const sendWorkflowProgress = () => {
@@ -4156,6 +4243,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 						const child = workflowChildResult(key, result);
+						if (child.runId) workflowChildRunIds.set(key, child.runId);
 						const childStatus = missionWorkflowChildStatus(result);
 						recordMissionWorkflowChild(missionBinding, _id, key, {
 							status: childStatus,
@@ -4169,6 +4257,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						return child;
 					},
 					status: async (keyOrRunId, workflowSignal) => workflowChildResult(keyOrRunId, await execute(randomUUID(), { action: "status", id: keyOrRunId }, workflowSignal, undefined, ctx, preserveActiveSession)),
+					steer: (key, message, options, workflowSignal) => steerWorkflowChildByKey({ state: deps.state, workflowRunId: _id, key, message, options, signal: workflowSignal, resolveRunId: () => workflowChildRunIds.get(key) }),
 				});
 				const traceLines = workflow.trace.map((entry) => `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.durationMs !== undefined ? ` in ${entry.durationMs}ms` : ""}${entry.error ? ` — ${entry.error}` : ""}`);
 				const sections = ["Workflow completed.", `Return:\n${formatWorkflowValue(workflow.value)}`];

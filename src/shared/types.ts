@@ -1080,9 +1080,9 @@ export interface Details {
 	workflow?: {
 		value?: unknown;
 		trace: Array<{
-			operation: "run" | "status";
+			operation: "run" | "status" | "steer";
 			key: string;
-			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused";
+			state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused" | "queued" | "delivered" | "missed";
 			agent?: string;
 			runId?: string;
 			phase?: string;

@@ -34,6 +34,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /SINGLE CHILD:.*starts exactly one child through the workflow runtime/i);
 		assert.match(description, /Do not combine agent\/task with action or workflowScript/i);
 		assert.match(description, /runs\.run for one child and runs\.all for parallel children/i);
+		assert.match(description, /runs\.steer\(key, message, \{mode\?, index\?, ackTimeoutMs\?\}\).*prior keyed child.*without exposing its run id/i);
+		assert.match(description, /receipts are queued, delivered, missed, or failed/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
 		assert.match(description, /ordinary JavaScript statement body.*explicit return/i);
 		assert.match(description, /Sequential example/i);
@@ -61,6 +63,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
 		assert.match(description, /SINGLE .*starts exactly one child through the workflow runtime/i);
 		assert.match(description, /runs\.run for one child and runs\.all for parallel work/i);
+		assert.match(description, /runs\.steer\(key,message,options\?\).*prior keyed child/i);
+		assert.match(description, /never accepts a raw run id/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
 		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
 		assert.match(description, /subagent_wait/i);

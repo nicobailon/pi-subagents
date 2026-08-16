@@ -7,7 +7,7 @@ import { acquireActiveAsyncCapacity } from "../../src/runs/background/active-asy
 import { consumeSteerRequests, consumeSteerRequestsFromDir, stepSteerInboxDir, writeSteerAck } from "../../src/runs/background/control-channel.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor, steerWorkflowChildByKey } from "../../src/runs/foreground/subagent-executor.ts";
 import { steerWorkflowForegroundTarget, workflowForegroundSteeringDir } from "../../src/runs/foreground/workflow-foreground-steering.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 
@@ -218,6 +218,75 @@ describe("async interrupt action", () => {
 			assert.match(text(result), /Message: "Focus on the failing test\."/);
 		} finally {
 			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
+	it("steers a foreground workflow child by stable key", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-key-foreground-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-writer`;
+		const asyncDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const routeDir = createWorkflowForegroundControl(state, workflowRunId, childRunId);
+		try {
+			const action = steerWorkflowChildByKey({ state, workflowRunId, key: childRunId, message: "Focus on the contract.", options: { ackTimeoutMs: 500 } });
+			const request = await waitUntil(() => {
+				const inbox = stepSteerInboxDir(routeDir, 0);
+				const entry = fs.readdirSync(inbox).find((name) => name.endsWith(".json"));
+				return entry ? JSON.parse(fs.readFileSync(path.join(inbox, entry), "utf-8")) as { id: string } : undefined;
+			});
+			writeSteerAck(routeDir, { requestId: request.id, index: 0, ts: Date.now(), state: "delivered", message: "accepted" });
+			assert.equal((await action).state, "delivered");
+		} finally {
+			cleanup(workflowRunId, asyncDir);
+		}
+	});
+
+	it("routes a stable key to async steering without recovery", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-key-async-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const workflowDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const childDir = createRunningAsync(state, childRunId, { track: false });
+		const childStatus = JSON.parse(fs.readFileSync(path.join(childDir, "status.json"), "utf-8"));
+		childStatus.pid = process.pid;
+		writeJson(path.join(childDir, "status.json"), childStatus);
+		const workflowStatus = JSON.parse(fs.readFileSync(path.join(workflowDir, "status.json"), "utf-8"));
+		workflowStatus.steps = [];
+		writeJson(path.join(workflowDir, "status.json"), workflowStatus);
+		const controller = new AbortController();
+		try {
+			const action = steerWorkflowChildByKey({ state, workflowRunId, key: "writer", message: "Use the new API.", options: { ackTimeoutMs: 500 }, signal: controller.signal, resolveRunId: () => childRunId });
+			await waitUntil(() => consumeSteerRequests(childDir)[0] ? true : undefined);
+			controller.abort();
+			assert.equal((await action).state, "queued");
+			assert.equal(fs.existsSync(path.join(childDir, "control", "steer-recovery")), false);
+		} finally {
+			cleanup(workflowRunId, workflowDir);
+			cleanup(childRunId, childDir);
+		}
+	});
+
+	it("returns missed when a keyed async child is terminal", async () => {
+		const state = createState();
+		const workflowRunId = `workflow-key-terminal-${Date.now().toString(36)}`;
+		const childRunId = `${workflowRunId}-child`;
+		const workflowDir = createRunningAsync(state, workflowRunId, { track: false, mode: "workflow" });
+		const childDir = createRunningAsync(state, childRunId, { track: false });
+		const workflowStatus = JSON.parse(fs.readFileSync(path.join(workflowDir, "status.json"), "utf-8"));
+		workflowStatus.steps = [{ agent: "worker", status: "completed", workflowKey: "writer", runId: childRunId, async: true }];
+		writeJson(path.join(workflowDir, "status.json"), workflowStatus);
+		const childStatus = JSON.parse(fs.readFileSync(path.join(childDir, "status.json"), "utf-8"));
+		childStatus.state = "complete";
+		childStatus.steps[0].status = "complete";
+		writeJson(path.join(childDir, "status.json"), childStatus);
+		try {
+			const result = await steerWorkflowChildByKey({ state, workflowRunId, key: "writer", message: "Too late.", options: { ackTimeoutMs: 20 } });
+			assert.equal(result.state, "missed");
+			assert.match(result.error ?? "", /is complete/);
+			assert.equal(consumeSteerRequests(childDir).length, 0);
+		} finally {
+			cleanup(workflowRunId, workflowDir);
+			cleanup(childRunId, childDir);
 		}
 	});
 
