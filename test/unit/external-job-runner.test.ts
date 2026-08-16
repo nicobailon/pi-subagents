@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, ExternalJobProviderError, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
-import { serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
 import { externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
 
 const tempDirs: string[] = [];
@@ -132,5 +132,85 @@ describe("external-job runner bridge", () => {
 		assert.equal(result.externalJob.state, "blocked");
 		assert.equal(result.externalJob.blockingJobId, "job-blocking");
 		assert.match(result.error ?? "", /job-blocking/);
+	});
+
+	it("does not redispatch a claimed start request after host restart", () => {
+		const dir = tempDir("pi-external-job-claimed-start-");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-duplicate", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		fs.mkdirSync(requestDir, { recursive: true });
+		fs.writeFileSync(path.join(requestDir, "start-timeout.json"), JSON.stringify({
+			id: "start-timeout",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: 1,
+			claimedAt: 2,
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-timeout",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+
+		assert.equal(starts, 0);
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-timeout.json"), "utf-8"));
+		assert.equal(response.ok, false);
+		assert.equal(response.code, "start-dispatch-unknown");
+		assert.match(response.message, /Refusing to redispatch/);
+		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.json")), false);
+	});
+
+	it("does not start again after a bridge timeout without provider job id", async () => {
+		const dir = tempDir("pi-external-job-timeout-retry-");
+		const prompt = "prompt";
+		fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({
+			steps: [{
+				externalJob: {
+					provider: "surf-oracle",
+					promptDigest: externalJobPromptDigest(prompt),
+					options: {},
+					state: "failed",
+					failureCode: "bridge-timeout",
+					failureMessage: "Bridge timed out before a provider job id was committed.",
+				},
+			}],
+		}), "utf-8");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-2", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+
+		const result = await runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt,
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-timeout-retry",
+			agent: "gpt-pro",
+		});
+
+		assert.equal(starts, 0);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.externalJob.failureCode, "start-redispatch-blocked");
+		assert.match(result.error ?? "", /Refusing to redispatch/);
+		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
 	});
 });

@@ -26,6 +26,7 @@ interface ExternalJobBridgeRequest {
 	providerJobId?: string;
 	start?: ExternalJobStartInput;
 	createdAt: number;
+	claimedAt?: number;
 }
 
 type ExternalJobBridgeResponse = {
@@ -96,6 +97,7 @@ function assertRequest(value: unknown, filePath: string): ExternalJobBridgeReque
 	if (request.operation !== "start" && request.operation !== "status" && request.operation !== "result" && request.operation !== "reattach") throw new Error(`External-job bridge request '${filePath}' has invalid operation.`);
 	if (typeof request.provider !== "string" || !request.provider.trim()) throw new Error(`External-job bridge request '${filePath}' has invalid provider.`);
 	if (typeof request.createdAt !== "number") throw new Error(`External-job bridge request '${filePath}' has invalid createdAt.`);
+	if (request.claimedAt !== undefined && typeof request.claimedAt !== "number") throw new Error(`External-job bridge request '${filePath}' has invalid claimedAt.`);
 	if (request.operation === "start") {
 		if (!request.start || typeof request.start !== "object" || Array.isArray(request.start)) throw new Error(`External-job bridge start request '${filePath}' is missing start input.`);
 	} else if (typeof request.providerJobId !== "string" || !request.providerJobId.trim()) {
@@ -171,22 +173,37 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 			continue;
 		}
 		if (inFlight.has(request.id) || fs.existsSync(responsePath(asyncDir, request.id))) continue;
-		inFlight.add(request.id);
-		void executeBridgeRequest(request).then((response) => {
-			writeAtomicJson(responsePath(asyncDir, request.id), response);
-			fs.rmSync(filePath, { force: true });
-		}).catch((error) => {
+		if (request.operation === "start" && request.claimedAt !== undefined) {
 			writeAtomicJson(responsePath(asyncDir, request.id), {
 				id: request.id,
 				ok: false,
 				operation: request.operation,
 				provider: request.provider,
+				code: "start-dispatch-unknown",
+				message: `External-job start for provider '${request.provider}' was already claimed by a previous host process, but no provider job id was committed. Refusing to redispatch the prompt automatically.`,
+				completedAt: Date.now(),
+			} satisfies ExternalJobBridgeResponse);
+			fs.rmSync(filePath, { force: true });
+			continue;
+		}
+		const claimedRequest = request.operation === "start" ? { ...request, claimedAt: Date.now() } : request;
+		if (claimedRequest !== request) writeAtomicJson(filePath, claimedRequest);
+		inFlight.add(claimedRequest.id);
+		void executeBridgeRequest(claimedRequest).then((response) => {
+			writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
+			fs.rmSync(filePath, { force: true });
+		}).catch((error) => {
+			writeAtomicJson(responsePath(asyncDir, claimedRequest.id), {
+				id: claimedRequest.id,
+				ok: false,
+				operation: claimedRequest.operation,
+				provider: claimedRequest.provider,
 				code: "bridge-error",
 				message: error instanceof Error ? error.message : String(error),
 				completedAt: Date.now(),
 			} satisfies ExternalJobBridgeResponse);
 		}).finally(() => {
-			inFlight.delete(request.id);
+			inFlight.delete(claimedRequest.id);
 		});
 	}
 }

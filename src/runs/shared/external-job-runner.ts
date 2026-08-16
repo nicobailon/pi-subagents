@@ -100,6 +100,13 @@ function resultOutput(result: ExternalJobResult, artifactPath: string | undefine
 	return "External job finished without text output.";
 }
 
+function blocksStartRedispatch(status: ExternalJobStatus, provider: string, promptDigest: string): boolean {
+	return status.provider === provider
+		&& status.promptDigest === promptDigest
+		&& !status.providerJobId
+		&& status.failureCode !== "provider-unavailable";
+}
+
 export async function runExternalJob(input: {
 	provider: string;
 	options?: Record<string, unknown>;
@@ -142,6 +149,13 @@ export async function runExternalJob(input: {
 			}
 			handle = await requestExternalJobOperation<ExternalJobHandle>(input.asyncDir, { operation: "reattach", provider, providerJobId: current.providerJobId });
 		} else {
+			if (current && blocksStartRedispatch(current, provider, promptDigest)) {
+				const message = `External-job start for provider '${provider}' previously ended without a durable provider job id. Refusing to redispatch the prompt automatically.`;
+				const status = failureStatus({ provider, promptDigest, options, previous: current, code: "start-redispatch-blocked", message });
+				publish(status);
+				return { output: message, exitCode: 1, error: message, externalJob: status };
+			}
+			publish({ provider, promptDigest, options, state: "queued", startedAt, updatedAt: Date.now() });
 			handle = await requestExternalJobOperation<ExternalJobHandle>(input.asyncDir, {
 				operation: "start",
 				provider,
