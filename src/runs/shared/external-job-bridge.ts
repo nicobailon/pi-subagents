@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
@@ -27,6 +29,14 @@ interface ExternalJobBridgeRequest {
 	start?: ExternalJobStartInput;
 	createdAt: number;
 	claimedAt?: number;
+}
+
+interface ExternalJobClaimOwner {
+	version: 1;
+	pid: number;
+	hostname: string;
+	claimedAt: number;
+	processStartIdentity?: string;
 }
 
 type ExternalJobBridgeResponse = {
@@ -65,6 +75,10 @@ function startClaimDir(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.claim`);
 }
 
+function startClaimTempDir(asyncDir: string, id: string): string {
+	return path.join(requestDir(asyncDir), `${id}.claim.tmp-${randomUUID()}`);
+}
+
 function responsePath(asyncDir: string, id: string): string {
 	return path.join(responseDir(asyncDir), `${id}.json`);
 }
@@ -77,8 +91,54 @@ function readJson<T>(filePath: string): T {
 	return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
-function isAlreadyExistsError(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "EEXIST";
+function processStartIdentity(pid: number): string | undefined {
+	if (process.platform === "linux") {
+		try {
+			const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+			const commandEnd = stat.lastIndexOf(")");
+			if (commandEnd === -1) return undefined;
+			const fields = stat.slice(commandEnd + 1).trim().split(/\s+/);
+			const startTicks = fields[19];
+			return startTicks ? `linux:${startTicks}` : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+	if (process.platform === "darwin" || process.platform === "freebsd") {
+		const result = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8" });
+		const started = result.status === 0 ? result.stdout.trim() : "";
+		return started ? `${process.platform}:${started}` : undefined;
+	}
+	return undefined;
+}
+
+function processIsAlive(pid: number): boolean | undefined {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ESRCH") return false;
+		if (code === "EPERM") return true;
+		return undefined;
+	}
+}
+
+function currentClaimOwner(): ExternalJobClaimOwner {
+	const startIdentity = processStartIdentity(process.pid);
+	return {
+		version: 1,
+		pid: process.pid,
+		hostname: os.hostname(),
+		claimedAt: Date.now(),
+		...(startIdentity ? { processStartIdentity: startIdentity } : {}),
+	};
+}
+
+function isClaimConflictError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null || !("code" in error)) return false;
+	const code = (error as NodeJS.ErrnoException).code;
+	return code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -157,23 +217,56 @@ async function executeBridgeRequest(request: ExternalJobBridgeRequest): Promise<
 }
 
 function claimStartRequest(asyncDir: string, filePath: string, request: ExternalJobBridgeRequest): { request: ExternalJobBridgeRequest; filePath: string } | undefined {
-	const claimed: ExternalJobBridgeRequest = { ...request, claimedAt: Date.now() };
+	const owner = currentClaimOwner();
+	const claimed: ExternalJobBridgeRequest = { ...request, claimedAt: owner.claimedAt };
 	const claimDir = startClaimDir(asyncDir, request.id);
+	const tempClaimDir = startClaimTempDir(asyncDir, request.id);
 	try {
-		fs.mkdirSync(claimDir);
+		fs.mkdirSync(tempClaimDir);
+		writeAtomicJson(path.join(tempClaimDir, "owner.json"), owner);
+		writeAtomicJson(path.join(tempClaimDir, "request.json"), claimed);
+		fs.renameSync(tempClaimDir, claimDir);
 	} catch (error) {
-		if (isAlreadyExistsError(error)) return undefined;
+		fs.rmSync(tempClaimDir, { recursive: true, force: true });
+		if (isClaimConflictError(error)) return undefined;
 		throw error;
 	}
-	writeAtomicJson(path.join(claimDir, "request.json"), claimed);
 	fs.rmSync(filePath, { force: true });
 	return { request: claimed, filePath: claimDir };
+}
+
+function parseClaimOwner(value: unknown): ExternalJobClaimOwner | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const owner = value as Partial<ExternalJobClaimOwner>;
+	if (owner.version !== 1 || typeof owner.pid !== "number" || !Number.isInteger(owner.pid) || owner.pid <= 0 || typeof owner.hostname !== "string" || typeof owner.claimedAt !== "number") return undefined;
+	if (owner.processStartIdentity !== undefined && typeof owner.processStartIdentity !== "string") return undefined;
+	return owner as ExternalJobClaimOwner;
+}
+
+function claimOwnerIsDead(owner: ExternalJobClaimOwner | undefined): boolean {
+	if (!owner || owner.hostname !== os.hostname()) return false;
+	const alive = processIsAlive(owner.pid);
+	if (alive === false) return true;
+	if (alive !== true || !owner.processStartIdentity) return false;
+	const currentIdentity = processStartIdentity(owner.pid);
+	return currentIdentity !== undefined && currentIdentity !== owner.processStartIdentity;
+}
+
+function readClaimOwner(claimDir: string): ExternalJobClaimOwner | undefined {
+	try {
+		return parseClaimOwner(readJson(path.join(claimDir, "owner.json")));
+	} catch {
+		return undefined;
+	}
 }
 
 export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	let files: string[];
 	try {
-		files = fs.readdirSync(requestDir(asyncDir)).filter((file) => file.endsWith(".json")).slice(0, MAX_REQUESTS_PER_SWEEP);
+		files = fs.readdirSync(requestDir(asyncDir), { withFileTypes: true })
+			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json")) || (entry.isDirectory() && entry.name.endsWith(".claim")))
+			.map((entry) => entry.name)
+			.slice(0, MAX_REQUESTS_PER_SWEEP);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
@@ -186,6 +279,10 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 
 export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: string): void {
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
+	if (file.endsWith(".claim")) {
+		serviceExternalJobStartClaim(asyncDir, file);
+		return;
+	}
 	const filePath = path.join(requestDir(asyncDir), file);
 	let request: ExternalJobBridgeRequest;
 	try {
@@ -227,6 +324,34 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 	}).finally(() => {
 		inFlight.delete(claimedRequest.id);
 	});
+}
+
+function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
+	const claimDir = path.join(requestDir(asyncDir), file);
+	const owner = readClaimOwner(claimDir);
+	if (!owner && fs.existsSync(requestPath(asyncDir, file.replace(/\.claim$/, ""))) && !fs.existsSync(responsePath(asyncDir, file.replace(/\.claim$/, "")))) {
+		fs.rmSync(claimDir, { recursive: true, force: true });
+		return;
+	}
+	if (!claimOwnerIsDead(owner)) return;
+	let request: ExternalJobBridgeRequest;
+	try {
+		request = assertRequest(readJson(path.join(claimDir, "request.json")), path.join(claimDir, "request.json"));
+	} catch {
+		return;
+	}
+	if (request.operation !== "start" || fs.existsSync(responsePath(asyncDir, request.id))) return;
+	writeAtomicJson(responsePath(asyncDir, request.id), {
+		id: request.id,
+		ok: false,
+		operation: request.operation,
+		provider: request.provider,
+		code: "start-dispatch-abandoned",
+		message: `External-job start for provider '${request.provider}' was claimed by a host process that is no longer alive before a provider job id was committed. Refusing to redispatch the prompt automatically.`,
+		completedAt: Date.now(),
+	} satisfies ExternalJobBridgeResponse);
+	fs.rmSync(claimDir, { recursive: true, force: true });
+	fs.rmSync(requestPath(asyncDir, request.id), { force: true });
 }
 
 export async function requestExternalJobOperation<T extends ExternalJobHandle | ExternalJobResult>(asyncDir: string, request: Omit<ExternalJobBridgeRequest, "id" | "createdAt">, timeoutMs = DEFAULT_OPERATION_TIMEOUT_MS): Promise<T> {

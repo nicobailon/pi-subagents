@@ -142,7 +142,7 @@ describe("external-job runner bridge", () => {
 		assert.match(result.error ?? "", /job-blocking/);
 	});
 
-	it("does not redispatch a partial claimed start request after host restart", () => {
+	it("recovers an incomplete start claim and dispatches the original request once", async () => {
 		const dir = tempDir("pi-external-job-claimed-start-");
 		let starts = 0;
 		registerExternalJobProvider({
@@ -172,10 +172,15 @@ describe("external-job runner bridge", () => {
 		}), "utf-8");
 
 		serviceExternalJobBridgeRequests(dir);
+		serviceExternalJobBridgeRequests(dir);
+		await waitForFile(path.join(dir, "external-job-responses", "start-timeout.json"));
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-timeout.json"), "utf-8"));
 
-		assert.equal(starts, 0);
-		assert.equal(fs.existsSync(path.join(dir, "external-job-responses", "start-timeout.json")), false);
-		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.json")), true);
+		assert.equal(starts, 1);
+		assert.equal(response.ok, true);
+		assert.equal(response.result.providerJobId, "job-duplicate");
+		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.claim")), false);
+		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.json")), false);
 	});
 
 	it("does not dispatch a start request twice while the first claim is active", async () => {
@@ -234,8 +239,11 @@ describe("external-job runner bridge", () => {
 			result: () => ({ providerJobId: "unused", state: "completed" }),
 		});
 		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		const claimDir = path.join(requestDir, "start-long.claim");
 		fs.mkdirSync(requestDir, { recursive: true });
-		fs.writeFileSync(path.join(requestDir, "start-long.json"), JSON.stringify({
+		fs.mkdirSync(claimDir);
+		fs.writeFileSync(path.join(claimDir, "owner.json"), JSON.stringify({ version: 1, pid: process.pid, hostname: os.hostname(), claimedAt: 1 }), "utf-8");
+		fs.writeFileSync(path.join(claimDir, "request.json"), JSON.stringify({
 			id: "start-long",
 			operation: "start",
 			provider: "surf-oracle",
@@ -252,11 +260,52 @@ describe("external-job runner bridge", () => {
 			},
 		}), "utf-8");
 
-		serviceExternalJobBridgeRequestFile(dir, "start-long.json");
+		serviceExternalJobBridgeRequestFile(dir, "start-long.claim");
 
 		assert.equal(starts, 0);
 		assert.equal(fs.existsSync(path.join(dir, "external-job-responses", "start-long.json")), false);
-		assert.equal(fs.existsSync(path.join(requestDir, "start-long.json")), true);
+		assert.equal(fs.existsSync(claimDir), true);
+	});
+
+	it("settles an abandoned start claim without redispatching", () => {
+		const dir = tempDir("pi-external-job-abandoned-claim-");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-duplicate", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		const claimDir = path.join(requestDir, "start-abandoned.claim");
+		fs.mkdirSync(claimDir, { recursive: true });
+		fs.writeFileSync(path.join(claimDir, "owner.json"), JSON.stringify({ version: 1, pid: 9_999_999, hostname: os.hostname(), claimedAt: 1 }), "utf-8");
+		fs.writeFileSync(path.join(claimDir, "request.json"), JSON.stringify({
+			id: "start-abandoned",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: 1,
+			claimedAt: 2,
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-abandoned",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+
+		assert.equal(starts, 0);
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-abandoned.json"), "utf-8"));
+		assert.equal(response.ok, false);
+		assert.equal(response.code, "start-dispatch-abandoned");
+		assert.match(response.message, /Refusing to redispatch/);
+		assert.equal(fs.existsSync(claimDir), false);
 	});
 
 	it("ignores a stale start request snapshot after another host claimed it", async () => {
