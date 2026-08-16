@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatRetainedChildren, listRetainedChildren } from "../../src/runs/background/retained-children.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
 interface WriteRunOptions {
@@ -49,6 +50,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			tokens: { input: index, output: index + 1, total: index * 2 + 1 },
 		}],
 	}), "utf-8");
+	updateActiveRunIndex(asyncDir, state);
 	if (options.recoveryDescriptor === "invalid") {
 		fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
 			version: 2,

@@ -743,9 +743,9 @@ describe("subagent_wait tool", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-cross-kind-"));
 		try {
 			const state = makeState("sess-1");
-			writeStatus(path.join(root, "runs"), "shared-async", "running", { sessionId: "sess-1", pid: 999999 });
-			state.foregroundRuns = new Map([["shared-foreground", {
-				runId: "shared-foreground",
+			writeStatus(path.join(root, "runs"), "shared-x-async", "running", { sessionId: "sess-1", pid: 999999 });
+			state.foregroundRuns = new Map([["shared-x-foreground", {
+				runId: "shared-x-foreground",
 				mode: "single",
 				cwd: root,
 				sessionId: "sess-1",
@@ -753,11 +753,11 @@ describe("subagent_wait tool", () => {
 				children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
 			}]]);
 
-			const result = await waitForSubagents({ id: "shared" }, undefined, baseDeps(root, state));
+			const result = await waitForSubagents({ id: "shared-x" }, undefined, baseDeps(root, state));
 			assert.equal(result.isError, true);
-			assert.match(textOf(result), /Ambiguous subagent run id prefix "shared"/);
-			assert.match(textOf(result), /shared-async/);
-			assert.match(textOf(result), /shared-foreground/);
+			assert.match(textOf(result), /Ambiguous subagent run id prefix "shared-x"/);
+			assert.match(textOf(result), /shared-x-async/);
+			assert.match(textOf(result), /shared-x-foreground/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -768,15 +768,15 @@ describe("subagent_wait tool", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
-			writeStatus(asyncRoot, "run-al", "running", { sessionId: "sess-2", pid: 999999 });
-			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "run-alph", "running", { sessionId: "sess-2", pid: 999999 });
+			writeStatus(asyncRoot, "run-alpha-current", "running", { sessionId: "sess-1", pid: 999998 });
 
-			const result = await waitForSubagents({ id: "run-al" }, undefined, baseDeps(root, state, {
-				sleep: async () => writeStatus(asyncRoot, "run-alpha", "complete", { sessionId: "sess-1" }),
+			const result = await waitForSubagents({ id: "run-alph" }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-alpha-current", "complete", { sessionId: "sess-1" }),
 			}));
 
 			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /run "run-al".*done/is);
+			assert.match(textOf(result), /run "run-alph".*done/is);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -856,9 +856,9 @@ describe("subagent_wait tool", () => {
 				if (polls === 1) writeStatus(asyncRoot, "run-alpha", "complete", { sessionId: "sess-1" });
 			};
 
-			const result = await waitForSubagents({ id: "run-al" }, undefined, baseDeps(root, state, { sleep }));
+			const result = await waitForSubagents({ id: "run-alph" }, undefined, baseDeps(root, state, { sleep }));
 			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /run "run-al".*done/is);
+			assert.match(textOf(result), /run "run-alph".*done/is);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -869,13 +869,14 @@ describe("subagent_wait tool", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
-			writeStatus(asyncRoot, "run", "running", { sessionId: "sess-1", pid: 999999 });
-			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "prefix-aa-1", "running", { sessionId: "sess-1", pid: 999999 });
+			writeStatus(asyncRoot, "prefix-aa-2", "running", { sessionId: "sess-1", pid: 999998 });
+			writeStatus(asyncRoot, "run", "running", { sessionId: "sess-1", pid: 999997 });
 
-			const ambiguous = await waitForSubagents({ id: "ru" }, undefined, baseDeps(root, state));
+			const ambiguous = await waitForSubagents({ id: "prefix-aa" }, undefined, baseDeps(root, state));
 			assert.equal(ambiguous.isError, true);
-			assert.match(textOf(ambiguous), /Ambiguous subagent run id prefix "ru"/);
-			assert.match(textOf(ambiguous), /run-alpha/);
+			assert.match(textOf(ambiguous), /Ambiguous subagent run id prefix "prefix-aa"/);
+			assert.match(textOf(ambiguous), /prefix-aa-2/);
 
 			let polls = 0;
 			const exact = await waitForSubagents({ id: "run" }, undefined, baseDeps(root, state, {

@@ -231,6 +231,7 @@ export function createWaitSubscriptionManager(
 		const runs = listAsyncRuns(asyncDirRoot, {
 			sessionId: record.sessionId,
 			runId: record.runId,
+			exactRunId: true,
 			resultsDir,
 			kill: options.kill,
 			now,

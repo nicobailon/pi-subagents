@@ -15,6 +15,24 @@ function pendingPath(resultsDir: string, sessionId: string, runId: string): stri
 }
 
 describe("result file indexes", () => {
+	it("resolves run ids without enumerating session indexes", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-run-index-"));
+		const originalReaddirSync = fsDefault.readdirSync;
+		try {
+			const resultPath = path.join(resultsDir, "direct-run.json");
+			writeAsyncResultFile(resultPath, { id: "direct-run", runId: "direct-run", sessionId: "session-a", success: true });
+			fsDefault.readdirSync = (() => { throw new Error("result index enumerated"); }) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "direct-run"), resultPath);
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "missing-run"), undefined);
+		} finally {
+			fsDefault.readdirSync = originalReaddirSync;
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("removes orphan index entries without deleting flat result files", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-index-"));
 		try {
@@ -23,7 +41,7 @@ describe("result file indexes", () => {
 			fs.rmSync(path.join(resultsDir, "missing.json"));
 			fs.writeFileSync(path.join(resultsDir, "unindexed.json"), JSON.stringify({ id: "unindexed", sessionId: "session-a" }), "utf-8");
 
-			assert.equal(cleanupResultIndexes(resultsDir, Date.now() + 86_400_001, 86_400_000), 2);
+			assert.equal(cleanupResultIndexes(resultsDir, Date.now() + 86_400_001, 86_400_000), 3);
 
 			assert.deepEqual(resultFilesForSession(resultsDir, "session-a"), ["kept.json"]);
 			assert.equal(fs.existsSync(path.join(resultsDir, "kept.json")), true);
@@ -93,7 +111,7 @@ describe("result file indexes", () => {
 			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
 			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), payloadPath);
 			fs.rmSync(path.join(resultsDir, "result-index"), { recursive: true });
-			assert.equal(resultPayloadPathForIndexedRun(resultsDir, runId), payloadPath);
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, runId), undefined);
 		} finally {
 			console.error = originalError;
 			fs.rmSync(resultsDir, { recursive: true, force: true });
@@ -150,7 +168,7 @@ describe("result file indexes", () => {
 			assert.equal(fs.existsSync(resultPath), false);
 			assert.equal(fs.existsSync(pendingPath(resultsDir, "session-a", "blocked")), true);
 			assert.equal(resultPayloadPathForSessionRun(resultsDir, "session-a", "blocked"), pendingPath(resultsDir, "session-a", "blocked"));
-			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "blocked"), pendingPath(resultsDir, "session-a", "blocked"));
+			assert.equal(resultPayloadPathForIndexedRun(resultsDir, "blocked"), undefined);
 			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), ["blocked.json"]);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });

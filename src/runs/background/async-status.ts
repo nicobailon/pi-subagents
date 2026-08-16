@@ -4,7 +4,7 @@ import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type LaunchResolvedChildExtensionsV1, type RuntimeAcknowledgedChildExtensionsV1, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState, type UsageBudgetState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
-import { pruneStatusCacheForAsyncRoot, readStatus } from "../../shared/utils.ts";
+import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
@@ -13,6 +13,8 @@ import { contextModeLabel, summarizeContextModes, type ContextMode, type Context
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
 import { ACTIVE_RUN_INDEX_DIR, DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS, activeRunMarkerAgeMs, isActiveAsyncState, readActiveRunIndex, releaseActiveRunIndex, updateActiveRunIndex } from "./active-run-index.ts";
+import { readRecentTerminalRunIndex, TERMINAL_RUN_INDEX_DIR } from "./terminal-run-index.ts";
+import { canScanAsyncRunPrefix } from "./run-id-query.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -120,14 +122,18 @@ interface AsyncRunListOptions {
 	states?: Array<AsyncRunSummary["state"]>;
 	sessionId?: string;
 	limit?: number;
-	/** Limits status-file reads after candidates are ordered by status mtime. */
+	/** Limits terminal candidates using the timestamp embedded in index marker names. */
 	entryLimit?: number;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	reconcile?: boolean;
 	runId?: string;
+	/** The caller already holds a canonical run id; never interpret a miss as a prefix. */
+	exactRunId?: boolean;
 	includeNested?: boolean;
+	/** Explicit repair/debug escape hatch. Normal runtime paths must not set this. */
+	repairScan?: boolean;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -155,7 +161,7 @@ function isAsyncRunDir(root: string, entry: string): boolean {
 
 type TargetedAsyncRunResolution =
 	| { kind: "exact"; id: string }
-	| { kind: "scan" }
+	| { kind: "prefix" }
 	| { kind: "reject" };
 
 /**
@@ -163,13 +169,13 @@ type TargetedAsyncRunResolution =
  * accepting a path whose canonical location escaped the async root.
  */
 export function resolveTargetedAsyncRun(asyncDirRoot: string, id: string, sessionId?: string): TargetedAsyncRunResolution {
-	if (!id || id === "." || id === ".." || id === ACTIVE_RUN_INDEX_DIR || path.basename(id) !== id) return { kind: "reject" };
+	if (!id || id === "." || id === ".." || id === ACTIVE_RUN_INDEX_DIR || id === TERMINAL_RUN_INDEX_DIR || path.basename(id) !== id) return { kind: "reject" };
 	const asyncDir = path.join(asyncDirRoot, id);
 	let entryStat: fs.Stats;
 	try {
 		entryStat = fs.lstatSync(asyncDir);
 	} catch (error) {
-		if (isNotFoundError(error)) return { kind: "scan" };
+		if (isNotFoundError(error)) return canScanAsyncRunPrefix(id) ? { kind: "prefix" } : { kind: "reject" };
 		throw new Error(`Failed to inspect async run path '${asyncDir}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
@@ -187,7 +193,7 @@ export function resolveTargetedAsyncRun(asyncDirRoot: string, id: string, sessio
 	}
 	if (sessionId !== undefined) {
 		const status = readStatus(asyncDir);
-		if (status?.sessionId !== sessionId) return { kind: "scan" };
+		if (status?.sessionId !== sessionId) return canScanAsyncRunPrefix(id) ? { kind: "prefix" } : { kind: "reject" };
 	}
 	return { kind: "exact", id };
 }
@@ -375,35 +381,39 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 
 export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}): AsyncRunSummary[] {
 	let entries: string[];
-	let scannedCompleteRoot = false;
-	let usedActiveIndex = false;
-	const activeOnly = options.runId === undefined
-		&& options.entryLimit === undefined
-		&& options.states !== undefined
-		&& options.states.length > 0
-		&& options.states.every(isActiveAsyncState);
+	const activeEntries = new Set<string>();
+	const wantsActive = options.states === undefined || options.states.some(isActiveAsyncState);
+	const wantsTerminal = options.states === undefined || options.states.some((state) => !isActiveAsyncState(state));
 	const includeNested = options.includeNested !== false;
 	try {
 		if (options.runId !== undefined) {
 			const resolution = resolveTargetedAsyncRun(asyncDirRoot, options.runId, options.sessionId);
 			entries = resolution.kind === "exact"
 				? [resolution.id]
-				: resolution.kind === "scan"
+				: resolution.kind === "prefix" && options.exactRunId !== true
 					? fs.readdirSync(asyncDirRoot).filter((entry) =>
 						(entry === options.runId || entry.startsWith(options.runId!))
 						&& resolveTargetedAsyncRun(asyncDirRoot, entry, options.sessionId).kind === "exact"
 					)
 					: [];
-		} else if (activeOnly) {
-			entries = (readActiveRunIndex(asyncDirRoot) ?? []).filter((entry) => {
-				if (resolveTargetedAsyncRun(asyncDirRoot, entry).kind === "exact") return true;
-				updateActiveRunIndex(path.join(asyncDirRoot, entry), "failed");
-				return false;
-			});
-			usedActiveIndex = true;
+		} else if (options.repairScan === true) {
+			entries = fs.readdirSync(asyncDirRoot).filter((entry) => entry !== ACTIVE_RUN_INDEX_DIR && entry !== TERMINAL_RUN_INDEX_DIR && isAsyncRunDir(asyncDirRoot, entry));
 		} else {
-			entries = fs.readdirSync(asyncDirRoot).filter((entry) => entry !== ACTIVE_RUN_INDEX_DIR && isAsyncRunDir(asyncDirRoot, entry));
-			scannedCompleteRoot = true;
+			const indexed = new Set<string>();
+			if (wantsActive) {
+				for (const entry of readActiveRunIndex(asyncDirRoot) ?? []) {
+					if (resolveTargetedAsyncRun(asyncDirRoot, entry).kind === "exact") {
+						indexed.add(entry);
+						activeEntries.add(entry);
+					} else {
+						updateActiveRunIndex(path.join(asyncDirRoot, entry), "failed");
+					}
+				}
+			}
+			if (wantsTerminal) {
+				for (const entry of readRecentTerminalRunIndex(asyncDirRoot, { sessionId: options.sessionId, ...(options.entryLimit !== undefined ? { limit: options.entryLimit } : {}) })) indexed.add(entry);
+			}
+			entries = [...indexed];
 		}
 	} catch (error) {
 		if (isNotFoundError(error)) return [];
@@ -411,28 +421,6 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			cause: error instanceof Error ? error : undefined,
 		});
 	}
-
-	if (options.entryLimit !== undefined) {
-		scannedCompleteRoot = false;
-		const limit = Math.max(0, Math.floor(options.entryLimit));
-		entries = entries
-			.map((entry) => {
-				try {
-					return { entry, mtimeMs: fs.statSync(path.join(asyncDirRoot, entry, "status.json")).mtimeMs };
-				} catch (error) {
-					if (isNotFoundError(error)) return undefined;
-					throw new Error(`Failed to inspect async status file for '${entry}': ${getErrorMessage(error)}`, {
-						cause: error instanceof Error ? error : undefined,
-					});
-				}
-			})
-			.filter((candidate): candidate is { entry: string; mtimeMs: number } => candidate !== undefined)
-			.sort((left, right) => right.mtimeMs - left.mtimeMs)
-			.slice(0, limit)
-			.map((candidate) => candidate.entry);
-	}
-
-	if (scannedCompleteRoot) pruneStatusCacheForAsyncRoot(asyncDirRoot, entries);
 
 	const allowedStates = options.states ? new Set(options.states) : undefined;
 	const runs: AsyncRunSummary[] = [];
@@ -444,7 +432,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	let nestedRouteIndex: Map<string, NestedRoute> | undefined;
 	const resolveNestedRoute = (rootRunId: string): NestedRoute | undefined => {
 		if (!includeNested) return undefined;
-		if (usedActiveIndex) return findNestedRouteForRootId(rootRunId);
+		if (activeEntries.has(rootRunId)) return findNestedRouteForRootId(rootRunId);
 		if (!nestedRouteIndex) nestedRouteIndex = buildNestedRouteIndex();
 		return nestedRouteIndex.get(rootRunId);
 	};
@@ -455,10 +443,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
 		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
 		if (!status) {
-			if (usedActiveIndex) updateActiveRunIndex(asyncDir, "failed");
+			if (activeEntries.has(entry)) updateActiveRunIndex(asyncDir, "failed");
 			continue;
 		}
-		if (usedActiveIndex && !isActiveAsyncState(status.state)) {
+		if (activeEntries.has(entry) && !isActiveAsyncState(status.state)) {
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
 			if (processTerminal?.state === "observed" || (activeRunMarkerAgeMs(asyncDir, options.now?.()) ?? 0) > DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS) releaseActiveRunIndex(asyncDir);
 		}

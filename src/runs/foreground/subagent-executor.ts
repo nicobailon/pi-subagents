@@ -1562,7 +1562,7 @@ async function resumeAsyncRun(input: {
 				details: { mode: "chain", results: [] },
 			};
 		}
-		const runId = randomUUID().slice(0, 8);
+		const runId = randomUUID();
 		const topLevelResume = depth === 0 && !resolveInheritedNestedRouteFromEnv() && !input.params.workflowParentRunId;
 		let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 		try {
@@ -1657,7 +1657,7 @@ async function resumeAsyncRun(input: {
 	if (target.source === "async" && !recoveryDescriptor) {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' is missing its required run fan-out recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	const runId = randomUUID().slice(0, 8);
+	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !resolveInheritedNestedRouteFromEnv() && !input.params.workflowParentRunId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 	try {
@@ -4888,7 +4888,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const agents = intercomBridge.active
 			? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 			: discoveredAgents;
-		const runId = randomUUID().slice(0, 8);
+		const runId = randomUUID();
 		const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
 		const nestedParentAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
 		const shareEnabled = effectiveParams.share === true;

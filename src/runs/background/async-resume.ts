@@ -8,7 +8,8 @@ import { intersectSubagentCapabilityCeilings, parseSubagentCapabilityCeiling, ty
 import { validateRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
-import { resultFilePath } from "./result-files.ts";
+import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
+import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -173,6 +174,8 @@ function prefixedRunIds(dir: string, prefix: string, suffix = ""): string[] {
 }
 
 function exactResultPath(resultsDir: string, runId: string): string | null {
+	const indexed = resultPayloadPathForIndexedRun(resultsDir, runId);
+	if (indexed) return indexed;
 	const resultPath = resultFilePath(resultsDir, runId);
 	assertInsideRoot(resultsDir, resultPath, "Async result file");
 	return fs.existsSync(resultPath) ? resultPath : null;
@@ -181,6 +184,7 @@ function exactResultPath(resultsDir: string, runId: string): string | null {
 export function findAsyncRunPrefixMatches(prefix: string, asyncDirRoot: string, resultsDir: string): Array<{ id: string; location: AsyncRunLocation }> {
 	const requestedId = assertRunId(prefix, "id");
 	if (!requestedId) return [];
+	if (!canScanAsyncRunPrefix(requestedId)) return [];
 	const asyncRoot = path.resolve(asyncDirRoot);
 	const resultRoot = path.resolve(resultsDir);
 	const matchingIds = prefixedRunIds(asyncRoot, requestedId).sort();
@@ -223,6 +227,10 @@ export function resolveAsyncRunLocation(params: AsyncResumeParams, asyncDirRoot:
 			resolvedId: requestedId,
 		};
 	}
+	if (requestedId.length < MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH) {
+		throw new Error(`Async run id prefix '${requestedId}' is too short. Provide at least ${MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH} characters.`);
+	}
+	if (!canScanAsyncRunPrefix(requestedId)) return { asyncDir: null, resultPath: null, resolvedId: requestedId };
 
 	const matching = findAsyncRunPrefixMatches(requestedId, asyncRoot, resultRoot);
 	if (matching.length === 0) return { asyncDir: null, resultPath: null, resolvedId: requestedId };

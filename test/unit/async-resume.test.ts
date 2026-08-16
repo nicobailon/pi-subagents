@@ -18,8 +18,8 @@ describe("async resume lookup", () => {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
-			writeJson(path.join(asyncRoot, "run-abc", "status.json"), {
-				runId: "run-abc",
+			writeJson(path.join(asyncRoot, "run-abcde", "status.json"), {
+				runId: "run-abcde",
 				mode: "single",
 				state: "complete",
 				startedAt: 100,
@@ -30,10 +30,10 @@ describe("async resume lookup", () => {
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-a" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget({ id: "run-abcd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 
 			assert.equal(target.kind, "revive");
-			assert.equal(target.runId, "run-abc");
+			assert.equal(target.runId, "run-abcde");
 			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
@@ -352,15 +352,15 @@ describe("async resume lookup", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ambiguous-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
-			writeJson(path.join(asyncRoot, "run-aa", "status.json"), {
-				runId: "run-aa",
+			writeJson(path.join(asyncRoot, "run-aaaa-1", "status.json"), {
+				runId: "run-aaaa-1",
 				mode: "single",
 				state: "running",
 				startedAt: 100,
 				steps: [{ agent: "scout", status: "running" }],
 			});
-			writeJson(path.join(asyncRoot, "run-ab", "status.json"), {
-				runId: "run-ab",
+			writeJson(path.join(asyncRoot, "run-aaaa-2", "status.json"), {
+				runId: "run-aaaa-2",
 				mode: "single",
 				state: "running",
 				startedAt: 100,
@@ -368,8 +368,12 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-aaaa" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/Ambiguous async run id prefix 'run-aaaa' matched: run-aaaa-1, run-aaaa-2/,
+			);
+			assert.throws(
 				() => resolveAsyncResumeTarget({ id: "run-a" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
-				/Ambiguous async run id prefix 'run-a' matched: run-aa, run-ab/,
+				/at least 8 characters/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

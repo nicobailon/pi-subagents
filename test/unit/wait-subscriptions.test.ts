@@ -68,7 +68,7 @@ describe("non-blocking wait subscriptions", () => {
 			const asyncRoot = path.join(root, "runs");
 			writeStatus(asyncRoot, "run-alpha", "running", { sessionId: "session-a", pid: 999_999 });
 			let armed: { targetKind: "async" | "foreground"; runId: string; requestedId: string; timeoutMs: number } | undefined;
-			const result = await waitForSubagents({ id: "run-al", nonBlocking: true, timeoutMs: 5_000 }, undefined, {
+			const result = await waitForSubagents({ id: "run-alph", nonBlocking: true, timeoutMs: 5_000 }, undefined, {
 				state: makeState(),
 				asyncDirRoot: asyncRoot,
 				resultsDir: path.join(root, "results"),
@@ -82,7 +82,7 @@ describe("non-blocking wait subscriptions", () => {
 
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /Armed wait subscription wait-token/);
-			assert.deepEqual(armed, { targetKind: "async", runId: "run-alpha", requestedId: "run-al", timeoutMs: 5_000 });
+			assert.deepEqual(armed, { targetKind: "async", runId: "run-alpha", requestedId: "run-alph", timeoutMs: 5_000 });
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -370,7 +370,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("wakes when async reconciliation throws", () => {
+	it("wakes when an exact async run cannot be reconciled", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-reconcile-error-"));
 		const asyncRoot = path.join(root, "not-a-directory");
 		const subscriptionsDir = path.join(root, "subscriptions");
@@ -385,7 +385,7 @@ describe("non-blocking wait subscriptions", () => {
 		try {
 			const registration = manager.arm({ targetKind: "async", runId: "run-error", requestedId: "run-error", timeoutMs: 30_000 });
 			manager.reconcile();
-			assert.match(sent[0] ?? "", /reconciliation failed/);
+			assert.match(sent[0] ?? "", /could not be reconciled/);
 			assert.equal(state.waitSubscriptions?.has(registration.token), false);
 			assert.equal(fs.existsSync(path.join(subscriptionsDir, `${registration.token}.json`)), false);
 		} finally {

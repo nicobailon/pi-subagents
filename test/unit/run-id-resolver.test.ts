@@ -84,11 +84,11 @@ describe("subagent run id resolver", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const resultsDir = path.join(root, "results");
-			fs.mkdirSync(path.join(asyncRoot, "fanout-async"), { recursive: true });
-			nested("root-fanout", "fanout-nested");
+			fs.mkdirSync(path.join(asyncRoot, "fanout-x-async"), { recursive: true });
+			nested("root-fanout", "fanout-x-nested");
 			assert.throws(
-				() => resolveSubagentRunId("fanout", { asyncDirRoot: asyncRoot, resultsDir }),
-				/Ambiguous subagent run id prefix 'fanout' matched: async:fanout-async, nested:fanout-nested/,
+				() => resolveSubagentRunId("fanout-x", { asyncDirRoot: asyncRoot, resultsDir }),
+				/Ambiguous subagent run id prefix 'fanout-x' matched: async:fanout-x-async, nested:fanout-x-nested/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -130,12 +130,12 @@ describe("subagent run id resolver", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const resultsDir = path.join(root, "results");
-			fs.mkdirSync(path.join(asyncRoot, "dupe-one"), { recursive: true });
-			fs.mkdirSync(path.join(asyncRoot, "dupe-two"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "dupe-aaa-one"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "dupe-aaa-two"), { recursive: true });
 
 			assert.throws(
-				() => resolveSubagentRunId("dupe", { asyncDirRoot: asyncRoot, resultsDir }),
-				/Ambiguous subagent run id prefix 'dupe' matched: async:dupe-one, async:dupe-two/,
+				() => resolveSubagentRunId("dupe-aaa", { asyncDirRoot: asyncRoot, resultsDir }),
+				/Ambiguous subagent run id prefix 'dupe-aaa' matched: async:dupe-aaa-one, async:dupe-aaa-two/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

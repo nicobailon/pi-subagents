@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { ACTIVE_RUN_INDEX_DIR, DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
+import { TERMINAL_RUN_INDEX_DIR } from "../../src/runs/background/terminal-run-index.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
 	const dir = path.join(root, id);
 	fs.mkdirSync(dir, { recursive: true });
-	fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify(status), "utf-8");
-	if (status.state === "queued" || status.state === "running") updateActiveRunIndex(dir, status.state);
+	const persisted = status.sessionId === undefined ? { ...status, sessionId: "session-a" } : status;
+	fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify(persisted), "utf-8");
+	updateActiveRunIndex(dir, persisted.state as "queued" | "running" | "complete" | "failed" | "paused" | "stopped" | "rejected");
 	return dir;
 }
 
@@ -341,7 +345,7 @@ describe("async status helpers", () => {
 		fs.writeFileSync(path.join(dir, "status.json"), "{not-json", "utf-8");
 		try {
 			assert.throws(
-				() => listAsyncRuns(root),
+				() => listAsyncRuns(root, { repairScan: true }),
 				/Failed to parse async status file/,
 			);
 		} finally {
@@ -604,6 +608,57 @@ describe("async status helpers", () => {
 
 			assert.deepEqual(runs.map((run) => run.id), ["active"]);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("lists recent terminal runs from time-sortable session markers", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-index-"));
+		try {
+			for (let index = 1; index <= 3; index++) {
+				createAsyncDir(root, `terminal-${index}`, {
+					runId: `terminal-${index}`,
+					sessionId: "session-a",
+					mode: "single",
+					state: "complete",
+					startedAt: index,
+					endedAt: index * 100,
+					steps: [{ agent: "worker", status: "complete" }],
+				});
+			}
+
+			const runs = listAsyncRuns(root, { sessionId: "session-a", states: ["complete"], entryLimit: 2, reconcile: false });
+			assert.deepEqual(runs.map((run) => run.id), ["terminal-3", "terminal-2"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("removes invalid terminal markers while reading the advisory index", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-heal-"));
+		try {
+			const marker = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"), "0000000000000100-missing.json");
+			fs.mkdirSync(path.dirname(marker), { recursive: true });
+			fs.writeFileSync(marker, JSON.stringify({ version: 1, runId: "missing", sessionId: "session-a", endedAt: 100 }));
+
+			assert.deepEqual(listAsyncRuns(root, { sessionId: "session-a", states: ["complete"], reconcile: false }), []);
+			assert.equal(fs.existsSync(marker), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not enumerate the async root for full-id or unsafe-prefix misses", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-exact-miss-"));
+		const originalReaddirSync = fsDefault.readdirSync;
+		try {
+			fsDefault.readdirSync = (() => { throw new Error("async root enumerated"); }) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+			assert.deepEqual(listAsyncRuns(root, { runId: "12345678-1234-1234-1234-123456789012", reconcile: false }), []);
+			assert.deepEqual(listAsyncRuns(root, { runId: "short", reconcile: false }), []);
+		} finally {
+			fsDefault.readdirSync = originalReaddirSync;
+			syncBuiltinESMExports();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

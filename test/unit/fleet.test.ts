@@ -13,6 +13,7 @@ import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../..
 import type { SubagentState } from "../../src/shared/types.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 
 function clearExternalRuns(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
@@ -55,11 +56,12 @@ function writeAsyncRun(root: string, input: {
 	if (input.output !== undefined) fs.writeFileSync(path.join(asyncDir, "output-0.log"), input.output, "utf-8");
 	const transcriptPath = input.transcript ? path.join(asyncDir, "transcript-0.jsonl") : undefined;
 	if (transcriptPath && input.transcript) fs.writeFileSync(transcriptPath, `${input.transcript.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf-8");
+	const state = input.state ?? "running";
 	fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 		runId: input.id,
 		sessionId: input.sessionId ?? "session-current",
 		mode: input.mode ?? (agents.length > 1 ? "parallel" : "single"),
-		state: input.state ?? "running",
+		state,
 		startedAt: 100,
 		lastUpdate: input.lastUpdate ?? 200,
 		currentStep: 0,
@@ -74,6 +76,7 @@ function writeAsyncRun(root: string, input: {
 		})),
 		...(input.output !== undefined ? { outputFile: "output-0.log" } : {}),
 	}, null, 2));
+	updateActiveRunIndex(asyncDir, state);
 	return asyncDir;
 }
 

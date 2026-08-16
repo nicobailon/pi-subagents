@@ -102,6 +102,7 @@ export function getAgentDir(): string {
 }
 
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
+const MAX_STATUS_CACHE_ENTRIES = 512;
 
 export function pruneStatusCacheForAsyncRoot(asyncDirRoot: string, runIds: Iterable<string>): number {
 	const root = path.resolve(asyncDirRoot);
@@ -163,6 +164,8 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		&& cached.size === stat.size
 		&& cached.ino === stat.ino
 	) {
+		statusCache.delete(statusPath);
+		statusCache.set(statusPath, cached);
 		return cached.status;
 	}
 
@@ -195,6 +198,11 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		ino: stat.ino,
 		status,
 	});
+	while (statusCache.size > MAX_STATUS_CACHE_ENTRIES) {
+		const oldest = statusCache.keys().next().value as string | undefined;
+		if (oldest === undefined) break;
+		statusCache.delete(oldest);
+	}
 	return status;
 }
 

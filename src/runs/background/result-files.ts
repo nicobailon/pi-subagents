@@ -7,6 +7,7 @@ import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "./index-segment.ts"
 const RESULT_INDEX_VERSION = 1;
 const RESULT_INDEX_DIR = "result-index";
 const SESSION_INDEX_DIR = "sessions";
+const RUN_INDEX_DIR = "runs";
 const OBSERVER_INDEX_DIR = "observers";
 const TOOL_CALL_INDEX_DIR = "tool-calls";
 const RESULT_PENDING_DIR = "result-pending";
@@ -49,6 +50,10 @@ function sessionIndexDir(resultsDir: string, sessionId: string): string {
 
 function resultIndexPath(resultsDir: string, sessionId: string, runId: string): string {
 	return path.join(sessionIndexDir(resultsDir, sessionId), encodedJsonFileName(runId));
+}
+
+function runIndexPath(resultsDir: string, runId: string): string {
+	return path.join(resultsDir, RESULT_INDEX_DIR, RUN_INDEX_DIR, encodedJsonFileName(runId));
 }
 
 function resultPendingPath(resultsDir: string, sessionId: string, runId: string): string {
@@ -104,6 +109,11 @@ export function writeResultIndexForData(resultPath: string, data: Record<string,
 	};
 	const resultsDir = path.dirname(resultPath);
 	writeAtomicJson(resultIndexPath(resultsDir, sessionId, runId), entry);
+	try {
+		writeAtomicJson(runIndexPath(resultsDir, runId), entry);
+	} catch (error) {
+		console.error(`Failed to write async result run index for '${resultPath}':`, error);
+	}
 	const toolCallId = nonEmptyString(data.toolCallId);
 	try {
 		if (toolCallId) writeAtomicJson(toolCallIndexPath(resultsDir, toolCallId, runId), entry);
@@ -153,6 +163,11 @@ export function removeResultIndex(resultsDir: string, sessionId: string | undefi
 		} catch {
 			// Pending cleanup must not affect result delivery.
 		}
+	}
+	try {
+		fs.rmSync(runIndexPath(resultsDir, runId), { force: true });
+	} catch {
+		// Index cleanup must not affect result delivery.
 	}
 	if (toolCallId) {
 		try {
@@ -242,28 +257,6 @@ function pendingResultLocationForSessionRun(resultsDir: string, sessionId: strin
 		: undefined;
 }
 
-function pendingResultLocationForIndexedRun(resultsDir: string, runId: string): ResultPayloadLocation | undefined {
-	const root = path.join(resultsDir, RESULT_PENDING_DIR);
-	let sessions: fs.Dirent[];
-	try {
-		sessions = fs.readdirSync(root, { withFileTypes: true });
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Failed to inspect pending async result root '${root}':`, error);
-		return undefined;
-	}
-	for (const session of sessions) {
-		if (!session.isDirectory()) continue;
-		const pendingPath = path.join(root, session.name, encodedJsonFileName(runId));
-		try {
-			const data = JSON.parse(fs.readFileSync(pendingPath, "utf-8")) as Record<string, unknown>;
-			if ((nonEmptyString(data.runId) ?? nonEmptyString(data.id)) === runId) return { file: resultFileName(runId), path: pendingPath, state: "pending" };
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Ignoring invalid pending async result '${pendingPath}':`, error);
-		}
-	}
-	return undefined;
-}
-
 function resultPayloadLocationFromIndex(resultsDir: string, entry: ResultIndexEntry): ResultPayloadLocation | undefined {
 	if (entry.file !== path.basename(entry.file) || !entry.file.endsWith(".json")) return undefined;
 	const pendingState = promotePendingResultFile(resultsDir, entry.sessionId, entry.runId, entry.file);
@@ -305,27 +298,24 @@ export function resultPayloadPathForMissionObserverRun(resultsDir: string, runId
 }
 
 export function resultPayloadPathForIndexedRun(resultsDir: string, runId: string): string | undefined {
-	const root = path.join(resultsDir, RESULT_INDEX_DIR, SESSION_INDEX_DIR);
-	let sessions: fs.Dirent[] = [];
+	const entryPath = runIndexPath(resultsDir, runId);
 	try {
-		sessions = fs.readdirSync(root, { withFileTypes: true });
+		const entry = parseResultIndexEntry(JSON.parse(fs.readFileSync(entryPath, "utf-8")));
+		if (!entry || entry.runId !== runId) {
+			fs.rmSync(entryPath, { force: true });
+			return undefined;
+		}
+		const location = resultPayloadLocationFromIndex(resultsDir, entry);
+		if (location) return location.path;
+		fs.rmSync(entryPath, { force: true });
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
-		if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`Failed to inspect async result session index root '${root}':`, error);
-	}
-	for (const session of sessions) {
-		if (!session.isDirectory()) continue;
-		const entryPath = path.join(root, session.name, encodedJsonFileName(runId));
-		try {
-			const entry = parseResultIndexEntry(JSON.parse(fs.readFileSync(entryPath, "utf-8")));
-			if (!entry || entry.runId !== runId) continue;
-			const location = resultPayloadLocationFromIndex(resultsDir, entry);
-			if (location) return location.path;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Ignoring invalid async result index '${entryPath}':`, error);
+		if (code !== "ENOENT" && code !== "ENOTDIR") {
+			console.error(`Ignoring invalid async result run index '${entryPath}':`, error);
+			try { fs.rmSync(entryPath, { force: true }); } catch {}
 		}
 	}
-	return pendingResultLocationForIndexedRun(resultsDir, runId)?.path;
+	return undefined;
 }
 
 function indexedResultFile(resultsDir: string, entry: ResultIndexEntry, includePending = false): string | undefined {

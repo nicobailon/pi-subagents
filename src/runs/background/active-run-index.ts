@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AsyncStatus } from "../../shared/types.ts";
+import { readStatus } from "../../shared/utils.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
+import { updateTerminalRunIndex } from "./terminal-run-index.ts";
 
 export const ACTIVE_RUN_INDEX_DIR = ".active-runs";
 export const DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS = 24 * 60 * 60 * 1000;
@@ -92,6 +94,14 @@ export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state
 		return;
 	}
 	releaseActiveRunIndex(asyncDir);
+	const status = readStatus(asyncDir);
+	if (status && status.state === state) {
+		try {
+			updateTerminalRunIndex(asyncDir, status);
+		} catch (error) {
+			console.error(`Failed to write async terminal-run index for '${asyncDir}':`, error);
+		}
+	}
 }
 
 export function activeRunMarkerAgeMs(asyncDir: string, now = Date.now()): number | undefined {

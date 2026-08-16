@@ -278,19 +278,19 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 	return activeRunsForSession(params, deps).filter((run) => needsAttention(run) && initialIds.has(run.id));
 }
 
-/** All runs (any state) for this session, for the final summary. */
-function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
+/** Exact initial runs in any state, for the final summary. */
+function runsForIds(runIds: Iterable<string>, deps: SubagentWaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
-	const runs = listAsyncRuns(asyncDirRoot, {
+	return [...runIds].flatMap((runId) => listAsyncRuns(asyncDirRoot, {
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
 		includeNested: false,
-		...(params.id ? { runId: params.id } : {}),
-	});
-	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+		runId,
+		exactRunId: true,
+	}));
 }
 
 function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 0): string {
@@ -611,7 +611,7 @@ export async function waitForSubagents(
 	const activeProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const providerFinishedCount = [...initialProviderIds].filter((id) => !activeProviderIds.has(id)).length;
 	try {
-		const allNow = allRunsForSession(waitParams, deps);
+		const allNow = runsForIds(initialAsyncIds, deps);
 		const terminal = allNow.filter((run) => !ACTIVE_STATES.includes(run.state) && initialAsyncIds.has(run.id));
 		finishedAsyncCount = terminal.length;
 		failedAsyncCount = terminal.filter((run) => run.state === "failed").length;

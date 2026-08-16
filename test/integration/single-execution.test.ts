@@ -2756,7 +2756,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const claims = fs.readdirSync(path.join(descriptor.directory, "claims"));
 			assert.equal(claims.length, 1);
 			const claim = JSON.parse(fs.readFileSync(path.join(descriptor.directory, "claims", claims[0]!), "utf-8")) as { path: string };
-			assert.match(claim.path, /^tasks\[0\]\/[a-f0-9]{8}\/single$/);
+			assert.match(claim.path, /^tasks\[0\]\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/single$/);
 		} finally {
 			if (previous === undefined) delete process.env[RUN_FANOUT_BUDGET_ENV];
 			else process.env[RUN_FANOUT_BUDGET_ENV] = previous;

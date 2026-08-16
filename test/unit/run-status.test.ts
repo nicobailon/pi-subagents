@@ -1122,16 +1122,16 @@ describe("async run status inspection", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-ambiguous-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
-			fs.mkdirSync(path.join(asyncRoot, "run-aa"), { recursive: true });
-			fs.mkdirSync(path.join(asyncRoot, "run-ab"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "run-aaaa-one"), { recursive: true });
+			fs.mkdirSync(path.join(asyncRoot, "run-aaaa-two"), { recursive: true });
 
-			const result = inspectSubagentStatus({ id: "run-a" }, {
+			const result = inspectSubagentStatus({ id: "run-aaaa" }, {
 				asyncDirRoot: asyncRoot,
 				resultsDir: path.join(root, "results"),
 			});
 
 			assert.equal(result.isError, true);
-			assert.match(textContent(result), /Ambiguous subagent run id prefix 'run-a' matched: async:run-aa, async:run-ab/);
+			assert.match(textContent(result), /Ambiguous subagent run id prefix 'run-aaaa' matched: async:run-aaaa-one, async:run-aaaa-two/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

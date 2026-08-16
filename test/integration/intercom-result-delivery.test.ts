@@ -260,9 +260,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(payload.mode, "single");
 		assert.equal(payload.children?.length, 1);
 		assert.equal(payload.children?.[0]?.agent, "worker");
-		assert.match(payload.children?.[0]?.intercomTarget ?? "", /^subagent-worker-[a-f0-9]+-1$/);
+		assert.match(payload.children?.[0]?.intercomTarget ?? "", /^subagent-worker-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-1$/);
 		assert.match(String(payload.message ?? ""), /Intercom targets below identify child sessions used while they were running/);
-		assert.match(String(payload.message ?? ""), /Run intercom target: subagent-worker-[a-f0-9]+-1/);
+		assert.match(String(payload.message ?? ""), /Run intercom target: subagent-worker-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-1/);
 		assert.match(result.content[0]?.text ?? "", /Delivered single subagent result via intercom\./);
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Full child output from worker/);
 		assert.equal(result.details?.results?.[0]?.finalOutput, undefined);
@@ -627,6 +627,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(startedEvent?.goal, "[prompt redacted]");
 			const attachedId = result.details?.asyncId;
 			assert.ok(attachedId, "expected attached chain async id");
+			assert.match(attachedId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 			assert.match(result.details?.asyncDir ?? "", new RegExp(`${attachedId}$`));
 			const statusPath = path.join(result.details!.asyncDir!, "status.json");
 			await waitForFile(statusPath);
@@ -696,6 +697,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(attached.isError, undefined);
 			assert.match(attached.content[0]?.text ?? "", /Attached async subagent/);
 			assert.ok(attached.details?.asyncId, "expected attached chain async id");
+			assert.match(attached.details.asyncId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 			await waitForFile(path.join(RESULTS_DIR, `${attached.details.asyncId}.json`));
 		} finally {
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
@@ -739,6 +741,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 			assert.equal(result.isError, undefined);
 			assert.match(result.content[0]?.text ?? "", /Revived async subagent from/);
+			assert.match(result.details?.asyncId ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 			assert.match(result.content[0]?.text ?? "", /Agent: b/);
 			assert.match(result.content[0]?.text ?? "", new RegExp(secondSession.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 			const args = await readMockCallArgs(0);
