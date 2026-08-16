@@ -288,6 +288,7 @@ export interface SubagentParamsLike {
 	workflowParentRunId?: string;
 	workflowKey?: string;
 	workflowChildAsyncId?: string;
+	workflowParentDeadlineAt?: number;
 	suppressRoutineResultIntercom?: boolean;
 	/** Internal inherited cumulative run-tree budget. */
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
@@ -457,6 +458,7 @@ function promptAuditRedoParams(value: unknown, rewrittenTask: string): SubagentP
 	delete params.workflowParentRunId;
 	delete params.workflowKey;
 	delete params.workflowChildAsyncId;
+	delete params.workflowParentDeadlineAt;
 	delete params.suppressRoutineResultIntercom;
 	if (params.worktree === true && Array.isArray(params.tasks)) delete params.cwd;
 	return params;
@@ -2230,12 +2232,16 @@ function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: Agen
 	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
 	const agent = agents.find((candidate) => candidate.name === params.agent);
 	if (!agent) return params;
+	const parentTimeoutMs = params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs === undefined && params.workflowParentDeadlineAt !== undefined
+		? Math.max(1, params.workflowParentDeadlineAt - Date.now())
+		: undefined;
 	return {
 		...params,
 		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
 		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
 			? { timeoutMs: agent.defaultTimeoutMs }
 			: {}),
+		...(parentTimeoutMs !== undefined ? { timeoutMs: parentTimeoutMs } : {}),
 		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
 			? { turnBudget: agent.defaultTurnBudget }
 			: {}),
@@ -2998,7 +3004,7 @@ function prepareWorkflowChildLaunchParams(input: {
 	configuredOutputBaseDir?: string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] };
 	workflowAgentScope?: unknown;
-	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor };
+	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number };
 }): SubagentParamsLike {
 	let childParams = input.childParams;
 	if (input.childParams.output === undefined && input.childParams.resume === undefined && input.aggregateOutputPath !== undefined) {
@@ -3528,8 +3534,15 @@ export function prepareWorkflowLaunchParams(
 	childParams: Record<string, unknown>,
 	parentWorkflowRunId: string,
 	workflowKey: string,
-	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor } = {},
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number } = {},
 ): SubagentParamsLike {
+	const parentTimeoutMs = options.parentDeadlineAt === undefined
+		|| childParams.timeoutMs !== undefined
+		|| childParams.maxRuntimeMs !== undefined
+		|| workflowDefaults.timeoutMs !== undefined
+		|| workflowDefaults.maxRuntimeMs !== undefined
+		? undefined
+		: Math.max(1, options.parentDeadlineAt - Date.now());
 	if (typeof childParams.resume === "string") {
 		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
@@ -3561,6 +3574,7 @@ export function prepareWorkflowLaunchParams(
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
+		...(parentTimeoutMs !== undefined ? { workflowParentDeadlineAt: options.parentDeadlineAt } : {}),
 		...(options.runFanoutBudget ? { runFanoutBudget: { ...options.runFanoutBudget, parentPath: `${options.runFanoutBudget.parentPath ? `${options.runFanoutBudget.parentPath}/` : ""}workflow[${workflowKey}]` } } : {}),
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
 	} as SubagentParamsLike;
@@ -3895,6 +3909,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
+					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 					const workflowResults: SingleResult[] = [];
 					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
@@ -4001,7 +4016,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -4119,6 +4134,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const producedChildOutputPaths = new Set<string>();
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
+			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 			const sendWorkflowProgress = () => {
 				const update = workflowChatProgressUpdate(_id, chatProgress, liveWorkflow);
 				if (update) onUpdate?.(update);
@@ -4158,7 +4174,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget } }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
