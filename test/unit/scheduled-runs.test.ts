@@ -203,6 +203,25 @@ describe("project schedule management", () => {
 		assert.throws(() => manager.bindSession(context(h.ctx.cwd, "session-b")), /removed legacy agent target.*target\.workflowScript/i);
 	});
 
+	it("skips orphaned schedule directories without schedule.json", () => {
+		const h = harness();
+		const root = scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores"));
+		const orphan = path.join(root, "orphaned-schedule");
+		fs.mkdirSync(orphan, { recursive: true });
+		fs.writeFileSync(path.join(orphan, "history.json"), JSON.stringify({ schemaVersion: 1, runs: [] }), "utf-8");
+		const manager = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(h.root, "stores"),
+			now: () => h.clock.now,
+			timers: h.timers,
+			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
+		});
+
+		manager.bindSession(context(h.ctx.cwd, "session-b"));
+		assert.deepEqual(listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores")).map((schedule) => schedule.id), []);
+		manager.stop();
+	});
+
 	it("supports workflowScript targets and rejects unsafe or deferred shapes", async () => {
 		const h = harness();
 		const workflow = await h.manager.handleToolCall({ action: "schedule.create", id: "workflow", every: "6h", workflowScript: "return await runs.run('review', {agent:'reviewer'})" }, h.ctx);

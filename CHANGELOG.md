@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- Keep schedule restore from crashing the extension at session start when a project has an orphaned schedule directory whose `schedule.json` is gone (for example after a git checkout that previously tracked it), by skipping orphaned directories instead of throwing.
 
 ### Added
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.

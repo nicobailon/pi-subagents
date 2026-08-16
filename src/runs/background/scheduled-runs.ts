@@ -235,7 +235,11 @@ class ScheduleStore {
 	}
 
 	list(): ScheduleRecord[] {
-		return this.ids().map((id) => this.get(id));
+		// Skip orphaned schedule directories (no schedule.json, e.g. removed by a git
+		// checkout that previously tracked it) instead of throwing and crashing restore.
+		return this.ids()
+			.map((id) => this.find(id))
+			.filter((schedule): schedule is ScheduleRecord => schedule !== undefined);
 	}
 
 	get(id: string): ScheduleRecord {
