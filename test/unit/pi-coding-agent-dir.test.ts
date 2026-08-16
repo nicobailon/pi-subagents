@@ -91,10 +91,11 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		writeFile(configPath, JSON.stringify({ asyncByDefault: true, maxSubagentDepth: 3, artifactDir: "session", artifactConfig: { cleanupDays: 9007199254740991 } }));
+		writeFile(configPath, JSON.stringify({ asyncByDefault: true, defaultSubagentContext: "fresh", maxSubagentDepth: 3, artifactDir: "session", artifactConfig: { cleanupDays: 9007199254740991 } }));
 
 		const config = loadConfig();
 		assert.equal(config.asyncByDefault, true);
+		assert.equal(config.defaultSubagentContext, "fresh");
 		assert.equal(config.maxSubagentDepth, 3);
 		assert.equal(config.artifactDir, "session");
 		assert.equal(config.artifactConfig?.cleanupDays, Number.MAX_SAFE_INTEGER);
@@ -220,6 +221,15 @@ Package skill content.
 		assert.equal(getArtifactsDir(sessionFile, cwd, "temp"), TEMP_ARTIFACTS_DIR);
 		assert.equal(getArtifactsDir(null, cwd, "session"), TEMP_ARTIFACTS_DIR);
 		assert.throws(() => getArtifactsDir(sessionFile, cwd, "workspace" as never), /Unsupported artifactDir/);
+	});
+
+	it("validates default subagent context values", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "fresh" }));
+		assert.equal(loadConfig().defaultSubagentContext, "fresh");
+
+		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
+		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
 	});
 
 	it("rejects invalid artifactDir config values", () => {

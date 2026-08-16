@@ -132,7 +132,7 @@ Boundaries:
 - Raw prompts are not exposed in public contract output.
 - It is side-effect-free for launch state: it does not create child sessions, temp prompt files, structured-output runtimes, tool-diagnostic files, or run artifacts.
 - Some host-owned facts, such as exact fork snapshots, nested async roots, and live model registries, can only be proven by the Pi host; those appear as `host_required` diagnostics instead of silently pretending to be exact.
-- Preflight reads the extension config, so `defaultSubagentContext: "fork"` affects omitted context in the same way as execution. Explicit `context: "fresh"` still wins.
+- Preflight reads the extension config, so `defaultSubagentContext: "fresh"` or `"fork"` affects omitted context in the same way as execution. Explicit `context` still wins.
 
 ## Structured delegation API
 

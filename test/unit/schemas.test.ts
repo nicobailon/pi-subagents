@@ -166,7 +166,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const description = String(contextSchema.description ?? "");
 		assert.match(description, /fresh/);
 		assert.match(description, /fork/);
-		assert.match(description, /defaultSubagentContext:'fork' wins over each agent defaultContext/);
+		assert.match(description, /defaultSubagentContext wins over each agent defaultContext/);
 		assert.match(description, /overrides every child/);
 		assert.match(description, /implicit fork/);
 		assert.match(description, /else fresh/);

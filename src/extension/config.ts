@@ -94,8 +94,8 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
-	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fork") {
-		throw new Error('config.defaultSubagentContext must be "fork"');
+	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fresh" && config.defaultSubagentContext !== "fork") {
+		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
 	}
 	if (config.foregroundDetachShortcut !== undefined
 		&& (typeof config.foregroundDetachShortcut !== "string" || !isValidKeyId(config.foregroundDetachShortcut))) {

@@ -38,6 +38,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /ordinary JavaScript statement body.*explicit return/i);
 		assert.match(description, /Sequential example/i);
 		assert.match(description, /Parallel example/i);
+		assert.match(description, /defaultSubagentContext wins over agent defaultContext/i);
 		assert.doesNotMatch(description, /Compatibility tasks\[\]|CHAIN EXAMPLES|PARALLEL \(compatibility\)/i);
 		assert.doesNotMatch(description, /append-step|approve-checkpoint|reject-checkpoint/);
 		assert.match(description, /cannot access filesystem, shell, arbitrary Pi tools, or host globals/i);
