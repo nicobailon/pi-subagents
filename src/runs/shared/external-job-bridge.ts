@@ -85,8 +85,28 @@ function startClaimCompletedPath(claimDir: string): string {
 	return path.join(claimDir, "completed.json");
 }
 
+function startClaimHandlePath(claimDir: string): string {
+	return path.join(claimDir, "handle.json");
+}
+
 function completedStartClaimExists(asyncDir: string, id: string): boolean {
 	return fs.existsSync(startClaimCompletedPath(startClaimDir(asyncDir, id)));
+}
+
+function cancelStartRequest(asyncDir: string, request: ExternalJobBridgeRequest): boolean {
+	const claimDir = startClaimDir(asyncDir, request.id);
+	const tempClaimDir = startClaimTempDir(asyncDir, request.id);
+	try {
+		fs.mkdirSync(tempClaimDir);
+		writeAtomicJson(startClaimCompletedPath(tempClaimDir), { completedAt: Date.now() });
+		fs.renameSync(tempClaimDir, claimDir);
+	} catch (error) {
+		fs.rmSync(tempClaimDir, { recursive: true, force: true });
+		if (isClaimConflictError(error)) return false;
+		throw error;
+	}
+	fs.rmSync(requestPath(asyncDir, request.id), { force: true });
+	return true;
 }
 
 function responsePath(asyncDir: string, id: string): string {
@@ -188,7 +208,7 @@ function assertRequest(value: unknown, filePath: string): ExternalJobBridgeReque
 	return request;
 }
 
-async function executeBridgeRequest(request: ExternalJobBridgeRequest): Promise<ExternalJobBridgeResponse> {
+async function executeBridgeRequest(request: ExternalJobBridgeRequest, claimDir?: string): Promise<ExternalJobBridgeResponse> {
 	const provider = getExternalJobProvider(request.provider);
 	if (!provider) {
 		return {
@@ -212,6 +232,7 @@ async function executeBridgeRequest(request: ExternalJobBridgeRequest): Promise<
 		const result = request.operation === "result"
 			? validateExternalJobResult(provider.name, raw, "External-job bridge result")
 			: validateExternalJobHandle(provider.name, raw, "External-job bridge handle");
+		if (request.operation === "start" && claimDir) writeAtomicJson(startClaimHandlePath(claimDir), result);
 		return { id: request.id, ok: true, operation: request.operation, provider: request.provider, result, completedAt: Date.now() };
 	} catch (error) {
 		const details = bridgeError(error);
@@ -270,6 +291,14 @@ function readClaimOwner(claimDir: string): ExternalJobClaimOwner | undefined {
 	}
 }
 
+function readClaimHandle(provider: string, claimDir: string): ExternalJobHandle | undefined {
+	try {
+		return validateExternalJobHandle(provider, readJson(startClaimHandlePath(claimDir)), "External-job bridge recovered start handle");
+	} catch {
+		return undefined;
+	}
+}
+
 export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	let files: string[];
 	try {
@@ -322,7 +351,7 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 	if (!claimed) return;
 	const claimedRequest = claimed.request;
 	inFlight.add(claimedRequest.id);
-	void executeBridgeRequest(claimedRequest).then((response) => {
+	void executeBridgeRequest(claimedRequest, claimedRequest.operation === "start" ? claimed.filePath : undefined).then((response) => {
 		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
 		if (claimedRequest.operation === "start") {
 			writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
@@ -361,6 +390,20 @@ function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
 		return;
 	}
 	if (request.operation !== "start" || fs.existsSync(responsePath(asyncDir, request.id))) return;
+	const handle = readClaimHandle(request.provider, claimDir);
+	if (handle) {
+		writeAtomicJson(responsePath(asyncDir, request.id), {
+			id: request.id,
+			ok: true,
+			operation: request.operation,
+			provider: request.provider,
+			result: handle,
+			completedAt: Date.now(),
+		} satisfies ExternalJobBridgeResponse);
+		writeAtomicJson(startClaimCompletedPath(claimDir), { completedAt: Date.now() });
+		fs.rmSync(requestPath(asyncDir, request.id), { force: true });
+		return;
+	}
 	writeAtomicJson(responsePath(asyncDir, request.id), {
 		id: request.id,
 		ok: false,
@@ -378,13 +421,18 @@ export async function requestExternalJobOperation<T extends ExternalJobHandle | 
 	const id = randomUUID();
 	fs.mkdirSync(requestDir(asyncDir), { recursive: true });
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
-	writeAtomicJson(requestPath(asyncDir, id), { ...request, id, createdAt: Date.now() } satisfies ExternalJobBridgeRequest);
+	const bridgeRequest = { ...request, id, createdAt: Date.now() } satisfies ExternalJobBridgeRequest;
+	writeAtomicJson(requestPath(asyncDir, id), bridgeRequest);
 	const deadline = request.operation === "start" ? undefined : Date.now() + timeoutMs;
 	const outPath = responsePath(asyncDir, id);
 	while (!fs.existsSync(outPath)) {
 		const canceled = cancel?.();
 		if (canceled) {
-			fs.rmSync(requestPath(asyncDir, id), { force: true });
+			if (request.operation === "start" && !cancelStartRequest(asyncDir, bridgeRequest)) {
+				await sleep(POLL_INTERVAL_MS);
+				continue;
+			}
+			if (request.operation !== "start") fs.rmSync(requestPath(asyncDir, id), { force: true });
 			throw canceled;
 		}
 		if (deadline !== undefined && Date.now() >= deadline) {

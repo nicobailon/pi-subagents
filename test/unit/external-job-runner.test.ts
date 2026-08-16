@@ -308,6 +308,47 @@ describe("external-job runner bridge", () => {
 		assert.equal(fs.existsSync(claimDir), false);
 	});
 
+	it("recovers a persisted start handle from a dead owner claim", () => {
+		const dir = tempDir("pi-external-job-dead-owner-handle-");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-duplicate", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		const claimDir = path.join(requestDir, "start-recovered.claim");
+		fs.mkdirSync(claimDir, { recursive: true });
+		fs.writeFileSync(path.join(claimDir, "owner.json"), JSON.stringify({ version: 1, pid: 9_999_999, hostname: os.hostname(), claimedAt: 1 }), "utf-8");
+		fs.writeFileSync(path.join(claimDir, "request.json"), JSON.stringify({
+			id: "start-recovered",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: 1,
+			claimedAt: 2,
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-recovered",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+		fs.writeFileSync(path.join(claimDir, "handle.json"), JSON.stringify({ providerJobId: "job-recovered", state: "running" }), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+
+		assert.equal(starts, 0);
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-recovered.json"), "utf-8"));
+		assert.equal(response.ok, true);
+		assert.equal(response.result.providerJobId, "job-recovered");
+		assert.equal(fs.existsSync(path.join(claimDir, "completed.json")), true);
+	});
+
 	it("ignores a stale start request snapshot after another host claimed it", async () => {
 		const dir = tempDir("pi-external-job-stale-snapshot-");
 		let starts = 0;
@@ -513,17 +554,35 @@ describe("external-job runner bridge", () => {
 			agent: "gpt-pro",
 			registerTimeout: (registered) => { timeout = registered; },
 		});
-		serviceExternalJobBridgeRequests(dir);
-		await new Promise((resolve) => setTimeout(resolve, 20));
-
 		timeout!();
 		const result = await operation;
 
-		assert.equal(starts, 1);
+		assert.equal(starts, 0);
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.timedOut, true);
 		assert.equal(result.externalJob.failureCode, "local-timeout");
 		assert.match(result.error ?? "", /timed out locally/);
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		const tombstone = fs.readdirSync(requestDir).find((entry) => entry.endsWith(".claim"));
+		assert.ok(tombstone);
+		const staleId = tombstone.replace(/\.claim$/, "");
+		fs.writeFileSync(path.join(requestDir, `${staleId}.json`), JSON.stringify({
+			id: staleId,
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: Date.now(),
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-local-timeout",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+		serviceExternalJobBridgeRequests(dir);
+		assert.equal(starts, 0);
 	});
 
 	it("waits for a slow start response instead of timing out without provider job id", async () => {
