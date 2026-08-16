@@ -93,6 +93,7 @@ export interface AsyncRetentionOptions {
 	processStartIdentity?: string;
 	isProcessAlive?: (pid: number) => boolean | undefined;
 	getProcessStartIdentity?: (pid: number) => string | undefined;
+	lstatSync?: typeof fs.lstatSync;
 	signal?: AbortSignal;
 	discoveryWorkerUrl?: URL;
 }
@@ -669,7 +670,9 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 		durationMs: 0,
 	};
 	const deletedIds: string[] = [];
+	const lstatSync = options.lstatSync ?? fs.lstatSync;
 	let commitStartedAt: number | undefined;
+	let cursorCommitUnsafe = false;
 	const finish = (): AsyncRetentionResult => {
 		if (commitStartedAt !== undefined) result.commitDurationMs = Math.max(0, Date.now() - commitStartedAt);
 		result.durationMs = Math.max(0, Date.now() - startedWall);
@@ -742,8 +745,9 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 			if (markCancelled()) return finish();
 			result.scanned += 1;
 			const runDir = path.join(options.asyncDirRoot, entry.name);
+			let mutationStateChanged = false;
 			try {
-				const stat = fs.lstatSync(runDir);
+				const stat = lstatSync(runDir);
 				if (!stat.isDirectory() || stat.isSymbolicLink()) {
 					increment(result.skipped, "unsafe-run-path");
 					continue;
@@ -769,6 +773,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 						increment(result.skipped, `recheck-${finalReason}`);
 						continue;
 					}
+					mutationStateChanged = true;
 					fs.rmSync(runDir, { recursive: true });
 					removeRunTombstoneMarker(maintenanceRoot, status!.runId);
 					result.reapedTombstones += 1;
@@ -777,18 +782,24 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 				}
 				const tombstone = path.join(options.asyncDirRoot, `${RUN_TOMBSTONE_PREFIX}${randomId()}`);
 				writeRunTombstoneMarker(maintenanceRoot, status!.runId, tombstone, currentTime);
+				mutationStateChanged = true;
 				try {
 					fs.renameSync(runDir, tombstone);
 				} catch (error) {
 					removeRunTombstoneMarker(maintenanceRoot, status!.runId);
+					mutationStateChanged = false;
 					throw error;
 				}
 				const recheckStatus = readStatus(tombstone);
 				const freshWaitReferences = parseWaitRunIds(waitSubscriptionsDir);
 				const recheckReason = freshWaitReferences.safe ? runSkipReason({ runDir: tombstone, status: recheckStatus, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds }) : "wait-references-unknown";
 				if (recheckReason) {
-					if (!fs.existsSync(runDir)) fs.renameSync(tombstone, runDir);
+					if (!fs.existsSync(runDir)) {
+						fs.renameSync(tombstone, runDir);
+						mutationStateChanged = false;
+					}
 					removeRunTombstoneMarker(maintenanceRoot, status!.runId);
+					if (mutationStateChanged) cursorCommitUnsafe = true;
 					increment(result.skipped, `recheck-${recheckReason}`);
 					continue;
 				}
@@ -797,6 +808,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 				result.deletedRuns += 1;
 				deletedIds.push(`run:${status!.runId}`);
 			} catch (error) {
+				if (mutationStateChanged) cursorCommitUnsafe = true;
 				if (!isNotFound(error)) result.errors.push(compactError(error));
 			}
 		}
@@ -804,8 +816,9 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 			if (markCancelled()) return finish();
 			result.scanned += 1;
 			const candidate: ResultCandidate = { ...discoveredCandidate, path: path.join(options.resultsDir, discoveredCandidate.relative) };
+			let mutationStateChanged = false;
 			try {
-				const stat = fs.lstatSync(candidate.path);
+				const stat = lstatSync(candidate.path);
 				if (!stat.isFile() || stat.isSymbolicLink()) {
 					increment(result.skipped, "unsafe-result-path");
 					continue;
@@ -828,18 +841,24 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 						continue;
 					}
 					fs.rmSync(candidate.path);
+					mutationStateChanged = true;
 					result.reapedTombstones += 1;
 					deletedIds.push(`result-tombstone:${resultRunId(candidate, data!)}`);
 					continue;
 				}
 				const tombstone = path.join(path.dirname(candidate.path), `${RESULT_TOMBSTONE_PREFIX}${candidate.kind}-${randomId()}`);
 				fs.renameSync(candidate.path, tombstone);
+				mutationStateChanged = true;
 				const tombstoneCandidate = { ...candidate, path: tombstone, kind: "tombstone" as const };
 				const recheckData = readJson(tombstone);
 				const freshWaitReferences = parseWaitRunIds(waitSubscriptionsDir);
 				const recheckReason = freshWaitReferences.safe ? resultSkipReason({ candidate: tombstoneCandidate, data: recheckData, asyncDirRoot: options.asyncDirRoot, resultsDir: options.resultsDir, maintenanceRoot, cutoff, protectedRunIds, waitRunIds: freshWaitReferences.runIds }) : "wait-references-unknown";
 				if (recheckReason) {
-					if (!fs.existsSync(candidate.path)) fs.renameSync(tombstone, candidate.path);
+					if (!fs.existsSync(candidate.path)) {
+						fs.renameSync(tombstone, candidate.path);
+						mutationStateChanged = false;
+					}
+					if (mutationStateChanged) cursorCommitUnsafe = true;
 					increment(result.skipped, `recheck-${recheckReason}`);
 					continue;
 				}
@@ -847,10 +866,11 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 				result.deletedResults += 1;
 				deletedIds.push(`result:${resultRunId(candidate, data!)}`);
 			} catch (error) {
+				if (mutationStateChanged) cursorCommitUnsafe = true;
 				if (!isNotFound(error)) result.errors.push(compactError(error));
 			}
 		}
-		if (result.errors.length > 0) {
+		if (cursorCommitUnsafe) {
 			increment(result.skipped, "commit-failure");
 			return finish();
 		}

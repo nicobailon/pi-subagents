@@ -534,6 +534,30 @@ describe("async retention cleanup", () => {
 		}
 	});
 
+	it("advances past a candidate with a read error when no mutation started", async () => {
+		const roots = makeRoots();
+		try {
+			const unreadable = writeOldRun(roots.asyncDirRoot, "aaa-unreadable");
+			const victim = writeOldRun(roots.asyncDirRoot, "zzz-victim");
+			const realLstatSync = fs.lstatSync;
+			const lstatSync = ((filePath: fs.PathLike, options?: Parameters<typeof fs.lstatSync>[1]) => {
+				if (path.resolve(String(filePath)) === path.resolve(unreadable)) throw Object.assign(new Error("read failed"), { code: "EIO" });
+				return realLstatSync(filePath, options);
+			}) as typeof fs.lstatSync;
+
+			const first = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 2, lstatSync });
+			assert.deepEqual(first.errors, ["read failed"]);
+			assert.equal(first.skipped["commit-failure"], undefined);
+			assert.equal(fs.existsSync(victim), true);
+
+			const second = await cleanupAsyncRetention({ ...cleanupOptions(roots), batchSize: 2, lstatSync });
+			assert.equal(second.deletedRuns, 1);
+			assert.equal(fs.existsSync(victim), false);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
 	it("yields the extension event loop during full directory discovery", async () => {
 		const roots = makeRoots();
 		try {
