@@ -1692,7 +1692,7 @@ describe("result watcher", () => {
 					intercomTarget: "orchestrator",
 				});
 				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
+				await waitForPredicate(() => delivered.length === 1);
 			} finally {
 				watcher.stopResultWatcher();
 			}

@@ -60,6 +60,7 @@ import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../.
 import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -1067,6 +1068,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(childResult.parentWorkflowRunId, workflowRunId);
 		assert.equal(childResult.workflowKey, "background");
 		assert.equal(fs.existsSync(workflowStepSessionFile), true);
+		const retainedCwd = handoff.groups?.[0]?.cleanup?.tasks?.[0]?.path;
+		assert.ok(retainedCwd);
+		const resumeTarget = resolveAsyncResumeTarget({ id: childRunId }, { asyncDirRoot: DIRS.async, resultsDir: DIRS.results });
+		assert.equal(resumeTarget.recoveryDescriptor?.sourceRunId, childRunId);
+		assert.equal(path.resolve(resumeTarget.cwd ?? ""), path.resolve(retainedCwd));
 		discardPreservedWorktrees(childStatus.parallelHandoff!.path!, { kind: "confirmed" });
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(workflowResultPath, { force: true });
