@@ -15,6 +15,11 @@ afterEach(() => {
 		const key = createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 20);
 		fs.rmSync(path.join(progressDir, `counter-${key}`), { force: true });
 		fs.rmSync(path.join(progressDir, `counter-${key}.lock`), { recursive: true, force: true });
+		if (fs.existsSync(progressDir)) {
+			for (const name of fs.readdirSync(progressDir)) {
+				if (name.startsWith(`create-${key}-`) && name.endsWith(".ready")) fs.rmSync(path.join(progressDir, name), { force: true });
+			}
+		}
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 	if (fs.existsSync(progressDir)) {
@@ -122,7 +127,8 @@ describe("Orca progress-tab observer", () => {
 		fs.mkdirSync(nested, { recursive: true });
 		const captures = path.join(dir, "captures");
 		fs.mkdirSync(captures);
-		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
+		const orderFile = path.join(dir, "order.txt");
+		const fakeOrca = writeNodeCommand(dir, "orca", "const fs=require('fs'),path=require('path');const args=process.argv.slice(2);const title=args[args.indexOf('--title')+1];fs.appendFileSync(process.env.ORCA_TEST_ORDER,title+'\\n');fs.writeFileSync(path.join(process.env.ORCA_TEST_CAPTURE_DIR, process.pid+'.json'),JSON.stringify(args))");
 		const repo = path.resolve(import.meta.dirname, "../..");
 		const moduleUrl = new URL("../../src/runs/shared/orca-progress-tabs.ts", import.meta.url).href;
 		const childScript = `import {createOrcaProgressTab} from ${JSON.stringify(moduleUrl)};const tab=createOrcaProgressTab({cwd:process.env.CHILD_CWD,runId:'concurrent-sequence',agent:'worker',index:0,config:{enabled:true}});if(!tab)throw new Error('tab unavailable');setTimeout(()=>tab.finish('failed'),100);setTimeout(()=>{},180);`;
@@ -130,7 +136,7 @@ describe("Orca progress-tab observer", () => {
 			process.execPath,
 			["--experimental-strip-types", "--input-type=module", "--eval", childScript],
 			repo,
-			{ ...process.env, PI_SUBAGENT_ORCA_BINARY: fakeOrca, ORCA_TEST_CAPTURE_DIR: captures, CHILD_CWD: index % 2 === 0 ? dir : nested },
+			{ ...process.env, PI_SUBAGENT_ORCA_BINARY: fakeOrca, ORCA_TEST_CAPTURE_DIR: captures, ORCA_TEST_ORDER: orderFile, CHILD_CWD: index % 2 === 0 ? dir : nested },
 		));
 		assert.deepEqual(await Promise.all(processes), Array(8).fill(0));
 		await waitForFileCount(captures, 8);
@@ -139,5 +145,7 @@ describe("Orca progress-tab observer", () => {
 			return args[args.indexOf("--title") + 1];
 		}).sort((left, right) => Number(left.split(" · ").at(-1)) - Number(right.split(" · ").at(-1)));
 		assert.deepEqual(titles, Array.from({ length: 8 }, (_, index) => `subagent · worker · ${index + 1}`));
+		const createdOrder = fs.readFileSync(orderFile, "utf-8").trim().split("\n");
+		assert.deepEqual(createdOrder, titles);
 	});
 });
