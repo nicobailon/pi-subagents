@@ -18,6 +18,7 @@ const EXTERNAL_JOB_BRIDGE_RESPONSE_DIR = "external-job-responses";
 const DEFAULT_OPERATION_TIMEOUT_MS = 120_000;
 const POLL_INTERVAL_MS = 50;
 const MAX_REQUESTS_PER_SWEEP = 100;
+const START_CLAIM_STALE_MS = DEFAULT_OPERATION_TIMEOUT_MS;
 
 interface ExternalJobBridgeRequest {
 	id: string;
@@ -61,6 +62,10 @@ function requestPath(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.json`);
 }
 
+function startClaimPath(asyncDir: string, id: string): string {
+	return path.join(requestDir(asyncDir), `${id}.claim.json`);
+}
+
 function responsePath(asyncDir: string, id: string): string {
 	return path.join(responseDir(asyncDir), `${id}.json`);
 }
@@ -71,6 +76,14 @@ function sleep(ms: number): Promise<void> {
 
 function readJson<T>(filePath: string): T {
 	return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+function isNotFoundError(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 function bridgeError(error: unknown): { code: string; message: string; blockingJobId?: string } {
@@ -144,6 +157,29 @@ async function executeBridgeRequest(request: ExternalJobBridgeRequest): Promise<
 	}
 }
 
+function claimStartRequest(asyncDir: string, filePath: string, request: ExternalJobBridgeRequest): { request: ExternalJobBridgeRequest; filePath: string } | undefined {
+	const claimed: ExternalJobBridgeRequest = { ...request, claimedAt: Date.now() };
+	const claimPath = startClaimPath(asyncDir, request.id);
+	let fd: number;
+	try {
+		fd = fs.openSync(claimPath, "wx");
+	} catch (error) {
+		if (isAlreadyExistsError(error)) return undefined;
+		throw error;
+	}
+	try {
+		fs.writeFileSync(fd, JSON.stringify(claimed), "utf-8");
+	} finally {
+		fs.closeSync(fd);
+	}
+	fs.rmSync(filePath, { force: true });
+	return { request: claimed, filePath: claimPath };
+}
+
+function startClaimIsStale(request: ExternalJobBridgeRequest): boolean {
+	return Date.now() - (request.claimedAt ?? request.createdAt) >= START_CLAIM_STALE_MS;
+}
+
 export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	let files: string[];
 	try {
@@ -154,58 +190,68 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	}
 	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
 	for (const file of files) {
-		const filePath = path.join(requestDir(asyncDir), file);
-		let request: ExternalJobBridgeRequest;
-		try {
-			request = assertRequest(readJson(filePath), filePath);
-		} catch (error) {
-			const id = file.replace(/\.json$/, "");
-			writeAtomicJson(responsePath(asyncDir, id), {
-				id,
-				ok: false,
-				operation: "status",
-				provider: "unknown",
-				code: "malformed-request",
-				message: error instanceof Error ? error.message : String(error),
-				completedAt: Date.now(),
-			} satisfies ExternalJobBridgeResponse);
-			fs.rmSync(filePath, { force: true });
-			continue;
-		}
-		if (inFlight.has(request.id) || fs.existsSync(responsePath(asyncDir, request.id))) continue;
-		if (request.operation === "start" && request.claimedAt !== undefined) {
-			writeAtomicJson(responsePath(asyncDir, request.id), {
-				id: request.id,
-				ok: false,
-				operation: request.operation,
-				provider: request.provider,
-				code: "start-dispatch-unknown",
-				message: `External-job start for provider '${request.provider}' was already claimed by a previous host process, but no provider job id was committed. Refusing to redispatch the prompt automatically.`,
-				completedAt: Date.now(),
-			} satisfies ExternalJobBridgeResponse);
-			fs.rmSync(filePath, { force: true });
-			continue;
-		}
-		const claimedRequest = request.operation === "start" ? { ...request, claimedAt: Date.now() } : request;
-		if (claimedRequest !== request) writeAtomicJson(filePath, claimedRequest);
-		inFlight.add(claimedRequest.id);
-		void executeBridgeRequest(claimedRequest).then((response) => {
-			writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
-			fs.rmSync(filePath, { force: true });
-		}).catch((error) => {
-			writeAtomicJson(responsePath(asyncDir, claimedRequest.id), {
-				id: claimedRequest.id,
-				ok: false,
-				operation: claimedRequest.operation,
-				provider: claimedRequest.provider,
-				code: "bridge-error",
-				message: error instanceof Error ? error.message : String(error),
-				completedAt: Date.now(),
-			} satisfies ExternalJobBridgeResponse);
-		}).finally(() => {
-			inFlight.delete(claimedRequest.id);
-		});
+		serviceExternalJobBridgeRequestFile(asyncDir, file);
 	}
+}
+
+export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: string): void {
+	fs.mkdirSync(responseDir(asyncDir), { recursive: true });
+	const filePath = path.join(requestDir(asyncDir), file);
+	let request: ExternalJobBridgeRequest;
+	try {
+		request = assertRequest(readJson(filePath), filePath);
+	} catch (error) {
+		if (isNotFoundError(error)) return;
+		const id = file.replace(/\.json$/, "");
+		writeAtomicJson(responsePath(asyncDir, id), {
+			id,
+			ok: false,
+			operation: "status",
+			provider: "unknown",
+			code: "malformed-request",
+			message: error instanceof Error ? error.message : String(error),
+			completedAt: Date.now(),
+		} satisfies ExternalJobBridgeResponse);
+		fs.rmSync(filePath, { force: true });
+		return;
+	}
+	if (inFlight.has(request.id) || fs.existsSync(responsePath(asyncDir, request.id))) return;
+	const claimedStartFile = file.endsWith(".claim.json");
+	if (request.operation === "start" && (claimedStartFile || request.claimedAt !== undefined)) {
+		if (!startClaimIsStale(request)) return;
+		writeAtomicJson(responsePath(asyncDir, request.id), {
+			id: request.id,
+			ok: false,
+			operation: request.operation,
+			provider: request.provider,
+			code: "start-dispatch-unknown",
+			message: `External-job start for provider '${request.provider}' was already claimed by a previous host process, but no provider job id was committed. Refusing to redispatch the prompt automatically.`,
+			completedAt: Date.now(),
+		} satisfies ExternalJobBridgeResponse);
+		fs.rmSync(filePath, { force: true });
+		fs.rmSync(requestPath(asyncDir, request.id), { force: true });
+		return;
+	}
+	const claimed = request.operation === "start" ? claimStartRequest(asyncDir, filePath, request) : { request, filePath };
+	if (!claimed) return;
+	const claimedRequest = claimed.request;
+	inFlight.add(claimedRequest.id);
+	void executeBridgeRequest(claimedRequest).then((response) => {
+		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
+		fs.rmSync(claimed.filePath, { force: true });
+	}).catch((error) => {
+		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), {
+			id: claimedRequest.id,
+			ok: false,
+			operation: claimedRequest.operation,
+			provider: claimedRequest.provider,
+			code: "bridge-error",
+			message: error instanceof Error ? error.message : String(error),
+			completedAt: Date.now(),
+		} satisfies ExternalJobBridgeResponse);
+	}).finally(() => {
+		inFlight.delete(claimedRequest.id);
+	});
 }
 
 export async function requestExternalJobOperation<T extends ExternalJobHandle | ExternalJobResult>(asyncDir: string, request: Omit<ExternalJobBridgeRequest, "id" | "createdAt">, timeoutMs = DEFAULT_OPERATION_TIMEOUT_MS): Promise<T> {

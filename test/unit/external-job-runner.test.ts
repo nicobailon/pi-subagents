@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, ExternalJobProviderError, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
-import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequestFile, serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
 import { externalJobPromptDigest, runExternalJob } from "../../src/runs/shared/external-job-runner.ts";
 
 const tempDirs: string[] = [];
@@ -32,6 +32,14 @@ async function serviceUntil<T>(asyncDir: string, promise: Promise<T>): Promise<T
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 	return promise;
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+	const deadline = Date.now() + 5_000;
+	while (!fs.existsSync(filePath)) {
+		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${filePath}`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
 }
 
 describe("external-job runner bridge", () => {
@@ -171,6 +179,96 @@ describe("external-job runner bridge", () => {
 		assert.equal(response.code, "start-dispatch-unknown");
 		assert.match(response.message, /Refusing to redispatch/);
 		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.json")), false);
+	});
+
+	it("does not dispatch a start request twice while the first claim is active", async () => {
+		const dir = tempDir("pi-external-job-active-claim-");
+		let starts = 0;
+		let resolveStart: ((value: { providerJobId: string; state: "completed" }) => void) | undefined;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => {
+				starts += 1;
+				return new Promise((resolve) => { resolveStart = resolve; });
+			},
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		fs.mkdirSync(requestDir, { recursive: true });
+		fs.writeFileSync(path.join(requestDir, "start-race.json"), JSON.stringify({
+			id: "start-race",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: Date.now(),
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-race",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+		serviceExternalJobBridgeRequests(dir);
+
+		assert.equal(starts, 1);
+		assert.equal(fs.existsSync(path.join(dir, "external-job-responses", "start-race.json")), false);
+		resolveStart!({ providerJobId: "job-race", state: "completed" });
+		await waitForFile(path.join(dir, "external-job-responses", "start-race.json"));
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-race.json"), "utf-8"));
+		assert.equal(response.ok, true);
+		assert.equal(response.result.providerJobId, "job-race");
+		assert.equal(starts, 1);
+	});
+
+	it("ignores a stale start request snapshot after another host claimed it", async () => {
+		const dir = tempDir("pi-external-job-stale-snapshot-");
+		let starts = 0;
+		let resolveStart: ((value: { providerJobId: string; state: "completed" }) => void) | undefined;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => {
+				starts += 1;
+				return new Promise((resolve) => { resolveStart = resolve; });
+			},
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		fs.mkdirSync(requestDir, { recursive: true });
+		fs.writeFileSync(path.join(requestDir, "start-stale.json"), JSON.stringify({
+			id: "start-stale",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: Date.now(),
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-stale",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+		serviceExternalJobBridgeRequestFile(dir, "start-stale.json");
+
+		assert.equal(starts, 1);
+		assert.equal(fs.existsSync(path.join(dir, "external-job-responses", "start-stale.json")), false);
+		resolveStart!({ providerJobId: "job-stale", state: "completed" });
+		await waitForFile(path.join(dir, "external-job-responses", "start-stale.json"));
+		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-stale.json"), "utf-8"));
+		assert.equal(response.ok, true);
+		assert.equal(response.result.providerJobId, "job-stale");
+		assert.equal(starts, 1);
 	});
 
 	it("does not start again after a bridge timeout without provider job id", async () => {
