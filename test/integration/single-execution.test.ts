@@ -59,6 +59,7 @@ import {
 import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
 import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
+import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -1050,9 +1051,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(typeof childStatus.parallelHandoff?.path, "string");
 		assert.equal(childStatus.parallelHandoff?.changedPatches, 1);
 		assert.equal(fs.existsSync(path.join(tempDir, "feature.txt")), false);
-		const handoff = JSON.parse(fs.readFileSync(childStatus.parallelHandoff!.path!, "utf-8")) as { groups?: Array<{ children?: Array<{ patch?: { changed?: boolean; filesChanged?: number } }> }> };
+		const handoff = JSON.parse(fs.readFileSync(childStatus.parallelHandoff!.path!, "utf-8")) as { groups?: Array<{ children?: Array<{ patch?: { changed?: boolean; filesChanged?: number } }>; cleanup?: { state?: string; tasks?: Array<{ path?: string; preserved?: boolean; worktreeRemoved?: boolean; reason?: string }> } }> };
 		assert.equal(handoff.groups?.[0]?.children?.[0]?.patch?.changed, true);
 		assert.equal(handoff.groups?.[0]?.children?.[0]?.patch?.filesChanged, 1);
+		assert.equal(handoff.groups?.[0]?.cleanup?.state, "partial");
+		assert.equal(handoff.groups?.[0]?.cleanup?.tasks?.[0]?.preserved, true);
+		assert.equal(handoff.groups?.[0]?.cleanup?.tasks?.[0]?.worktreeRemoved, false);
+		assert.equal(handoff.groups?.[0]?.cleanup?.tasks?.[0]?.reason, "retained child resume requires managed worktree cwd");
+		assert.equal(fs.existsSync(handoff.groups?.[0]?.cleanup?.tasks?.[0]?.path ?? ""), true);
 		const childResultPath = path.join(DIRS.results, `${childRunId}.json`);
 		for (let attempt = 0; attempt < 200 && !fs.existsSync(childResultPath); attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1061,6 +1067,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(childResult.parentWorkflowRunId, workflowRunId);
 		assert.equal(childResult.workflowKey, "background");
 		assert.equal(fs.existsSync(workflowStepSessionFile), true);
+		discardPreservedWorktrees(childStatus.parallelHandoff!.path!, { kind: "confirmed" });
 		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 		fs.rmSync(workflowResultPath, { force: true });
 		fs.rmSync(childDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });

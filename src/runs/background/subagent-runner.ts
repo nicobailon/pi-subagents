@@ -4601,7 +4601,14 @@ async function runSubagent(
 				};
 				try {
 					writeParallelHandoffGroup(handoff);
-					const cleanup = cleanupWorktrees(singleWorktreeSetup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath });
+					const cleanup = cleanupWorktrees(singleWorktreeSetup, {
+						kind: "preserve",
+						capturedDiffs: diffs,
+						handoffManifestPath: manifestPath,
+						...(config.parentWorkflowRunId && singleResult.sessionFile && fs.existsSync(singleResult.sessionFile) && !singleResult.stopped
+							? { cleanupBlocker: "retained child resume requires managed worktree cwd" }
+							: {}),
+					});
 					statusPayload.parallelHandoff = writeParallelHandoffGroup({ ...handoff, cleanup });
 					previousOutput = [previousOutput, diffSummary, formatParallelHandoffReference(statusPayload.parallelHandoff)].filter(Boolean).join("\n\n");
 				} catch (error) {

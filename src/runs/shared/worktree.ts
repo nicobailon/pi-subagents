@@ -46,7 +46,7 @@ export interface WorktreeCleanupTask {
 }
 
 export type WorktreeCleanupIntent =
-	| { kind: "preserve"; capturedDiffs?: WorktreeDiff[]; handoffManifestPath?: string }
+	| { kind: "preserve"; capturedDiffs?: WorktreeDiff[]; handoffManifestPath?: string; cleanupBlocker?: string }
 	| {
 		kind: "discard";
 		authorization:
@@ -571,6 +571,17 @@ function cleanupSingleWorktree(
 	const errors: string[] = [];
 	let worktreeRemoved = false;
 	let branchRemoved = false;
+	if (intent.kind === "preserve" && intent.cleanupBlocker) {
+		return {
+			index: worktree.index,
+			path: worktree.path,
+			branch: worktree.branch,
+			worktreeRemoved: false,
+			branchRemoved: false,
+			preserved: true,
+			reason: intent.cleanupBlocker,
+		};
+	}
 	if (intent.kind !== "setup-rollback") {
 		try {
 			removeSyntheticPathsBeforeDiff(worktree);

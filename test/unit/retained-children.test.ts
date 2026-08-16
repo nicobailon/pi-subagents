@@ -17,6 +17,7 @@ interface WriteRunOptions {
 	recoveryDescriptor?: "present" | "missing" | "invalid";
 	recoverySourceRunId?: string;
 	recoveryAgent?: string;
+	recoveryCwd?: string;
 }
 
 function writeRetainedRun(root: string, index: number, options: WriteRunOptions = {}): void {
@@ -56,7 +57,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			version: 2,
 			sourceRunId: runId,
 			agent: "worker",
-			cwd: root,
+			cwd: options.recoveryCwd ?? root,
 			systemPromptMode: "replace",
 			outputMode: "inline",
 		}), "utf-8");
@@ -66,7 +67,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			runFanoutBudget: createRunFanoutBudget(runId, 64),
 			sourceRunId: options.recoverySourceRunId ?? runId,
 			agent: options.recoveryAgent ?? "worker",
-			cwd: root,
+			cwd: options.recoveryCwd ?? root,
 			systemPromptMode: "replace",
 			inheritProjectContext: false,
 			inheritSkills: false,
@@ -162,6 +163,23 @@ describe("retained child roster", () => {
 			assert.match(formatted, /resumability: not resumable \(no persisted session file\)/);
 			assert.doesNotMatch(formatted, /resume: subagent/);
 			assert.match(formatted, /No resumable retained child is listed\. Launch a same-role fallback challenge and label it as fallback\./);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not advertise a retained child when its required cwd is missing", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-retained-children-missing-cwd-"));
+		try {
+			const missingCwd = path.join(root, "removed-worktree");
+			writeRetainedRun(root, 1, { recoveryCwd: missingCwd });
+
+			const children = listRetainedChildren(path.join(root, "runs"), "parent-a");
+			const formatted = formatRetainedChildren(children);
+
+			assert.equal(children[0]?.resumability.state, "not-resumable");
+			assert.match(children[0]?.resumability.state === "not-resumable" ? children[0].resumability.reason : "", /required cwd is missing|resume dependency unavailable/);
+			assert.doesNotMatch(formatted, /resume: subagent/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

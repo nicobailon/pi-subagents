@@ -10,6 +10,7 @@ import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
+import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -409,6 +410,17 @@ function validateResumeSessionFile(runId: string, sessionFile: string): string {
 	return resolved;
 }
 
+function validateResumeCwd(runId: string, cwd: string | undefined): string | undefined {
+	if (!cwd) return undefined;
+	const resolved = path.resolve(cwd);
+	try {
+		if (!fs.statSync(resolved).isDirectory()) throw new Error("path is not a directory");
+	} catch (error) {
+		throw new Error(`Async run '${runId}' required cwd does not exist: ${cwd}`, { cause: error instanceof Error ? error : undefined });
+	}
+	return resolved;
+}
+
 export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncResumeDeps = {}, options: AsyncResumeOptions = {}): AsyncResumeTarget {
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
@@ -509,6 +521,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
+	const managedWorktreeCwd = location.asyncDir
+		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index)
+		: undefined;
+	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? status?.cwd ?? result?.cwd ?? recoveryDescriptor?.cwd);
 
 	return {
 		kind: "revive",
@@ -517,7 +533,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		state,
 		agent,
 		index,
-		cwd: status?.cwd ?? result?.cwd,
+		...(resumeCwd ? { cwd: resumeCwd } : {}),
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),

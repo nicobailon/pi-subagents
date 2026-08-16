@@ -34,6 +34,28 @@ function readManifest(manifestPath: string): ParallelHandoffManifest | undefined
 	return parsed;
 }
 
+export function resolveRetainedWorktreeCwd(manifestPath: string, runId: string, childIndex: number): string | undefined {
+	const manifest = readManifest(manifestPath);
+	if (!manifest) return undefined;
+	if (manifest.runId !== runId) throw new Error(`Managed worktree handoff belongs to run '${manifest.runId}', not '${runId}'.`);
+	const match = manifest.groups
+		.flatMap((group) => group.children.map((child) => ({ group, child })))
+		.find(({ child }) => child.index === childIndex);
+	if (!match) return undefined;
+	const cleanup = match.group.cleanup.tasks.find((task) => task.index === match.child.taskIndex);
+	if (!cleanup) throw new Error(`Async run '${runId}' child ${childIndex} has no managed worktree cleanup record.`);
+	const relativeCwd = path.relative(match.group.repoRoot, manifest.cwd);
+	if (path.isAbsolute(relativeCwd) || relativeCwd.startsWith("..")) throw new Error(`Async run '${runId}' has an invalid managed worktree cwd.`);
+	const requiredCwd = path.join(cleanup.path, relativeCwd);
+	if (cleanup.worktreeRemoved || cleanup.branchRemoved) throw new Error(`Async run '${runId}' required managed worktree was removed: ${requiredCwd}`);
+	try {
+		if (!fs.statSync(requiredCwd).isDirectory()) throw new Error("path is not a directory");
+	} catch (error) {
+		throw new Error(`Async run '${runId}' required managed worktree cwd is missing: ${requiredCwd}`, { cause: error instanceof Error ? error : undefined });
+	}
+	return requiredCwd;
+}
+
 function referenceFor(manifestPath: string, manifest: ParallelHandoffManifest): ParallelHandoffReference {
 	const children = manifest.groups.flatMap((group) => group.children);
 	return {
