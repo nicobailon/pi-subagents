@@ -81,6 +81,14 @@ function startClaimTempDir(asyncDir: string, id: string): string {
 	return path.join(requestDir(asyncDir), `${id}.claim.tmp-${randomUUID()}`);
 }
 
+function startClaimCompletedPath(claimDir: string): string {
+	return path.join(claimDir, "completed.json");
+}
+
+function completedStartClaimExists(asyncDir: string, id: string): boolean {
+	return fs.existsSync(startClaimCompletedPath(startClaimDir(asyncDir, id)));
+}
+
 function responsePath(asyncDir: string, id: string): string {
 	return path.join(responseDir(asyncDir), `${id}.json`);
 }
@@ -266,7 +274,7 @@ export function serviceExternalJobBridgeRequests(asyncDir: string): void {
 	let files: string[];
 	try {
 		files = fs.readdirSync(requestDir(asyncDir), { withFileTypes: true })
-			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json")) || (entry.isDirectory() && entry.name.endsWith(".claim")))
+			.filter((entry) => (entry.isFile() && entry.name.endsWith(".json") && !completedStartClaimExists(asyncDir, entry.name.replace(/\.json$/, ""))) || (entry.isDirectory() && entry.name.endsWith(".claim") && !fs.existsSync(startClaimCompletedPath(path.join(requestDir(asyncDir), entry.name)))))
 			.map((entry) => entry.name)
 			.slice(0, MAX_REQUESTS_PER_SWEEP);
 	} catch (error) {
@@ -304,6 +312,10 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 		fs.rmSync(filePath, { force: true });
 		return;
 	}
+	if (request.operation === "start" && completedStartClaimExists(asyncDir, request.id)) {
+		fs.rmSync(filePath, { force: true });
+		return;
+	}
 	if (inFlight.has(request.id) || fs.existsSync(responsePath(asyncDir, request.id))) return;
 	if (request.operation === "start" && request.claimedAt !== undefined) return;
 	const claimed = request.operation === "start" ? claimStartRequest(asyncDir, filePath, request) : { request, filePath };
@@ -312,7 +324,11 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 	inFlight.add(claimedRequest.id);
 	void executeBridgeRequest(claimedRequest).then((response) => {
 		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), response);
-		fs.rmSync(claimed.filePath, { recursive: true, force: true });
+		if (claimedRequest.operation === "start") {
+			writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
+		} else {
+			fs.rmSync(claimed.filePath, { recursive: true, force: true });
+		}
 	}).catch((error) => {
 		writeAtomicJson(responsePath(asyncDir, claimedRequest.id), {
 			id: claimedRequest.id,
@@ -323,6 +339,7 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 			message: error instanceof Error ? error.message : String(error),
 			completedAt: Date.now(),
 		} satisfies ExternalJobBridgeResponse);
+		if (claimedRequest.operation === "start") writeAtomicJson(startClaimCompletedPath(claimed.filePath), { completedAt: Date.now() });
 	}).finally(() => {
 		inFlight.delete(claimedRequest.id);
 	});
@@ -330,6 +347,7 @@ export function serviceExternalJobBridgeRequestFile(asyncDir: string, file: stri
 
 function serviceExternalJobStartClaim(asyncDir: string, file: string): void {
 	const claimDir = path.join(requestDir(asyncDir), file);
+	if (fs.existsSync(startClaimCompletedPath(claimDir))) return;
 	const owner = readClaimOwner(claimDir);
 	if (!owner && fs.existsSync(requestPath(asyncDir, file.replace(/\.claim$/, ""))) && !fs.existsSync(responsePath(asyncDir, file.replace(/\.claim$/, "")))) {
 		fs.rmSync(claimDir, { recursive: true, force: true });

@@ -179,7 +179,7 @@ describe("external-job runner bridge", () => {
 		assert.equal(starts, 1);
 		assert.equal(response.ok, true);
 		assert.equal(response.result.providerJobId, "job-duplicate");
-		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.claim")), false);
+		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.claim")), true);
 		assert.equal(fs.existsSync(path.join(requestDir, "start-timeout.json")), false);
 	});
 
@@ -350,6 +350,100 @@ describe("external-job runner bridge", () => {
 		const response = JSON.parse(fs.readFileSync(path.join(dir, "external-job-responses", "start-stale.json"), "utf-8"));
 		assert.equal(response.ok, true);
 		assert.equal(response.result.providerJobId, "job-stale");
+		assert.equal(starts, 1);
+	});
+
+	it("does not redispatch after a completed start claim", async () => {
+		const dir = tempDir("pi-external-job-completed-claim-");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-completed", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		fs.mkdirSync(requestDir, { recursive: true });
+		const request = {
+			id: "start-completed",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: Date.now(),
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-completed",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		};
+		fs.writeFileSync(path.join(requestDir, "start-completed.json"), JSON.stringify(request), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+		await waitForFile(path.join(dir, "external-job-responses", "start-completed.json"));
+		fs.rmSync(path.join(dir, "external-job-responses", "start-completed.json"), { force: true });
+		fs.writeFileSync(path.join(requestDir, "start-completed.json"), JSON.stringify(request), "utf-8");
+		serviceExternalJobBridgeRequests(dir);
+
+		assert.equal(starts, 1);
+		assert.equal(fs.existsSync(path.join(requestDir, "start-completed.claim")), true);
+	});
+
+	it("does not let completed start claims starve later requests", async () => {
+		const dir = tempDir("pi-external-job-completed-claim-starvation-");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-after-tombstones", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+		const requestDir = path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR);
+		fs.mkdirSync(requestDir, { recursive: true });
+		for (let index = 0; index < 100; index += 1) {
+			const id = `000-${String(index).padStart(3, "0")}`;
+			const claimDir = path.join(requestDir, `${id}.claim`);
+			fs.mkdirSync(claimDir);
+			fs.writeFileSync(path.join(claimDir, "completed.json"), JSON.stringify({ completedAt: 1 }), "utf-8");
+			fs.writeFileSync(path.join(requestDir, `${id}.json`), JSON.stringify({
+				id,
+				operation: "start",
+				provider: "surf-oracle",
+				createdAt: Date.now(),
+				start: {
+					prompt: "stale prompt",
+					promptDigest: externalJobPromptDigest("stale prompt"),
+					cwd: dir,
+					runId: "run-stale-completed",
+					stepIndex: 0,
+					agent: "gpt-pro",
+					options: {},
+				},
+			}), "utf-8");
+		}
+		fs.writeFileSync(path.join(requestDir, "zzz.json"), JSON.stringify({
+			id: "zzz",
+			operation: "start",
+			provider: "surf-oracle",
+			createdAt: Date.now(),
+			start: {
+				prompt: "prompt",
+				promptDigest: externalJobPromptDigest("prompt"),
+				cwd: dir,
+				runId: "run-after-tombstones",
+				stepIndex: 0,
+				agent: "gpt-pro",
+				options: {},
+			},
+		}), "utf-8");
+
+		serviceExternalJobBridgeRequests(dir);
+		await waitForFile(path.join(dir, "external-job-responses", "zzz.json"));
+
 		assert.equal(starts, 1);
 	});
 
