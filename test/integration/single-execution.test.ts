@@ -45,6 +45,7 @@ import { createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDG
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
+	SUBAGENT_CHILD_ENV,
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_STEER_ACK_DIR_ENV,
 	SUBAGENT_STEER_CAPABILITY_ENV,
@@ -2629,7 +2630,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		} satisfies SubagentDelegationRequest;
 
 		try {
-			registerSubagentExtension(fakePi as never);
+			const previousChildEnv = process.env[SUBAGENT_CHILD_ENV];
+			delete process.env[SUBAGENT_CHILD_ENV];
+			try {
+				registerSubagentExtension(fakePi as never);
+			} finally {
+				if (previousChildEnv === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+				else process.env[SUBAGENT_CHILD_ENV] = previousChildEnv;
+			}
 			for (const handler of runtimeHandlers.get("session_start") ?? []) {
 				await handler({ reason: "startup" }, ctx);
 			}
