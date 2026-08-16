@@ -158,7 +158,7 @@ try {
 }
 
 describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
-	it("includes context field for fresh/fork execution mode", () => {
+	it("includes context field and default precedence for fresh/fork execution mode", () => {
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");
 		assert.equal(contextSchema.type, "string");
@@ -166,7 +166,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const description = String(contextSchema.description ?? "");
 		assert.match(description, /fresh/);
 		assert.match(description, /fork/);
-		assert.match(description, /each agent uses its own defaultContext/);
+		assert.match(description, /defaultSubagentContext:'fork' wins over each agent defaultContext/);
 		assert.match(description, /overrides every child/);
 		assert.match(description, /implicit fork/);
 		assert.match(description, /else fresh/);

@@ -1899,6 +1899,8 @@ export interface MainWindowRendererConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Prefer fork context for launches that omit an explicit context. */
+	defaultSubagentContext?: "fork";
 	/** Optional shortcut that detaches the active foreground single-subagent run. */
 	foregroundDetachShortcut?: string;
 	/** Show the Claude Code-style navigable fleet. Defaults to true. */

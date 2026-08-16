@@ -66,6 +66,20 @@ export interface PreferredForkSnapshot {
 	leafId?: string | null;
 }
 
+export interface SubagentLaunchContextInput {
+	explicitContext?: SubagentExecutionContext;
+	agentDefaultContext?: SubagentExecutionContext;
+	defaultSubagentContext?: "fork";
+	canUseImplicitFork: boolean;
+}
+
+/** Resolve the actual launch context from explicit, global, and agent preferences. */
+export function resolveSubagentLaunchContext(input: SubagentLaunchContextInput): SubagentExecutionContext {
+	if (input.explicitContext !== undefined) return input.explicitContext;
+	const preferredContext = input.defaultSubagentContext === "fork" ? "fork" : input.agentDefaultContext ?? "fresh";
+	return preferredContext === "fork" && input.canUseImplicitFork ? "fork" : "fresh";
+}
+
 /** True when an implicit `defaultContext: fork` can create a real branch now.
  * Explicit `context: "fork"` stays strict and does not use this preference. */
 export function canPreferFork(sessionManager: PreferredForkAvailability): boolean {

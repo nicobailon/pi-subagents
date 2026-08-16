@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add `defaultSubagentContext: "fork"` to prefer forked context for all launches that omit an explicit context (#1161).
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
 
 ### Fixed

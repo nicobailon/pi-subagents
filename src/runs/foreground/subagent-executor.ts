@@ -58,7 +58,7 @@ import { isScheduledRunAction, type ScheduledRunAction } from "../background/sch
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
 import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
-import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
+import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
@@ -2173,13 +2173,21 @@ interface AgentDefaultContextPolicy {
 	usesFork: boolean;
 }
 
-function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: AgentConfig[], canUseDefaultFork = false): AgentDefaultContextPolicy {
-	if (params.context !== undefined) {
-		return resolveExplicitContextPolicy(params);
-	}
+function resolveAgentDefaultContextPolicy(
+	params: SubagentParamsLike,
+	agents: AgentConfig[],
+	defaultSubagentContext: ExtensionConfig["defaultSubagentContext"],
+	canUseDefaultFork = false,
+): AgentDefaultContextPolicy {
+	if (params.context !== undefined) return resolveExplicitContextPolicy(params);
 	const byName = new Map(agents.map((agent) => [agent.name, agent]));
 	const contextForAgent = (agentName: string): ContextMode =>
-		canUseDefaultFork && byName.get(agentName)?.defaultContext === "fork" ? "fork" : "fresh";
+		resolveSubagentLaunchContext({
+			explicitContext: params.context,
+			agentDefaultContext: byName.get(agentName)?.defaultContext,
+			defaultSubagentContext,
+			canUseImplicitFork: canUseDefaultFork,
+		});
 	const requestedAgentNames = collectRequestedAgentNames(params);
 	const contextSummary = summarizeContextModes(requestedAgentNames.map((name) => contextForAgent(name)));
 	const usesFork = contextSummary === "fork" || contextSummary === "mixed";
@@ -2192,7 +2200,10 @@ function resolveAgentDefaultContextPolicy(params: SubagentParamsLike, agents: Ag
 }
 
 function resolveExplicitContextPolicy(params: SubagentParamsLike): AgentDefaultContextPolicy {
-	const context = params.context === "fork" ? "fork" : "fresh";
+	const context = resolveSubagentLaunchContext({
+		explicitContext: params.context,
+		canUseImplicitFork: false,
+	});
 	return {
 		params,
 		contextForAgent: () => context,
@@ -4859,7 +4870,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		// Prefer fork only when the parent session is persisted and has a current leaf;
 		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.
 		// Explicit context:"fork" remains strict.
-		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents, canPreferFork(ctx.sessionManager));
+		const contextPolicy = resolveAgentDefaultContextPolicy(
+			effectiveParams,
+			discoveredAgents,
+			deps.config.defaultSubagentContext,
+			canPreferFork(ctx.sessionManager),
+		);
 		effectiveParams = contextPolicy.params;
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({

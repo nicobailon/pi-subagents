@@ -438,6 +438,46 @@ Project prompt.
 		assert.equal(explicitFork.contract.context, "fork");
 	});
 
+	it("applies defaultSubagentContext fork without overriding explicit fresh", async () => {
+		const cwd = path.join(tempDir, "repo-global-fork");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+defaultContext: fresh
+---
+Project prompt.
+`);
+		writeJson(path.join(process.env.PI_CODING_AGENT_DIR!, "extensions", "subagent", "config.json"), {
+			defaultSubagentContext: "fork",
+		});
+		const parentSessionFile = path.join(tempDir, "global-parent.jsonl");
+		fs.writeFileSync(parentSessionFile, '{"type":"session","version":1,"id":"parent","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n', "utf-8");
+
+		const implicit = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentSessionFile,
+			parentLeafId: "leaf-current",
+		});
+		assert.equal(implicit.ok, true);
+		assert.equal(implicit.contract.context, "fork");
+
+		const explicitFresh = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			context: "fresh",
+			parentSessionFile,
+			parentLeafId: "leaf-current",
+		});
+		assert.equal(explicitFresh.ok, true);
+		assert.equal(explicitFresh.contract.context, "fresh");
+
+		const unavailableFork = await resolveSubagentLaunchContract({ agent: "worker", cwd });
+		assert.equal(unavailableFork.ok, true);
+		assert.equal(unavailableFork.contract.context, "fresh");
+	});
+
 	it("fails closed when a capability ceiling denies read required for child skills", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });

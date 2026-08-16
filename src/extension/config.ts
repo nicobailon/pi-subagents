@@ -94,6 +94,9 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
+	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fork") {
+		throw new Error('config.defaultSubagentContext must be "fork"');
+	}
 	if (config.foregroundDetachShortcut !== undefined
 		&& (typeof config.foregroundDetachShortcut !== "string" || !isValidKeyId(config.foregroundDetachShortcut))) {
 		throw new Error("config.foregroundDetachShortcut must be a valid keybinding string such as \"ctrl+b\"");

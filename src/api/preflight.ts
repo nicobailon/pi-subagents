@@ -17,7 +17,8 @@ import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
 import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
-import { canPreferForkFromSnapshot } from "../shared/fork-context.ts";
+import { canPreferForkFromSnapshot, resolveSubagentLaunchContext } from "../shared/fork-context.ts";
+import { loadConfig } from "../extension/config.ts";
 import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindingDigest } from "../shared/launch-contract.ts";
 import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
@@ -194,12 +195,15 @@ function normalizeAvailableModels(models: SubagentLaunchContractInput["available
 }
 
 function resolveLaunchContractContext(input: SubagentLaunchContractInput, agent: AgentConfig): "fresh" | "fork" {
-	if (input.context !== undefined) return input.context;
-	if (agent.defaultContext !== "fork") return agent.defaultContext ?? "fresh";
-	return canPreferForkFromSnapshot({
-		parentSessionFile: input.parentSessionFile,
-		leafId: input.parentLeafId,
-	}) ? "fork" : "fresh";
+	return resolveSubagentLaunchContext({
+		explicitContext: input.context,
+		agentDefaultContext: agent.defaultContext,
+		defaultSubagentContext: loadConfig().defaultSubagentContext,
+		canUseImplicitFork: canPreferForkFromSnapshot({
+			parentSessionFile: input.parentSessionFile,
+			leafId: input.parentLeafId,
+		}),
+	});
 }
 
 function candidateList(inputAgent: string, selected: AgentConfig | undefined, cwd: string): SubagentLaunchContractAgentCandidate[] {
