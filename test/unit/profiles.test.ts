@@ -16,10 +16,12 @@ import {
 	refreshProviderModelCatalog,
 	readProviderModelCatalog,
 } from "../../src/profiles/profiles.ts";
+import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
 
 let homeDir = "";
 const previousHome = process.env.HOME;
 const previousUserProfile = process.env.USERPROFILE;
+const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
 
 function makeCtx(cwd: string, models: Array<Record<string, unknown>>) {
 	return {
@@ -42,6 +44,8 @@ describe("profiles helpers", () => {
 		else process.env.HOME = previousHome;
 		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = previousUserProfile;
+		if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
+		else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
 		fs.rmSync(homeDir, { recursive: true, force: true });
 	});
 
@@ -146,11 +150,14 @@ describe("profiles helpers", () => {
 		);
 	});
 
-	it("refreshes a provider model catalog and writes a cache file", async () => {
+	it("refreshes a provider model catalog using the resolved Pi executable and writes a cache file", async () => {
+		const piBinary = path.join(homeDir, "pi-wrapper.exe");
+		process.env[PI_SUBAGENT_PI_BINARY_ENV] = piBinary;
 		const execCalls: string[] = [];
 		const execCwds: unknown[] = [];
 		const pi = {
-			exec: async (_command: string, args: string[], options?: Record<string, unknown>) => {
+			exec: async (command: string, args: string[], options?: Record<string, unknown>) => {
+				assert.equal(command, piBinary);
 				execCalls.push(args.join(" "));
 				execCwds.push(options?.cwd);
 				return { stdout: "OK\n", stderr: "", code: 0, killed: false };
