@@ -149,6 +149,7 @@ interface AsyncStatusPayload {
 interface MockPiCallRecord {
 	args?: string[];
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
+	requiredChildTools?: string[];
 }
 
 function writeWatchdogSettings(projectDir: string, tailMs = 120_000): void {
@@ -417,6 +418,17 @@ function readMockPiArgs(mockPi: MockPi, index: number): string[] {
 	return payload.args;
 }
 
+function readMockPiRequiredTools(mockPi: MockPi, index: number): string[] {
+	const callFile = fs.readdirSync(mockPi.dir)
+		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+		.sort()
+		.at(index);
+	assert.ok(callFile, `expected recorded call ${index}`);
+	const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord;
+	assert.ok(Array.isArray(payload.requiredChildTools), "expected recorded required child tools");
+	return payload.requiredChildTools;
+}
+
 function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
 	const callFiles = fs.readdirSync(mockPi.dir)
 		.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
@@ -681,6 +693,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(status.runtimeAcknowledgedExtensions, runtimeAck);
 		assert.deepEqual(status.steps?.[0]?.runtimeAcknowledgedExtensions, runtimeAck);
 		assert.ok(!JSON.stringify(launch.details.launchResolvedExtensions).includes(tempDir), "projection should not expose raw extension paths");
+		// Stale supervisor-bridge pair: the --tools allowlist passes both names
+		// through, but PI_SUBAGENT_REQUIRED_TOOLS excludes them so the 0.50 child
+		// runtime cannot fail the run over the removed native intercom (#1207).
+		const recoveryCallArgs = readMockPiArgs(mockPi, 0);
+		assert.equal(recoveryCallArgs[recoveryCallArgs.indexOf("--tools") + 1], "read,intercom,contact_supervisor");
+		assert.deepEqual(readMockPiRequiredTools(mockPi, 0), ["read"]);
 	});
 
 	it("background parallel groups report usage budget state and block queued children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
