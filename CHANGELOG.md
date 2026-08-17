@@ -11,6 +11,7 @@
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
 
 ### Fixed
+- Keep `contact_supervisor` out of strict child tool requirements so explicit agent allowlists that name it no longer fail as missing `intercom` after the 0.50.0 supervisor-channel cutover. Thanks to [@MingTeer](https://github.com/MingTeer) for #1207.
 - Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while retaining strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
 - Fail closed when an existing external-job `status.json` is unreadable or malformed, including an invalid `steps` shape, instead of starting a new provider job.
 - Describe `async:false` as a blocking parent wait, not a UI or foreground-only mode.

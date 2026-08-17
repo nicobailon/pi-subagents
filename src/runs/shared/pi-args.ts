@@ -433,13 +433,17 @@ export function resolvePiLaunchToolPlan(
 			...internalTools,
 		]),
 	];
+	// contact_supervisor stays in the --tools allowlist but is never a strict
+	// requirement: children register it at runtime through the native supervisor
+	// channel (or pi-intercom), so requiring it would fail bridge-injected and
+	// stale-descriptor allowlists that the child runtime satisfies anyway (#1207).
 	const requiredChildTools = explicitToolAllowlist
 		? [
 				...new Set([
 					...(input.tools !== undefined ? declaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
 					...internalTools,
-				]),
+				].filter((tool) => tool !== "contact_supervisor")),
 			]
 		: [];
 	const permSystemExt = capabilityCeiling?.denyExtensions

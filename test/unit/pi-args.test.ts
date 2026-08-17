@@ -806,11 +806,33 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			toolsArg,
 			"read,grep,find,ls,bash,edit,write,contact_supervisor",
 		);
+		// contact_supervisor is runtime-registered in children, so it is never a
+		// strict requirement even when the explicit allowlist names it (#1207).
 		assert.deepEqual(
 			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
-			toolsArg.split(","),
+			["read", "grep", "find", "ls", "bash", "edit", "write"],
 		);
 		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
+	});
+
+	it("keeps explicit intercom tools strict while excluding contact_supervisor from requirements", () => {
+		const { args, env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read", "intercom", "contact_supervisor"],
+		});
+
+		assert.equal(
+			args[args.indexOf("--tools") + 1],
+			"read,intercom,contact_supervisor",
+		);
+		assert.deepEqual(
+			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
+			["read", "intercom"],
+		);
 	});
 
 	it("launches the bundled reviewer without mutation-capable tools", () => {
