@@ -558,6 +558,64 @@ describe("external-job runner bridge", () => {
 		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
 	});
 
+	it("fails closed when existing status.json has an invalid steps shape", async () => {
+		const dir = tempDir("pi-external-job-invalid-steps-");
+		fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ steps: "nope" }), "utf-8");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-new", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+
+		const result = await runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-invalid-steps",
+			agent: "gpt-pro",
+		});
+
+		assert.equal(starts, 0);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.externalJob.failureCode, "status-unreadable");
+		assert.match(result.error ?? "", /Malformed external-job status/);
+		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
+	});
+
+	it("starts when existing status.json has a pending step without an external job", async () => {
+		const dir = tempDir("pi-external-job-pending-step-");
+		fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({
+			steps: [{ agent: "gpt-pro", status: "pending" }],
+		}), "utf-8");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-1", state: "completed" }; },
+			status: () => ({ providerJobId: "job-1", state: "completed" }),
+			reattach: () => ({ providerJobId: "job-1", state: "completed" }),
+			result: () => ({ providerJobId: "job-1", state: "completed", output: "first start" }),
+		});
+
+		const result = await serviceUntil(dir, runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-pending-step",
+			agent: "gpt-pro",
+		}));
+
+		assert.equal(starts, 1);
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.externalJob.providerJobId, "job-1");
+	});
+
 	it("stops waiting for start when local timeout fires before a provider job id", async () => {
 		const dir = tempDir("pi-external-job-start-local-timeout-");
 		let starts = 0;

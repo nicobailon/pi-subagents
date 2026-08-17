@@ -12,7 +12,7 @@
 
 ### Fixed
 - Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while retaining strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
-- Fail closed when an existing external-job `status.json` is unreadable or malformed, instead of starting a new provider job.
+- Fail closed when an existing external-job `status.json` is unreadable or malformed, including an invalid `steps` shape, instead of starting a new provider job.
 - Describe `async:false` as a blocking parent wait, not a UI or foreground-only mode.
 - Skip malformed agent definitions during discovery so valid agents still list and launch, while showing their configuration errors in management diagnostics (#1200).
 - Resolve `/subagents-generate-profiles` provider probes through the shared Pi executable resolver so configured and Windows-specific Pi commands work. Thanks to [@Wumpf](https://github.com/Wumpf) for #1199.
