@@ -14,6 +14,7 @@ import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-st
 import { steerAsyncRun } from "../runs/foreground/async-steering-action.ts";
 import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
+import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget } from "../runs/foreground/workflow-foreground-steering.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
@@ -1279,14 +1280,25 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 		await copyToClipboard(text);
 	});
 	const actions = options.actions ?? {
-		steer: async (input: { runId: string; asyncDir: string; index?: number; message: string; mode: SteerDeliveryMode }) => firstToolResultText(await steerAsyncRun({
-			state,
-			runId: input.runId,
-			...(input.index !== undefined ? { index: input.index } : {}),
-			message: input.message,
-			mode: input.mode,
-			location: { asyncDir: input.asyncDir, resolvedId: input.runId } as Parameters<typeof steerAsyncRun>[0]["location"],
-		}), `Failed to steer async run ${input.runId}.`),
+		steer: async (input: { runId: string; asyncDir: string; index?: number; message: string; mode: SteerDeliveryMode }) => {
+			const status = readStatus(input.asyncDir);
+			const liveWorkflowRunId = status?.mode === "workflow" && state.workflowControllers?.has(status.runId || input.runId)
+				? status.runId || input.runId
+				: undefined;
+			if (liveWorkflowRunId) {
+				const route = resolveWorkflowForegroundSteeringTarget({ state, workflowRunId: liveWorkflowRunId, asyncDirRoot: options.asyncDirRoot ?? DIRS.async });
+				if (!route.ok) return { text: route.message, isError: true };
+				return firstToolResultText(await steerWorkflowForegroundTarget({ target: route.target, message: input.message, mode: input.mode, ...(input.index !== undefined ? { index: input.index } : {}) }), `Failed to steer foreground run ${input.runId}.`);
+			}
+			return firstToolResultText(await steerAsyncRun({
+				state,
+				runId: input.runId,
+				...(input.index !== undefined ? { index: input.index } : {}),
+				message: input.message,
+				mode: input.mode,
+				location: { asyncDir: input.asyncDir, resolvedId: input.runId } as Parameters<typeof steerAsyncRun>[0]["location"],
+			}), `Failed to steer async run ${input.runId}.`);
+		},
 		stop: (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(stopAsyncRun(state, input.runId, undefined, { asyncDir: input.asyncDir, resolvedId: input.runId }), `Failed to stop async run ${input.runId}.`),
 		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleHerdrInspectorAction("inspector.open", {
 			id: input.runId,
