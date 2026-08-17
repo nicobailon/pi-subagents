@@ -33,13 +33,26 @@ function formatError(error: ExternalJobProviderError, provider: string): string 
 	return `External-job provider '${provider}' failed closed (${error.code}): ${error.message}.${blocking}`;
 }
 
+function isNotFound(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
 function readExistingExternalJob(asyncDir: string, stepIndex: number): ExternalJobStatus | undefined {
+	const statusPath = path.join(asyncDir, "status.json");
+	let raw: string;
 	try {
-		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { steps?: Array<{ externalJob?: ExternalJobStatus }> };
-		return status.steps?.[stepIndex]?.externalJob;
-	} catch {
-		return undefined;
+		raw = fs.readFileSync(statusPath, "utf-8");
+	} catch (error) {
+		if (isNotFound(error)) return undefined;
+		throw new ExternalJobProviderError(`Unreadable external-job status '${statusPath}'. Refusing to redispatch the prompt.`, { code: "status-unreadable", cause: error });
 	}
+	let status: { steps?: Array<{ externalJob?: ExternalJobStatus }> };
+	try {
+		status = JSON.parse(raw) as { steps?: Array<{ externalJob?: ExternalJobStatus }> };
+	} catch (error) {
+		throw new ExternalJobProviderError(`Malformed external-job status '${statusPath}'. Refusing to redispatch the prompt.`, { code: "status-unreadable", cause: error });
+	}
+	return status.steps?.[stepIndex]?.externalJob;
 }
 
 function statusFromHandle(input: {
@@ -129,7 +142,7 @@ export async function runExternalJob(input: {
 	const startedAt = Date.now();
 	let timedOut = false;
 	let stopped = false;
-	let current = readExistingExternalJob(input.asyncDir, input.stepIndex);
+	let current: ExternalJobStatus | undefined;
 	const timeout = () => { timedOut = true; };
 	const stop = () => { stopped = true; };
 	input.registerTimeout?.(timeout);
@@ -146,6 +159,7 @@ export async function runExternalJob(input: {
 		return new ExternalJobProviderError(message, { code: stopped ? "local-stop" : "local-timeout" });
 	};
 	try {
+		current = readExistingExternalJob(input.asyncDir, input.stepIndex);
 		let handle: ExternalJobHandle;
 		if (current?.providerJobId) {
 			if (current.provider !== provider || current.promptDigest !== promptDigest) {

@@ -84,9 +84,9 @@ Completed workflow children from this parent session stay addressable as retaine
 
 ### Async/background
 
-Prefer async mode for every subagent launch. Set `async: true` no matter the task unless foreground behavior is the actual requirement. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, backlog gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
+Prefer async mode for every subagent launch. Set `async: true` no matter the task unless the parent must block until completion. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, backlog gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
 
-Use `async:false` only for foreground-specific needs: the user explicitly asked to watch that child live in chat; you are testing foreground rendering, live cards, detach, or foreground-only control behavior; or the feature under inspection exists only in the foreground runner. Do not use `async:false` because a task is short, because it is the last gate, because no other work is ready, because the user asked to finish the overall job, or because blocking is convenient.
+Use `async:false` only when the parent must block until completion. Async mode still shows progress. Do not use `async:false` because a task is short, because it is the last gate, because no other work is ready, because the user asked to finish the overall job, or because blocking is convenient.
 
 Async does not mean parallel writes. Do not edit the same active worktree while an async worker is changing it. Parent-side overlap should be reading, validation prep, synthesis, command planning, or review of unaffected context unless the writer is isolated in a separate worktree.
 

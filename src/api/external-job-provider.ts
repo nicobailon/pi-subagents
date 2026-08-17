@@ -111,14 +111,19 @@ function validateHandle(provider: string, value: unknown, field: string, extraFi
 	const supported = new Set(["providerJobId", "state", "handleUrl", "conversationUrl", "failureCode", "failureMessage", "blockingJobId", ...extraFields]);
 	const unknown = Object.keys(handle).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`${field} from external-job provider '${provider}' has unknown fields: ${unknown.join(", ")}.`);
+	const handleUrl = validateOptionalString(handle.handleUrl, `${field}.handleUrl`, MAX_URL_LENGTH);
+	const conversationUrl = validateOptionalString(handle.conversationUrl, `${field}.conversationUrl`, MAX_URL_LENGTH);
+	const failureCode = validateOptionalString(handle.failureCode, `${field}.failureCode`, MAX_FAILURE_CODE_LENGTH);
+	const failureMessage = validateOptionalString(handle.failureMessage, `${field}.failureMessage`, MAX_FAILURE_MESSAGE_LENGTH);
+	const blockingJobId = validateOptionalString(handle.blockingJobId, `${field}.blockingJobId`, MAX_JOB_ID_LENGTH);
 	return {
 		providerJobId: validateString(handle.providerJobId, `${field}.providerJobId`, MAX_JOB_ID_LENGTH),
 		state: validateState(handle.state, `${field}.state`),
-		...(validateOptionalString(handle.handleUrl, `${field}.handleUrl`, MAX_URL_LENGTH) ? { handleUrl: validateOptionalString(handle.handleUrl, `${field}.handleUrl`, MAX_URL_LENGTH) } : {}),
-		...(validateOptionalString(handle.conversationUrl, `${field}.conversationUrl`, MAX_URL_LENGTH) ? { conversationUrl: validateOptionalString(handle.conversationUrl, `${field}.conversationUrl`, MAX_URL_LENGTH) } : {}),
-		...(validateOptionalString(handle.failureCode, `${field}.failureCode`, MAX_FAILURE_CODE_LENGTH) ? { failureCode: validateOptionalString(handle.failureCode, `${field}.failureCode`, MAX_FAILURE_CODE_LENGTH) } : {}),
-		...(validateOptionalString(handle.failureMessage, `${field}.failureMessage`, MAX_FAILURE_MESSAGE_LENGTH) ? { failureMessage: validateOptionalString(handle.failureMessage, `${field}.failureMessage`, MAX_FAILURE_MESSAGE_LENGTH) } : {}),
-		...(validateOptionalString(handle.blockingJobId, `${field}.blockingJobId`, MAX_JOB_ID_LENGTH) ? { blockingJobId: validateOptionalString(handle.blockingJobId, `${field}.blockingJobId`, MAX_JOB_ID_LENGTH) } : {}),
+		...(handleUrl ? { handleUrl } : {}),
+		...(conversationUrl ? { conversationUrl } : {}),
+		...(failureCode ? { failureCode } : {}),
+		...(failureMessage ? { failureMessage } : {}),
+		...(blockingJobId ? { blockingJobId } : {}),
 	};
 }
 

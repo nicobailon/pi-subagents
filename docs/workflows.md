@@ -228,7 +228,7 @@ Review $@. Return concrete findings with source proof, or state that no issue wa
 /prompt-workflow review-release-candidate v0.51.0
 ```
 
-For watched same-repo workflows, pass `async:false` to show the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Foreground workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
+For watched same-repo workflows, pass `async:false` only when the parent must block until completion. That blocking mode also shows the live in-chat workflow card. `chatProgress` can force `off` or `live-card` when the automatic policy is not what you want. Blocking workflows default to a 30-minute timeout; async workflows have no default timeout. See the [tool reference](tool-reference.md) for the full parameter list.
 
 The legacy `/chain`, `/parallel`, and `/run-chain` commands are not registered.
 

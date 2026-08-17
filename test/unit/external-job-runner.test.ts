@@ -529,6 +529,35 @@ describe("external-job runner bridge", () => {
 		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
 	});
 
+	it("fails closed when existing status.json is malformed", async () => {
+		const dir = tempDir("pi-external-job-corrupt-status-");
+		fs.writeFileSync(path.join(dir, "status.json"), "{ not json", "utf-8");
+		let starts = 0;
+		registerExternalJobProvider({
+			name: "surf-oracle",
+			start: () => { starts += 1; return { providerJobId: "job-new", state: "completed" }; },
+			status: () => ({ providerJobId: "unused", state: "completed" }),
+			reattach: () => ({ providerJobId: "unused", state: "completed" }),
+			result: () => ({ providerJobId: "unused", state: "completed" }),
+		});
+
+		const result = await runExternalJob({
+			provider: "surf-oracle",
+			cwd: dir,
+			prompt: "prompt",
+			asyncDir: dir,
+			stepIndex: 0,
+			runId: "run-corrupt-status",
+			agent: "gpt-pro",
+		});
+
+		assert.equal(starts, 0);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.externalJob.failureCode, "status-unreadable");
+		assert.match(result.error ?? "", /Malformed external-job status/);
+		assert.equal(fs.existsSync(path.join(dir, EXTERNAL_JOB_BRIDGE_REQUEST_DIR)), false);
+	});
+
 	it("stops waiting for start when local timeout fires before a provider job id", async () => {
 		const dir = tempDir("pi-external-job-start-local-timeout-");
 		let starts = 0;

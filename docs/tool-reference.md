@@ -42,7 +42,7 @@ Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for 
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
-| `async` | boolean | default-on | Background execution. Workflows default to background and accept `async:false` as an explicit foreground escape hatch. |
+| `async` | boolean | default-on | Background execution. Workflows default to background. `async:false` blocks the parent until completion. |
 | `chatProgress` | `auto \| off \| live-card` | `auto` | WorkflowScript chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. |
 | `isolation` | `none \| worktree` | - | Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |
 | `timeoutMs` / `maxRuntimeMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while composite async runs (chains, parallel tasks, workflows) stay unbounded at the top level. |

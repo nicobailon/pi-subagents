@@ -12,6 +12,8 @@
 
 ### Fixed
 - Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while retaining strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
+- Fail closed when an existing external-job `status.json` is unreadable or malformed, instead of starting a new provider job.
+- Describe `async:false` as a blocking parent wait, not a UI or foreground-only mode.
 - Skip malformed agent definitions during discovery so valid agents still list and launch, while showing their configuration errors in management diagnostics (#1200).
 - Resolve `/subagents-generate-profiles` provider probes through the shared Pi executable resolver so configured and Windows-specific Pi commands work. Thanks to [@Wumpf](https://github.com/Wumpf) for #1199.
 - Serialize same-worktree Orca progress-tab creation so numbered tabs appear left to right in sequence instead of racing in the UI. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1196.
@@ -42,7 +44,7 @@
 - Document that a host's session lifetime owns completion wakes, and how to key an idle check on live run state rather than parent activity. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1144.
 - Remove legacy subagent tool compatibility fields for append-step control, schedule aliases, async recovery metadata, and string mission goals.
 - Remove chain approval checkpoint steps and the `approve-checkpoint` / `reject-checkpoint` controls.
-- Clarify that subagent reviews and gates should stay async unless foreground behavior is the actual requirement.
+- Clarify that subagent reviews and gates should stay async unless the parent must block until completion.
 - Remove `prompts.render` from `workflowScript`; pass explicit task text to `runs.run` or use `/prompt-workflow` for reusable prompt templates.
 
 ## [0.50.0] - 2026-08-15
