@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -707,13 +709,32 @@ function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowS
 	};
 }
 
+function resolveWorkflowParserEntry(): string {
+	try {
+		return requireFromPackage.resolve("acorn");
+	} catch (primaryError) {
+		// Some runtimes (e.g. Bun-compiled single-file binaries) fail bare
+		// package-specifier resolution through createRequire while subpath
+		// resolution still works. Resolve the manifest and derive the
+		// CommonJS entry from its "main" field instead.
+		try {
+			const manifestPath = requireFromPackage.resolve("acorn/package.json");
+			const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { main?: unknown };
+			const entry = typeof manifest.main === "string" && manifest.main ? manifest.main : "./dist/acorn.js";
+			return resolvePath(dirname(manifestPath), entry);
+		} catch {
+			throw primaryError;
+		}
+	}
+}
+
 export async function runWorkflowScript(options: RunWorkflowScriptOptions): Promise<WorkflowScriptResult> {
 	if (!options.script.trim()) throw new Error("workflowScript must not be empty.");
 	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error("workflow script timeout must be a positive integer.");
 
 	let acornPath: string;
 	try {
-		acornPath = requireFromPackage.resolve("acorn");
+		acornPath = resolveWorkflowParserEntry();
 	} catch (error) {
 		throw new Error("Workflow parser dependency 'acorn' is unavailable from pi-subagents. Reinstall pi-subagents dependencies before launching workflowScript.", { cause: error });
 	}
