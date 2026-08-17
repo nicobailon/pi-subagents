@@ -806,8 +806,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			toolsArg,
 			"read,grep,find,ls,bash,edit,write,contact_supervisor",
 		);
-		// contact_supervisor is runtime-registered in children, so it is never a
-		// strict requirement even when the explicit allowlist names it (#1207).
+		// Supervisor-coordination names are runtime-registered in children, so
+		// they are never strict requirements even when named explicitly (#1207).
 		assert.deepEqual(
 			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
 			["read", "grep", "find", "ls", "bash", "edit", "write"],
@@ -815,7 +815,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[CHILD_TOOL_DIAGNOSTIC_PATH_ENV], toolDiagnosticPath);
 	});
 
-	it("keeps explicit intercom tools strict while excluding contact_supervisor from requirements", () => {
+	it("strips the legacy supervisor pairing from requirements", () => {
 		const { args, env } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
@@ -828,6 +828,26 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(
 			args[args.indexOf("--tools") + 1],
 			"read,intercom,contact_supervisor",
+		);
+		assert.deepEqual(
+			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
+			["read"],
+		);
+	});
+
+	it("keeps a lone explicit intercom tool strict", () => {
+		const { args, env } = buildPiArgs({
+			baseArgs: ["-p"],
+			task: "hello",
+			sessionEnabled: false,
+			inheritProjectContext: false,
+			inheritSkills: false,
+			tools: ["read", "intercom"],
+		});
+
+		assert.equal(
+			args[args.indexOf("--tools") + 1],
+			"read,intercom",
 		);
 		assert.deepEqual(
 			JSON.parse(env[REQUIRED_CHILD_TOOLS_ENV] ?? "[]"),
