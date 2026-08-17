@@ -332,7 +332,7 @@ function listIndexFiles(dir: string): string[] {
 			.map((entry) => path.join(dir, entry.name));
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
-		if (code === "ENOENT" || code === "ENOTDIR") return [];
+		if (code === "ENOENT" || code === "ENOTDIR" || code === "EPERM" || code === "EACCES") return [];
 		throw error;
 	}
 	return files;
@@ -366,7 +366,8 @@ function pendingResultFilesForSession(resultsDir: string, sessionId: string): st
 	try {
 		entries = fs.readdirSync(dir, { withFileTypes: true });
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR" || code === "EPERM" || code === "EACCES") return [];
 		throw error;
 	}
 	const files = new Set<string>();
@@ -416,7 +417,8 @@ export function cleanupResultIndexes(resultsDir: string, now = Date.now(), maxAg
 		try {
 			entries = fs.readdirSync(dir, { withFileTypes: true });
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === "ENOENT" || code === "ENOTDIR" || code === "EPERM" || code === "EACCES") return;
 			throw error;
 		}
 		for (const entry of entries) {

@@ -289,4 +289,38 @@ describe("result file indexes", () => {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});
+
+	it("round-trips results for Windows session file paths", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-win-session-"));
+		try {
+			const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+			const runId = "win-session-run";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const sessionDirs = fs.readdirSync(path.join(resultsDir, "result-index", "sessions"));
+			assert.equal(sessionDirs.length, 1);
+			assert.match(sessionDirs[0]!, /^~sha256-[a-f0-9]{64}$/);
+			assert.deepEqual(resultFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns no session candidates when the session index is unlistable", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-eperm-scan-"));
+		const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+		error.code = "EPERM";
+		const originalReaddirSync = fsDefault.readdirSync;
+		try {
+			fsDefault.readdirSync = (() => { throw error; }) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+			assert.deepEqual(resultCandidateFilesForSession(resultsDir, "session-a"), []);
+		} finally {
+			fsDefault.readdirSync = originalReaddirSync;
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
 });

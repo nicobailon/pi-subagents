@@ -12,6 +12,7 @@
 
 ### Fixed
 - Stop failing child runs over the stale supervisor-bridge tool pair: when an explicit allowlist names `contact_supervisor`, neither it nor its legacy `intercom` companion is a strict tool requirement anymore, so 0.49-era agent configs and recovery descriptors no longer fail as missing `intercom` after the 0.50.0 supervisor-channel cutover. A lone `intercom` entry still requires a real external provider. Thanks to [@MingTeer](https://github.com/MingTeer) for #1207.
+- Hash result-index session segments that encode as Windows paths or file-like names (`C:\...\session.jsonl`), and treat `EPERM`/`EACCES` as an empty scan so leftover index directories do not spam the parent session.
 - Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while retaining strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
 - Fail closed when an existing external-job `status.json` is unreadable or malformed, including an invalid `steps` shape, instead of starting a new provider job.
 - Describe `async:false` as a blocking parent wait, not a UI or foreground-only mode.
