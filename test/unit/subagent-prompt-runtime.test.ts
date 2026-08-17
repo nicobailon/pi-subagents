@@ -1191,7 +1191,7 @@ describe("subagent prompt runtime", () => {
 		});
 	});
 
-	it("bounds composite tool ids for Codex child context", () => {
+	it("preserves composite tool ids for Codex child context", () => {
 		let contextHandler: ((event: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) | undefined;
 		registerSubagentPromptRuntime({
 			on(event: string, handler: (payload: { messages: unknown[] }, ctx: { model?: { api: string } }) => { messages: unknown[] } | undefined) {
@@ -1202,18 +1202,11 @@ describe("subagent prompt runtime", () => {
 		const toolCallId = "call_N7iYNRPXLl9czpXh3bDyMpIL|fc_0e76718634eca88f016a76fdc89aec81919763fa7858f67a0d";
 		const messages = [
 			{ role: "user", content: "Task" },
-			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "read", input: { path: "README.md" } }] },
-			{ role: "toolResult", toolName: "read", toolCallId, content: "file" },
+			{ role: "assistant", content: [{ type: "toolCall", id: toolCallId, name: "subagent", input: { agent: "delegate" } }] },
+			{ role: "toolResult", toolName: "subagent", toolCallId, content: "file" },
 		];
 
-		const context = contextHandler?.({ messages }, { model: { api: "openai-codex-responses" } });
-		assert.ok(context);
-		const mappedCallId = (context.messages[1] as { content: Array<{ id?: unknown }> }).content[0]?.id;
-		const mappedResultId = (context.messages[2] as { toolCallId?: unknown }).toolCallId;
-		assert.equal(typeof mappedCallId, "string");
-		assert.match(mappedCallId, /^[a-zA-Z0-9_-]+$/);
-		assert.ok(mappedCallId.length <= 64);
-		assert.equal(mappedResultId, mappedCallId);
+		assert.equal(contextHandler?.({ messages }, { model: { api: "openai-codex-responses" } }), undefined);
 	});
 
 	it("preserves composite tool ids for non-Codex APIs that normalize them", () => {

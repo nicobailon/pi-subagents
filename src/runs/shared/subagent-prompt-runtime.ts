@@ -213,8 +213,10 @@ const MAX_PORTABLE_TOOL_ID_LENGTH = 64;
 const COMPOSITE_TOOL_ID_APIS = new Set([
 	"azure-openai-responses",
 	"openai-completions",
+	"openai-codex-responses",
 	"openai-responses",
 ]);
+const PRESERVE_SUBAGENT_TOOL_HISTORY_APIS = new Set(["openai-codex-responses"]);
 
 function portableToolId(id: string): string {
 	if (PORTABLE_TOOL_ID_PATTERN.test(id) && id.length <= MAX_PORTABLE_TOOL_ID_LENGTH) return id;
@@ -251,17 +253,17 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean } = {}): unknown[] {
-	const preserveCurrentFanoutToolHistory = process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
+export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveSubagentToolHistory?: boolean } = {}): unknown[] {
+	const preserveSubagentToolHistory = options.preserveSubagentToolHistory ?? process.env[SUBAGENT_FANOUT_CHILD_ENV] === "1";
 	const sanitizeToolIds = options.sanitizeToolIds ?? true;
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
-		if (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message))) {
+		if (isParentOnlySubagentMessage(message) || (!preserveSubagentToolHistory && isSubagentToolResultMessage(message))) {
 			changed = true;
 			continue;
 		}
-		const stripped = preserveCurrentFanoutToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
+		const stripped = preserveSubagentToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
 		if (stripped === undefined) {
 			changed = true;
 			continue;
@@ -633,8 +635,10 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 
 	onRuntimeEvent("context", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
+		const api = ctx?.model?.api ?? "";
 		const messages = stripParentOnlySubagentMessages(event.messages, {
-			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
+			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(api),
+			preserveSubagentToolHistory: PRESERVE_SUBAGENT_TOOL_HISTORY_APIS.has(api),
 		});
 		if (messages === event.messages) return undefined;
 		return { messages };
