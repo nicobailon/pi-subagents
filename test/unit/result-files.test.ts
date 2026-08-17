@@ -308,6 +308,25 @@ describe("result file indexes", () => {
 		}
 	});
 
+	it("reads a pre-hash URI-encoded session index after the encoding change", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-session-"));
+		try {
+			const sessionId = String.raw`C:\Users\theap\.pi\agent\sessions\leaf.jsonl`;
+			const runId = "legacy-session-run";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			writeAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const currentDir = path.join(resultsDir, "result-index", "sessions", encodeIndexSegment(sessionId));
+			const historicalDir = path.join(resultsDir, "result-index", "sessions", encodeURIComponent(sessionId));
+			fs.renameSync(currentDir, historicalDir);
+
+			assert.deepEqual(resultFilesForSession(resultsDir, sessionId), [`${runId}.json`]);
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), resultPath);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("returns no session candidates when the session index is unlistable", () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-eperm-scan-"));
 		const error = new Error("operation not permitted") as NodeJS.ErrnoException;

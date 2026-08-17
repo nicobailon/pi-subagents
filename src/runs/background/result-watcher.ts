@@ -137,8 +137,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 function isNotFound(error: unknown): boolean {
-	const code = errorCode(error);
-	return code === "ENOENT" || code === "ENOTDIR" || code === "EPERM" || code === "EACCES";
+	return errorCode(error) === "ENOENT";
 }
 
 function shouldPoll(error: unknown): boolean {

@@ -39,3 +39,21 @@ export function encodeIndexSegment(value: string, maxBytes = MAX_INDEX_SEGMENT_B
 	if (Buffer.byteLength(encoded, "utf-8") <= maxBytes && isPortableSegment(encoded)) return encoded;
 	return hashedSegment(value);
 }
+
+function historicallyReadableSegment(value: string, maxBytes: number): string | undefined {
+	try {
+		const encoded = encodeURIComponent(value);
+		if (encoded.length === 0 || encoded === "." || encoded === ".." || encoded.endsWith(".") || WINDOWS_RESERVED_NAME.test(encoded)) return undefined;
+		if (Buffer.byteLength(encoded, "utf-8") > maxBytes) return undefined;
+		return encoded;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Current write key first, then the pre-hash URI-encoded key when it still fits. */
+export function indexSegmentAliases(value: string, maxBytes = MAX_INDEX_SEGMENT_BYTES): string[] {
+	const current = encodeIndexSegment(value, maxBytes);
+	const historical = historicallyReadableSegment(value, maxBytes);
+	return historical && historical !== current ? [current, historical] : [current];
+}

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { ACTIVE_RUN_INDEX_DIR, readActiveRunToolCallIndex, releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
+import { encodeIndexSegment, indexSegmentAliases, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 
 describe("bounded index segments", () => {
 	it("preserves legacy encoding for short values and hashes oversized opaque ids", () => {
@@ -30,6 +30,8 @@ describe("bounded index segments", () => {
 		assert.match(encodeIndexSegment(sessionId), /^~sha256-[a-f0-9]{64}$/);
 		assert.equal(encodeIndexSegment(sessionId), encodeIndexSegment(sessionId));
 		assert.match(encodeIndexSegment("session.jsonl"), /^~sha256-[a-f0-9]{64}$/);
+		assert.deepEqual(indexSegmentAliases(sessionId), [encodeIndexSegment(sessionId), encodeURIComponent(sessionId)]);
+		assert.deepEqual(indexSegmentAliases("session-a"), ["session-a"]);
 	});
 
 	it("indexes and releases active runs with oversized provider tool-call ids", () => {
