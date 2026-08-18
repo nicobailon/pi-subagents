@@ -3907,7 +3907,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (indexedState === state && indexPersistence.pendingCount() === 0) return;
 					indexPersistence.write(asyncDir, { state, toolCallId: status.toolCallId }, (_filePath, payload) => {
 						const indexPayload = payload as { state: AsyncStatus["state"]; toolCallId?: string };
-						updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId);
+						updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId, { retryCapacityErrors: true });
 					});
 				};
 				const runPersistence = createCapacityResilientJsonWriter({
