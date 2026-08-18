@@ -540,6 +540,40 @@ Do work
 		assert.equal(agents.some((candidate) => candidate.name === "planner"), false);
 		assert.equal(agents.some((candidate) => candidate.name === "context-builder"), false);
 	});
+
+	it("keeps bundled agent definitions from module load during package file updates", () => {
+		const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-hot-update-"));
+		tempDirs.push(fixture);
+		fs.cpSync(path.join(process.cwd(), "src"), path.join(fixture, "src"), { recursive: true });
+		fs.cpSync(path.join(process.cwd(), "agents"), path.join(fixture, "agents"), { recursive: true });
+		fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(fixture, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+		writeJson(path.join(fixture, "package.json"), { type: "module" });
+		writeAgent(path.join(fixture, "challenge.mjs"), `
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { discoverAgentsAll } from "./src/agents/agents.ts";
+
+const gptProPath = path.join(process.cwd(), "agents", "gpt-pro.md");
+fs.writeFileSync(gptProPath, \`---
+name: gpt-pro
+description: Future Surf GPT Pro advisor
+runner:
+  type: future-external-job
+---
+
+Review with the future runner.
+\`, "utf-8");
+
+const discovered = discoverAgentsAll(process.cwd());
+const gptPro = discovered.builtin.find((candidate) => candidate.name === "gpt-pro");
+
+		assert.equal(gptPro?.runner?.type, "external-job");
+		assert.equal(discovered.agentDiagnostics?.some((diagnostic) => diagnostic.filePath === gptProPath), false);
+`);
+
+		execFileSync(process.execPath, ["--experimental-strip-types", "challenge.mjs"], { cwd: fixture, stdio: "pipe" });
+	});
 });
 
 describe("agent frontmatter launch defaults", () => {

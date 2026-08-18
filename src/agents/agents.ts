@@ -1573,22 +1573,32 @@ function parseAgentAcceptanceFrontmatter(raw: string | undefined, agentName: str
 	return parsed as AcceptanceInput;
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
-	const agents: AgentConfig[] = [];
-	const diagnostics: AgentDiscoveryDiagnostic[] = [];
+interface AgentDefinitionFile {
+	filePath: string;
+	content: string;
+}
 
+function readAgentDefinitionFiles(dir: string): AgentDefinitionFile[] {
+	const files: AgentDefinitionFile[] = [];
 	for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
 		if (isLegacyAgentSkillPath(dir, filePath)) {
 			continue;
 		}
 
-		let content: string;
 		try {
-			content = fs.readFileSync(filePath, "utf-8");
+			files.push({ filePath, content: fs.readFileSync(filePath, "utf-8") });
 		} catch {
 			continue;
 		}
+	}
+	return files;
+}
 
+function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
+	const agents: AgentConfig[] = [];
+	const diagnostics: AgentDiscoveryDiagnostic[] = [];
+
+	for (const { filePath, content } of files) {
 		let name: string | undefined;
 		let runtimeName: string | undefined;
 		let packageSpecified = false;
@@ -1760,6 +1770,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?:
 	return { agents, diagnostics };
 }
 
+function loadAgentsFromDir(dir: string, source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
+	return loadAgentsFromDefinitionFiles(readAgentDefinitionFiles(dir), source, discoveryPriority);
+}
+
 function loadChainsFromDir(dir: string, source: AgentSource): { chains: ChainConfig[]; diagnostics: ChainDiscoveryDiagnostic[] } {
 	const chains = new Map<string, ChainConfig>();
 	const diagnostics: ChainDiscoveryDiagnostic[] = [];
@@ -1821,6 +1835,7 @@ function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; pref
 	};
 }
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");
+const BUILTIN_AGENT_DEFINITION_FILES = readAgentDefinitionFiles(BUILTIN_AGENTS_DIR);
 
 export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
 
@@ -1855,7 +1870,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		includeProject: scope !== "user",
 	});
 
-	const builtinLoaded = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
+	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
 	const builtinAgents = applyBuiltinOverrides(
 		applySubagentDefaults(builtinLoaded.agents, defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
@@ -1937,7 +1952,7 @@ export function discoverAgentsAll(cwd: string): {
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd);
 
-	const builtinLoaded = loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
+	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
 	const builtin = applyBuiltinOverrides(
 		applySubagentDefaults(builtinLoaded.agents, defaultModel, defaultThinking, defaultExtensions),
 		userSettings,
