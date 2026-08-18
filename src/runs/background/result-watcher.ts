@@ -140,6 +140,11 @@ function isNotFound(error: unknown): boolean {
 	return errorCode(error) === "ENOENT";
 }
 
+function isAccessDenied(error: unknown): boolean {
+	const code = errorCode(error);
+	return code === "EPERM" || code === "EACCES";
+}
+
 function shouldPoll(error: unknown): boolean {
 	const code = errorCode(error);
 	return code === "EMFILE" || code === "ENOSPC";
@@ -232,6 +237,7 @@ export function createResultWatcher(
 			return `${resultPath}:${stat.size}:${stat.mtimeMs}`;
 		} catch (error) {
 			identityCache.delete(file);
+			if (isAccessDenied(error)) throw error;
 			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
@@ -249,6 +255,7 @@ export function createResultWatcher(
 			return { identity, signature };
 		} catch (error) {
 			identityCache.delete(file);
+			if (isAccessDenied(error)) throw error;
 			if (!isNotFound(error)) console.error(`Failed to inspect subagent result file '${resultPath}':`, error);
 			return undefined;
 		}
@@ -293,10 +300,17 @@ export function createResultWatcher(
 	const handleResult = async (file: string, triggerTurn: boolean) => {
 		if (processing.has(file)) return;
 		let observed: ReadonlySet<string> | undefined;
-		if (!shouldProcessResult(file)) {
-			const runId = file === path.basename(file) && file.endsWith(".json") ? file.replace(/\.json$/i, "") : undefined;
-			observed = observedRunIds();
-			if (!runId || !observed.has(runId) || !shouldProcessResult(file, observed)) return;
+		try {
+			if (!shouldProcessResult(file)) {
+				const runId = file === path.basename(file) && file.endsWith(".json") ? file.replace(/\.json$/i, "") : undefined;
+				observed = observedRunIds();
+				if (!runId || !observed.has(runId) || !shouldProcessResult(file, observed)) return;
+			}
+		} catch (error) {
+			if (!isAccessDenied(error)) throw error;
+			console.error(`Failed to inspect subagent result file '${publicResultPath(file)}'; will retry:`, error);
+			scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+			return;
 		}
 		processing.add(file);
 		let resultPath = publicResultPath(file);
@@ -517,7 +531,10 @@ export function createResultWatcher(
 			if (!ownsSession(sessionId, epoch)) return;
 			if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		} catch (error) {
-			if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
+			if (isAccessDenied(error)) {
+				console.error(`Failed to process subagent result file '${resultPath}'; will retry:`, error);
+				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+			} else if (!isNotFound(error)) console.error(`Failed to process subagent result file '${resultPath}':`, error);
 		} finally {
 			processing.delete(file);
 		}

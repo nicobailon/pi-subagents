@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -1755,6 +1756,56 @@ describe("result watcher", () => {
 			assert.equal(fs.existsSync(resultPath), false);
 			assert.deepEqual(emitted, ["subagent:async-complete"]);
 		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retries delivery after a transient session index access denial", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-index-retry-"));
+		const originalError = console.error;
+		const originalReadFileSync = fsDefault.readFileSync;
+		try {
+			console.error = () => {};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const emitted: string[] = [];
+			const fakeWatcher = {
+				on() { return fakeWatcher; },
+				close() {},
+				unref() {},
+			} as fs.FSWatcher;
+			let watchEvent: ((event: string, file: string | Buffer | null) => void) | undefined;
+			const resultPath = path.join(resultsDir, "index-retry.json");
+			writeIndexedResult(resultPath, { id: "index-retry", runId: "index-retry", sessionId: "session-1", agent: "worker", success: true, summary: "done", timestamp: 1 });
+			let indexReads = 0;
+			fsDefault.readFileSync = ((file, ...args) => {
+				if (String(file).includes(`${path.sep}result-index${path.sep}`)) {
+					indexReads += 1;
+				}
+				if (indexReads === 2 && String(file).includes(`${path.sep}result-index${path.sep}`)) {
+					const error = new Error("permission denied") as NodeJS.ErrnoException;
+					error.code = "EACCES";
+					throw error;
+				}
+				return originalReadFileSync(file, ...args);
+			}) as typeof fsDefault.readFileSync;
+			syncBuiltinESMExports();
+
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit(event) { emitted.push(event); } } }, state, resultsDir, 60_000, {
+				fs: { ...fs, watch: (_path, callback) => { watchEvent = callback; return fakeWatcher; } },
+			});
+			try {
+				watcher.startResultWatcher();
+				watchEvent?.("change", "index-retry.json");
+				assert.equal(await waitForPredicate(() => emitted.includes("subagent:async-complete")), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+			assert.equal(fs.existsSync(resultPath), false);
+		} finally {
+			console.error = originalError;
+			fsDefault.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});
