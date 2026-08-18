@@ -58,11 +58,21 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 			path.dirname(filePath),
 			tempBaseName(filePath, pid, now(), random().toString(36).slice(2)),
 		);
+		let writeError: unknown;
 		try {
 			fsImpl.writeFileSync(tempPath, JSON.stringify(payload, null, 2), mode === undefined ? "utf-8" : { encoding: "utf-8", mode });
 			renameWithRetry(fsImpl, tempPath, filePath, renameRetryDelaysMs, wait);
+		} catch (error) {
+			writeError = error;
+			throw error;
 		} finally {
-			fsImpl.rmSync(tempPath, { force: true });
+			try {
+				fsImpl.rmSync(tempPath, { force: true });
+			} catch (cleanupError) {
+				// Preserve the write/rename failure: cleanup is best effort and must
+				// not hide the error callers need to classify or report.
+				if (writeError === undefined) throw cleanupError;
+			}
 		}
 	};
 }

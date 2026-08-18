@@ -1,6 +1,7 @@
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
 const RETRYABLE_FILE_SYSTEM_ERROR_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
+const STORAGE_CAPACITY_ERROR_CODES = new Set(["EDQUOT", "EMFILE", "ENFILE", "ENOSPC"]);
 
 export const FS_RETRY_MAX_TOTAL_MS_ENV = "PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS";
 
@@ -72,6 +73,11 @@ export function waitForFileSystemRetry(delayMs: number): void {
 export function isRetryableFileSystemError(error: unknown): boolean {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	return typeof code === "string" && RETRYABLE_FILE_SYSTEM_ERROR_CODES.has(code);
+}
+
+export function isStorageCapacityError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return typeof code === "string" && STORAGE_CAPACITY_ERROR_CODES.has(code);
 }
 
 export function runFileSystemOperationWithRetry<T>(operation: () => T, options: FileSystemRetryOptions = {}): T {
