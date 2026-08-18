@@ -85,6 +85,32 @@ import {
 export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
 const SLOW_RELOAD_PHASE_MS = 250;
+const RUNTIME_REGISTRY_STORE_KEY = "__piSubagentRuntimeRegistry";
+
+interface SubagentRuntimeEntry {
+	cleanup(): void;
+	sessionManager: object | null;
+	visibleControlNotices: Set<string>;
+}
+
+interface SubagentRuntimeRegistry {
+	bySessionManager: WeakMap<object, SubagentRuntimeEntry>;
+	activeEntries: Set<SubagentRuntimeEntry>;
+}
+
+function getRuntimeRegistry(): SubagentRuntimeRegistry {
+	const globalStore = globalThis as Record<string, unknown>;
+	const existing = globalStore[RUNTIME_REGISTRY_STORE_KEY] as Partial<SubagentRuntimeRegistry> | undefined;
+	if (existing?.bySessionManager instanceof WeakMap && existing.activeEntries instanceof Set) {
+		return existing as SubagentRuntimeRegistry;
+	}
+	const registry: SubagentRuntimeRegistry = {
+		bySessionManager: new WeakMap(),
+		activeEntries: new Set(),
+	};
+	globalStore[RUNTIME_REGISTRY_STORE_KEY] = registry;
+	return registry;
+}
 
 function logSlowPhase(label: string, startedAt: number): void {
 	const elapsed = Date.now() - startedAt;
@@ -359,16 +385,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
 		return;
 	}
-	const globalStore = globalThis as Record<string, unknown>;
-	const runtimeCleanupStoreKey = "__piSubagentRuntimeCleanup";
-	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
-	if (typeof previousRuntimeCleanup === "function") {
-		try {
-			previousRuntimeCleanup();
-		} catch {
-			// Best effort cleanup for stale timers from an older reload.
-		}
-	}
+	const runtimeRegistry = getRuntimeRegistry();
 
 	DIRS.results = ensureAccessibleDir(DIRS.results);
 	DIRS.async = ensureAccessibleDir(DIRS.async);
@@ -441,6 +458,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let goalTurnId = 0;
+	let parentSessionEnvValue: string | null = null;
 	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
 	const scheduledRunManager = createScheduledRunManager({
 		config,
@@ -490,22 +508,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	}, ASYNC_RETENTION_DELAY_MS);
 	asyncRetentionTimer.unref?.();
-
-	const runtimeCleanup = () => {
-		clearTimeout(resultIndexCleanupTimer);
-		clearTimeout(asyncRetentionTimer);
-		asyncRetentionAbort.abort();
-		stopResultWatcher();
-		state.currentSessionId = null;
-		completionNotifier.dispose();
-		mainWatchdog.dispose();
-		scheduledRunManager.stop();
-		supervisorChannel.dispose();
-		waitSubscriptionManager.dispose();
-		fleetStatus?.dispose();
-		disposeAsyncJobTracker();
-	};
-	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
 
 	const executor = createSubagentExecutor({
 		pi,
@@ -689,22 +691,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		foregroundDetachShortcut: config.foregroundDetachShortcut,
 	});
 
-	const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
-	const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
-	const previousEventUnsubscribes = globalStore[eventUnsubscribeStoreKey];
-	if (Array.isArray(previousEventUnsubscribes)) {
-		for (const unsubscribe of previousEventUnsubscribes) {
-			if (typeof unsubscribe !== "function") continue;
-			try {
-				unsubscribe();
-			} catch {
-				// Best effort cleanup for stale handlers from an older reload.
-			}
-		}
-	}
-	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
-	const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices as Set<string> : new Set<string>();
-	globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
+	let visibleControlNotices = new Set<string>();
 	const activeHerdrRuns = () => projectActiveHerdrRuns(state);
 	const herdrStatusBridge = registerHerdrStatusBridge({
 		events: pi.events,
@@ -746,7 +733,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		herdrStatusBridge.dispose,
 		rpcBridge.dispose,
 	];
-	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
 
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName !== "subagent") return;
@@ -824,6 +810,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const sessionId = ctx.sessionManager.getSessionId();
 			if (sessionId) {
 				process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
+				parentSessionEnvValue = sessionId;
 			}
 		}
 		state.lastUiContext = ctx;
@@ -862,6 +849,84 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		fleetStatus?.setContext(ctx);
 	};
 
+	let runtimeCleaned = false;
+	const runtimeEntry: SubagentRuntimeEntry = {
+		sessionManager: null,
+		visibleControlNotices,
+		cleanup() {
+			if (runtimeCleaned) return;
+			runtimeCleaned = true;
+			const shuttingDownParentSession = parentSessionEnvValue;
+			clearTimeout(resultIndexCleanupTimer);
+			clearTimeout(asyncRetentionTimer);
+			asyncRetentionAbort.abort();
+			stopResultWatcher();
+			completionNotifier.dispose();
+			mainWatchdog.dispose();
+			scheduledRunManager.stop();
+			supervisorChannel.dispose();
+			waitSubscriptionManager.dispose();
+			fleetStatus?.dispose();
+			disposeAsyncJobTracker();
+			state.resultFileCoalescer.clear();
+			for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
+			state.cleanupTimers.clear();
+			state.asyncJobs.clear();
+			for (const unsubscribe of eventUnsubscribes) {
+				try {
+					unsubscribe();
+				} catch {
+					// Best effort cleanup during shutdown or reload.
+				}
+			}
+			slashBridge.cancelAll();
+			slashBridge.dispose();
+			promptTemplateBridge.cancelAll();
+			promptTemplateBridge.dispose();
+			state.widgetsSuspended = false;
+			state.currentSessionId = null;
+			state.parentSessionFile = null;
+			parentSessionEnvValue = null;
+			if (shuttingDownParentSession && process.env[SUBAGENT_PARENT_SESSION_ENV] === shuttingDownParentSession) {
+				delete process.env[SUBAGENT_PARENT_SESSION_ENV];
+			}
+			if (runtimeEntry.sessionManager && runtimeRegistry.bySessionManager.get(runtimeEntry.sessionManager) === runtimeEntry) {
+				runtimeRegistry.bySessionManager.delete(runtimeEntry.sessionManager);
+			}
+			runtimeRegistry.activeEntries.delete(runtimeEntry);
+			if (runtimeRegistry.activeEntries.size === 0) clearSlashSnapshots();
+			try {
+				if (state.lastUiContext?.hasUI) state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
+			} catch (error) {
+				if (!isStaleExtensionContextError(error)) throw error;
+			}
+			state.lastUiContext = null;
+		},
+	};
+
+	const installRuntime = (ctx: ExtensionContext) => {
+		const sessionManager = ctx.sessionManager as object;
+		const previousRuntime = runtimeRegistry.bySessionManager.get(sessionManager);
+		if (previousRuntime && previousRuntime !== runtimeEntry) {
+			visibleControlNotices = previousRuntime.visibleControlNotices;
+			runtimeEntry.visibleControlNotices = visibleControlNotices;
+		}
+		if (runtimeEntry.sessionManager && runtimeEntry.sessionManager !== sessionManager
+			&& runtimeRegistry.bySessionManager.get(runtimeEntry.sessionManager) === runtimeEntry) {
+			runtimeRegistry.bySessionManager.delete(runtimeEntry.sessionManager);
+		}
+		runtimeEntry.sessionManager = sessionManager;
+		runtimeRegistry.bySessionManager.set(sessionManager, runtimeEntry);
+		runtimeRegistry.activeEntries.add(runtimeEntry);
+		if (previousRuntime && previousRuntime !== runtimeEntry) {
+			try {
+				previousRuntime.cleanup();
+			} catch {
+				// Best effort cleanup for stale resources from the replaced runtime.
+			}
+		}
+	};
+
 	pi.on("agent_start", () => {
 		resumeWidgetsAfterCompaction();
 		herdrStatusBridge.agentStarted();
@@ -889,6 +954,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", (event, ctx) => {
+		installRuntime(ctx);
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering);
 		herdrStatusBridge.sessionStarted({
@@ -900,49 +966,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
-		state.widgetsSuspended = false;
-		clearTimeout(resultIndexCleanupTimer);
-		clearTimeout(asyncRetentionTimer);
-		asyncRetentionAbort.abort();
-		stopResultWatcher();
-		state.currentSessionId = null;
-		state.parentSessionFile = null;
-		completionNotifier.dispose();
-		delete process.env[SUBAGENT_PARENT_SESSION_ENV];
-		for (const unsubscribe of eventUnsubscribes) {
-			try {
-				unsubscribe();
-			} catch {
-				// Best effort cleanup during shutdown.
-			}
-		}
-		if (globalStore[eventUnsubscribeStoreKey] === eventUnsubscribes) {
-			delete globalStore[eventUnsubscribeStoreKey];
-		}
-		scheduledRunManager.stop();
-		disposeAsyncJobTracker();
-		for (const timer of state.cleanupTimers.values()) {
-			clearTimeout(timer);
-		}
-		state.cleanupTimers.clear();
-		state.asyncJobs.clear();
-		clearSlashSnapshots();
-		slashBridge.cancelAll();
-		slashBridge.dispose();
-		promptTemplateBridge.cancelAll();
-		promptTemplateBridge.dispose();
-		supervisorChannel.dispose();
-		fleetStatus?.dispose();
-		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
-			delete globalStore[runtimeCleanupStoreKey];
-		}
-		try {
-			if (state.lastUiContext?.hasUI) {
-				state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
-			}
-		} catch (error) {
-			if (!isStaleExtensionContextError(error)) throw error;
-		}
+		runtimeEntry.cleanup();
 		await herdrStatusBridge.flush();
 	});
 }
