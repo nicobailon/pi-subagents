@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -63,6 +64,7 @@ import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-prog
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { prepareSubagentLaunchCapabilities, SUBAGENT_LAUNCH_CAPABILITIES_ENV, type PreparedSubagentLaunchCapabilities } from "../shared/launch-capabilities.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -397,6 +399,7 @@ async function runSingleAttempt(
 		tools: toolPlan.effectiveToolAllowlist,
 		extensions: toolPlan.extensionArgs,
 		mcpDirectTools: toolPlan.effectiveMcpTools,
+		launchCapabilities: options.launchCapabilities,
 		...(options.outputPath ? { outputPath: options.outputPath } : {}),
 		outputMode: options.outputMode ?? "inline",
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
@@ -478,6 +481,43 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
+	let preparedLaunchCapabilities: PreparedSubagentLaunchCapabilities | undefined;
+	if (options.launchCapabilities?.length) {
+		if (!options.parentSessionId) {
+			cleanupTempDir(tempDir);
+			throw new Error("Private launch capabilities require an exact parent session identity.");
+		}
+		try {
+			preparedLaunchCapabilities = await prepareSubagentLaunchCapabilities({
+				sessionId: options.parentSessionId,
+				requested: options.launchCapabilities,
+				identity: {
+					version: 1,
+					parentSessionId: options.parentSessionId,
+					rootRunId: options.nestedRoute?.rootRunId ?? options.runId,
+					runId: options.runId,
+					attemptId: randomUUID(),
+					childIndex: options.index ?? 0,
+					agent: agent.name,
+					mode: "foreground",
+					cwdRealpath: options.cwd ?? runtimeCwd,
+					effectiveTools: toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : ["*"],
+					launchResolvedExtensions: [...new Set(launchResolvedExtensions.disableAmbientExtensions
+						? launchResolvedExtensions.effective
+						: [
+							...launchResolvedExtensions.runtime,
+							...launchResolvedExtensions.configured,
+							...launchResolvedExtensions.effective,
+						])],
+					launchContractDigest,
+				},
+			});
+			sharedEnv[SUBAGENT_LAUNCH_CAPABILITIES_ENV] = preparedLaunchCapabilities.envelope;
+		} catch (error) {
+			cleanupTempDir(tempDir);
+			throw error;
+		}
+	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
@@ -533,7 +573,7 @@ async function runSingleAttempt(
 		};
 
 		const detachForeground = (reason: string): boolean => {
-			if (detached || processClosed || lifecycleFinished || options.signal?.aborted) return false;
+			if (options.launchCapabilities?.length || detached || processClosed || lifecycleFinished || options.signal?.aborted) return false;
 			const receiptProgress = snapshotProgress(progress);
 			receiptProgress.status = "detached";
 			receiptProgress.durationMs = Date.now() - startTime;
@@ -653,7 +693,7 @@ async function runSingleAttempt(
 		};
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
-			if (!options.allowIntercomDetach || processClosed) return;
+			if (options.launchCapabilities?.length || !options.allowIntercomDetach || processClosed) return;
 			if (!payload || typeof payload !== "object") return;
 			const event = payload as { requestId?: unknown; runId?: unknown; agent?: unknown; childIndex?: unknown };
 			const requestId = event.requestId;
@@ -1332,12 +1372,14 @@ async function runSingleAttempt(
 		// Publish only after every callback and cleanup guard captured by detach or
 		// later lifecycle events has initialized. Consumers may invoke synchronously.
 		try {
-			options.onDetachReady?.((reason = "user request") => detachForeground(reason));
+			if (!options.launchCapabilities?.length) options.onDetachReady?.((reason = "user request") => detachForeground(reason));
 		} catch (error) {
 			// A consumer callback is advisory. Keep the child attached and observable
 			// rather than rejecting this attempt and orphaning its live process.
 			appendRecentOutput(progress, [`Foreground detach callback failed: ${error instanceof Error ? error.message : String(error)}`]);
 		}
+	}).finally(async () => {
+		await preparedLaunchCapabilities?.dispose("child-process-terminal");
 	});
 	result.exitCode = exitCode;
 	if (interruptedByControl) {

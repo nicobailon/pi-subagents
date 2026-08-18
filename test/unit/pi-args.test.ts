@@ -10,6 +10,7 @@ import {
 	TOOL_BUDGET_ZERO_AUTH_ENV,
 } from "../../src/runs/shared/tool-budget.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
+import { SUBAGENT_LAUNCH_CAPABILITIES_ENV } from "../../src/runs/shared/launch-capabilities.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
@@ -69,6 +70,7 @@ const originalEnv = {
 	MCP_HASH_ROOT: process.env.MCP_HASH_ROOT,
 	MCP_HASH_TOKEN: process.env.MCP_HASH_TOKEN,
 	PI_SUBAGENT_TASK_DELIVERY: process.env.PI_SUBAGENT_TASK_DELIVERY,
+	[SUBAGENT_LAUNCH_CAPABILITIES_ENV]: process.env[SUBAGENT_LAUNCH_CAPABILITIES_ENV],
 };
 const originalCwd = process.cwd();
 const tempRoots: string[] = [];
@@ -155,6 +157,13 @@ afterEach(() => {
 });
 
 describe("buildPiArgs session wiring", () => {
+	it("explicitly clears an inherited private launch capability", () => {
+		process.env[SUBAGENT_LAUNCH_CAPABILITIES_ENV] = "parent-bearer-must-not-propagate";
+		const { env } = buildPiArgs({ baseArgs: [], task: "child", inheritProjectContext: false, inheritSkills: false });
+		assert.equal(env[SUBAGENT_LAUNCH_CAPABILITIES_ENV], undefined);
+		assert.equal(process.env[SUBAGENT_LAUNCH_CAPABILITIES_ENV], "parent-bearer-must-not-propagate", "buildPiArgs must not mutate ambient process.env");
+	});
+
 	it("projects launch-resolved extension identifiers without raw paths", () => {
 		const privateExt = path.join(
 			os.tmpdir(),

@@ -43,9 +43,11 @@ import {
 	type ChildWatchdogConfig,
 } from "../../watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
+import { SUBAGENT_LAUNCH_CAPABILITIES_ENV } from "./launch-capabilities.ts";
 import {
 	PI_CODING_AGENT_PACKAGE_ROOT_ENV,
 	getAgentDir,
+	getProjectConfigDir,
 } from "../../shared/utils.ts";
 import {
 	encodePermissionRules,
@@ -277,6 +279,58 @@ function extensionIdentifier(value: string): string {
 	return `sha256:${createHash("sha256").update(path.normalize(value.trim())).digest("hex").slice(0, 16)}`;
 }
 
+const EXTENSION_FILE = /\.(?:[cm]?[jt]s)$/i;
+
+function discoverExtensionEntries(entry: string): string[] {
+	try {
+		const stat = fs.statSync(entry);
+		if (stat.isFile()) return EXTENSION_FILE.test(entry) ? [path.normalize(entry)] : [];
+		if (!stat.isDirectory()) return [];
+		const found: string[] = [];
+		for (const child of fs.readdirSync(entry, { withFileTypes: true }).slice(0, 256)) {
+			const childPath = path.join(entry, child.name);
+			if (child.isFile() && EXTENSION_FILE.test(child.name)) found.push(path.normalize(childPath));
+			else if (child.isDirectory()) {
+				for (const indexName of ["index.ts", "index.js", "index.mjs", "index.cjs", "index.mts", "index.cts"]) {
+					const indexPath = path.join(childPath, indexName);
+					if (fs.existsSync(indexPath)) {
+						found.push(path.normalize(indexPath));
+						break;
+					}
+				}
+			}
+		}
+		return found;
+	} catch {
+		return [];
+	}
+}
+
+function settingsExtensionEntries(file: string, base: string): string[] {
+	try {
+		const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { extensions?: unknown };
+		if (!Array.isArray(parsed.extensions)) return [];
+		return parsed.extensions
+			.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+			.flatMap((entry) => discoverExtensionEntries(entry.startsWith("~/")
+				? path.join(os.homedir(), entry.slice(2))
+				: path.resolve(base, entry)));
+	} catch {
+		return [];
+	}
+}
+
+function discoverAmbientExtensionPaths(cwd: string): string[] {
+	const agentDir = getAgentDir();
+	const projectConfigDir = getProjectConfigDir(cwd);
+	return [...new Set([
+		...discoverExtensionEntries(path.join(agentDir, "extensions")),
+		...discoverExtensionEntries(path.join(projectConfigDir, "extensions")),
+		...settingsExtensionEntries(path.join(agentDir, "settings.json"), agentDir),
+		...settingsExtensionEntries(path.join(projectConfigDir, "settings.json"), projectConfigDir),
+	])].slice(0, 256);
+}
+
 function boundedExtensionIdentifiers(values: string[]): {
 	ids: string[];
 	omitted: number;
@@ -463,6 +517,7 @@ export function resolvePiLaunchToolPlan(
 	const configuredExtensions = capabilityCeiling?.denyExtensions
 		? []
 		: [
+				...(!disableAmbientExtensions ? discoverAmbientExtensionPaths(input.cwd ?? process.cwd()) : []),
 				...toolExtensionPaths,
 				...(input.extensions ?? []),
 				...(input.subagentOnlyExtensions ?? []),
@@ -644,6 +699,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	}
 
 	const env: Record<string, string | undefined> = {};
+	// A delegated lease never propagates implicitly. The exact launcher attempt
+	// must install a fresh private envelope after buildPiArgs returns.
+	env[SUBAGENT_LAUNCH_CAPABILITIES_ENV] = undefined;
 	const piPackageRoot =
 		process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] ?? resolvePiPackageRoot();
 	if (piPackageRoot) env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = piPackageRoot;

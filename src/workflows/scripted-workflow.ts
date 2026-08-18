@@ -260,6 +260,8 @@ function validateRunCall(key, params, label, fingerprints) {
   }
   if (Object.prototype.hasOwnProperty.call(params, "clarify")) throw new Error(label + " does not support clarify UI.");
   if (params.worktree !== undefined && typeof params.worktree !== "boolean") throw new Error(label + " worktree must be true or false.");
+  if (params.launchCapabilities !== undefined && (!Array.isArray(params.launchCapabilities) || params.launchCapabilities.length < 1 || params.launchCapabilities.length > 16 || new Set(params.launchCapabilities).size !== params.launchCapabilities.length || params.launchCapabilities.some((id) => typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)))) throw new Error(label + " launchCapabilities must contain 1-16 unique namespace ids.");
+  if (params.launchCapabilities !== undefined && params.resume !== undefined) throw new Error(label + " launchCapabilities are not supported with retained resume.");
   if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
   if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");
   if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
@@ -963,6 +965,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			if (params.worktree !== undefined && typeof params.worktree !== "boolean") {
 				return respond(Promise.reject(new Error(`runs.run('${key}') worktree must be true or false.`)));
+			}
+			if (params.launchCapabilities !== undefined && (!Array.isArray(params.launchCapabilities) || params.launchCapabilities.length < 1 || params.launchCapabilities.length > 16 || new Set(params.launchCapabilities).size !== params.launchCapabilities.length || params.launchCapabilities.some((id) => typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)))) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') launchCapabilities must contain 1-16 unique namespace ids.`)));
+			}
+			if (params.launchCapabilities !== undefined && params.resume !== undefined) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') launchCapabilities are not supported with retained resume.`)));
 			}
 			if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') gate must be a non-empty command string.`)));

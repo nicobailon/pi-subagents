@@ -1837,6 +1837,8 @@ export interface RunSyncOptions {
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */
 	waitToolEnabled?: boolean;
+	/** Required private capability namespaces for this exact foreground attempt. */
+	launchCapabilities?: string[];
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	nestedRoute?: NestedRouteInfo;

@@ -236,6 +236,27 @@ Semantics:
 
 Schedules created while a ceiling is active are rejected until durable schedule persistence is available; unrestricted schedules remain subject to any policy active when they fire. Public status exposes bounded audit counts and sources, never full extension paths.
 
+## Private launch capabilities
+
+Extensions that own authority unavailable to the model can register an exact-session provider through `pi-subagents/launch-capabilities`. A caller requests namespace names only:
+
+```ts
+subagent({
+  agent: "writer",
+  task: "Implement the already-authorized item.",
+  async: false,
+  launchCapabilities: ["example.authority.v1"],
+});
+```
+
+The package resolves every required namespace after the final foreground child identity, tools, extensions, cwd/worktree, and launch digest are known. Effective ambient user/project extension entries are discovered before launch and represented by hashed paths, just like explicit extension paths. A missing, ambiguous, or declining provider rejects the launch before Pi starts. The provider returns a short-lived grant with an online `authorize` callback and optional lifecycle transitions; it never returns a model-visible token.
+
+The child binds the private per-spawn envelope once through `bindInheritedLaunchCapabilities`, using its actual Pi session and launch cwd. Every privileged operation calls the parent broker again—positive answers are not cached. Session, attempt, cwd, expiry, provider loss, replay, malformed-envelope, and sibling mismatches fail closed. Raw bearer material is removed from the child environment after binding and omitted from results, status, logs, metadata, and recovery state. `buildPiArgs` explicitly clears inherited envelopes, so delegated authority cannot reach grandchildren.
+
+Initial support is deliberately narrow: exact foreground child attempts only. Async, scheduled, retained resume, recovery, and detached authority launches are rejected. Authority-bearing foreground controls do not expose detach, and intercom detach requests are denied. A delegated child can request another namespace, but a provider should grant only authority it directly owns; pi-subagents never interprets or expands provider semantics.
+
+This is a cooperative extension boundary, not an operating-system sandbox. Native code running as the same user can bypass Pi extensions.
+
 ## Background-work provider API
 
 Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the process-local provider contract:

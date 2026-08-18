@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -61,6 +62,7 @@ import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { registerSubagentLaunchCapabilityProvider } from "../../src/runs/shared/launch-capabilities.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -461,6 +463,62 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
 		assert.doesNotMatch(readCallArgs().join("\n"), /This path is authoritative for this run/);
+	});
+
+	it("does not publish a foreground detach control for an authority-bearing executor child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ steps: [{ delay: 100, jsonl: [events.assistantMessage("completed attached")] }] });
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const ambientExtension = path.join(tempDir, "ambient-mutation-gate.ts");
+		fs.writeFileSync(ambientExtension, "export default function () {}\n", "utf8");
+		fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".pi", "settings.json"), JSON.stringify({ extensions: [ambientExtension] }), "utf8");
+		const ambientExtensionId = `sha256:${createHash("sha256").update(path.normalize(ambientExtension)).digest("hex").slice(0, 16)}`;
+		const registration = registerSubagentLaunchCapabilityProvider({
+			sessionId: "session-123",
+			capabilityId: "test.authority.v1",
+			source: "executor-control-test",
+			issue: (identity) => {
+				assert.ok(identity.launchResolvedExtensions.includes(ambientExtensionId), "effective ambient extension paths must be attested exactly");
+				return { expiresAt: Date.now() + 60_000, authorize: () => true };
+			},
+		});
+		try {
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state,
+				config: {},
+				asyncByDefault: false,
+				tempArtifactsDir: tempDir,
+				getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
+				expandTilde: (value: string) => value,
+				discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+				allowMutatingManagementActions: true,
+			});
+			const pending = executor.execute(
+				"authority-control",
+				{ agent: "echo", task: "Stay attached", async: false, launchCapabilities: ["test.authority.v1"] },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			let control = state.lastForegroundControlId ? state.foregroundControls.get(state.lastForegroundControlId) : undefined;
+			for (let attempt = 0; attempt < 100 && !control; attempt++) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				control = state.lastForegroundControlId ? state.foregroundControls.get(state.lastForegroundControlId) : undefined;
+			}
+			assert.ok(control);
+			assert.equal(control.detach, undefined);
+			const result = await pending;
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "authority child failed");
+		} finally {
+			registration.dispose();
+		}
 	});
 
 	it("reports a user-requested foreground detach without supervisor guidance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -5550,6 +5608,34 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.timedOut, undefined);
 		assert.equal(result.error, undefined);
 		assert.match(result.finalOutput ?? "", /Interrupted/);
+	});
+
+	it("does not expose detach while a foreground child holds private launch authority", async () => {
+		mockPi.onCall({ steps: [
+			{ delay: 75, jsonl: [events.assistantMessage("completed while attached")] },
+		] });
+		let detachExposed = false;
+		const registration = registerSubagentLaunchCapabilityProvider({
+			sessionId: "authority-parent-session",
+			capabilityId: "test.authority.v1",
+			source: "detach-test",
+			issue: () => ({ expiresAt: Date.now() + 60_000, authorize: () => true }),
+		});
+		try {
+			const result = await runSync!(tempDir, makeAgentConfigs(["echo"]), "echo", "Keep authority attached", {
+				runId: "authority-no-detach",
+				parentSessionId: "authority-parent-session",
+				launchCapabilities: ["test.authority.v1"],
+				acceptance: false,
+				onDetachReady: () => { detachExposed = true; },
+			});
+			assert.equal(detachExposed, false);
+			assert.equal(result.detached, undefined);
+			assert.equal(result.exitCode, 0);
+			assert.equal(result.finalOutput, "completed while attached");
+		} finally {
+			registration.dispose();
+		}
 	});
 
 	it("supports synchronous user detach and rejects duplicate and late detach calls", async () => {

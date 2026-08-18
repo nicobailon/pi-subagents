@@ -26,6 +26,13 @@ describe("public subagent execution normalization", () => {
 				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":false})`,
 			},
 		});
+		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: false, launchCapabilities: ["devspec.claim-authority.v1"] }), {
+			ok: true,
+			params: {
+				async: false,
+				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","launchCapabilities":["devspec.claim-authority.v1"],"output":true})`,
+			},
+		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", isolation: "none" }), {
 			ok: true,
 			params: {
@@ -64,6 +71,8 @@ describe("public subagent execution normalization", () => {
 			{ agent: 42 },
 			{ task: "work" },
 			{ agent: "worker", task: 42 },
+			{ agent: "worker", launchCapabilities: ["devspec.claim-authority.v1"] },
+			{ workflowScript: "return 1", async: false, launchCapabilities: ["devspec.claim-authority.v1"] },
 			{ agent: "worker", workflowScript: "return 1" },
 			{ action: "status", task: "work" },
 			{ tasks: [{ agent: "worker" }] },

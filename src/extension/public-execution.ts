@@ -11,6 +11,8 @@ export interface PublicSubagentExecutionParams {
 	chainName?: unknown;
 	config?: unknown;
 	workflowScript?: unknown;
+	launchCapabilities?: unknown;
+	async?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
 	output?: unknown;
@@ -100,6 +102,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.step !== undefined) {
 		return { ok: false, error: "step is not a public execution field; use workflowScript for orchestration.", mode: "workflow" };
 	}
+	if (params.launchCapabilities !== undefined && (params.agent === undefined || params.async !== false)) {
+		return { ok: false, error: "launchCapabilities require an exact structured foreground child with async:false. Workflow children must attach capabilities inside their own runs.run params.", mode: "workflow" };
+	}
 	if (params.workflowScript !== undefined && (params.agent !== undefined || params.task !== undefined)) {
 		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript.", mode: "workflow" };
 	}
@@ -110,10 +115,11 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (params.task !== undefined && typeof params.task !== "string") {
 			return { ok: false, error: "Structured single-child task must be a string when provided.", mode: "workflow" };
 		}
-		const { agent: _agent, task: _task, output, ...workflowDefaults } = params;
+		const { agent: _agent, task: _task, output, launchCapabilities, ...workflowDefaults } = params;
 		const child = {
 			agent: params.agent.trim(),
 			...(params.task !== undefined ? { task: params.task } : {}),
+			...(launchCapabilities !== undefined ? { launchCapabilities } : {}),
 			output: output === undefined ? true : output,
 		};
 		return {

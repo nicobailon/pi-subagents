@@ -286,6 +286,8 @@ export interface SubagentParamsLike {
 	steeringRecovery?: boolean;
 	mode?: SteerDeliveryMode;
 	workflowScript?: string;
+	/** Required private capability namespaces for this exact child launch. */
+	launchCapabilities?: string[];
 	chatProgress?: "auto" | "off" | "live-card";
 	isolation?: "none" | "worktree";
 	step?: ChainStep;
@@ -2725,7 +2727,13 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 	const hasTasks = (params.tasks?.length ?? 0) > 0;
 	const hasSingle = !hasChain && !hasTasks && Boolean(params.agent);
 	if (!effectiveAsync) return null;
-
+	if (params.launchCapabilities?.length) {
+		return {
+			content: [{ type: "text", text: "Private launch capabilities currently require an exact foreground child. Retry with async:false; async, scheduled, resumed, and recovery launches fail closed." }],
+			isError: true,
+			details: { mode: "single" as const, results: [] },
+		};
+	}
 
 	if (!isAsyncAvailable()) {
 		return {
@@ -3180,7 +3188,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				interruptController.abort();
 				return true;
 			},
-			detach: () => detachForeground?.("user request") === true,
+			...(params.launchCapabilities?.length
+				? {}
+				: { detach: () => detachForeground?.("user request") === true }),
 		}));
 	}
 
@@ -3217,6 +3227,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			outputMode: effectiveOutputMode,
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
+			launchCapabilities: params.launchCapabilities,
 			onUpdate: forwardSingleUpdate,
 			controlConfig,
 			onControlEvent,

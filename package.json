@@ -12,6 +12,7 @@
     "./external-runs": "./src/api/external-runs.ts",
     "./delegation": "./src/api/delegation.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
+    "./launch-capabilities": "./src/api/launch-capabilities.ts",
     "./preflight": "./src/api/preflight.ts",
     "./control-channel": "./src/api/control-channel.ts",
     "./intercom-bridge": "./src/api/intercom-bridge.ts",

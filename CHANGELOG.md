@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Add explicit foreground `launchCapabilities` and the `pi-subagents/launch-capabilities` provider API for private, exact-attempt, one-time-bound, online-revalidated child authority. Required but unavailable capabilities fail before spawn; bearer envelopes stay per-spawn, never enter model-visible results, and are cleared from nested launches.
+
 ## [0.51.0] - 2026-08-18
 
 ### Highlights
