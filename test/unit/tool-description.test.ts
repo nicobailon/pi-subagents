@@ -36,18 +36,18 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 635);
+		assert.equal(Buffer.byteLength(description), 660);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 741);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 889);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /runs\.all, not runs\.run promises.*\.output/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /await runs\.all.*do not read \.output from unawaited runs\.run launches/i);
 	});
 
 	it("keeps the full description when configured", () => {
@@ -56,7 +56,8 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
 		assert.match(description, /SINGLE CHILD:.*starts exactly one child through the workflow runtime/i);
 		assert.match(description, /Do not combine agent\/task with action or workflowScript/i);
-		assert.match(description, /runs\.run for one child and runs\.all for parallel children/i);
+		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel children/i);
+		assert.match(description, /do not read \.output from unawaited runs\.run launches/i);
 		assert.match(description, /runs\.steer\(key, message, \{mode\?, index\?, ackTimeoutMs\?\}\).*prior keyed child.*without exposing its run id/i);
 		assert.match(description, /receipts are queued, delivered, missed, or failed/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
@@ -85,7 +86,8 @@ describe("registered subagent tool description", () => {
 		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for orchestration/i);
 		assert.match(description, /SINGLE .*starts exactly one child through the workflow runtime/i);
-		assert.match(description, /runs\.run for one child and runs\.all for parallel work/i);
+		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel work/i);
+		assert.match(description, /do not read \.output from unawaited runs\.run launches/i);
 		assert.match(description, /runs\.steer\(key,message,options\?\).*prior keyed child/i);
 		assert.match(description, /never accepts a raw run id/i);
 		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);

@@ -718,7 +718,7 @@ describe("scripted workflow runtime", () => {
 			}),
 			(error: unknown) => error instanceof WorkflowScriptError
 				&& error.message.includes("unawaited runs.run launch(es): 'bg'")
-				&& error.message.includes("Await or return each launch"),
+				&& error.message.includes("await runs.all([{key, agent, task}, ...])"),
 		);
 		assert.equal(childAborted, true);
 	});
@@ -967,7 +967,9 @@ describe("scripted workflow runtime", () => {
 				},
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
-			(error: unknown) => error instanceof WorkflowScriptError && error.message.includes("unawaited runs.run launch(es): 'x'"),
+			(error: unknown) => error instanceof WorkflowScriptError
+				&& error.message.includes("unawaited runs.run launch(es): 'x'")
+				&& error.message.includes("do not read .output from unawaited launches"),
 		);
 	});
 

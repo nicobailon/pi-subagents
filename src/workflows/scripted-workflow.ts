@@ -773,7 +773,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				void worker.terminate();
 				const unobservedKeys = "value" in outcome ? [...launches].filter(([, launch]) => !launch.observed).map(([key]) => key) : [];
 				const completionError = unobservedKeys.length > 0
-					? new Error(`workflowScript completed with unawaited runs.run launch(es): ${unobservedKeys.map((key) => `'${key}'`).join(", ")}. Await or return each launch.`)
+					? new Error(`workflowScript completed with unawaited runs.run launch(es): ${unobservedKeys.map((key) => `'${key}'`).join(", ")}. For ordinary parallel fanout use await runs.all([{key, agent, task}, ...]); do not read .output from unawaited launches.`)
 					: "value" in outcome
 						? (() => {
 							const unobservedSteers = [...steers.values()].filter((steer) => !steer.observed).map((steer) => steer.key);

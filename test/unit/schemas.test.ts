@@ -177,6 +177,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(workflowScript?.type, "string");
 		assert.equal(workflowScript?.minLength, 1);
 		assert.match(String(workflowScript?.description ?? ""), /runs\.run/);
+		assert.match(String(workflowScript?.description ?? ""), /await runs\.all\(\[\{key, agent, task\}, \.\.\.\]\)/);
+		assert.match(String(workflowScript?.description ?? ""), /do not read \.output from unawaited runs\.run launches/);
+		assert.match(String(workflowScript?.description ?? ""), /advanced rolling fanout/);
 		assert.match(String(workflowScript?.description ?? ""), /sequential and parallel phases dynamically/i);
 		assert.match(String(workflowScript?.description ?? ""), /worktree:true/i);
 		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
@@ -184,6 +187,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(chatProgress?.type, "string");
 		assert.deepEqual(chatProgress?.enum, ["auto", "off", "live-card"]);
 		assert.match(String(chatProgress?.description ?? ""), /same Git repository/i);
+		assert.match(String(chatProgress?.description ?? ""), /async:false/);
+		assert.match(String(chatProgress?.description ?? ""), /omit chatProgress or use auto\/off/);
 		const worktree = SubagentParams?.properties?.worktree;
 		assert.equal(worktree?.type, "boolean");
 		assert.match(String(worktree?.description ?? ""), /each workflow child/i);

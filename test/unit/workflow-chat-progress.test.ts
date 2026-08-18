@@ -98,6 +98,7 @@ describe("workflow chat progress policy", () => {
 			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: worktree, background: true }).projection?.mode, "off");
 			assert.equal(resolveWorkflowChatProgress({ requested: "auto", parentCwd: repo, workflowCwd: other, background: false }).projection?.mode, "off");
 			assert.match(resolveWorkflowChatProgress({ requested: "live-card", parentCwd: repo, workflowCwd: other, background: false }).error ?? "", /same Git repository/i);
+			assert.match(resolveWorkflowChatProgress({ requested: "live-card", parentCwd: repo, workflowCwd: repo, background: true }).error ?? "", /omit chatProgress or use auto\/off.*async:false only when the parent must block/i);
 			assert.match(resolveWorkflowChatProgress({ requested: "terminal", parentCwd: repo, workflowCwd: repo, background: false }).error ?? "", /one of: auto, off, live-card/i);
 		} finally {
 			try { git(repo, ["worktree", "remove", "--force", worktree]); } catch {}
