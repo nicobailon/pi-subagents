@@ -607,6 +607,25 @@ describe("agent management config parsing", () => {
 		assert.ok(readText(got).includes("Subagent-only extensions: " + path.join(tempDir, ".pi", "agents", "tools", "child-only.ts") + ", /opt/pi/child.ts"));
 	});
 
+	it("preserves relative extension paths during unrelated updates", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const agentPath = path.join(tempDir, ".pi", "agents", "portable.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(
+			agentPath,
+			"---\nname: portable\ndescription: Portable agent\nextensions: ./tools/parent.ts, package-extension\nsubagentOnlyExtensions: ../child.ts, ~/shared.ts\n---\nOriginal prompt.\n",
+		);
+
+		const updated = handleUpdate({ agent: "portable", config: { description: "Updated agent" } }, ctx);
+
+		assert.equal(updated.isError, false);
+		const content = fs.readFileSync(agentPath, "utf-8");
+		assert.match(content, /^description: Updated agent$/m);
+		assert.match(content, /^extensions: \.\/tools\/parent\.ts, package-extension$/m);
+		assert.match(content, /^subagentOnlyExtensions: \.\.\/child\.ts, ~\/shared\.ts$/m);
+		assert.ok(!content.includes(tempDir));
+	});
+
 	it("does not serialize settings overrides into custom agent frontmatter during updates", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] } };
 		const settingsPath = path.join(tempDir, ".pi", "settings.json");
