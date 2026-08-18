@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 
 export type ControlChannelFs = Pick<typeof fs, "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync" | "realpathSync">;
@@ -580,6 +581,7 @@ export function watchAsyncControlInbox(
 		onSteerAck?: (ack: SteerAck) => void;
 		pollIntervalMs?: number;
 		safetyPollIntervalMs?: number;
+		platform?: NodeJS.Platform;
 		fs?: ControlChannelFs;
 		timers?: ControlChannelTimers;
 	},
@@ -647,12 +649,16 @@ export function watchAsyncControlInbox(
 		for (const entry of entries) watchDir(path.join(ackRoot, entry));
 	};
 	try {
-		watchDir(dir);
-		watchDir(steerRequestsDir(asyncDir), true);
-		watchDir(steerCapabilitiesDir(asyncDir), true);
-		watchDir(path.join(dir, STEER_ACKS_DIR), true);
-		watchExistingSteerAckDirs();
-		startSafetyPolling();
+		if (shouldUseNativeFsWatch("runner-control-inbox", opts.platform)) {
+			watchDir(dir);
+			watchDir(steerRequestsDir(asyncDir), true);
+			watchDir(steerCapabilitiesDir(asyncDir), true);
+			watchDir(path.join(dir, STEER_ACKS_DIR), true);
+			watchExistingSteerAckDirs();
+			startSafetyPolling();
+		} else {
+			startPolling();
+		}
 	} catch {
 		startPolling();
 	}

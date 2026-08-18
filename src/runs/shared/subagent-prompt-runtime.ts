@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
@@ -337,6 +338,7 @@ export function registerSteeringInbox(
 		nativeRealpath?: (filePath: string) => string;
 		legacySettleFallbackMs?: number;
 		safetyPollIntervalMs?: number;
+		platform?: NodeJS.Platform;
 		timers?: Pick<typeof globalThis, "setInterval" | "clearInterval">;
 	} = {},
 ): void {
@@ -449,13 +451,17 @@ export function registerSteeringInbox(
 			safetyInterval = (deps.timers?.setInterval ?? setInterval)(flush, deps.safetyPollIntervalMs ?? STEERING_SAFETY_POLL_INTERVAL_MS) as NodeJS.Timeout;
 			safetyInterval.unref?.();
 		};
-		try {
-			watcher = (deps.watch ?? fs.watch)(resolveWatchPath(steerInbox, deps.nativeRealpath), () => flush());
-			watcher.on("error", startPolling);
-			startSafetyPolling();
-		} catch {
-			watcher = undefined;
+		if (!shouldUseNativeFsWatch("child-steering-inbox", deps.platform)) {
 			startPolling();
+		} else {
+			try {
+				watcher = (deps.watch ?? fs.watch)(resolveWatchPath(steerInbox, deps.nativeRealpath), () => flush());
+				watcher.on("error", startPolling);
+				startSafetyPolling();
+			} catch {
+				watcher = undefined;
+				startPolling();
+			}
 		}
 	};
 	const activate = (): undefined => {

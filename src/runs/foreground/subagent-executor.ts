@@ -378,6 +378,8 @@ interface ExecutorDeps {
 	expandTilde: (p: string) => string;
 	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig };
 	allowMutatingManagementActions?: boolean;
+	activateSupervisorTransport?: () => void;
+	refreshResultDelivery?: () => void;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
@@ -5294,6 +5296,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			};
 			deps.state.foregroundControls.set(runId, foregroundControl);
 			deps.state.lastForegroundControlId = runId;
+			deps.activateSupervisorTransport?.();
+			deps.refreshResultDelivery?.();
 		}
 
 		const writeNestedForegroundEvent = (type: "subagent.nested.started" | "subagent.nested.completed", result?: AgentToolResult<Details>): void => {

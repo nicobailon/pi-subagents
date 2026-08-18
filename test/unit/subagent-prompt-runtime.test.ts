@@ -244,6 +244,7 @@ describe("subagent prompt runtime", () => {
 				},
 				sendUserMessage() {},
 			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, {
+				platform: "linux",
 				nativeRealpath(target) {
 					assert.equal(target, inbox);
 					return nativeInbox;
@@ -264,6 +265,41 @@ describe("subagent prompt runtime", () => {
 			handlers.get("session_start")?.({});
 			assert.equal(watchedDir, nativeInbox);
 			assert.deepEqual(intervalDelays, [5000]);
+			handlers.get("session_shutdown")?.({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses polling without native steering watchers on Darwin", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-darwin-runtime-"));
+		try {
+			const inbox = path.join(dir, "steer");
+			process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
+			const handlers = new Map<string, (payload?: unknown) => unknown>();
+			const intervalDelays: number[] = [];
+			let watchCalls = 0;
+
+			registerSteeringInbox({
+				on(event: string, handler: (payload?: unknown) => unknown) {
+					handlers.set(event, handler);
+				},
+				sendUserMessage() {},
+			} as { on(event: string, handler: (payload?: unknown) => unknown): void; sendUserMessage(): void }, {
+				platform: "darwin",
+				watch: (() => { watchCalls += 1; throw new Error("Darwin must not use fs.watch."); }) as typeof fs.watch,
+				timers: {
+					setInterval: ((_handler: Parameters<typeof setInterval>[0], delay?: number) => {
+						intervalDelays.push(delay ?? 0);
+						return { unref() {} };
+					}) as typeof setInterval,
+					clearInterval: (() => {}) as typeof clearInterval,
+				},
+			});
+
+			handlers.get("session_start")?.({});
+			assert.equal(watchCalls, 0);
+			assert.deepEqual(intervalDelays, [250]);
 			handlers.get("session_shutdown")?.({});
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });

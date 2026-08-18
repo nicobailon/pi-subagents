@@ -377,7 +377,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 		try {
 			const nativeDir = path.join(path.dirname(asyncDir), "native-control-path");
 			const h = harness(nativeDir);
-			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers });
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			assert.equal(h.watchedDir(), nativeDir);
 			dispose();
 		} finally {
@@ -389,7 +389,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 		const asyncDir = tmpAsyncDir("pi-control-watch-no-poll-");
 		try {
 			const h = harness();
-			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers });
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			assert.deepEqual(h.intervalDelays(), [5000]);
 			dispose();
 		} finally {
@@ -401,10 +401,23 @@ describe("control channel: watchAsyncControlInbox", () => {
 		const asyncDir = tmpAsyncDir("pi-control-watch-fallback-");
 		try {
 			const h = harness();
-			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers });
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			h.triggerError();
 			h.triggerError();
 			assert.deepEqual(h.intervalDelays(), [5000, 250]);
+			dispose();
+		} finally {
+			cleanup(asyncDir);
+		}
+	});
+
+	it("uses portable polling without native watchers on Darwin", () => {
+		const asyncDir = tmpAsyncDir("pi-control-watch-darwin-");
+		try {
+			const h = harness();
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt() {}, fs: h.fsImpl, timers: h.timers, platform: "darwin" });
+			assert.equal(h.watchedDir(), undefined);
+			assert.deepEqual(h.intervalDelays(), [250]);
 			dispose();
 		} finally {
 			cleanup(asyncDir);
@@ -417,7 +430,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 			requestAsyncInterrupt(asyncDir);
 			let fired = 0;
 			const h = harness();
-			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt: () => fired++, fs: h.fsImpl, timers: h.timers });
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt: () => fired++, fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			assert.equal(fired, 1);
 			assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
 			dispose();
@@ -431,7 +444,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 		try {
 			let fired = 0;
 			const h = harness();
-			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt: () => fired++, fs: h.fsImpl, timers: h.timers });
+			const dispose = watchAsyncControlInbox(asyncDir, { onInterrupt: () => fired++, fs: h.fsImpl, timers: h.timers, platform: "linux" });
 			assert.equal(fired, 0);
 
 			requestAsyncInterrupt(asyncDir);
@@ -467,6 +480,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 				onStop: () => events.push("stop"),
 				fs: h.fsImpl,
 				timers: h.timers,
+				platform: "linux",
 			});
 
 			assert.deepEqual(events, ["stop", "interrupt"]);
@@ -487,6 +501,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 				onSteer: (request) => steers.push({ message: request.message, targetIndex: request.targetIndex }),
 				fs: h.fsImpl,
 				timers: h.timers,
+				platform: "linux",
 			});
 
 			requestAsyncSteer(asyncDir, { message: "go narrower", targetIndex: 0, id: "s", ts: 1 });
@@ -510,6 +525,7 @@ describe("control channel: watchAsyncControlInbox", () => {
 				onSteer: (request) => steers.push(request.message),
 				fs: h.fsImpl,
 				timers: h.timers,
+				platform: "linux",
 			});
 
 			const watchedSteerDir = fs.realpathSync.native(steerRequestsDir(asyncDir));

@@ -31,7 +31,7 @@ import { createSubagentParamsSchema } from "./schemas.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
-import { cleanupResultIndexes } from "../runs/background/result-files.ts";
+import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
@@ -457,10 +457,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
 	});
+	let refreshResultDelivery = () => {};
+	const hasResultDeliveryDemand = () => {
+		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
+		if (state.foregroundControls.size > 0) return true;
+		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
+		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
+	};
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
+		onJobTerminal: () => refreshResultDelivery(),
 	});
-	const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
+	const resultWatcher = createResultWatcher(
 		pi,
 		state,
 		DIRS.results,
@@ -469,9 +477,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			notifier: completionNotifier,
 			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
 			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
+			hasDeliveryDemand: hasResultDeliveryDemand,
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
 		},
 	);
+	const { startResultWatcher, primeExistingResults, stopResultWatcher } = resultWatcher;
+	refreshResultDelivery = resultWatcher.refreshResultDelivery;
 	const asyncRetentionAbort = new AbortController();
 	const asyncRetentionTimer = setTimeout(async () => {
 		try {
@@ -519,6 +530,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		getSubagentSessionRoot,
 		expandTilde,
 		discoverAgents,
+		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
+		refreshResultDelivery: () => refreshResultDelivery(),
 	});
 	executorScheduled = executor.executeScheduled;
 
@@ -726,10 +739,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const asyncStartedHandler = (payload: unknown) => {
 		handleStarted(payload);
+		supervisorChannel.activateTransport();
+		refreshResultDelivery();
 		fleetStatus?.refresh();
 	};
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
+		refreshResultDelivery();
 		refreshActiveAsyncCapacity();
 		scheduledRunManager.handleAsyncCompletion(payload);
 		fleetStatus?.refresh();
@@ -897,6 +913,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		});
 		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
+		supervisorChannel.activateTransport();
 	});
 
 	pi.on("session_shutdown", async () => {

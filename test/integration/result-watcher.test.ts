@@ -41,7 +41,7 @@ function createResultWatcher(
 	completionTtlMs: Parameters<typeof createRawResultWatcher>[3],
 	deps: Parameters<typeof createRawResultWatcher>[4] = {},
 ): ReturnType<typeof createRawResultWatcher> {
-	return createRawResultWatcher(pi, state, resultsDir, completionTtlMs, { coalesceDelayMs: 0, ...deps });
+	return createRawResultWatcher(pi, state, resultsDir, completionTtlMs, { platform: "linux", coalesceDelayMs: 0, ...deps });
 }
 
 function writeIndexedResult(filePath: string, data: Record<string, unknown>): void {
@@ -62,6 +62,70 @@ async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Pr
 }
 
 describe("result watcher", () => {
+	it("does not create Darwin native watchers or idle timers", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-darwin-idle-"));
+		try {
+			let watchCalls = 0;
+			const intervals: number[] = [];
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				platform: "darwin",
+				hasDeliveryDemand: () => false,
+				fs: { ...fs, watch: (() => { watchCalls += 1; throw new Error("Darwin must not use fs.watch."); }) as typeof fs.watch },
+				timers: {
+					setTimeout,
+					clearTimeout,
+					setInterval: ((_handler: () => void, delay?: number) => { intervals.push(delay ?? 0); return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
+					clearInterval,
+				},
+			});
+			try {
+				watcher.startResultWatcher();
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.equal(watchCalls, 0);
+			assert.deepEqual(intervals, []);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses demand-gated Darwin polling for result delivery", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-darwin-demand-"));
+		try {
+			let demand = true;
+			let poll: (() => void) | undefined;
+			let cleared = false;
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				platform: "darwin",
+				hasDeliveryDemand: () => demand,
+				fs: { ...fs, watch: (() => { throw new Error("Darwin must not use fs.watch."); }) as typeof fs.watch },
+				timers: {
+					setTimeout,
+					clearTimeout,
+					setInterval: ((handler: () => void, delay?: number) => { assert.equal(delay, 3000); poll = handler; return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
+					clearInterval: (() => { cleared = true; }) as typeof clearInterval,
+				},
+			});
+			try {
+				watcher.startResultWatcher();
+				assert.equal(typeof poll, "function");
+				demand = false;
+				poll?.();
+				assert.equal(cleared, true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("processes deferred session-scoped results after session identity is restored", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-session-"));
 		try {

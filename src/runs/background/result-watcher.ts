@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	type IntercomEventBus,
@@ -54,6 +55,9 @@ type ResultWatcherDeps = {
 	deliverIntercomResults?: boolean;
 	/** Coalesces result-file events. Tests can lower this without changing retry timing. */
 	coalesceDelayMs?: number;
+	/** Returns true while a durable completion source needs periodic delivery checks. */
+	hasDeliveryDemand?: () => boolean;
+	platform?: NodeJS.Platform;
 };
 
 type ResultFileChild = {
@@ -174,6 +178,7 @@ export function createResultWatcher(
 ): {
 	startResultWatcher: () => void;
 	primeExistingResults: (options?: { triggerTurn?: boolean }) => void;
+	refreshResultDelivery: () => void;
 	stopResultWatcher: () => void;
 } {
 	const fsApi = deps.fs ?? fs;
@@ -584,6 +589,30 @@ export function createResultWatcher(
 		if (resultScanTimer) timers.clearInterval(resultScanTimer);
 		resultScanTimer = null;
 	};
+	const useNativeWatcher = () => shouldUseNativeFsWatch("result-delivery", deps.platform);
+	const hasDeliveryDemand = () => {
+		try {
+			return deps.hasDeliveryDemand?.() === true;
+		} catch (error) {
+			console.error("Failed to inspect subagent result delivery demand:", error);
+			return false;
+		}
+	};
+	const clearResultPoller = () => {
+		if (!state.watcherRestartTimer) return;
+		timers.clearTimeout(state.watcherRestartTimer);
+		timers.clearInterval(state.watcherRestartTimer);
+		state.watcherRestartTimer = null;
+	};
+	const startDemandPolling = () => {
+		if (!deliveryActive || useNativeWatcher() || state.watcherRestartTimer) return;
+		if (!hasDeliveryDemand()) return;
+		state.watcherRestartTimer = timers.setInterval(() => {
+			primeExistingResults();
+			if (!hasDeliveryDemand()) clearResultPoller();
+		}, POLL_INTERVAL_MS);
+		state.watcherRestartTimer.unref?.();
+	};
 
 	const startPolling = (reason: unknown) => {
 		state.watcher?.close();
@@ -622,6 +651,10 @@ export function createResultWatcher(
 			timers.clearTimeout(state.watcherRestartTimer);
 			timers.clearInterval(state.watcherRestartTimer);
 			state.watcherRestartTimer = null;
+		}
+		if (!useNativeWatcher()) {
+			startDemandPolling();
+			return;
 		}
 		try {
 			const watchDir = resolveWatchPath(resultsDir, fsApi.realpathSync.native);
@@ -665,11 +698,7 @@ export function createResultWatcher(
 		deliveryEpoch += 1;
 		state.watcher?.close();
 		state.watcher = null;
-		if (state.watcherRestartTimer) {
-			timers.clearTimeout(state.watcherRestartTimer);
-			timers.clearInterval(state.watcherRestartTimer);
-		}
-		state.watcherRestartTimer = null;
+		clearResultPoller();
 		clearResultScan();
 		state.resultFileCoalescer.clear();
 		pendingTriggerTurn.clear();
@@ -677,5 +706,5 @@ export function createResultWatcher(
 		identityCache.clear();
 	};
 
-	return { startResultWatcher, primeExistingResults, stopResultWatcher };
+	return { startResultWatcher, primeExistingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
 }

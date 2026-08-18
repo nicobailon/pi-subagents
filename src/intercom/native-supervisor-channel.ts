@@ -14,6 +14,7 @@ import {
 } from "../runs/shared/pi-args.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
+import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
@@ -75,6 +76,7 @@ type SupervisorWatch = (filename: fs.PathLike, listener: fs.WatchListener<string
 interface NativeSupervisorChannelDeps {
 	platform?: NodeJS.Platform;
 	watch?: SupervisorWatch;
+	timers?: Pick<typeof globalThis, "setInterval" | "clearInterval" | "setImmediate" | "clearImmediate">;
 }
 
 const ContactSupervisorParamsSchema = Type.Object({
@@ -612,8 +614,9 @@ function buildParentSupervisorTool(pending: Map<string, PendingSupervisorRequest
 	};
 }
 
-export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState, deps: NativeSupervisorChannelDeps = {}): { start: () => void; dispose: () => void; pending: Map<string, PendingSupervisorRequest> } {
+export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState, deps: NativeSupervisorChannelDeps = {}): { start: () => void; activateTransport: () => void; dispose: () => void; pending: Map<string, PendingSupervisorRequest> } {
 	const watch = deps.watch ?? fs.watch;
+	const timers = deps.timers ?? globalThis;
 	const pending = new Map<string, PendingSupervisorRequest>();
 	const seenFiles = new Set<string>();
 	const requestWatchers = new Map<string, fs.FSWatcher>();
@@ -623,6 +626,13 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	let deferredWatcherRefresh: ReturnType<typeof setImmediate> | undefined;
 	let started = false;
 	let lastStaleCleanupAt = 0;
+	const platform = deps.platform ?? process.platform;
+	const useNativeWatcher = () => shouldUseNativeFsWatch("supervisor-channel", platform) && platform !== "win32";
+	const hasTransportDemand = () => {
+		if (pending.size > 0) return true;
+		if (state.foregroundControls.size > 0) return true;
+		return [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
+	};
 
 	const registerParentTools = (): void => {
 		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pending, state));
@@ -689,12 +699,18 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 
 	const startPolling = (): void => {
 		if (poller) return;
-		poller = setInterval(poll, CHANNEL_POLL_MS);
+		poller = timers.setInterval(() => {
+			poll();
+			if (!useNativeWatcher() && platform === "darwin" && !hasTransportDemand()) {
+				if (poller) timers.clearInterval(poller);
+				poller = undefined;
+			}
+		}, CHANNEL_POLL_MS);
 		poller.unref?.();
 	};
 	const startSafetyPolling = (): void => {
 		if (safetyPoller) return;
-		safetyPoller = setInterval(() => {
+		safetyPoller = timers.setInterval(() => {
 			watchExistingRequestDirs();
 			poll();
 		}, CHANNEL_SAFETY_POLL_MS);
@@ -730,7 +746,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	};
 	const scheduleWatcherRefresh = (): void => {
 		if (deferredWatcherRefresh) return;
-		deferredWatcherRefresh = setImmediate(() => {
+		deferredWatcherRefresh = timers.setImmediate(() => {
 			deferredWatcherRefresh = undefined;
 			if (!started) return;
 			watchExistingRequestDirs();
@@ -740,6 +756,11 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	};
 
 	return {
+		activateTransport: () => {
+			if (!started) return;
+			poll();
+			if (!useNativeWatcher() && hasTransportDemand()) startPolling();
+		},
 		start: () => {
 			if (started) return;
 			started = true;
@@ -747,8 +768,8 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			poll();
 			try {
 				fs.mkdirSync(SUPERVISOR_CHANNEL_ROOT, { recursive: true });
-				if ((deps.platform ?? process.platform) === "win32") {
-					startPolling();
+				if (!useNativeWatcher()) {
+					if (platform === "win32") startPolling();
 					return;
 				}
 				watchExistingRequestDirs();
@@ -776,11 +797,11 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				try { watcher.close(); } catch {}
 			}
 			requestWatchers.clear();
-			if (poller) clearInterval(poller);
+			if (poller) timers.clearInterval(poller);
 			poller = undefined;
-			if (safetyPoller) clearInterval(safetyPoller);
+			if (safetyPoller) timers.clearInterval(safetyPoller);
 			safetyPoller = undefined;
-			if (deferredWatcherRefresh) clearImmediate(deferredWatcherRefresh);
+			if (deferredWatcherRefresh) timers.clearImmediate(deferredWatcherRefresh);
 			deferredWatcherRefresh = undefined;
 			pending.clear();
 			seenFiles.clear();

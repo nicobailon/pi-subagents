@@ -144,7 +144,7 @@ describe("native supervisor channel", () => {
 			) => { sent.push({ message, options }); },
 			getSessionName: () => "shared-name",
 		};
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), { platform: "darwin" });
 
 		assert.deepEqual(registeredTools, []);
 		channel.start();
@@ -192,6 +192,81 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent.map((message) => message.details?.id), [requestId]);
 	});
 
+	it("registers idle Darwin sessions without native watchers or polling", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		let watchCalls = 0;
+		const intervals: number[] = [];
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), {
+			platform: "darwin",
+			watch: (() => { watchCalls += 1; throw new Error("Darwin must not call fs.watch."); }) as never,
+			timers: {
+				setInterval: ((_handler: () => void, delay?: number) => { intervals.push(delay ?? 0); return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
+				clearInterval: (() => {}) as typeof clearInterval,
+				setImmediate,
+				clearImmediate,
+			},
+		});
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(watchCalls, 0);
+		assert.deepEqual(intervals, []);
+	});
+
+	it("activates Darwin supervisor polling only while child work is live", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const state = makeState(currentSessionId, ctx);
+		state.foregroundControls.set("run-a", { runId: "run-a", startedAt: Date.now(), updatedAt: Date.now(), activeChildren: new Map(), schedulingOwners: 1 } as never);
+		const intervals: number[] = [];
+		const channel = createNativeSupervisorChannel(pi as never, state, {
+			platform: "darwin",
+			watch: (() => { throw new Error("Darwin must not call fs.watch."); }) as never,
+			timers: {
+				setInterval: ((_handler: () => void, delay?: number) => { intervals.push(delay ?? 0); return { unref() {} } as NodeJS.Timeout; }) as typeof setInterval,
+				clearInterval: (() => {}) as typeof clearInterval,
+				setImmediate,
+				clearImmediate,
+			},
+		});
+
+		channel.start();
+		channel.activateTransport();
+		channel.dispose();
+
+		assert.deepEqual(intervals, [250]);
+	});
+
 	it("delivers requests written under an existing request directory by watch event", async () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
@@ -212,11 +287,19 @@ describe("native supervisor channel", () => {
 			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
 			getSessionName: () => "shared-name",
 		};
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+		const watchListeners: fs.WatchListener<string>[] = [];
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), {
+			platform: "linux",
+			watch: ((_filename: fs.PathLike, listener: fs.WatchListener<string>) => {
+				watchListeners.push(listener);
+				return { on: () => {}, close: () => {}, unref: () => {} } as unknown as fs.FSWatcher;
+			}) as never,
+		});
 
 		try {
 			channel.start();
 			const requestId = writeRequest({ sessionId: currentSessionId, runId });
+			for (const listener of watchListeners) listener("rename", `${requestId}.json`);
 			await waitForCondition(() => sent.some((message) => message.details?.id === requestId), "supervisor request watch delivery");
 		} finally {
 			channel.dispose();

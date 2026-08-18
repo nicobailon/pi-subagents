@@ -18,6 +18,9 @@ interface AsyncJobTrackerModule {
 			pollIntervalMs?: number;
 			resultsDir?: string;
 			widgetEnabled?: boolean;
+			platform?: NodeJS.Platform;
+			onJobTerminal?: () => void;
+			watch?: typeof fs.watch;
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
 		},
@@ -37,6 +40,7 @@ type AsyncJobTracker = ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]
 const activeTrackers = new Set<AsyncJobTracker>();
 
 function createTracker(...args: Parameters<AsyncJobTrackerModule["createAsyncJobTracker"]>): AsyncJobTracker {
+	args[3] = { platform: "linux", ...(args[3] ?? {}) };
 	const tracker = trackerMod!.createAsyncJobTracker(...args);
 	activeTrackers.add(tracker);
 	return tracker;
@@ -457,6 +461,53 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			}), "utf-8");
 
 			await waitForCondition(() => state.asyncJobs.get("late-status-run")?.steps?.[0]?.currentTool === "read", "late status refresh before liveness", 1000);
+			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("uses polling without native watchers on Darwin and fires terminal delivery hooks once", async () => {
+		const asyncRoot = createTempDir("pi-async-job-darwin-poll-");
+		try {
+			const runDir = path.join(asyncRoot, "darwin-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "darwin-run",
+				mode: "single",
+				state: "running",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "worker", status: "running" }],
+			}), "utf-8");
+			const state = createState();
+			let nativeWatchCalls = 0;
+			let terminalHooks = 0;
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, {
+				platform: "darwin",
+				pollIntervalMs: 10,
+				onJobTerminal: () => terminalHooks++,
+				watch: (() => {
+					nativeWatchCalls++;
+					throw new Error("Darwin tracker must not create native watchers");
+				}) as typeof fs.watch,
+			});
+			tracker.handleStarted({ id: "darwin-run", asyncDir: runDir, agent: "worker" });
+
+			await waitForCondition(() => state.asyncJobs.get("darwin-run")?.status === "running", "darwin polling started");
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "darwin-run",
+				mode: "single",
+				state: "complete",
+				startedAt: 1000,
+				lastUpdate: 2000,
+				steps: [{ agent: "worker", status: "complete" }],
+			}), "utf-8");
+
+			await waitForCondition(() => state.asyncJobs.get("darwin-run")?.status === "complete", "darwin terminal refresh");
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(nativeWatchCalls, 0);
+			assert.equal(terminalHooks, 1);
 			tracker.resetJobs();
 		} finally {
 			removeTempDir(asyncRoot);

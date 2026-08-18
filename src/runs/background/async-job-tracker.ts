@@ -21,6 +21,7 @@ import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-
 import { findNestedRouteForRootId, hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
+import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -28,6 +29,9 @@ interface AsyncJobTrackerOptions {
 	pollIntervalMs?: number;
 	resultsDir?: string;
 	widgetEnabled?: boolean;
+	platform?: NodeJS.Platform;
+	onJobTerminal?: () => void;
+	watch?: typeof fs.watch;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 }
@@ -67,6 +71,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const runningJobIds = new Set<string>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
+	const watch = options.watch ?? fs.watch;
+	const useNativeWatcher = () => shouldUseNativeFsWatch("async-job-tracker", options.platform);
+	const terminalStatus = (status: string) => status === "complete" || status === "failed" || status === "paused" || status === "stopped";
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		if (state.widgetsSuspended) return;
 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
@@ -407,7 +414,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
 				job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
 				job.sessionFile = status.sessionFile ?? job.sessionFile;
-				if (job.status === "complete" || job.status === "failed" || job.status === "paused" || job.status === "stopped") {
+				if (terminalStatus(job.status)) {
+					if (!terminalStatus(previousStatus)) options.onJobTerminal?.();
 					rememberFleetJob(state, job);
 					if (!nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 						scheduleCleanup(job.asyncId);
@@ -445,6 +453,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const watchJob = (job: AsyncJobState) => {
+		if (!useNativeWatcher()) return;
 		const watched = jobWatchers.get(job.asyncId) ?? { watchers: new Map<string, fs.FSWatcher>() };
 		const active = job.status === "queued" || job.status === "running";
 		const watchPath = (watchPath: string): boolean => {
@@ -452,7 +461,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			const nestedEventSink = job.nestedRoute?.eventSink === watchPath;
 			let watcher: fs.FSWatcher;
 			try {
-				watcher = fs.watch(resolveWatchPath(watchPath), (_event, file) => {
+				watcher = watch(resolveWatchPath(watchPath), (_event, file) => {
 					const rawFileName = file?.toString();
 					const fileName = rawFileName ?? path.basename(watchPath);
 					const nestedEventFile = nestedEventSink && (!rawFileName || rawFileName.endsWith(".json") || rawFileName.endsWith(".jsonl"));
@@ -501,9 +510,10 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const watchAsyncRoot = () => {
+		if (!useNativeWatcher()) return;
 		if (rootWatcher) return;
 		try {
-			rootWatcher = fs.watch(resolveWatchPath(asyncDirRoot), (_event, file) => {
+			rootWatcher = watch(resolveWatchPath(asyncDirRoot), (_event, file) => {
 				const runDirName = file?.toString();
 				for (const job of state.asyncJobs.values()) {
 					if (jobWatchers.has(job.asyncId) || (runDirName && path.basename(job.asyncDir) !== runDirName)) continue;
