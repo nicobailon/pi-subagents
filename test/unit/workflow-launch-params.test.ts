@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { prepareWorkflowLaunchParams } from "../../src/runs/foreground/subagent-executor.ts";
+import { prepareWorkflowLaunchParams, sanitizeRunPathSegment } from "../../src/runs/foreground/subagent-executor.ts";
 
 describe("workflow launch params", () => {
 	it("keeps omitted workflow child async foreground", () => {
@@ -219,5 +219,27 @@ describe("workflow launch params", () => {
 				toolBudget: { soft: 2, hard: 4, block: "*" },
 			},
 		);
+	});
+
+	describe("sanitizeRunPathSegment", () => {
+		it("replaces Windows-invalid characters and trims separators", () => {
+			assert.equal(sanitizeRunPathSegment("call_VfdHQygxGeL1L49ez04A4tf7|WtnJ9gVpB/jdQGWbnKhfMgDqPGUGmNw"), "call_VfdHQygxGeL1L49ez04A4tf7_WtnJ9gVpB_jdQGWbnKhfMgDqPGUGmNw");
+			assert.equal(sanitizeRunPathSegment(":::path//sub?*<file>|name:::"), "path_sub_file_name");
+			assert.equal(sanitizeRunPathSegment("   ___invalid___   "), "invalid");
+		});
+
+		it("falls back to unknown for empty or all-invalid strings", () => {
+			assert.equal(sanitizeRunPathSegment(""), "unknown");
+			assert.equal(sanitizeRunPathSegment("   "), "unknown");
+			assert.equal(sanitizeRunPathSegment("???///|||"), "unknown");
+		});
+
+		it("bounds oversized segments to the maximum byte length", () => {
+			const longId = "a".repeat(200);
+			const sanitized = sanitizeRunPathSegment(longId, 120);
+			assert.equal(sanitized.length, 120);
+			assert.equal(Buffer.byteLength(sanitized, "utf-8"), 120);
+			assert.equal(sanitized, "a".repeat(120));
+		});
 	});
 });
