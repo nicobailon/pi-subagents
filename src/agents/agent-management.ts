@@ -818,7 +818,13 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
 	if (target.source !== "user" && target.source !== "project") return result(`Cannot update ${target.source} agent '${target.name}'. Eject it to user or project scope first.`, true);
-	const updated = editableAgentConfig(target);
+	let updated: AgentConfig;
+	try {
+		updated = editableAgentConfig(target);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return result(`Could not reread agent definition ${target.filePath} before updating '${target.name}': ${message}`, true);
+	}
 	const oldName = target.name;
 	if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
 	if (hasKey(cfg, "description") && (typeof cfg.description !== "string" || !cfg.description.trim())) return result("config.description must be a non-empty string when provided.", true);
