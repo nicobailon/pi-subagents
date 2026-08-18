@@ -84,7 +84,7 @@ describe("subagents.defaultExtensions", () => {
 		);
 		assert.deepEqual(
 			agents.find((agent) => agent.name === "explicit")?.extensions,
-			["./explicit.ts"],
+			[path.join(tempProject, ".pi", "agents", "explicit.ts")],
 		);
 		assert.deepEqual(
 			agents.find((agent) => agent.name === "disabled")?.extensions,
@@ -117,7 +117,7 @@ describe("subagents.defaultExtensions", () => {
 		);
 		assert.deepEqual(
 			agents.find((agent) => agent.name === "explicit")?.extensions,
-			["./frontmatter.ts"],
+			[path.join(tempProject, ".pi", "agents", "frontmatter.ts")],
 		);
 	});
 

@@ -604,7 +604,7 @@ describe("agent management config parsing", () => {
 
 		const got = handleManagementAction("get", { agent: "child-tool-user" }, ctx);
 		assert.equal(got.isError, false);
-		assert.match(readText(got), /Subagent-only extensions: \.\/tools\/child-only\.ts, \/opt\/pi\/child\.ts/);
+		assert.ok(readText(got).includes("Subagent-only extensions: " + path.join(tempDir, ".pi", "agents", "tools", "child-only.ts") + ", /opt/pi/child.ts"));
 	});
 
 	it("does not serialize settings overrides into custom agent frontmatter during updates", () => {
