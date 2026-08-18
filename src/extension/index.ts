@@ -95,6 +95,7 @@ interface SubagentRuntimeEntry {
 
 interface SubagentRuntimeRegistry {
 	bySessionManager: WeakMap<object, SubagentRuntimeEntry>;
+	visibleControlNoticesBySessionManager: WeakMap<object, Set<string>>;
 	activeEntries: Set<SubagentRuntimeEntry>;
 }
 
@@ -102,10 +103,14 @@ function getRuntimeRegistry(): SubagentRuntimeRegistry {
 	const globalStore = globalThis as Record<string, unknown>;
 	const existing = globalStore[RUNTIME_REGISTRY_STORE_KEY] as Partial<SubagentRuntimeRegistry> | undefined;
 	if (existing?.bySessionManager instanceof WeakMap && existing.activeEntries instanceof Set) {
+		if (!(existing.visibleControlNoticesBySessionManager instanceof WeakMap)) {
+			existing.visibleControlNoticesBySessionManager = new WeakMap();
+		}
 		return existing as SubagentRuntimeRegistry;
 	}
 	const registry: SubagentRuntimeRegistry = {
 		bySessionManager: new WeakMap(),
+		visibleControlNoticesBySessionManager: new WeakMap(),
 		activeEntries: new Set(),
 	};
 	globalStore[RUNTIME_REGISTRY_STORE_KEY] = registry;
@@ -868,7 +873,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			waitSubscriptionManager.dispose();
 			fleetStatus?.dispose();
 			disposeAsyncJobTracker();
-			state.resultFileCoalescer.clear();
 			for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
 			state.cleanupTimers.clear();
 			state.asyncJobs.clear();
@@ -905,12 +909,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	const installRuntime = (ctx: ExtensionContext) => {
+		if (runtimeCleaned) {
+			throw new Error("Cannot restart a cleaned pi-subagents extension runtime; register a new extension instance.");
+		}
 		const sessionManager = ctx.sessionManager as object;
 		const previousRuntime = runtimeRegistry.bySessionManager.get(sessionManager);
-		if (previousRuntime && previousRuntime !== runtimeEntry) {
-			visibleControlNotices = previousRuntime.visibleControlNotices;
-			runtimeEntry.visibleControlNotices = visibleControlNotices;
+		const existingVisibleControlNotices = runtimeRegistry.visibleControlNoticesBySessionManager.get(sessionManager);
+		if (existingVisibleControlNotices) {
+			visibleControlNotices = existingVisibleControlNotices;
+		} else {
+			runtimeRegistry.visibleControlNoticesBySessionManager.set(sessionManager, visibleControlNotices);
 		}
+		runtimeEntry.visibleControlNotices = visibleControlNotices;
 		if (runtimeEntry.sessionManager && runtimeEntry.sessionManager !== sessionManager
 			&& runtimeRegistry.bySessionManager.get(runtimeEntry.sessionManager) === runtimeEntry) {
 			runtimeRegistry.bySessionManager.delete(runtimeEntry.sessionManager);

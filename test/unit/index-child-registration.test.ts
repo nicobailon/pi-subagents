@@ -686,6 +686,97 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("keeps slash snapshots until the last independent runtime shuts down", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import { buildSlashInitialResult, getSlashRenderableSnapshot } from "./src/slash/slash-live-state.ts";
+			function createRuntime(sessionId) {
+				const handlers = new Map();
+				const events = { on() { return () => {}; }, emit() {} };
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, handler); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const ctx = {
+					cwd: process.cwd(), hasUI: false,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				return { pi, handlers, ctx };
+			}
+
+			const first = createRuntime("slash-first");
+			const second = createRuntime("slash-second");
+			registerSubagentExtension(first.pi);
+			first.handlers.get("session_start")({ reason: "startup" }, first.ctx);
+			registerSubagentExtension(second.pi);
+			second.handlers.get("session_start")({ reason: "startup" }, second.ctx);
+			const details = buildSlashInitialResult("slash-isolation", { agent: "worker", task: "Keep this snapshot" });
+			const liveVersion = getSlashRenderableSnapshot(details).version;
+			if (liveVersion <= 0) throw new Error("slash snapshot was not populated");
+
+			await first.handlers.get("session_shutdown")({ reason: "shutdown" });
+			if (getSlashRenderableSnapshot(details).version !== liveVersion) {
+				throw new Error("one runtime shutdown cleared another active runtime's slash snapshot");
+			}
+			await second.handlers.get("session_shutdown")({ reason: "shutdown" });
+			if (getSlashRenderableSnapshot(details).version !== 0) {
+				throw new Error("last runtime shutdown did not clear slash snapshots");
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
+	it("rejects restarting a cleaned extension registration", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const handlers = new Map();
+			const events = { on() { return () => {}; }, emit() {} };
+			const pi = new Proxy({
+				events,
+				on(channel, handler) { handlers.set(channel, handler); },
+				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const ctx = {
+				cwd: process.cwd(), hasUI: false,
+				ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+				sessionManager: { getSessionId() { return "cleaned-runtime"; }, getSessionFile() { return null; }, getEntries() { return []; } },
+				modelRegistry: { getAvailable() { return []; } },
+			};
+
+			registerSubagentExtension(pi);
+			handlers.get("session_start")({ reason: "startup" }, ctx);
+			await handlers.get("session_shutdown")({ reason: "shutdown" });
+			let restartError;
+			try {
+				handlers.get("session_start")({ reason: "resume" }, ctx);
+			} catch (error) {
+				restartError = error;
+			}
+			if (!(restartError instanceof Error) || !restartError.message.includes("Cannot restart a cleaned pi-subagents extension runtime")) {
+				throw new Error("cleaned runtime restart did not fail explicitly: " + String(restartError));
+			}
+			if (process.env.PI_SUBAGENT_PARENT_SESSION === "cleaned-runtime") {
+				throw new Error("cleaned runtime restart continued into session reset");
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("disposes pending completion notifications on session shutdown", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-notify-shutdown-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");
@@ -868,6 +959,18 @@ describe("subagent extension child mode", () => {
 			const oldListenerCount = eventListeners.get("subagent:async-complete")?.size ?? 0;
 			if (oldListenerCount === 0) throw new Error("old runtime did not register async-complete listeners");
 			oldRuntime.sent.length = 0;
+			const repeatedControlNotice = {
+				source: "async",
+				event: {
+					type: "needs_attention", to: "needs_attention", ts: 1, runId: "reload-control",
+					agent: "worker", index: 0, message: "worker needs attention", reason: "idle",
+				},
+			};
+			oldRuntime.events.emit("subagent:control-event", repeatedControlNotice);
+			if (oldRuntime.sent.filter((message) => message.customType === "subagent_control_notice").length !== 1) {
+				throw new Error("old runtime did not deliver the first control notice");
+			}
+			oldRuntime.sent.length = 0;
 			const timersBeforeOldCompletion = new Set(pendingTimers.keys());
 			oldRuntime.events.emit("subagent:async-complete", {
 				id: "reload-held-completion", agent: "worker", success: true, summary: "Old",
@@ -877,18 +980,31 @@ describe("subagent extension child mode", () => {
 			const oldCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeOldCompletion.has(token));
 			if (oldCompletionTimers.length === 0) throw new Error("old completion did not schedule a timer");
 
-			const newRuntime = createRuntime();
-			registerSubagentExtension(newRuntime.pi);
-			if ((eventListeners.get("subagent:async-complete")?.size ?? 0) <= oldListenerCount) {
-				throw new Error("replacement runtime did not register its event subscriptions");
+			await oldRuntime.handlers.get("session_shutdown")({ reason: "reload" });
+			if ((eventListeners.get("subagent:async-complete")?.size ?? 0) !== 0) {
+				throw new Error("reload shutdown left old event subscriptions active");
 			}
-			newRuntime.handlers.get("session_start")({ reason: "reload" }, newRuntime.ctx);
-			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount) {
-				throw new Error("reload cleanup left old event subscriptions active");
-			}
-			await oldRuntime.handlers.get("session_shutdown")();
 			for (const [, handler] of oldCompletionTimers) handler();
 			if (oldRuntime.sent.length !== 0) throw new Error("stale completion sent after runtime cleanup");
+
+			const newRuntime = createRuntime();
+			registerSubagentExtension(newRuntime.pi);
+			newRuntime.handlers.get("session_start")({ reason: "reload" }, newRuntime.ctx);
+			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount) {
+				throw new Error("replacement runtime did not restore its event subscriptions");
+			}
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== "notify-reload-session") {
+				throw new Error("replacement runtime did not restore its parent session identity");
+			}
+			await oldRuntime.handlers.get("session_shutdown")({ reason: "reload" });
+			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount
+				|| process.env.PI_SUBAGENT_PARENT_SESSION !== "notify-reload-session") {
+				throw new Error("stale shutdown changed the replacement runtime");
+			}
+			newRuntime.events.emit("subagent:control-event", repeatedControlNotice);
+			if (newRuntime.sent.some((message) => message.customType === "subagent_control_notice")) {
+				throw new Error("reload delivered the same visible control notice twice");
+			}
 
 			const timersBeforeNewCompletion = new Set(pendingTimers.keys());
 			newRuntime.events.emit("subagent:async-complete", {
@@ -902,7 +1018,7 @@ describe("subagent extension child mode", () => {
 				handler();
 			}
 			if (newRuntime.sent.length !== 1) throw new Error("new notifier was not active after reload cleanup");
-			newRuntime.handlers.get("session_shutdown")();
+			await newRuntime.handlers.get("session_shutdown")({ reason: "shutdown" });
 			globalThis.setTimeout = realSetTimeout;
 			globalThis.clearTimeout = realClearTimeout;
 		`;
