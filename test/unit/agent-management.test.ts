@@ -644,6 +644,31 @@ describe("agent management config parsing", () => {
 		);
 	});
 
+	it("returns a structured error when a definition disappears after discovery", () => {
+		const agentPath = path.join(tempDir, ".pi", "agents", "removed-during-update.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(
+			agentPath,
+			"---\nname: removed-during-update\ndescription: Temporary agent\nextensions: ./tools/parent.ts\n---\nOriginal prompt.\n",
+		);
+		let cwdReads = 0;
+		const ctx = {
+			get cwd() {
+				cwdReads += 1;
+				// handleUpdate reads cwd again after discovery, which models the definition disappearing between reads.
+				if (cwdReads === 2) fs.unlinkSync(agentPath);
+				return tempDir;
+			},
+			modelRegistry: { getAvailable: () => [] },
+		};
+
+		const updated = handleUpdate({ agent: "removed-during-update", config: { description: "Updated agent" } }, ctx);
+
+		assert.equal(updated.isError, true);
+		assert.match(readText(updated), /Could not reread agent definition .*removed-during-update\.md before updating 'removed-during-update':.*ENOENT/);
+		assert.equal(fs.existsSync(agentPath), false);
+	});
+
 	it("does not serialize settings overrides into custom agent frontmatter during updates", () => {
 		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] } };
 		const settingsPath = path.join(tempDir, ".pi", "settings.json");
