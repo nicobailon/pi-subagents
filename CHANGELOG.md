@@ -11,6 +11,7 @@
 - Add `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS` so a host embedding the extension can bound how long a contended filesystem retry blocks its thread. Unset by default. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1143.
 
 ### Fixed
+- Sanitize foreground workflow output path segments derived from provider run IDs, so Windows launches do not fail when tool-call IDs contain path-invalid characters. Thanks to [@maxime-louward-shift](https://github.com/maxime-louward-shift) for #1235.
 - Route async completion notification and cleanup only to the parent Pi process that launched the run, so concurrent windows sharing one session file cannot consume each other's results. Thanks to [@wangjianming](https://github.com/wangjianming) for #1225.
 - Clarify `workflowScript` fanout guidance: use awaited `runs.all` for ordinary parallel work, while stored `runs.run` promises remain only for fully observed advanced rolling fanout. Explain that async workflows have no inline `live-card` projection (#1229, #1230).
 - Keep extension reload cleanup scoped to the replaced session runtime, so concurrent Pi sessions in one process do not remove each other's subscriptions or parent-session identity. Thanks to [@ryanbbrown](https://github.com/ryanbbrown) for #1222.
