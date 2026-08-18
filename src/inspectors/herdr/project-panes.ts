@@ -411,7 +411,7 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 				}
 			}
 			const splitArgs = ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot];
-			if (input.focus !== false) splitArgs.push("--focus");
+			splitArgs.push(input.focus === true ? "--focus" : "--no-focus");
 			const split = await client.run(splitArgs, { timeoutMs: 15_000, signal: input.signal });
 			if (!split.ok) return projectPaneError(split.error.code, split.error.message, { projectRoot, details: split.error.details });
 			const paneId = extractPaneId(split.data);
@@ -430,7 +430,7 @@ function createProjectPaneManagerInternal(options: InternalProjectPaneManagerOpt
 				projectRoot,
 				paneId,
 				openedAt: now,
-				...(input.focus !== false ? { lastFocusedAt: now } : {}),
+				...(input.focus === true ? { lastFocusedAt: now } : {}),
 				herdrVersion: detected.data.versionText,
 				command,
 				...(startupMessage ? { startupMessage } : {}),

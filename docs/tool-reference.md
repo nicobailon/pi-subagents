@@ -38,7 +38,7 @@ Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for 
 | `missionId` | string | - | Attach a workflow to an existing project mission instead of creating its default enclosing mission. |
 | `mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest required by `action: "worktree.discard"`. |
-| `focus` | boolean | true | Focus the newly split pane for `action: "inspector.open"` or `action: "project.open"`; not a standalone action. |
+| `focus` | boolean | false | Focus the newly split pane for `action: "inspector.open"` or `action: "project.open"`; not a standalone action. Panes open in the background unless you set `focus: true`. |
 | `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
