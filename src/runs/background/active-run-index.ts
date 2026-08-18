@@ -76,7 +76,7 @@ export function releaseActiveRunIndex(asyncDir: string): void {
 	releaseToolCallAliases(asyncDir);
 }
 
-export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state"], toolCallId?: string): void {
+export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state"], toolCallId?: string, options: { retryCapacityErrors?: boolean } = {}): void {
 	const marker = markerPath(asyncDir);
 	if (isActiveAsyncState(state)) {
 		fs.mkdirSync(path.dirname(marker), { recursive: true });
@@ -100,7 +100,7 @@ export function updateActiveRunIndex(asyncDir: string, state: AsyncStatus["state
 		try {
 			updateTerminalRunIndex(asyncDir, status);
 		} catch (error) {
-			if (isStorageCapacityError(error)) throw error;
+			if (options.retryCapacityErrors && isStorageCapacityError(error)) throw error;
 			console.error(`Failed to write async terminal-run index for '${asyncDir}':`, error);
 		}
 	}
