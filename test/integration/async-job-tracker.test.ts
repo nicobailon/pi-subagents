@@ -961,6 +961,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				asyncDir: runDir,
 				pid: 12345,
 				sessionId: "session-current",
+				completionOwnerId: "owner-current",
 				mode: "parallel",
 				agents: ["scout", "reviewer", "worker"],
 				chainStepCount: 1,
@@ -974,6 +975,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const result = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-no-status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
 			assert.equal(status.sessionId, "session-current");
+			assert.equal(status.completionOwnerId, "owner-current");
 			assert.equal(status.mode, "parallel");
 			assert.equal(status.currentStep, 0);
 			assert.equal(status.chainStepCount, 1);
@@ -985,6 +987,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			]);
 			assert.equal(result.success, false);
 			assert.equal(result.sessionId, "session-current");
+			assert.equal(result.completionOwnerId, "owner-current");
 			assert.ok(ui.renderRequests > 0, "expected startup-crash repair cleanup to request a rerender");
 		} finally {
 			removeTempDir(asyncRoot);

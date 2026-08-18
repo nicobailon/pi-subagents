@@ -11,6 +11,8 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 
+const COMPLETION_OWNER_ID = "completion-owner-a";
+
 function createEventBus() {
 	const emitter = new EventEmitter();
 	return {
@@ -39,7 +41,7 @@ function createPi(currentSessionId = "session-1", registerOptions: RegisterSubag
 
 	// Formatting-focused tests run with batching disabled so single completions
 	// emit synchronously. Batching behavior is covered by the dedicated suite below.
-	const notifier = registerSubagentNotify(pi as never, { currentSessionId }, { batchConfig: { enabled: false }, ...registerOptions });
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId, completionOwnerId: COMPLETION_OWNER_ID }, { batchConfig: { enabled: false }, ...registerOptions });
 
 	return { events, sent, notifier, dispose: () => notifier.dispose() };
 }
@@ -53,7 +55,7 @@ function createBatchingPi(clock: ReturnType<typeof createFakeClock>, currentSess
 			sent.push({ message, options });
 		},
 	};
-	const notifier = registerSubagentNotify(pi as never, { currentSessionId }, {
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId, completionOwnerId: COMPLETION_OWNER_ID }, {
 		batchConfig: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
 		timers: clock.api,
 		now: clock.now,
@@ -105,6 +107,7 @@ function completionResult(overrides: Record<string, unknown> = {}) {
 		exitCode: 0,
 		timestamp: 123,
 		sessionId: "session-a",
+		completionOwnerId: COMPLETION_OWNER_ID,
 		...overrides,
 	};
 }
@@ -121,6 +124,7 @@ describe("registerSubagentNotify", () => {
 			exitCode: 0,
 			timestamp: 123,
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.equal(sent.length, 1);
@@ -146,6 +150,13 @@ describe("registerSubagentNotify", () => {
 		const { notifier, sent } = createPi("session-a");
 		assert.equal(await notifier.deliver(completionResult({ id: "direct-accepted" })), true);
 		assert.equal(sent.length, 1);
+	});
+
+	it("rejects async completion delivery for a missing or different parent owner", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver(completionResult({ id: "missing-owner", completionOwnerId: undefined })), false);
+		assert.equal(await notifier.deliver(completionResult({ id: "different-owner", completionOwnerId: "completion-owner-b" })), false);
+		assert.equal(sent.length, 0);
 	});
 
 	it("does not wake the session when background delivery explicitly disables triggerTurn", async () => {
@@ -224,6 +235,7 @@ describe("registerSubagentNotify", () => {
 			taskIndex: 1,
 			totalTasks: 3,
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.equal(sent.length, 1);
@@ -249,6 +261,7 @@ describe("registerSubagentNotify", () => {
 			timestamp: 456,
 			sessionFile: "/tmp/session.jsonl",
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.deepEqual(sent, [{
@@ -272,6 +285,7 @@ describe("registerSubagentNotify", () => {
 			summary: "Paused after interrupt. Waiting for explicit next action.",
 			timestamp: 789,
 			sessionId: "session-1",
+			completionOwnerId: COMPLETION_OWNER_ID,
 		});
 
 		assert.equal(sent.length, 1);

@@ -63,6 +63,7 @@ export interface CompletionNotification {
 	taskIndex?: number;
 	totalTasks?: number;
 	sessionId?: string | null;
+	completionOwnerId?: string | null;
 	triggerTurn?: boolean;
 	/** True when an acknowledged grouped intercom relay already delivered this run. */
 	intercomDelivered?: boolean;
@@ -239,7 +240,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 
 export default function registerSubagentNotify(
 	pi: ExtensionAPI,
-	state: Pick<SubagentState, "currentSessionId">,
+	state: Pick<SubagentState, "currentSessionId" | "completionOwnerId">,
 	options: RegisterSubagentNotifyOptions = {},
 ): CompletionNotifier {
 	const seen = new Map<string, number>();
@@ -275,6 +276,7 @@ export default function registerSubagentNotify(
 
 	const deliver = (result: CompletionNotification): Promise<boolean> => {
 		if (disposed || typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return Promise.resolve(false);
+		if (result.source !== "foreground" && (!state.completionOwnerId || result.completionOwnerId !== state.completionOwnerId)) return Promise.resolve(false);
 		if (result.intercomDelivered === true) return Promise.resolve(true);
 		const key = buildCompletionKey(result, "notify");
 		const seenAt = seen.get(key);

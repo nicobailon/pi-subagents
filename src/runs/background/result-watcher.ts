@@ -92,6 +92,7 @@ type ResultFileData = CompletionNotification & {
 
 type ResultFileIdentity = {
 	sessionId?: string;
+	completionOwnerId?: string;
 	runId?: string;
 	asyncDir?: string;
 };
@@ -118,6 +119,7 @@ function jsonStringProperty(raw: string, property: string): string | undefined {
 function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
 	return {
 		sessionId: jsonStringProperty(raw, "sessionId"),
+		completionOwnerId: jsonStringProperty(raw, "completionOwnerId"),
 		runId: file.replace(/\.json$/i, ""),
 		asyncDir: jsonStringProperty(raw, "asyncDir"),
 	};
@@ -196,10 +198,13 @@ export function createResultWatcher(
 	// and revoked before the watcher, queues, or callbacks are torn down.
 	let activeSessionId: string | null = null;
 
-	const ownsSession = (sessionId: string, epoch: number) => {
+	const ownsCompletion = (sessionId: string, completionOwnerId: unknown, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
 		if (!activeSessionId && state.currentSessionId) activeSessionId = state.currentSessionId;
-		return activeSessionId === sessionId && state.currentSessionId === sessionId;
+		return activeSessionId === sessionId
+			&& state.currentSessionId === sessionId
+			&& typeof completionOwnerId === "string"
+			&& completionOwnerId === state.completionOwnerId;
 	};
 
 	const scheduleResult = (file: string, triggerTurn: boolean, delayMs = 0) => {
@@ -282,7 +287,7 @@ export function createResultWatcher(
 		// Missing identity stays on the normal parser path so malformed or legacy
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
-		if (identity.sessionId === state.currentSessionId) return true;
+		if (identity.sessionId === state.currentSessionId && identity.completionOwnerId === state.completionOwnerId) return true;
 		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
 		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
 		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
@@ -346,6 +351,7 @@ export function createResultWatcher(
 			let data = parseResult(raw);
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
+			const completionOwnerId = data.completionOwnerId;
 			const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
 			const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
 			let observerSucceeded = true;
@@ -363,7 +369,7 @@ export function createResultWatcher(
 			}
 			if (observerSucceeded) removeMissionObserverIndex(resultsDir, runId);
 			const epoch = deliveryEpoch;
-			if (!ownsSession(sessionId, epoch)) return;
+			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			// Recorded before dedupe and before the unlink below so subagent_wait can
 			// use the in-memory record or its bounded durable replay after cleanup.
 			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
@@ -392,7 +398,7 @@ export function createResultWatcher(
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
-				if (!ownsSession(sessionId, epoch)) return;
+				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -447,7 +453,7 @@ export function createResultWatcher(
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
-				if (!ownsSession(sessionId, epoch)) return;
+				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -468,7 +474,7 @@ export function createResultWatcher(
 					asyncDir: data.asyncDir,
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
 				}));
-				if (!ownsSession(sessionId, epoch)) return;
+				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (!intercomDelivered) console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 			}
 
@@ -492,7 +498,7 @@ export function createResultWatcher(
 					})) : [],
 				} : {}),
 			});
-			if (!ownsSession(sessionId, epoch)) return;
+			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			if (!accepted) {
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
@@ -533,7 +539,7 @@ export function createResultWatcher(
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
-			if (!ownsSession(sessionId, epoch)) return;
+			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 			if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		} catch (error) {
 			if (isAccessDenied(error)) {

@@ -14,10 +14,13 @@ import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
+const COMPLETION_OWNER_ID = "completion-owner-default";
+
 function createState(): SubagentState {
 	return {
 		baseCwd: "/repo",
 		currentSessionId: null,
+		completionOwnerId: COMPLETION_OWNER_ID,
 		asyncJobs: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
@@ -45,7 +48,7 @@ function createResultWatcher(
 }
 
 function writeIndexedResult(filePath: string, data: Record<string, unknown>): void {
-	writeAsyncResultFile(filePath, data);
+	writeAsyncResultFile(filePath, { completionOwnerId: COMPLETION_OWNER_ID, ...data });
 }
 
 function pendingResultPath(resultsDir: string, sessionId: string, runId: string): string {
@@ -513,6 +516,7 @@ describe("result watcher", () => {
 				id: "pending-run",
 				runId: "pending-run",
 				sessionId: "session-current",
+				completionOwnerId: COMPLETION_OWNER_ID,
 				success: true,
 				state: "complete",
 				summary: "done from pending",
@@ -613,6 +617,7 @@ describe("result watcher", () => {
 				id: "scheduled-pending",
 				runId: "scheduled-pending",
 				sessionId: "session-a",
+				completionOwnerId: COMPLETION_OWNER_ID,
 				success: true,
 				state: "complete",
 				summary: "scheduled pending done",
@@ -797,6 +802,67 @@ describe("result watcher", () => {
 			assert.equal(other.emitted.some((entry) => entry.event === "subagent:async-complete"), false);
 			assert.equal(other.emitted.some((entry) => entry.event === "subagent:result-intercom"), false);
 			assert.equal(fs.existsSync(ownerResultPath), false);
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves same-session completions for the exact parent owner", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-owner-scope-"));
+		try {
+			const ownerState = createState();
+			ownerState.currentSessionId = "shared-session";
+			ownerState.completionOwnerId = "owner-a";
+			const otherState = createState();
+			otherState.currentSessionId = "shared-session";
+			otherState.completionOwnerId = "owner-b";
+			const resultPath = path.join(resultsDir, "owner-scoped.json");
+			const missingOwnerPath = path.join(resultsDir, "missing-owner.json");
+			writeAsyncResultFile(resultPath, {
+				id: "owner-scoped",
+				runId: "owner-scoped",
+				sessionId: "shared-session",
+				completionOwnerId: "owner-a",
+				success: true,
+				summary: "owned result",
+			});
+			writeAsyncResultFile(missingOwnerPath, {
+				id: "missing-owner",
+				runId: "missing-owner",
+				sessionId: "shared-session",
+				success: true,
+				summary: "legacy result",
+			});
+			let otherDeliveries = 0;
+			const otherWatcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, otherState, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				notifier: { deliver: async () => { otherDeliveries += 1; return true; } },
+			});
+			try {
+				otherWatcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			} finally {
+				otherWatcher.stopResultWatcher();
+			}
+			assert.equal(otherDeliveries, 0);
+			assert.equal(fs.existsSync(resultPath), true);
+			assert.equal(fs.existsSync(missingOwnerPath), true);
+			assert.equal((JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { notificationDeliveredAt?: unknown }).notificationDeliveredAt, undefined);
+
+			let ownerDeliveries = 0;
+			const ownerWatcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, ownerState, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				notifier: { deliver: async () => { ownerDeliveries += 1; return true; } },
+			});
+			try {
+				ownerWatcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true);
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			} finally {
+				ownerWatcher.stopResultWatcher();
+			}
+			assert.equal(ownerDeliveries, 1);
+			assert.equal(fs.existsSync(missingOwnerPath), true, "missing owner fails closed for every window");
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}

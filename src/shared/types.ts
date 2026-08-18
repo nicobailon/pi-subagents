@@ -1259,6 +1259,7 @@ export interface AsyncStartedEvent {
 	sessionRoot?: string;
 	pid?: number;
 	sessionId?: string;
+	completionOwnerId?: string;
 	mode?: SubagentRunMode;
 	agent?: string;
 	agents?: string[];
@@ -1354,6 +1355,8 @@ export interface ExternalProcessStatus {
 export interface AsyncStatus {
 	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
 	runId: string;
+	/** Parent Pi process/window that owns local completion delivery. */
+	completionOwnerId?: string;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
 	sessionId?: string;
@@ -1503,6 +1506,7 @@ export interface AsyncJobState {
 	description?: string;
 	pid?: number;
 	sessionId?: string;
+	completionOwnerId?: string;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;
@@ -1688,6 +1692,8 @@ export interface ActiveAsyncCapacitySnapshot {
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
+	/** Reload-stable identity for this parent Pi process/window. */
+	completionOwnerId?: string;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
 	artifactDirPreference?: ArtifactDirPreference;
 	/** Runtime authority snapshot used by optional inspector controls. */
