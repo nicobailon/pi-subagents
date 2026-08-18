@@ -4,6 +4,13 @@
 
 ## [0.51.0] - 2026-08-18
 
+### Highlights
+- Workflow orchestration is easier to control with stable-key steering, clearer fanout guidance, and a supported external-job runner path.
+- Async runs are harder to lose when storage is full, file access is temporarily denied, identifiers are too long, or multiple Pi windows share one session.
+- macOS reloads and idle sessions do less fragile filesystem watching, which avoids reload hangs without adding always-on work.
+- Herdr and Fleet are less disruptive: panes stay in the background by default, trusted transcripts open cleanly, and live workflow children steer through the right route.
+- The workflow API is cleaner: scripted workflows are the supported path, and removed legacy chain surfaces now have direct migration guidance.
+
 ### Added
 - Add stable-key `runs.steer` to `workflowScript`, with routing for foreground and async children, structured receipts, trace entries, and checks for unawaited calls (#1186).
 - Add `runner.type: external-job`, the exported provider bridge, the Surf GPT Pro `gpt-pro` profile, and docs for external advisor data boundaries (#1189).
