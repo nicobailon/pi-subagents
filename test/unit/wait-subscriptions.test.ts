@@ -8,6 +8,7 @@ import { registerWaitTool } from "../../src/runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../../src/runs/background/wait-subscriptions.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: string, extra: object = {}): void {
@@ -22,6 +23,23 @@ function writeStatus(asyncRoot: string, runId: string, state: string, extra: obj
 		lastUpdate: now,
 		steps: [{ agent: "worker", status: state }],
 		...extra,
+	}), "utf-8");
+}
+
+function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string, sessionFile: string, cwd: string): void {
+	fs.writeFileSync(path.join(asyncRoot, runId, "recovery-descriptor.json"), JSON.stringify({
+		version: 1,
+		sourceRunId: runId,
+		agent,
+		sessionFile,
+		cwd,
+		systemPromptMode: "append",
+		outputMode: "inline",
+		inheritProjectContext: false,
+		inheritSkills: false,
+		maxSubagentDepth: 0,
+		share: false,
+		runFanoutBudget: createRunFanoutBudget(runId, 64),
 	}), "utf-8");
 }
 
@@ -213,6 +231,7 @@ describe("non-blocking wait subscriptions", () => {
 			fs.writeFileSync(completedSessionFile, "{}\n", "utf-8");
 			fs.writeFileSync(failedSessionFile, "{}\n", "utf-8");
 			writeStatus(asyncRoot, "run-revive", "running", { sessionId: "session-a", pid: 999_999 });
+			writeRecoveryDescriptor(asyncRoot, "run-revive", "second", failedSessionFile, root);
 			manager.arm({ targetKind: "async", runId: "run-revive", requestedId: "run-revive", timeoutMs: 30_000 });
 
 			writeStatus(asyncRoot, "run-revive", "failed", {

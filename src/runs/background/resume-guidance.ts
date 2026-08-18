@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { AsyncRunSummary } from "./async-status.ts";
+import { readAsyncRecoveryDescriptor } from "./async-resume.ts";
 
 const INTERCOM_DETACH_ERROR = "detached for intercom coordination";
 
@@ -15,11 +16,13 @@ function formatIntercomDetachGuidance(run: AsyncRunSummary): string | undefined 
 }
 
 export function formatAsyncReviveCommand(run: AsyncRunSummary): string | undefined {
-	const step = run.steps.find((candidate) => candidate.status === "failed" && candidate.sessionFile && fs.existsSync(candidate.sessionFile));
-	if (!step) {
-		if (run.steps.length === 1 && run.sessionFile && fs.existsSync(run.sessionFile)) {
-			return `subagent({ action: "resume", id: "${run.id}", message: "Continue from the persisted child session and report the result." })`;
-		}
+	const step = run.steps.find((candidate) => candidate.status === "failed");
+	const sessionFile = step?.sessionFile ?? (run.steps.length === 1 ? run.sessionFile : undefined);
+	if (!step || !sessionFile || !fs.existsSync(sessionFile)) return undefined;
+	try {
+		const descriptor = readAsyncRecoveryDescriptor(run.asyncDir);
+		if (!descriptor || descriptor.sourceRunId !== run.id || descriptor.agent !== step.agent) return undefined;
+	} catch {
 		return undefined;
 	}
 	const index = run.steps.length === 1 ? "" : `, index: ${step.index}`;

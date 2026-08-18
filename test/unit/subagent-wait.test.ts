@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
@@ -29,6 +30,23 @@ function writeStatus(asyncRoot: string, runId: string, state: AsyncStatus["state
 		"utf-8",
 	);
 	updateActiveRunIndex(dir, state);
+}
+
+function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string, sessionFile: string, cwd: string): void {
+	fs.writeFileSync(path.join(asyncRoot, runId, "recovery-descriptor.json"), JSON.stringify({
+		version: 1,
+		sourceRunId: runId,
+		agent,
+		sessionFile,
+		cwd,
+		systemPromptMode: "append",
+		outputMode: "inline",
+		inheritProjectContext: false,
+		inheritSkills: false,
+		maxSubagentDepth: 0,
+		share: false,
+		runFanoutBudget: createRunFanoutBudget(runId, 64),
+	}), "utf-8");
 }
 
 function makeState(sessionId: string | null): SubagentState {
@@ -200,6 +218,7 @@ describe("subagent_wait tool", () => {
 			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
 			const state = makeState("sess-1");
 			writeStatus(asyncRoot, "run-revive", "running", { sessionId: "sess-1", pid: 999999 });
+			writeRecoveryDescriptor(asyncRoot, "run-revive", "worker", sessionFile, root);
 			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
 				sleep: async () => writeStatus(asyncRoot, "run-revive", "failed", {
 					sessionId: "sess-1",
@@ -214,6 +233,52 @@ describe("subagent_wait tool", () => {
 			assert.match(text, /subagent\(\{ action: "resume", id: "run-revive", message:/);
 			assert.match(text, /before reporting failure or launching a replacement/);
 			assert.match(text, /only if revive fails or the user explicitly asks/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not advertise resume-first when the recovery descriptor is missing", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-no-recovery-descriptor-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "worker-session.jsonl");
+			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-no-descriptor", "running", { sessionId: "sess-1", pid: 999999 });
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-no-descriptor", "failed", {
+					sessionId: "sess-1",
+					steps: [{ agent: "worker", status: "failed", sessionFile }],
+				}),
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.doesNotMatch(textOf(result), /Resume-first/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the single-child run session fallback with a matching recovery descriptor", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-run-session-fallback-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "worker-session.jsonl");
+			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-session-fallback", "running", { sessionId: "sess-1", pid: 999999 });
+			writeRecoveryDescriptor(asyncRoot, "run-session-fallback", "worker", sessionFile, root);
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => writeStatus(asyncRoot, "run-session-fallback", "failed", {
+					sessionId: "sess-1",
+					sessionFile,
+					steps: [{ agent: "worker", status: "failed" }],
+				}),
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /Resume-first/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
