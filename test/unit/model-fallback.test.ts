@@ -86,6 +86,7 @@ describe("model fallback helpers", () => {
 
 	it("detects retryable provider/model failures", () => {
 		assert.equal(isRetryableModelFailure("rate limit exceeded for provider"), true);
+		assert.equal(isRetryableModelFailure("The usage limit has been reached"), true);
 		assert.equal(isRetryableModelFailure("model unavailable"), true);
 		assert.equal(isRetryableModelFailure("authentication failed"), true);
 		assert.equal(isRetryableModelFailure("Subagent produced no output (possible model cold-start or empty response)."), true);

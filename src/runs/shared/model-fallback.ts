@@ -311,6 +311,7 @@ export function buildModelCandidates(
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
 	/rate\s*limit/i,
+	/usage\s*limit/i,
 	/too many requests/i,
 	/\b429\b/,
 	/quota/i,
