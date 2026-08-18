@@ -6,6 +6,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { findBlockingAgentDiagnostic, resolveAgentName, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope } from "../../agents/agents.ts";
 import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
+import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
 	beginForegroundChild,
@@ -1773,7 +1775,7 @@ async function resumeAsyncRun(input: {
 		const sourceStatus = readStatus(sourceAsyncDir);
 		if (sourceStatus?.steering) {
 			for (const brief of queuedBriefs) updateSteeringTarget(sourceStatus.steering, brief.request.id, target.index, "delivered", Date.now());
-			writeAtomicJson(path.join(sourceAsyncDir, "status.json"), sourceStatus);
+			createCapacityResilientJsonWriter({ keepAlive: true }).write(path.join(sourceAsyncDir, "status.json"), sourceStatus);
 		}
 	}
 
@@ -3888,14 +3890,44 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					workflow: { trace: [], emits: [], console: [] },
 					runFanoutBudget: getRunFanoutBudgetSnapshot(workflowFanoutBudget),
 				};
-				const appendWorkflowEvent = (event: Record<string, unknown>) => fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
+				const appendWorkflowEvent = (event: Record<string, unknown>) => {
+					try {
+						fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
+					} catch (error) {
+						if (!isStorageCapacityError(error)) throw error;
+						console.error(`Failed to append async workflow event while storage is full:`, error);
+					}
+				};
 				let indexedState: AsyncStatus["state"] | undefined;
+				const indexPersistence = createCapacityResilientJsonWriter({
+					keepAlive: true,
+					onSuccess: (_filePath, payload) => { indexedState = (payload as { state: AsyncStatus["state"] }).state; },
+					onError: (error, filePath) => console.error(`Failed to update async workflow index '${filePath}':`, error),
+				});
+				const queueActiveRunIndex = (): void => {
+					const state = status.state;
+					if (indexedState === state && indexPersistence.pendingCount() === 0) return;
+					indexPersistence.write(asyncDir, { state, toolCallId: status.toolCallId }, (_filePath, payload) => {
+						const indexPayload = payload as { state: AsyncStatus["state"]; toolCallId?: string };
+						updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId);
+					});
+				};
+				const runPersistence = createCapacityResilientJsonWriter({
+					keepAlive: true,
+					onSuccess: (filePath) => { if (filePath === statusPath) queueActiveRunIndex(); },
+					onError: (error, filePath) => console.error(`Failed to persist async workflow state '${filePath}':`, error),
+					write: (filePath, payload) => filePath === resultPath
+						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
+						: writeAtomicJson(filePath, payload),
+				});
+				let initialPersistenceComplete = false;
 				const persist = () => {
 					status.lastUpdate = Date.now();
-					writeAtomicJson(statusPath, status);
-					if (indexedState !== status.state) {
-						updateActiveRunIndex(asyncDir, status.state, status.toolCallId);
-						indexedState = status.state;
+					if (initialPersistenceComplete) runPersistence.write(statusPath, status);
+					else {
+						writeAtomicJson(statusPath, status);
+						initialPersistenceComplete = true;
+						queueActiveRunIndex();
 					}
 					const job = deps.state.asyncJobs.get(workflowRunId);
 					if (job) {
@@ -3921,7 +3953,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				const writeWorkflowResult = (payload: Record<string, unknown>): boolean => {
 					try {
-						writeAsyncResultFile(resultPath, payload);
+						runPersistence.write(resultPath, payload);
 						return true;
 					} catch (error) {
 						const message = `Failed to write async workflow result ${resultPath}: ${error instanceof Error ? error.message : String(error)}`;
@@ -3955,7 +3987,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				deps.state.asyncJobs.set(workflowRunId, workflowJob);
 				deps.state.fleetJobs ??= new Map();
 				deps.state.fleetJobs.set(workflowRunId, workflowJob);
-				persist();
+				try {
+					persist();
+				} catch (error) {
+					deps.state.workflowControllers?.delete(workflowRunId);
+					deps.state.asyncJobs.delete(workflowRunId);
+					deps.state.fleetJobs?.delete(workflowRunId);
+					workflowCapacity?.rollback();
+					indexPersistence.dispose();
+					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
+				}
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {

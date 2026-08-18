@@ -130,8 +130,8 @@ export function steerInboxClosedPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), STEER_INBOX_CLOSED_FILE);
 }
 
-export function closeSteerInbox(asyncDir: string, state: string): void {
-	writeAtomicJson(steerInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now(), state });
+export function closeSteerInbox(asyncDir: string, state: string, write: (filePath: string, payload: object) => void = writeAtomicJson): void {
+	write(steerInboxClosedPath(asyncDir), { version: 1, closedAt: Date.now(), state });
 }
 
 /** Per-child inbox consumed by the child prompt runtime inside the Pi process. */

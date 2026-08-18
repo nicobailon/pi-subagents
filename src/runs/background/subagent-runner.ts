@@ -7,7 +7,9 @@ import type { Message } from "@earendil-works/pi-ai";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
-import { isActiveAsyncState, updateActiveRunIndex } from "./active-run-index.ts";
+import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
+import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
+import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
@@ -1113,6 +1115,7 @@ function writeRunLog(
 		shareUrl?: string;
 		shareError?: string;
 	},
+	write: (filePath: string, content: string) => void = (filePath, content) => fs.writeFileSync(filePath, content, "utf-8"),
 ): void {
 	const lines: string[] = [];
 	lines.push(`# Subagent run ${input.id}`);
@@ -1142,7 +1145,7 @@ function writeRunLog(
 	}
 	lines.push(input.summary.trim() || "(no output)");
 	lines.push("");
-	fs.writeFileSync(logPath, lines.join("\n"), "utf-8");
+	write(logPath, lines.join("\n"));
 }
 
 /** Context for running a single step */
@@ -2026,6 +2029,7 @@ function markParallelGroupSetupFailure(input: {
 	asyncDir: string;
 	runId: string;
 	stepIndex: number;
+	writeStatus: (status: RunnerStatusPayload) => void;
 }): void {
 	for (let taskIndex = 0; taskIndex < input.group.parallel.length; taskIndex++) {
 		const flatTaskIndex = input.groupStartFlatIndex + taskIndex;
@@ -2042,7 +2046,7 @@ function markParallelGroupSetupFailure(input: {
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
 	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-	writeAtomicJson(input.statusPath, input.statusPayload);
+	input.writeStatus(input.statusPayload);
 	appendJsonl(input.eventsPath, JSON.stringify({
 		type: "subagent.parallel.completed",
 		ts: input.failedAt,
@@ -2062,6 +2066,7 @@ function markParallelGroupRunning(input: {
 	asyncDir: string;
 	runId: string;
 	stepIndex: number;
+	writeStatus: (status: RunnerStatusPayload) => void;
 }): void {
 	for (let taskIndex = 0; taskIndex < input.group.parallel.length; taskIndex++) {
 		const flatTaskIndex = input.groupStartFlatIndex + taskIndex;
@@ -2079,7 +2084,7 @@ function markParallelGroupRunning(input: {
 	input.statusPayload.lastActivityAt = input.groupStartTime;
 	input.statusPayload.lastUpdate = input.groupStartTime;
 	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-	writeAtomicJson(input.statusPath, input.statusPayload);
+	input.writeStatus(input.statusPayload);
 	appendJsonl(input.eventsPath, JSON.stringify({
 		type: "subagent.parallel.started",
 		ts: input.groupStartTime,
@@ -2365,9 +2370,37 @@ async function runSubagent(
 		outputFile: path.join(asyncDir, "output-0.log"),
 	});
 
-	fs.mkdirSync(asyncDir, { recursive: true });
-	writeAtomicJson(statusPath, statusPayload);
-	updateActiveRunIndex(asyncDir, statusPayload.state, statusPayload.toolCallId);
+	let lastIndexedStatusState: AsyncStatus["state"] | undefined;
+	const indexPersistence = createCapacityResilientJsonWriter({
+		keepAlive: true,
+		onSuccess: (_filePath, payload) => {
+			lastIndexedStatusState = (payload as { state: AsyncStatus["state"] }).state;
+		},
+		onError: (error, filePath) => console.error(`Failed to update async run index '${filePath}':`, error),
+	});
+	const queueActiveRunIndex = (): void => {
+		const state = statusPayload.state;
+		if (state === lastIndexedStatusState && indexPersistence.pendingCount() === 0) return;
+		indexPersistence.write(asyncDir, { state, toolCallId: statusPayload.toolCallId }, (_filePath, payload) => {
+			const indexPayload = payload as { state: AsyncStatus["state"]; toolCallId?: string };
+			updateActiveRunIndex(asyncDir, indexPayload.state, indexPayload.toolCallId);
+		});
+	};
+	const runPersistence = createCapacityResilientJsonWriter({
+		keepAlive: true,
+		onSuccess: (filePath) => {
+			if (filePath === statusPath) queueActiveRunIndex();
+		},
+		onError: (error, filePath) => console.error(`Failed to persist async run state '${filePath}':`, error),
+	});
+	try {
+		fs.mkdirSync(asyncDir, { recursive: true });
+	} catch (error) {
+		if (!isStorageCapacityError(error)) throw error;
+		console.error(`Failed to prepare async run storage '${asyncDir}' while storage is full:`, error);
+	}
+	runPersistence.write(statusPath, statusPayload);
+
 	let pendingParallelUsageCost: CostSummary = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 	const currentUsageTotals = (): CostSummary => {
 		const cost = results.reduce<CostSummary>((sum, result) => ({
@@ -2440,7 +2473,6 @@ async function runSubagent(
 		statusPayload.workflowGraph = graph;
 	};
 	let finalResultCommitted = false;
-	let lastIndexedActiveState = isActiveAsyncState(statusPayload.state);
 	const statusResultState = (): AsyncStatus["state"] | undefined => {
 		if (statusPayload.state === "running" || statusPayload.state === "queued") return undefined;
 		return statusPayload.state;
@@ -2464,7 +2496,7 @@ async function runSubagent(
 		if (!state || finalResultCommitted || !config.sessionId) return;
 		const now = statusPayload.endedAt ?? statusPayload.lastUpdate ?? Date.now();
 		const summary = statusResultSummary(state);
-		writePendingAsyncResultFile(resultPath, omitUndefinedProperties({
+		runPersistence.write(resultPath, omitUndefinedProperties({
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 			id,
 			runId: id,
@@ -2492,17 +2524,12 @@ async function runSubagent(
 			cwd,
 			sessionId: config.sessionId,
 			sessionFile: statusPayload.sessionFile ?? latestSessionFile,
-		}));
+		}), (filePath, payload) => writePendingAsyncResultFile(filePath, payload as Record<string, unknown>));
 	};
 	const writeStatusPayloadNow = (): void => {
 		refreshWorkflowGraph();
 		writeRecoverableStatusResult();
-		writeAtomicJson(statusPath, statusPayload);
-		const activeState = isActiveAsyncState(statusPayload.state);
-		if (activeState !== lastIndexedActiveState) {
-			updateActiveRunIndex(asyncDir, statusPayload.state, statusPayload.toolCallId);
-		}
-		lastIndexedActiveState = activeState;
+		runPersistence.write(statusPath, statusPayload);
 		emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued" ? "subagent.nested.updated" : "subagent.nested.completed");
 	};
 	const statusWriteCoalescer = createFileCoalescer(writeStatusPayloadNow, 100);
@@ -4036,6 +4063,7 @@ async function runSubagent(
 						asyncDir,
 						runId: id,
 						stepIndex,
+						writeStatus: () => writeStatusPayload(),
 					});
 					flatIndex += group.parallel.length;
 					break;
@@ -4063,6 +4091,7 @@ async function runSubagent(
 						asyncDir,
 						runId: id,
 						stepIndex,
+						writeStatus: () => writeStatusPayload(),
 					});
 					flatIndex += group.parallel.length;
 					break;
@@ -4094,6 +4123,7 @@ async function runSubagent(
 					asyncDir,
 					runId: id,
 					stepIndex,
+					writeStatus: () => writeStatusPayload(),
 				});
 				const parallelResults = await mapConcurrent(
 					group.parallel,
@@ -4806,7 +4836,7 @@ async function runSubagent(
 		turnBudgetExceeded: result.turnBudgetExceeded,
 	})));
 	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded || statusPayload.error ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed";
-	closeSteerInbox(asyncDir, statusPayload.state);
+	closeSteerInbox(asyncDir, statusPayload.state, (filePath, payload) => runPersistence.write(filePath, payload));
 	disposeControlInbox();
 	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
 	const effectiveSessionFile = sessionFile ?? latestSessionFile;
@@ -4858,7 +4888,7 @@ async function runSubagent(
 		}
 	}
 	try {
-		writeAsyncResultFile(resultPath, {
+		runPersistence.write(resultPath, {
 			lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 			id,
 			agent: agentName,
@@ -4951,7 +4981,7 @@ async function runSubagent(
 			shareError,
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
-		});
+		}, (filePath, payload) => { writeAsyncResultFile(filePath, payload as Record<string, unknown>); });
 		finalResultCommitted = true;
 	} catch (err) {
 		const message = `Failed to write result file ${resultPath}: ${err instanceof Error ? err.message : String(err)}`;
@@ -4992,7 +5022,11 @@ async function runSubagent(
 		sessionFile: effectiveSessionFile,
 		shareUrl,
 		shareError,
+	}), (filePath, content) => runPersistence.write(filePath, { content }, (_path, payload) => {
+		fs.writeFileSync(_path, (payload as { content: string }).content, "utf-8");
 	}));
+	if (runPersistence.pendingCount() === 0) runPersistence.dispose();
+	if (indexPersistence.pendingCount() === 0) indexPersistence.dispose();
 	if (config.runnerProcessInstanceId) {
 		const writers: Record<string, PiWriterProcessInstanceExitV1[]> = {};
 		const expectedWriters: Record<string, number> = {};

@@ -12,6 +12,7 @@
 
 ### Fixed
 - Avoid Darwin reload hangs by disabling native filesystem watchers in idle subagent transports and using demand-gated polling for live result, supervisor, control, and steering delivery. Thanks to [@youlikemodernart](https://github.com/youlikemodernart) for #1220.
+- Keep live workflow and child-run status/result persistence retrying after temporary filesystem-capacity failures instead of letting `ENOSPC`, quota, or file-descriptor exhaustion crash the host or runner. Thanks to [@ahmadaccino](https://github.com/ahmadaccino) for #1227.
 - Stop failing child runs over the stale supervisor-bridge tool pair: when an explicit allowlist names `contact_supervisor`, neither it nor its legacy `intercom` companion is a strict tool requirement anymore, so 0.49-era agent configs and recovery descriptors no longer fail as missing `intercom` after the 0.50.0 supervisor-channel cutover. A lone `intercom` entry still requires a real external provider. Thanks to [@MingTeer](https://github.com/MingTeer) for #1207.
 - Hash result-index session segments that encode as Windows paths or file-like names (`C:\...\session.jsonl`), keep reading the previous URI-encoded keys, and treat `EPERM`/`EACCES` as an empty index scan so leftover directories do not spam the parent session. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1211.
 - Add explicit `isolation: "none"` for schema-driven workflows without Git worktree setup, while retaining strict `isolation: "worktree"` behavior. Thanks to [@tlsneo](https://github.com/tlsneo) for #1203.
