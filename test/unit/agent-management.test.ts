@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
+import { editableAgentConfig, handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
 import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
@@ -624,6 +624,24 @@ describe("agent management config parsing", () => {
 		assert.match(content, /^extensions: \.\/tools\/parent\.ts, package-extension$/m);
 		assert.match(content, /^subagentOnlyExtensions: \.\.\/child\.ts, ~\/shared\.ts$/m);
 		assert.ok(!content.includes(tempDir));
+	});
+
+	it("fails when extension frontmatter cannot be reread", () => {
+		const filePath = path.join(tempDir, ".pi", "agents", "removed.md");
+		assert.throws(
+			() => editableAgentConfig({
+				name: "removed",
+				description: "Removed agent",
+				systemPromptMode: "replace",
+				inheritProjectContext: false,
+				inheritSkills: false,
+				systemPrompt: "Original prompt.",
+				source: "project",
+				filePath,
+				extensions: [path.join(tempDir, ".pi", "agents", "tools", "parent.ts")],
+			}),
+			/ENOENT/,
+		);
 	});
 
 	it("does not serialize settings overrides into custom agent frontmatter during updates", () => {
