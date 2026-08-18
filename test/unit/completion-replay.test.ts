@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { cleanupCompletionReplay, completionArchivePath, completionReplayPath, readCompletionArchive, readCompletionReplay, writeCompletionReplay, writeCompletionArchive } from "../../src/runs/background/completion-replay.ts";
 import { utf8Tail } from "../../src/shared/utf8.ts";
 import { collectWaitCompletions, recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -54,6 +55,75 @@ describe("completion replay", () => {
 			assert.equal(completions?.[0]?.results?.[0]?.agent, "worker");
 			assert.equal(completions?.[0]?.archivePath, replay?.archivePath);
 		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces pending completions when the direct session index is temporarily inaccessible", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-index-denied-"));
+		const originalReadFileSync = fsCjs.readFileSync;
+		try {
+			const publicPath = path.join(resultsDir, "run-pending.json");
+			fs.mkdirSync(publicPath, { recursive: true });
+			writeAsyncResultFile(publicPath, {
+				id: "run-pending",
+				runId: "run-pending",
+				sessionId: "session-a",
+				agent: "worker",
+				success: true,
+				results: [{ agent: "worker", success: true, outputState: "present" }],
+			});
+			fsCjs.readFileSync = ((file, ...args) => {
+				if (String(file).includes(`${path.sep}result-index${path.sep}`)) {
+					const error = new Error("permission denied") as NodeJS.ErrnoException;
+					error.code = "EACCES";
+					throw error;
+				}
+				return originalReadFileSync(file, ...args);
+			}) as typeof fsCjs.readFileSync;
+			syncBuiltinESMExports();
+
+			const terminal = [{ id: "run-pending", sessionId: "session-a" }] as AsyncRunSummary[];
+			const completions = collectWaitCompletions(terminal, makeState(), resultsDir);
+			assert.equal(completions?.[0]?.runId, "run-pending");
+			assert.equal(completions?.[0]?.results?.[0]?.agent, "worker");
+		} finally {
+			fsCjs.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("surfaces malformed pending payload errors when the direct session index is inaccessible", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-completion-index-denied-malformed-"));
+		const originalReadFileSync = fsCjs.readFileSync;
+		try {
+			const publicPath = path.join(resultsDir, "run-pending.json");
+			fs.mkdirSync(publicPath, { recursive: true });
+			writeAsyncResultFile(publicPath, {
+				id: "run-pending",
+				runId: "run-pending",
+				sessionId: "session-a",
+				success: true,
+			});
+			fs.rmSync(publicPath, { recursive: true, force: true });
+			const pendingDir = path.join(resultsDir, "result-pending", encodeURIComponent("session-a"));
+			fs.writeFileSync(path.join(pendingDir, "run-pending.json"), "{", "utf-8");
+			fsCjs.readFileSync = ((file, ...args) => {
+				if (String(file).includes(`${path.sep}result-index${path.sep}`)) {
+					const error = new Error("permission denied") as NodeJS.ErrnoException;
+					error.code = "EACCES";
+					throw error;
+				}
+				return originalReadFileSync(file, ...args);
+			}) as typeof fsCjs.readFileSync;
+			syncBuiltinESMExports();
+
+			const terminal = [{ id: "run-pending", sessionId: "session-a" }] as AsyncRunSummary[];
+			assert.throws(() => collectWaitCompletions(terminal, makeState(), resultsDir), /Failed to read/);
+		} finally {
+			fsCjs.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
 			fs.rmSync(resultsDir, { recursive: true, force: true });
 		}
 	});

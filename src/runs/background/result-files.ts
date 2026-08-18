@@ -246,6 +246,11 @@ function pendingResultPayloadMatches(filePath: string, sessionId: string, runId:
 	}
 }
 
+function assertPendingResultPayloadMatches(filePath: string, sessionId: string, runId: string): boolean {
+	const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+	return (nonEmptyString(data.runId) ?? nonEmptyString(data.id)) === runId && nonEmptyString(data.sessionId) === sessionId;
+}
+
 export function promotePendingResultFile(resultsDir: string, sessionId: string, runId: string, file = resultFileName(runId), options: { logFailure?: boolean } = {}): "none" | "promoted" | "pending" {
 	if (file !== path.basename(file) || !file.endsWith(".json")) return "none";
 	const pendingPath = firstExistingResultFile(resultPendingPaths(resultsDir, sessionId, runId));
@@ -285,6 +290,12 @@ function pendingResultLocationForSessionRun(resultsDir: string, sessionId: strin
 	const pendingPath = firstExistingResultFile(resultPendingPaths(resultsDir, sessionId, runId));
 	if (!pendingPath || !pendingResultPayloadMatches(pendingPath, sessionId, runId)) return undefined;
 	return { file, path: pendingPath, state: "pending" };
+}
+
+export function fallbackResultPayloadPathForSessionRun(resultsDir: string, sessionId: string, runId: string): string | undefined {
+	const pendingPath = firstExistingResultFile(resultPendingPaths(resultsDir, sessionId, runId));
+	if (!pendingPath || !assertPendingResultPayloadMatches(pendingPath, sessionId, runId)) return undefined;
+	return pendingPath;
 }
 
 function resultPayloadLocationFromIndex(resultsDir: string, entry: ResultIndexEntry): ResultPayloadLocation | undefined {

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import type { ArtifactPaths, SubagentState, WaitCompletion, WaitCompletionChild } from "../../shared/types.ts";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readCompletionReplay, writeCompletionReplay } from "./completion-replay.ts";
-import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
+import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
@@ -12,6 +12,11 @@ function errorCode(error: unknown): string | undefined {
 	return typeof error === "object" && error !== null && "code" in error
 		? (error as NodeJS.ErrnoException).code
 		: undefined;
+}
+
+function isAccessDenied(error: unknown): boolean {
+	const code = errorCode(error);
+	return code === "EPERM" || code === "EACCES";
 }
 
 function errorMessage(error: unknown): string {
@@ -115,9 +120,21 @@ export function collectWaitCompletions(terminal: AsyncRunSummary[], state: Subag
 			continue;
 		}
 		const publicResultPath = resultFilePath(resultsDir, run.id);
-		const resultPath = run.sessionId
-			? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath
-			: publicResultPath;
+		let resultPath = publicResultPath;
+		try {
+			resultPath = run.sessionId
+				? resultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath
+				: publicResultPath;
+		} catch (error) {
+			if (!isAccessDenied(error) || !run.sessionId) throw error;
+			try {
+				resultPath = fallbackResultPayloadPathForSessionRun(resultsDir, run.sessionId, run.id) ?? publicResultPath;
+			} catch (fallbackError) {
+				throw new Error(`Failed to read subagent result '${publicResultPath}': ${errorMessage(fallbackError)}`, {
+					cause: fallbackError instanceof Error ? fallbackError : undefined,
+				});
+			}
+		}
 		try {
 			const raw = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
 			completions.push(toWaitCompletion(raw, run.id));
