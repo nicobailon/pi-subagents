@@ -19,6 +19,7 @@ import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
+import type { HerdrClient } from "../inspectors/herdr/client.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
 
 const REFRESH_MS = 750;
@@ -109,6 +110,7 @@ export interface FleetViewOptions {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	actions?: FleetActionHandlers;
 	copyText?: (text: string) => Promise<void> | void;
+	herdrClient?: HerdrClient;
 }
 
 function belongsToCurrentSession(sessionId: string | undefined, currentSessionId: string | null): boolean {
@@ -1330,11 +1332,13 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 		inspect: async (input: { runId: string; asyncDir: string; index?: number }) => firstToolResultText(await handleHerdrInspectorAction("inspector.open", {
 			id: input.runId,
 			dir: input.asyncDir,
+			focus: true,
 			...(input.index !== undefined ? { index: input.index } : {}),
 		}, {
 			state,
 			sessionRoots: state.trustedSessionRoots,
 			cwd: state.baseCwd,
+			...(options.herdrClient ? { client: options.herdrClient } : {}),
 			...(state.authorityPolicy ? { authorityPolicy: state.authorityPolicy } : {}),
 			...(state.missionStoreConfig ? { missions: state.missionStoreConfig } : {}),
 		}), `Failed to open Herdr inspector for async run ${input.runId}.`),
