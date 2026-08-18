@@ -2861,8 +2861,12 @@ function resolveConfiguredSingleRunOutputBaseDir(deps: ExecutorDeps): string | u
 		: undefined;
 }
 
+function sanitizeRunPathSegment(value: string): string {
+	return value.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+}
+
 function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
-	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", runId);
+	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", sanitizeRunPathSegment(runId));
 }
 
 function resolveWorkflowAggregateOutputPath(
@@ -2881,7 +2885,7 @@ function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, art
 		const parsed = path.parse(aggregateOutputPath);
 		return path.join(parsed.dir, `${parsed.name}.${workflowKey}${parsed.ext || ".md"}`);
 	}
-	return path.join(artifactsDir, "outputs", workflowRunId, `${workflowKey}.md`);
+	return path.join(artifactsDir, "outputs", sanitizeRunPathSegment(workflowRunId), `${workflowKey}.md`);
 }
 
 function writeWorkflowAggregateOutput(outputPath: string | undefined, text: string, producedChildOutputPaths: ReadonlySet<string>): string | undefined {
