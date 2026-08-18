@@ -346,6 +346,28 @@ describe("result file indexes", () => {
 		}
 	});
 
+	it("reads a pre-hash extension-like pending filename", () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-legacy-pending-"));
+		const originalError = console.error;
+		try {
+			const sessionId = "session-a";
+			const runId = "legacy.jsonl";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			fs.mkdirSync(resultPath);
+			console.error = () => {};
+			writePendingAsyncResultFile(resultPath, { id: runId, runId, sessionId, success: true });
+
+			const currentPath = pendingPath(resultsDir, sessionId, runId);
+			const historicalPath = path.join(path.dirname(currentPath), `${runId}.json`);
+			fs.renameSync(currentPath, historicalPath);
+
+			assert.equal(resultPayloadPathForSessionRun(resultsDir, sessionId, runId), historicalPath);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("throws access-denied direct session index reads", (t) => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-files-eacces-index-"));
 		const error = new Error("permission denied") as NodeJS.ErrnoException;

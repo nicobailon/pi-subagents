@@ -73,7 +73,7 @@ function resultPendingPath(resultsDir: string, sessionId: string, runId: string)
 }
 
 function resultPendingPaths(resultsDir: string, sessionId: string, runId: string): string[] {
-	return indexSegmentAliases(sessionId).map((segment) => path.join(resultsDir, RESULT_PENDING_DIR, segment, encodedJsonFileName(runId)));
+	return indexSegmentAliases(sessionId).flatMap((segment) => encodedJsonFileNames(runId).map((fileName) => path.join(resultsDir, RESULT_PENDING_DIR, segment, fileName)));
 }
 
 function pendingSessionDirs(resultsDir: string, sessionId: string): string[] {
