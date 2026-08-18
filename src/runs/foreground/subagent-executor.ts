@@ -3880,6 +3880,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					lastUpdate: startedAt,
 					...(timeout !== undefined ? { deadlineAt: startedAt + timeout, timeoutMs: timeout } : {}),
 					cwd: workflowCwd,
+					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
 					pid: process.pid,
 					steps: [],
 					workflow: { trace: [], emits: [], console: [] },

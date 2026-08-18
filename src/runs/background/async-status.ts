@@ -84,6 +84,7 @@ export interface AsyncRunSummary {
 	mode: SubagentRunMode;
 	context?: ContextSummary;
 	cwd?: string;
+	sessionRoot?: string;
 	startedAt: number;
 	lastUpdate?: number;
 	endedAt?: number;
@@ -318,6 +319,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		mode: status.mode,
 		...(summarizeContextModes(summarizedSteps.map((step) => step.context)) ? { context: summarizeContextModes(summarizedSteps.map((step) => step.context)) } : {}),
 		cwd: status.cwd,
+		...(status.sessionRoot ? { sessionRoot: status.sessionRoot } : {}),
 		startedAt: status.startedAt,
 		lastUpdate: status.lastUpdate,
 		endedAt: status.endedAt,

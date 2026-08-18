@@ -403,6 +403,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				mode: "workflow",
 				state: "running",
 				sessionId: "session-workflow",
+				sessionRoot: "/trusted/workflow-sessions",
 				startedAt: 1000,
 				lastUpdate: 2000,
 				steps: [{ agent: "scan", label: "scan", status: "running" }],
@@ -414,6 +415,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
 			tracker.restoreActiveJobs();
 			assert.deepEqual(state.asyncJobs.get("workflow-run")?.workflow?.emits, [{ stage: "scan" }]);
+			assert.equal(state.asyncJobs.get("workflow-run")?.sessionRoot, "/trusted/workflow-sessions");
 
 			fs.writeFileSync(statusPath, JSON.stringify({
 				runId: "workflow-run",

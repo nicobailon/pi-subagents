@@ -1387,6 +1387,8 @@ export interface AsyncStatus {
 	usageBudget?: UsageBudgetState;
 	pid?: number;
 	cwd?: string;
+	/** Parent-resolved child session root retained for trusted restored transcript lookup. */
+	sessionRoot?: string;
 	currentStep?: number;
 	chainStepCount?: number;
 	pendingAppends?: number;
