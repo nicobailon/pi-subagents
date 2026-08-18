@@ -1594,6 +1594,18 @@ function readAgentDefinitionFiles(dir: string): AgentDefinitionFile[] {
 	return files;
 }
 
+function resolveAgentRelativeExtensionPaths(paths: string[] | undefined, agentFilePath: string): string[] | undefined {
+	if (paths === undefined) return undefined;
+	const baseDir = path.dirname(agentFilePath);
+	return paths.map((entry) => {
+		const trimmed = entry.trim();
+		if (trimmed === "." || trimmed === ".." || trimmed.startsWith("./") || trimmed.startsWith("../")) {
+			return path.resolve(baseDir, trimmed);
+		}
+		return entry;
+	});
+}
+
 function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: AgentSource, discoveryPriority?: number): { agents: AgentConfig[]; diagnostics: AgentDiscoveryDiagnostic[] } {
 	const agents: AgentConfig[] = [];
 	const diagnostics: AgentDiscoveryDiagnostic[] = [];
@@ -1685,8 +1697,8 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			else throw new Error(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
 		}
 
-		const extensions = parseFrontmatterList(frontmatter.extensions);
-		const subagentOnlyExtensions = parseFrontmatterList(frontmatter.subagentOnlyExtensions);
+		const extensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.extensions), filePath);
+		const subagentOnlyExtensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.subagentOnlyExtensions), filePath);
 
 		const extraFields: Record<string, string> = {};
 		for (const [key, value] of Object.entries(frontmatter)) {

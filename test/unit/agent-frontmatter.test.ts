@@ -392,8 +392,8 @@ Do work
 		assert.deepEqual(worker?.skills, ["review-checklist", "safe-bash"]);
 		assert.deepEqual(worker?.skillPath, ["./private-skills", "../shared-skills"]);
 		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
-		assert.deepEqual(worker?.extensions, ["./extension-one.ts", "./extension-two.ts"]);
-		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
+		assert.deepEqual(worker?.extensions, [path.join(dir, ".pi", "agents", "extension-one.ts"), path.join(dir, ".pi", "agents", "extension-two.ts")]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(dir, ".pi", "agents", "child-only.ts"), path.join(dir, ".pi", "agents", "child-helper.ts")]);
 	});
 
 	it("preserves MCP-only tools as an explicit empty builtin allowlist", () => {
@@ -439,8 +439,8 @@ Do work
 		assert.deepEqual(worker?.skills, ["review-checklist", "safe-bash"]);
 		assert.deepEqual(worker?.skillPath, ["./private-skills", "../shared-skills"]);
 		assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
-		assert.deepEqual(worker?.extensions, ["./extension-one.ts", "./extension-two.ts"]);
-		assert.deepEqual(worker?.subagentOnlyExtensions, ["./child-only.ts", "./child-helper.ts"]);
+		assert.deepEqual(worker?.extensions, [path.join(dir, ".pi", "agents", "extension-one.ts"), path.join(dir, ".pi", "agents", "extension-two.ts")]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(dir, ".pi", "agents", "child-only.ts"), path.join(dir, ".pi", "agents", "child-helper.ts")]);
 	});
 });
 
@@ -1495,7 +1495,7 @@ Do work
 
 		const result = discoverAgents(dir, "project");
 		const worker = result.agents.find((agent) => agent.name === "worker");
-		assert.deepEqual(worker?.subagentOnlyExtensions, ["./tools/child-search.ts", "/opt/pi/child-only.ts"]);
+		assert.deepEqual(worker?.subagentOnlyExtensions, [path.join(agentsDir, "tools", "child-search.ts"), "/opt/pi/child-only.ts"]);
 	});
 });
 
