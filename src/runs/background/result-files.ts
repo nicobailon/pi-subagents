@@ -32,6 +32,10 @@ function encodedJsonFileName(value: string): string {
 	return `${encodeIndexSegment(value, MAX_JSON_FILE_STEM_BYTES)}${JSON_EXTENSION}`;
 }
 
+function encodedJsonFileNames(value: string): string[] {
+	return indexSegmentAliases(value, MAX_JSON_FILE_STEM_BYTES).map((segment) => `${segment}${JSON_EXTENSION}`);
+}
+
 function nonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -57,7 +61,7 @@ function resultIndexPath(resultsDir: string, sessionId: string, runId: string): 
 }
 
 function resultIndexPaths(resultsDir: string, sessionId: string, runId: string): string[] {
-	return sessionIndexDirs(resultsDir, sessionId).map((dir) => path.join(dir, encodedJsonFileName(runId)));
+	return sessionIndexDirs(resultsDir, sessionId).flatMap((dir) => encodedJsonFileNames(runId).map((fileName) => path.join(dir, fileName)));
 }
 
 function runIndexPath(resultsDir: string, runId: string): string {
@@ -302,7 +306,8 @@ function readResultIndexForSessionRun(resultsDir: string, sessionId: string, run
 			return entry;
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
-			if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EPERM" && code !== "EACCES") {
+			if (code === "EPERM" || code === "EACCES") throw error;
+			if (code !== "ENOENT" && code !== "ENOTDIR") {
 				console.error(`Ignoring invalid async result index for '${runId}':`, error);
 			}
 		}
