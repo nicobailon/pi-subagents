@@ -197,13 +197,7 @@ function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPa
 }
 
 function withDeclaredExtensionPaths(config: AgentConfig, filePath: string): AgentConfig {
-	let frontmatter: Record<string, string>;
-	try {
-		({ frontmatter } = parseFrontmatter(fs.readFileSync(filePath, "utf-8")));
-	} catch {
-		return config;
-	}
-
+	const { frontmatter } = parseFrontmatter(fs.readFileSync(filePath, "utf-8"));
 	const { extensions: _extensions, subagentOnlyExtensions: _subagentOnlyExtensions, ...withoutResolvedExtensions } = config;
 	return {
 		...withoutResolvedExtensions,
