@@ -111,6 +111,9 @@ describe("Herdr inspector", () => {
 			assert.equal(binding?.openedAt, "2026-01-01T00:00:00.000Z");
 			assert.equal(binding?.missionId, "mission-cross-project");
 			assert.equal(binding?.missionPath, path.join(missionDir, "mission-cross-project.json"));
+			assert.equal(binding?.lastFocusedAt, undefined);
+			const splitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
+			assert.deepEqual(splitCall?.slice(-1), ["--no-focus"]);
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p9");
 			assert.ok(runCall);
 			if (process.platform !== "win32") {
@@ -124,6 +127,21 @@ describe("Herdr inspector", () => {
 			assert.match(text(closed), /subagent run was not stopped/);
 			assert.equal(readHerdrInspectorBinding(asyncDir), undefined);
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p9"));
+
+			calls.length = 0;
+			const focusedOpened = await handleHerdrInspectorAction("inspector.open", { id: "run-123", focus: true }, {
+				cwd: root,
+				asyncDirRoot: root,
+				resultsDir: path.join(root, "results"),
+				client,
+				sessionRoots: [sessionRoot],
+				runnerPath: path.join(root, "runner.ts"),
+				now: () => new Date("2026-01-01T00:00:00.000Z"),
+			});
+			assert.equal(focusedOpened.isError, undefined, text(focusedOpened));
+			const focusedSplitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
+			assert.deepEqual(focusedSplitCall?.slice(-1), ["--focus"]);
+			assert.equal(readHerdrInspectorBinding(asyncDir)?.lastFocusedAt, "2026-01-01T00:00:00.000Z");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -292,7 +310,8 @@ describe("Herdr inspector", () => {
 			assert.equal(binding?.projectRoot, projectRoot);
 			assert.equal(binding?.startupMessage, "Own this project mission.");
 			const splitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
-			assert.deepEqual(splitCall?.slice(0, 7), ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot]);
+			assert.deepEqual(splitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--no-focus"]);
+			assert.equal(binding?.lastFocusedAt, undefined);
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p10");
 			assert.equal(runCall?.[3]?.startsWith("& "), process.platform === "win32");
 			if (process.platform !== "win32") assert.match(runCall?.[3] ?? "", /^sh -c 'exec \"\$0\" \"\$@\"' '/);
@@ -308,6 +327,17 @@ describe("Herdr inspector", () => {
 			assert.match(text(closed), /Closed Herdr project pane w1:p10/);
 			assert.equal(readHerdrProjectPaneBinding(root), undefined);
 			assert.ok(calls.some((args) => args.join(" ") === "pane close w1:p10"));
+
+			calls.length = 0;
+			const focused = await handleHerdrProjectPaneAction("project.open", { cwd: root, focus: true }, {
+				cwd: process.cwd(),
+				client,
+				now: () => new Date("2026-01-01T00:00:00.000Z"),
+			});
+			assert.equal(focused.isError, undefined, text(focused));
+			const focusedSplitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
+			assert.deepEqual(focusedSplitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--focus"]);
+			assert.equal(readHerdrProjectPaneBinding(root)?.lastFocusedAt, "2026-01-01T00:00:00.000Z");
 		} finally {
 			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
 			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
