@@ -598,6 +598,145 @@ describe("subagent extension child mode", () => {
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
+	it("keeps independent extension runtimes active in one process", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
+			const completionOwnerId = currentCompletionOwnerId();
+			function createRuntime(sessionId) {
+				const eventListeners = new Map();
+				const eventDeliveries = new Map();
+				const handlers = new Map();
+				const events = {
+					on(channel, handler) {
+						let listeners = eventListeners.get(channel);
+						if (!listeners) eventListeners.set(channel, listeners = new Set());
+						listeners.add(handler);
+						return () => listeners.delete(handler);
+					},
+					emit(channel, payload) {
+						for (const handler of [...(eventListeners.get(channel) ?? [])]) {
+							eventDeliveries.set(channel, (eventDeliveries.get(channel) ?? 0) + 1);
+							handler(payload);
+						}
+					},
+				};
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, handler); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const sessionManager = {
+					getSessionId() { return sessionId; },
+					getSessionFile() { return "/tmp/" + sessionId + ".jsonl"; },
+					getEntries() { return []; },
+				};
+				const ctx = {
+					cwd: process.cwd(), hasUI: false,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager,
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				return { pi, events, eventDeliveries, handlers, ctx };
+			}
+
+			const first = createRuntime("independent-first");
+			registerSubagentExtension(first.pi);
+			first.handlers.get("session_start")({ reason: "startup" }, first.ctx);
+			first.events.emit("subagent:async-complete", {
+				id: "independent-baseline", agent: "worker", success: true, summary: "Baseline",
+				exitCode: 0, timestamp: Date.now(), sessionId: "independent-first", completionOwnerId,
+			});
+			const baselineDeliveries = first.eventDeliveries.get("subagent:async-complete") ?? 0;
+			if (baselineDeliveries === 0) throw new Error("first runtime did not register async-complete listeners");
+			const second = createRuntime("independent-second");
+			registerSubagentExtension(second.pi);
+			second.handlers.get("session_start")({ reason: "startup" }, second.ctx);
+
+			await first.handlers.get("agent_end")({}, first.ctx);
+			first.events.emit("subagent:async-complete", {
+				id: "independent-completion", agent: "worker", success: true, summary: "Done",
+				exitCode: 0, timestamp: Date.now(), sessionId: "independent-first", completionOwnerId,
+			});
+			if (first.eventDeliveries.get("subagent:async-complete") !== baselineDeliveries * 2) {
+				throw new Error("first runtime no longer received async-complete after second registration");
+			}
+
+			await first.handlers.get("session_shutdown")();
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== "independent-second") {
+				throw new Error("independent shutdown cleared another runtime's parent session identity");
+			}
+			await second.handlers.get("agent_end")({}, second.ctx);
+			second.events.emit("subagent:async-complete", {
+				id: "independent-second-completion", agent: "reviewer", success: true, summary: "Done",
+				exitCode: 0, timestamp: Date.now(), sessionId: "independent-second", completionOwnerId,
+			});
+			if ((second.eventDeliveries.get("subagent:async-complete") ?? 0) === 0) {
+				throw new Error("first runtime shutdown removed the second runtime's event subscription");
+			}
+			await second.handlers.get("session_shutdown")();
+			if (process.env.PI_SUBAGENT_PARENT_SESSION !== undefined) {
+				throw new Error("owning shutdown left its parent session identity active");
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
+	it("keeps slash snapshots until the last independent runtime shuts down", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			import { buildSlashInitialResult, getSlashRenderableSnapshot } from "./src/slash/slash-live-state.ts";
+			function createRuntime(sessionId) {
+				const handlers = new Map();
+				const events = { on() { return () => {}; }, emit() {} };
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, handler); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				const ctx = {
+					cwd: process.cwd(), hasUI: false,
+					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				return { pi, handlers, ctx };
+			}
+
+			const first = createRuntime("slash-first");
+			const second = createRuntime("slash-second");
+			registerSubagentExtension(first.pi);
+			first.handlers.get("session_start")({ reason: "startup" }, first.ctx);
+			registerSubagentExtension(second.pi);
+			second.handlers.get("session_start")({ reason: "startup" }, second.ctx);
+			const details = buildSlashInitialResult("slash-isolation", { agent: "worker", task: "Keep this snapshot" });
+			const liveVersion = getSlashRenderableSnapshot(details).version;
+			if (liveVersion <= 0) throw new Error("slash snapshot was not populated");
+
+			await first.handlers.get("session_shutdown")({ reason: "shutdown" });
+			if (getSlashRenderableSnapshot(details).version !== liveVersion) {
+				throw new Error("one runtime shutdown cleared another active runtime's slash snapshot");
+			}
+			await second.handlers.get("session_shutdown")({ reason: "shutdown" });
+			if (getSlashRenderableSnapshot(details).version !== 0) {
+				throw new Error("last runtime shutdown did not clear slash snapshots");
+			}
+		`;
+
+		execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("disposes pending completion notifications on session shutdown", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-notify-shutdown-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");
@@ -647,7 +786,7 @@ describe("subagent extension child mode", () => {
 			sent.length = 0;
 			events.emit("subagent:async-complete", {
 				id: "shutdown-held-completion", agent: "worker", success: true, summary: "Done",
-				exitCode: 0, timestamp: Date.now(), sessionId: "notify-shutdown-session",
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-shutdown-session", completionOwnerId,
 			});
 			if (sent.length !== 0) throw new Error("completion was not queued before shutdown");
 			const heldTimers = [...pendingTimers.values()];
@@ -691,21 +830,26 @@ describe("subagent extension child mode", () => {
 				return token;
 			};
 			globalThis.clearTimeout = (token) => pendingTimers.delete(token);
-			function createRuntime(sessionId) {
-				const eventListeners = new Map();
+			const eventListeners = new Map();
+			const events = {
+				on(channel, handler) {
+					let listeners = eventListeners.get(channel);
+					if (!listeners) eventListeners.set(channel, listeners = new Set());
+					listeners.add(handler);
+					return () => listeners.delete(handler);
+				},
+				emit(channel, payload) {
+					for (const handler of [...(eventListeners.get(channel) ?? [])]) handler(payload);
+				},
+			};
+			const sessionManager = {
+				getSessionId() { return "notify-reload-session"; },
+				getSessionFile() { return null; },
+				getEntries() { return []; },
+			};
+			function createRuntime() {
 				const handlers = new Map();
 				const sent = [];
-				const events = {
-					on(channel, handler) {
-						let listeners = eventListeners.get(channel);
-						if (!listeners) eventListeners.set(channel, listeners = new Set());
-						listeners.add(handler);
-						return () => listeners.delete(handler);
-					},
-					emit(channel, payload) {
-						for (const handler of [...(eventListeners.get(channel) ?? [])]) handler(payload);
-					},
-				};
 				const pi = new Proxy({
 					events,
 					on(channel, handler) { handlers.set(channel, handler); },
@@ -715,34 +859,45 @@ describe("subagent extension child mode", () => {
 				const ctx = {
 					cwd: process.cwd(), hasUI: false,
 					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					sessionManager,
 					modelRegistry: { getAvailable() { return []; } },
 				};
 				return { pi, events, handlers, sent, ctx };
 			}
-			const oldRuntime = createRuntime("notify-reload-old");
+
+			const oldRuntime = createRuntime();
 			registerSubagentExtension(oldRuntime.pi);
-			oldRuntime.handlers.get("session_start")({}, oldRuntime.ctx);
+			oldRuntime.handlers.get("session_start")({ reason: "startup" }, oldRuntime.ctx);
+			const oldListenerCount = eventListeners.get("subagent:async-complete")?.size ?? 0;
+			if (oldListenerCount === 0) throw new Error("old runtime did not register async-complete listeners");
 			oldRuntime.sent.length = 0;
 			const timersBeforeOldCompletion = new Set(pendingTimers.keys());
 			oldRuntime.events.emit("subagent:async-complete", {
 				id: "reload-held-completion", agent: "worker", success: true, summary: "Old",
-				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-old", completionOwnerId,
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-session", completionOwnerId,
 			});
 			if (oldRuntime.sent.length !== 0) throw new Error("old completion was not queued before reload");
 			const oldCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeOldCompletion.has(token));
 			if (oldCompletionTimers.length === 0) throw new Error("old completion did not schedule a timer");
 
-			const newRuntime = createRuntime("notify-reload-new");
+			const newRuntime = createRuntime();
 			registerSubagentExtension(newRuntime.pi);
-			newRuntime.handlers.get("session_start")({}, newRuntime.ctx);
+			newRuntime.handlers.get("session_start")({ reason: "reload" }, newRuntime.ctx);
+			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount) {
+				throw new Error("replacement runtime did not restore its event subscriptions");
+			}
 			for (const [, handler] of oldCompletionTimers) handler();
 			if (oldRuntime.sent.length !== 0) throw new Error("stale completion sent after runtime cleanup");
+			await oldRuntime.handlers.get("session_shutdown")({ reason: "reload" });
+			if (eventListeners.get("subagent:async-complete")?.size !== oldListenerCount
+				|| process.env.PI_SUBAGENT_PARENT_SESSION !== "notify-reload-session") {
+				throw new Error("stale shutdown changed the replacement runtime");
+			}
 
 			const timersBeforeNewCompletion = new Set(pendingTimers.keys());
 			newRuntime.events.emit("subagent:async-complete", {
 				id: "reload-new-completion", agent: "reviewer", success: true, summary: "New",
-				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-new", completionOwnerId,
+				exitCode: 0, timestamp: Date.now(), sessionId: "notify-reload-session", completionOwnerId,
 			});
 			const newCompletionTimers = [...pendingTimers.entries()].filter(([token]) => !timersBeforeNewCompletion.has(token));
 			if (newCompletionTimers.length === 0) throw new Error("new completion did not schedule a timer");
@@ -751,7 +906,7 @@ describe("subagent extension child mode", () => {
 				handler();
 			}
 			if (newRuntime.sent.length !== 1) throw new Error("new notifier was not active after reload cleanup");
-			newRuntime.handlers.get("session_shutdown")();
+			await newRuntime.handlers.get("session_shutdown")({ reason: "shutdown" });
 			globalThis.setTimeout = realSetTimeout;
 			globalThis.clearTimeout = realClearTimeout;
 		`;
