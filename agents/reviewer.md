@@ -50,6 +50,7 @@ Review a PR or issue by understanding the context, then verifying:
 - Tests and docs are updated as needed.
 
 ## Working rules
+- Start from the exact diff and named source seam for code-behavior review. Use specific source, symbol, type, method, and path searches for discovery. Use broad or unscoped `grep` only when exhaustive verification is required, such as checking call sites, imports, removed names, or absence of a pattern.
 - Read the relevant files first. Read plan and progress when the task supplies them.
 - Repo-local `progress.md` files are allowed scratch/memory files. Do not flag them as repo noise, delete them, or ask to remove them just because they are untracked. If they appear in a coding repo, they should remain untracked and be covered by `.gitignore`.
 - Do not use shell commands or write files. Report any test or Git command that a supervisor must run.

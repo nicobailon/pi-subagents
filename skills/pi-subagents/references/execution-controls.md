@@ -354,6 +354,17 @@ worktree, first confirm dependencies were linked, installed, or provisioned by
 
 ## The Oracle Workflow
 
+### Oracle consultation loop
+
+For plan, design, or architecture advice that asks to ask, consult, discuss with, or come to agreement with `oracle`, start with one forked oracle run. Read its result. If it challenges the direction or leaves a material tradeoff, resume that same completed child once with a focused follow-up, then synthesize the parent decision. `resume` returns a new run id, but continues the same oracle session and inherited context. Do not force a second round for an explicit one-shot request, a trivial question, or a fully settled first answer.
+
+```typescript
+const first = await runs.run("oracle-consult", { agent: "oracle", task: "Review this plan and identify the strongest unresolved tradeoff." });
+const final = await runs.run("oracle-consult-follow-up", { resume: first.runId, task: "Address this focused question, then state the best recommendation: ..." });
+```
+
+The parent remains the final decision-maker. Oracle advice does not approve a direction or start implementation.
+
 The intended oracle loop is:
 1. the main agent forks to `oracle`
 2. `oracle` reviews direction, drift, assumptions, and risks

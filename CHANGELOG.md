@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- Guide oracle plan and design advice through a short same-session consultation when a material tradeoff remains, while keeping the parent as final decision-maker (#1245).
+- Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
+
 ### Fixed
 - Show a scheduled run's completion and name the schedule that produced it, so scheduled work no longer finishes silently in a session that cannot attribute it. Thanks to [@albertgwo](https://github.com/albertgwo) for #1246.
 - Show resume-first guidance for failed async runs only when a matching recovery descriptor exists, so missing recovery data no longer points users to a resume command that cannot work. Thanks to [@graadient](https://github.com/graadient) for #1241.

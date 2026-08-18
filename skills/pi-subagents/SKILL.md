@@ -30,6 +30,7 @@ For broad or uncertain requests, read more than one reference. For complex work,
 ## Always-on constraints
 
 - Keep the parent as orchestrator and final decision-maker.
+- For plan, design, or architecture advice that asks to consult, discuss with, or come to agreement with `oracle`, use a short same-session consultation loop: read the first result, resume once with a targeted challenge when material tradeoffs remain, then synthesize the parent decision. Keep explicit one-shot, trivial, and fully settled consultations one-shot.
 - Use one writer per cwd/worktree unless isolated worktrees are intentional.
 - For cross-codebase work, record the target repo, explicit `cwd`, authority boundary, and expected output before launch. Do not assume the parent session cwd is the child repo.
 - For parallel fanout, compare child prompts before launch. Do not send clone prompts with only issue numbers, titles, or broad file globs swapped; each child needs a lane-specific task, source seam, prior evidence, and decision that remains distinct without the item number. Launch that fanout as one async `workflowScript` with stable keys and aggregate output unless there is truly only one child.
