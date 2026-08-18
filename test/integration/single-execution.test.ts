@@ -590,6 +590,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const workflowCwd = path.join(tempDir, "workflow-cwd");
 		fs.mkdirSync(workflowCwd);
 		const toolCallId = "call_demo|fc_demo";
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "parent-session.jsonl");
 
 		const result = await executor.execute(
 			toolCallId,
@@ -600,7 +602,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			},
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			context,
 		);
 
 		assert.equal(result.isError, undefined);
@@ -614,6 +616,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(path.basename(result.details.asyncDir!), workflowRunId);
 		assert.equal(asyncJobs.has(workflowRunId), true);
 		assert.equal(asyncJobs.get(workflowRunId)?.cwd, workflowCwd);
+		assert.equal(asyncJobs.get(workflowRunId)?.sessionRoot, path.join(tempDir, ".pi/subagents", "sessions"));
 		assert.equal(asyncJobs.has(toolCallId), false);
 		assert.equal(fs.existsSync(path.join(DIRS.async, toolCallId)), false);
 		assert.match(result.content[0]?.text ?? "", /Async workflow/);

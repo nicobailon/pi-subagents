@@ -21,6 +21,7 @@
 - Route Fleet inspector steering for live in-process workflow children through their foreground routes instead of the detached async queue. Thanks to [@ViktorBarzin](https://github.com/ViktorBarzin) for #1218 and #1216.
 - Resolve the workflowScript parser from pi-subagents instead of the caller's working directory, so workflows start in projects that do not install Acorn.
 - Treat provider subscription usage-limit errors as retryable model failures so `fallbackModels` can continue to the next configured model. Thanks to [@dwizzle204](https://github.com/dwizzle204) for #1215.
+- Preserve workflow async session roots for Herdr inspectors so workflow runs open with the same trusted session-root context as standalone runs. Thanks to [@hank-warren](https://github.com/hank-warren) for #1219.
 - Keep structured delegation integration coverage active when the test process inherits a subagent-child environment marker.
 - Bound repeated async-state queries to active, exact-id, and recent-terminal indexes instead of scanning the historical async root (#1162).
 - Keep retained workflow children resumable when their managed worktree cwd is preserved in the handoff manifest (#1172).
