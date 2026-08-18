@@ -17,6 +17,7 @@
 - Skip malformed agent definitions during discovery so valid agents still list and launch, while showing their configuration errors in management diagnostics (#1200).
 - Resolve `/subagents-generate-profiles` provider probes through the shared Pi executable resolver so configured and Windows-specific Pi commands work. Thanks to [@Wumpf](https://github.com/Wumpf) for #1199.
 - Serialize same-worktree Orca progress-tab creation so numbered tabs appear left to right in sequence instead of racing in the UI. Thanks to [@hyein-cbio](https://github.com/hyein-cbio) for #1196.
+- Route Fleet inspector steering for live in-process workflow children through their foreground routes instead of the detached async queue. Thanks to [@ViktorBarzin](https://github.com/ViktorBarzin) for #1218 and #1216.
 - Resolve the workflowScript parser from pi-subagents instead of the caller's working directory, so workflows start in projects that do not install Acorn.
 - Keep structured delegation integration coverage active when the test process inherits a subagent-child environment marker.
 - Bound repeated async-state queries to active, exact-id, and recent-terminal indexes instead of scanning the historical async root (#1162).

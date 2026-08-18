@@ -507,7 +507,7 @@ describe("native subagent fleet", () => {
 		assert.equal(snapshot.items[0]?.agent, "workflow");
 	});
 
-	it("hides workflow-owned foreground duplicates and opens the workflow parent inspector", async () => {
+	it("shows selectable workflow children only when multiple are live", async () => {
 		const state = stateForTest();
 		state.asyncJobs.set("workflow-1", {
 			asyncId: "workflow-1",
@@ -531,14 +531,42 @@ describe("native subagent fleet", () => {
 			runId: "child-1",
 			parentWorkflowRunId: "workflow-1",
 			workflowKey: "review",
+			workflowSteeringDir: "/tmp/workflow-1/control/workflow-foreground/child-1",
+			sessionId: "session-current",
 			mode: "single",
 			startedAt: 10,
 			updatedAt: 20,
 			activeChildren: new Map([[0, { index: 0, agent: "reviewer", startedAt: 10, updatedAt: 20 }]]),
 		});
+		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), ["async:unrelated", "async:workflow-1"]);
+		state.foregroundControls.get("child-1")!.activeChildren!.set(1, { index: 1, agent: "writer", startedAt: 11, updatedAt: 21 });
+		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), [
+			"foreground-active:child-1:0",
+			"foreground-active:child-1:1",
+			"async:unrelated",
+			"async:workflow-1",
+		]);
+		state.foregroundControls.get("child-1")!.activeChildren!.delete(1);
+		state.foregroundControls.set("child-2", {
+			runId: "child-2",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "verify",
+			workflowSteeringDir: "/tmp/workflow-1/control/workflow-foreground/child-2",
+			sessionId: "session-current",
+			mode: "single",
+			startedAt: 11,
+			updatedAt: 21,
+			activeChildren: new Map([[0, { index: 0, agent: "verifier", startedAt: 11, updatedAt: 21 }]]),
+		});
 		const snapshot = collectFleetSnapshot(state);
-		assert.deepEqual(snapshot.items.map((item) => item.key), ["async:unrelated", "async:workflow-1"]);
-		const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
+		assert.deepEqual(snapshot.items.map((item) => item.key), [
+			"foreground-active:child-2:0",
+			"foreground-active:child-1:0",
+			"async:unrelated",
+			"async:workflow-1",
+		]);
+		const steerCalls: Array<{ runId: string; asyncDir: string; index?: number; message: string; mode: string }> = [];
+		const inspectCalls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
 		const component = new SubagentFleetComponent(
 			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
 			theme as never,
@@ -548,17 +576,22 @@ describe("native subagent fleet", () => {
 				initialKey: "foreground-active:child-1:0",
 				refreshMs: 60_000,
 				actions: {
-					async steer() { return { text: "unused" }; },
+					async steer(input) { steerCalls.push(input); return { text: "Steering queued." }; },
 					stop() { return { text: "unused" }; },
-					async inspect(input) { calls.push(input); return { text: "Inspector opened." }; },
+					async inspect(input) { inspectCalls.push(input); return { text: "Inspector opened." }; },
 				},
 			},
 		);
 		try {
 			assert.ok(component.render(100).some((line) => line.includes("workflow")));
+			component.handleInput("s");
+			for (const char of "check the failure") component.handleInput(char);
+			component.handleInput("\r");
+			await new Promise((resolve) => setImmediate(resolve));
+			assert.deepEqual(steerCalls, [{ runId: "child-1", asyncDir: "/tmp/workflow-1", index: 0, message: "check the failure", mode: "steer" }]);
 			component.handleInput("H");
 			await new Promise((resolve) => setImmediate(resolve));
-			assert.deepEqual(calls, [{ runId: "workflow-1", asyncDir: "/tmp/workflow-1" }]);
+			assert.deepEqual(inspectCalls, [{ runId: "workflow-1", asyncDir: "/tmp/workflow-1" }]);
 		} finally {
 			component.dispose();
 		}
