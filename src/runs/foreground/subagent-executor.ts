@@ -2862,8 +2862,11 @@ function resolveConfiguredSingleRunOutputBaseDir(deps: ExecutorDeps): string | u
 		: undefined;
 }
 
-function sanitizeRunPathSegment(value: string): string {
-	return value.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+export function sanitizeRunPathSegment(value: string, maxBytes = 120): string {
+	const sanitized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+	if (!sanitized) return "unknown";
+	if (Buffer.byteLength(sanitized, "utf-8") <= maxBytes) return sanitized;
+	return sanitized.slice(0, maxBytes).replace(/_+$/, "") || "unknown";
 }
 
 function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
