@@ -729,6 +729,43 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		assert.equal(args[args.indexOf("--model") + 1], "anthropic/claude-sonnet-4-5:off");
 	});
 
+	it("keeps inherited parent models outside the registry during foreground fork preparation", async () => {
+		const { manager } = makeForkingSessionManagerRecorder({
+			sessionFile: path.join(tempDir, "parent.jsonl"),
+			leafId: "leaf-123",
+		});
+		const executor = makeExecutorWithDiscoverAgents(() => ({
+			agents: [{ name: "worker", description: "Worker", defaultContext: "fork" }],
+			projectAgentsDir: null,
+		}));
+		const ctx = {
+			...makeCtx(manager),
+			model: { provider: "gateway", id: "parent-model" },
+			modelRegistry: { getAvailable: () => [{ provider: "openai", id: "gpt-5-mini" }] },
+		};
+
+		const inherited = await executor.execute(
+			"inherited-parent-model",
+			{ agent: "worker", task: "test", context: "fork" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(inherited.isError, undefined);
+		const args = readCallArgs();
+		assert.equal(args[args.indexOf("--model") + 1], "gateway/parent-model");
+
+		const explicit = await executor.execute(
+			"explicit-unknown-model",
+			{ agent: "worker", task: "test", context: "fork", model: "gateway/unknown" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(explicit.isError, true);
+		assert.match(explicit.content[0]?.text ?? "", /Unknown subagent model 'gateway\/unknown'/);
+	});
+
 
 
 
