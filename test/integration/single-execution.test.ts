@@ -279,6 +279,10 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function pathContainsSegments(filePath: string, ...segments: string[]): boolean {
+	return segments.every((segment) => filePath.split(path.sep).includes(segment));
+}
+
 function writePackageSkill(packageRoot: string, skillName: string): void {
 	const skillDir = path.join(packageRoot, "skills", skillName);
 	fs.mkdirSync(skillDir, { recursive: true });
@@ -1614,6 +1618,131 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.match(child.error ?? "", new RegExp(escapeRegExp(path.join(tempDir, relativeDuplicateOutput))));
 		}
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("isolates colliding inherited agent-default outputs for parallel workflow children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "review report", matchArgIncludes: "Review" });
+		mockPi.onCall({ output: "monitor report", matchArgIncludes: "Monitor" });
+		const result = await makeExecutor([makeAgent("echo", { output: "context.md" })]).execute(
+			"scripted-workflow-parallel-inherited-output-collision",
+			{
+				async: false,
+				workflowScript: `return await runs.all([
+					{ key: "review", agent: "echo", task: "Review" },
+					{ key: "monitor", agent: "echo", task: "Monitor" }
+				]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const children = result.details.workflow?.value as Array<{ ok: boolean }>;
+		assert.deepEqual(children.map(({ ok }) => ok), [true, true]);
+		const outputPaths = result.details.results.map(({ savedOutputPath }) => savedOutputPath ?? "").sort();
+		assert.equal(outputPaths.length, 2);
+		assert.notEqual(outputPaths[0], outputPaths[1]);
+		assert.ok(pathContainsSegments(outputPaths[0]!, "artifacts", "outputs"));
+		assert.ok(pathContainsSegments(outputPaths[1]!, "artifacts", "outputs"));
+		assert.match(path.basename(outputPaths[0]!), /^(monitor|review)\.md$/);
+		assert.match(path.basename(outputPaths[1]!), /^(monitor|review)\.md$/);
+		assert.deepEqual(outputPaths.map((outputPath) => fs.readFileSync(outputPath, "utf-8")).sort(), ["monitor report", "review report"]);
+		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
+	});
+
+	it("isolates inherited outputs that collide with a resumed child output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const retainedRunId = `retained-output-${Date.now()}`;
+		const retainedAsyncDir = path.join(DIRS.async, retainedRunId);
+		const retainedSessionFile = path.join(tempDir, "retained-session.jsonl");
+		const retainedOutputPath = path.join(tempDir, "context.md");
+		const runFanoutBudget = createRunFanoutBudget(retainedRunId, 10);
+		fs.mkdirSync(retainedAsyncDir, { recursive: true });
+		fs.writeFileSync(retainedSessionFile, "{}\n", "utf-8");
+		fs.writeFileSync(path.join(retainedAsyncDir, "status.json"), JSON.stringify({
+			runId: retainedRunId,
+			sessionId: "session-123",
+			state: "failed",
+			cwd: tempDir,
+			sessionFile: retainedSessionFile,
+			steps: [
+				{ agent: "echo", status: "failed", sessionFile: retainedSessionFile },
+				{ agent: "echo", status: "failed", sessionFile: retainedSessionFile },
+			],
+		}), "utf-8");
+		fs.writeFileSync(path.join(retainedAsyncDir, "recovery-descriptor.json"), JSON.stringify({
+			version: 1,
+			runFanoutBudget,
+			sourceRunId: retainedRunId,
+			agent: "echo",
+			cwd: tempDir,
+			systemPromptMode: "append",
+			inheritProjectContext: true,
+			inheritSkills: true,
+			outputPath: retainedOutputPath,
+			outputMode: "inline",
+			maxSubagentDepth: 1,
+			share: false,
+		}), "utf-8");
+		mockPi.onCall({ output: "resumed report", matchArgIncludes: "Resume" });
+		mockPi.onCall({ output: "review report", matchArgIncludes: "Review" });
+
+		try {
+			const result = await makeExecutor([makeAgent("echo", { output: "context.md" })]).execute(
+				"scripted-workflow-resumed-inherited-output-collision",
+				{
+					async: false,
+					workflowScript: `return await runs.all([
+						{ key: "resume", resume: ${JSON.stringify(retainedRunId)}, index: 1, task: "Resume" },
+						{ key: "review", agent: "echo", task: "Review" }
+					]);`,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+			const children = result.details.workflow?.value as Array<{ ok: boolean }>;
+			assert.deepEqual(children.map(({ ok }) => ok), [true, true]);
+			assert.equal(fs.readFileSync(retainedOutputPath, "utf-8"), "resumed report");
+			const outputPaths = result.details.results.map(({ savedOutputPath }) => savedOutputPath ?? "");
+			const inheritedOutputPaths = outputPaths.filter((outputPath) => outputPath && outputPath !== retainedOutputPath).sort();
+			assert.deepEqual(inheritedOutputPaths.map((outputPath) => path.basename(outputPath)), ["review.md"]);
+			assert.ok(inheritedOutputPaths.every((outputPath) => pathContainsSegments(outputPath, "artifacts", "outputs")));
+		} finally {
+			fs.rmSync(retainedAsyncDir, { recursive: true, force: true });
+			fs.rmSync(runFanoutBudget.directory, { recursive: true, force: true });
+		}
+	});
+
+	it("reroutes a later inherited agent-default output collision", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first report", matchArgIncludes: "First" });
+		mockPi.onCall({ output: "second report", matchArgIncludes: "Second" });
+		const result = await makeExecutor([makeAgent("echo", { output: "context.md" })]).execute(
+			"scripted-workflow-sequential-inherited-output-collision",
+			{
+				async: false,
+				workflowScript: `
+					const first = await runs.run("first", { agent: "echo", task: "First" });
+					const second = await runs.run("second", { agent: "echo", task: "Second" });
+					return [first, second];
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const children = result.details.workflow?.value as Array<{ ok: boolean }>;
+		assert.deepEqual(children.map(({ ok }) => ok), [true, true]);
+		assert.equal(fs.readFileSync(path.join(tempDir, "context.md"), "utf-8"), "first report");
+		const outputPaths = result.details.results.map(({ savedOutputPath }) => savedOutputPath ?? "");
+		assert.equal(outputPaths[0], path.join(tempDir, "context.md"));
+		assert.ok(pathContainsSegments(outputPaths[1]!, "artifacts", "outputs"));
+		assert.equal(path.basename(outputPaths[1]!), "second.md");
+		assert.equal(fs.readFileSync(outputPaths[1]!, "utf-8"), "second report");
 	});
 
 	it("preserves a rejected file-only child report when its path matches workflow output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

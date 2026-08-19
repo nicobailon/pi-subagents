@@ -1012,7 +1012,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (!admission) {
 				const seenKeys = new Set<string>();
 				const calls = (batch?.calls ?? [{ key, params }]).filter((call) => {
-					if (seenKeys.has(call.key) || launches.has(call.key) || call.params.resume !== undefined) return false;
+					if (seenKeys.has(call.key) || launches.has(call.key)) return false;
 					seenKeys.add(call.key);
 					return true;
 				});

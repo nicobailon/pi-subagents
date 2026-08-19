@@ -7,6 +7,7 @@
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
 
 ### Fixed
+- Isolate colliding inherited workflow child output defaults while preserving explicit output collision checks. Thanks to [@Reverier-Xu](https://github.com/Reverier-Xu) for #1253.
 - Show a scheduled run's completion and name the schedule that produced it, so scheduled work no longer finishes silently in a session that cannot attribute it. Thanks to [@albertgwo](https://github.com/albertgwo) for #1246.
 - Show resume-first guidance for failed async runs only when a matching recovery descriptor exists, so missing recovery data no longer points users to a resume command that cannot work. Thanks to [@graadient](https://github.com/graadient) for #1241.
 - Keep bundled agent discovery stable across hot package updates, so long-running sessions do not parse newer bundled agent files with older loaded code. Thanks to [@graadient](https://github.com/graadient) for #1242.
