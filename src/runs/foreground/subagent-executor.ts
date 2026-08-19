@@ -7,7 +7,7 @@ import { findBlockingAgentDiagnostic, resolveAgentName, type AgentConfig, type A
 import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
-import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
+import { isRetryableFileSystemError, isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
 	beginForegroundChild,
@@ -4002,8 +4002,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
 					} catch (error) {
-						if (!isStorageCapacityError(error)) throw error;
-						console.error(`Failed to append async workflow event while storage is full:`, error);
+						// The event log is a journal, not workflow truth. Callers append from
+						// inside run-result handling, so losing an entry to a full disk or to a
+						// transient Windows lock must not fail the run being recorded.
+						if (!isStorageCapacityError(error) && !isRetryableFileSystemError(error)) throw error;
+						console.error(`Failed to append async workflow event '${eventsPath}':`, error);
 					}
 				};
 				let indexedState: AsyncStatus["state"] | undefined;
@@ -4029,10 +4032,32 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						: writeAtomicJson(filePath, payload),
 				});
 				let initialPersistenceComplete = false;
+				let statusPersistenceDegraded = false;
 				const persist = () => {
 					status.lastUpdate = Date.now();
-					if (initialPersistenceComplete) runPersistence.write(statusPath, status);
-					else {
+					if (initialPersistenceComplete) {
+						// Status updates are a progress journal, not workflow truth. persist() runs
+						// from admit/launch/onTrace/onEmit and completion handling, i.e. inside the
+						// promises the workflow script awaits. A transient lock on status.json must
+						// therefore never mark a finished child failed or abort its still-running
+						// siblings. Initial creation below stays fail-fast: a run is not accepted
+						// until its storage exists.
+						try {
+							runPersistence.write(statusPath, status);
+							statusPersistenceDegraded = false;
+						} catch (error) {
+							const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
+							console.error(message, error);
+							if (!statusPersistenceDegraded) {
+								statusPersistenceDegraded = true;
+								try {
+									appendWorkflowEvent({ type: "subagent.workflow.status_write_failed", error: message });
+								} catch (eventError) {
+									console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
+								}
+							}
+						}
+					} else {
 						writeAtomicJson(statusPath, status);
 						initialPersistenceComplete = true;
 						queueActiveRunIndex();

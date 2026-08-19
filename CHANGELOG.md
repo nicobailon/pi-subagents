@@ -10,6 +10,7 @@
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
 
 ### Fixed
+- Keep async workflow status journaling out of workflow control flow. A transient Windows lock on `status.json` could outlast the bounded rename retry and throw from inside `persist()`, which runs inside the promises a `workflowScript` awaits. One locked write therefore marked an already-completed child failed and aborted its still-running siblings through `Promise.all` in `runs.all`. Status updates after initial run creation now degrade with a `subagent.workflow.status_write_failed` event instead of failing the run, the workflow event log tolerates the same transient lock errors it already tolerates for a full disk, and a throwing `onTrace` host callback can no longer reject a child promise. Follow-up to #1143.
 - Keep completed inspect RPC output available from the durable completion replay after result delivery consumes its one-shot payload, including per-child inline result tails (#1254).
 - Wake the idle parent when an async workflow child needs attention, and persist that control event on the enclosing workflow. Status already showed the stall; the parent notice did not. Thanks to [@Yibo-Zhang](https://github.com/Yibo-Zhang) for #1266.
 
