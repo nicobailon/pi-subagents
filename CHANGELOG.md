@@ -10,7 +10,7 @@
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
 
 ### Fixed
-- Stop Windows opening a console window for each child process spawned for bookkeeping. `spawnSync` and `execFileSync` default to `windowsHide: false`, so the Git, `gh` and PowerShell probes used for process liveness, acceptance snapshots, worktree commands, chat progress and LSP diagnostics each flashed a console window on Windows, which made a busy run disruptive to work alongside. POSIX-only probes are left untouched. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt).
+- Stop Windows opening a console window for each child process spawned for bookkeeping. `spawnSync` and `execFileSync` default to `windowsHide: false`, so the Git, `gh` and PowerShell probes used for process liveness, acceptance snapshots, worktree commands, chat progress and LSP diagnostics each flashed a console window on Windows, which made a busy run disruptive to work alongside. POSIX-only probes are left untouched. Thanks to [@MarcusNeufeldt](https://github.com/MarcusNeufeldt) for #1274.
 - Keep completed inspect RPC output available from the durable completion replay after result delivery consumes its one-shot payload, including per-child inline result tails (#1254).
 - Wake the idle parent when an async workflow child needs attention, and persist that control event on the enclosing workflow. Status already showed the stall; the parent notice did not. Thanks to [@Yibo-Zhang](https://github.com/Yibo-Zhang) for #1266.
 
