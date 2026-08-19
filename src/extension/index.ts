@@ -611,6 +611,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const slashBridge = registerSlashSubagentBridge({
 		events: pi.events,
+		asyncByDefault,
 		getContext: () => state.lastUiContext,
 		execute: (id, params, signal, onUpdate, ctx) =>
 			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),

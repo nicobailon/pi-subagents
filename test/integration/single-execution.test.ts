@@ -418,6 +418,23 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(JSON.stringify(result.details), /Converted structured single-child request/);
 	});
 
+	it("keeps public structured single-child calls foreground when async is disabled by default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Structured child used the foreground default" });
+		const executor = makeExecutor([makeAgent("echo")], {}, false);
+
+		const result = await executor.executePublic(
+			"structured-single-foreground-default",
+			{ agent: "echo", task: "Run through workflow" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.match(result.content[0]?.text ?? "", /Structured child used the foreground default/);
+		assert.equal(result.details.asyncId, undefined);
+	});
+
 	it("does not override structured single output unless configured by the agent", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (const params of [
 			{ agent: "echo", task: "Use the task output path", async: false },

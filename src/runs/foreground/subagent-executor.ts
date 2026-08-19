@@ -5563,7 +5563,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
-		const normalized = normalizePublicSubagentExecution(params);
+		const normalized = normalizePublicSubagentExecution(params, { asyncByDefault: deps.asyncByDefault });
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}

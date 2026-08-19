@@ -13,6 +13,7 @@ export interface PublicSubagentExecutionParams {
 	workflowScript?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
+	async?: unknown;
 	output?: unknown;
 	resume?: unknown;
 	clarify?: unknown;
@@ -30,7 +31,7 @@ export type PublicSubagentExecutionNormalization<T> =
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
-export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T): PublicSubagentExecutionNormalization<T> {
+export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: { asyncByDefault?: boolean } = {}): PublicSubagentExecutionNormalization<T> {
 	if (params.isolation !== undefined) {
 		if (params.isolation !== "none" && params.isolation !== "worktree") {
 			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
@@ -120,6 +121,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			ok: true,
 			params: {
 				...workflowDefaults,
+				...(params.async === undefined && options.asyncByDefault === false ? { async: false } : {}),
 				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", ${JSON.stringify(child)})`,
 			} as T,
 		};

@@ -20,6 +20,20 @@ describe("public subagent execution normalization", () => {
 				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
 			},
 		});
+		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }, { asyncByDefault: false }), {
+			ok: true,
+			params: {
+				async: false,
+				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
+			},
+		});
+		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }, { asyncByDefault: false }), {
+			ok: true,
+			params: {
+				async: true,
+				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", {"agent":"worker","output":true})`,
+			},
+		});
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", output: false }), {
 			ok: true,
 			params: {
