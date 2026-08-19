@@ -758,7 +758,18 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		const child = children.get(key);
 		return child ? [child] : [];
 	}) });
-	const traceChanged = () => options.onTrace?.([...trace]);
+	// Hosts use onTrace to persist a progress journal, and it is invoked from inside
+	// the run-promise handlers below. A throw here would reject the child promise the
+	// script is awaiting, so a single failed status write could mark a completed child
+	// failed and abort its siblings through Promise.all. Telemetry must not decide
+	// workflow outcomes, so a failing callback is reported and the run continues.
+	const traceChanged = () => {
+		try {
+			options.onTrace?.([...trace]);
+		} catch (error) {
+			console.error("Workflow onTrace callback failed:", error);
+		}
+	};
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {

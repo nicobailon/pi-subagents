@@ -1417,4 +1417,36 @@ describe("scripted workflow runtime", () => {
 		await new Promise((resolve) => queueMicrotask(resolve));
 		assert.equal(traceLengths.at(-1), finalTraceLength);
 	});
+
+	it("keeps every child alive when a host trace callback throws", async () => {
+		// Regression: hosts persist a status journal from onTrace, and onTrace is called
+		// from inside the run-promise handlers. A failed status write used to reject the
+		// child promise, so one locked status.json marked a finished child failed and
+		// aborted its still-running siblings through Promise.all inside runs.all.
+		let thrown = 0;
+		const abortedWhileRunning: string[] = [];
+		const result = await runWorkflowScript({
+			script: `return await runs.all([{ key: "a", agent: "worker", task: "one" }, { key: "b", agent: "worker", task: "two" }, { key: "c", agent: "worker", task: "three" }]);`,
+			timeoutMs: 5_000,
+			onTrace(trace) {
+				if (thrown === 0 && trace.some((entry) => entry.operation === "run" && entry.state === "completed")) {
+					thrown += 1;
+					throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+				}
+			},
+			async launch(key, _params, signal) {
+				if (key !== "a") await new Promise((resolve) => setTimeout(resolve, 10));
+				if (signal?.aborted) abortedWhileRunning.push(key);
+				return { key, ok: true, output: `${key} done`, artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.equal(thrown, 1, "the trace callback should have thrown once");
+		assert.deepEqual(abortedWhileRunning, [], "no sibling should be aborted by a journal failure");
+		const children = result.value as Array<{ key: string; ok: boolean }>;
+		assert.deepEqual(children.map((child) => child.key), ["a", "b", "c"]);
+		assert.ok(children.every((child) => child.ok), "every child should still report success");
+		assert.equal(result.children.filter((child) => !child.ok).length, 0);
+	});
 });
