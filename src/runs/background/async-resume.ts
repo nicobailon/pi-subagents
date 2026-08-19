@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DIRS, type AcceptanceInput, type AsyncStatus, type ResolvedTurnBudget, type SteeringRecoveryDescriptor } from "../../shared/types.ts";
+import { DIRS, type AcceptanceInput, type AsyncStatus, type ResolvedTurnBudget, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -36,6 +36,7 @@ export type AsyncResumeTarget = {
 	runId: string;
 	asyncDir?: string;
 	state: AsyncStatus["state"];
+	mode?: SubagentRunMode;
 	agent: string;
 	index: number;
 	cwd?: string;
@@ -293,6 +294,17 @@ function normalizeRecoveryTurnBudget(value: unknown, descriptorPath: string): Re
 	return result.turnBudget;
 }
 
+export function asyncReviveRequiresRecoveryDescriptor(target: Pick<AsyncResumeTarget, "recoveryDescriptor" | "mode" | "sessionFile">): boolean {
+	if (target.recoveryDescriptor) return false;
+	return !(target.mode === "workflow" && Boolean(target.sessionFile));
+}
+
+function resumeTargetMode(status: AsyncStatus | null, result: AsyncResultFile | undefined): SubagentRunMode | undefined {
+	if (status?.mode) return status.mode;
+	if (result?.mode === "single" || result?.mode === "parallel" || result?.mode === "chain" || result?.mode === "workflow") return result.mode;
+	return undefined;
+}
+
 export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): SteeringRecoveryDescriptor | undefined {
 	if (!asyncDir) return undefined;
 	const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
@@ -439,6 +451,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir ?? undefined);
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
+	const mode = resumeTargetMode(status, result);
 	if (options.sessionId && ((status && status.sessionId !== options.sessionId) || (result && result.sessionId !== options.sessionId))) {
 		throw new Error(`Async run '${runId}' was not found in the active session.`);
 	}
@@ -465,6 +478,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					runId,
 					asyncDir: location.asyncDir ?? undefined,
 					state,
+					...(mode ? { mode } : {}),
 					agent: selectedStep.agent,
 					index: requestedIndex,
 					cwd: status?.cwd ?? result?.cwd,
@@ -492,6 +506,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				runId,
 				asyncDir: location.asyncDir ?? undefined,
 				state,
+				...(mode ? { mode } : {}),
 				agent: selected.step.agent,
 				index: selected.index,
 				cwd: status?.cwd ?? result?.cwd,
@@ -532,6 +547,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		runId,
 		asyncDir: location.asyncDir ?? undefined,
 		state,
+		...(mode ? { mode } : {}),
 		agent,
 		index,
 		...(resumeCwd ? { cwd: resumeCwd } : {}),

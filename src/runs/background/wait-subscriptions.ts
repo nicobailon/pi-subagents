@@ -217,7 +217,7 @@ export function createWaitSubscriptionManager(
 				return;
 			}
 			const detached = run.children.filter((child) => child.status === "detached");
-			if (detached.some((child) => child.activityState === "needs_attention")) {
+			if (detached.some((child) => child.activityState === "needs_attention" && child.currentTool === "contact_supervisor")) {
 				settle(record, "needs attention", "Reply to the pending supervisor request or inspect the run status.");
 				return;
 			}

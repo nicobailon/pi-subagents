@@ -464,7 +464,7 @@ function clearForegroundSupervisorAttention(request: SupervisorRequest, pending:
 		&& candidate.childIndex === request.childIndex
 	)) return;
 	const remembered = rememberedForegroundChild(request, state);
-	if (!remembered || remembered.child.status !== "detached" || remembered.child.currentTool !== "contact_supervisor") return;
+	if (!remembered || remembered.child.status !== "detached") return;
 	const updatedAt = Date.now();
 	remembered.run.updatedAt = updatedAt;
 	remembered.child.activityState = undefined;
@@ -693,6 +693,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					agent: request.agent,
 					childIndex: request.childIndex,
 				});
+				if (pending.has(request.id)) markForegroundSupervisorAttention(request, state);
 			}
 		}
 	};

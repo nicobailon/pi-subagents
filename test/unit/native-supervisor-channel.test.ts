@@ -458,6 +458,152 @@ describe("native supervisor channel", () => {
 		}
 	});
 
+	it("marks attention after detach when the reply has not landed yet", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		writeRequest({ sessionId: currentSessionId, runId });
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const state = makeState(currentSessionId, ctx);
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			events: {
+				emit: () => {
+					state.foregroundRuns = new Map([[runId, {
+						runId,
+						mode: "single",
+						cwd: process.cwd(),
+						sessionId: currentSessionId,
+						updatedAt: Date.now(),
+						children: [{ agent: "worker", index: 0, status: "detached", updatedAt: Date.now() }],
+					}]]);
+				},
+			},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, state);
+		try {
+			channel.start();
+			const child = state.foregroundRuns.get(runId)!.children[0]!;
+			assert.equal(child.activityState, "needs_attention");
+			assert.equal(child.currentTool, "contact_supervisor");
+		} finally {
+			channel.dispose();
+		}
+	});
+
+	it("skips restamping attention when the reply already landed during detach", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId });
+		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }>();
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const state = makeState(currentSessionId, ctx);
+		state.foregroundRuns = new Map();
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }) => {
+				registeredTools.set(tool.name, tool);
+			},
+			sendMessage: () => {
+				void registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+					action: "reply",
+					replyTo: requestId,
+					message: "Approved",
+				});
+			},
+			events: {
+				emit: () => {
+					state.foregroundRuns = new Map([[runId, {
+						runId,
+						mode: "single",
+						cwd: process.cwd(),
+						sessionId: currentSessionId,
+						updatedAt: Date.now(),
+						children: [{ agent: "worker", index: 0, status: "detached", updatedAt: Date.now() }],
+					}]]);
+				},
+			},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, state);
+		try {
+			channel.start();
+			const child = state.foregroundRuns.get(runId)!.children[0]!;
+			assert.equal(child.status, "detached");
+			assert.equal(child.activityState, undefined);
+			assert.equal(child.currentTool, undefined);
+			assert.equal(channel.pending.has(requestId), false);
+		} finally {
+			channel.dispose();
+		}
+	});
+
+	it("clears remembered attention even when currentTool is not contact_supervisor", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId });
+		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }>();
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const state = makeState(currentSessionId, ctx);
+		state.foregroundRuns = new Map([[runId, {
+			runId,
+			mode: "single",
+			cwd: process.cwd(),
+			sessionId: currentSessionId,
+			updatedAt: 1,
+			children: [{ agent: "worker", index: 0, status: "detached", activityState: "needs_attention", currentTool: "edit", updatedAt: 1 }],
+		}]]);
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }) => {
+				registeredTools.set(tool.name, tool);
+			},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, state);
+		try {
+			channel.start();
+			state.foregroundRuns.get(runId)!.children[0]!.currentTool = "edit";
+			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+				action: "reply",
+				replyTo: requestId,
+				message: "Approved",
+			});
+			const child = state.foregroundRuns.get(runId)!.children[0]!;
+			assert.equal(child.activityState, undefined);
+			assert.equal(child.currentTool, undefined);
+		} finally {
+			channel.dispose();
+		}
+	});
+
 	it("matches supervisor requests against the runtime session id instead of persisted session file path", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const persistedSessionFile = path.join(os.tmpdir(), `${currentSessionId}.jsonl`);

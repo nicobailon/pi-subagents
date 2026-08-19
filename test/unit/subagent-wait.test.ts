@@ -667,6 +667,7 @@ describe("subagent_wait tool", () => {
 						index: 0,
 						status: "detached",
 						activityState: "needs_attention",
+						currentTool: "contact_supervisor",
 						updatedAt: 2,
 					};
 				},
@@ -677,6 +678,45 @@ describe("subagent_wait tool", () => {
 			assert.match(textOf(result), /foreground-blocked/);
 			assert.match(textOf(result), /researcher#0/);
 			assert.match(textOf(result), /Reply to any pending supervisor request/);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps waiting after a resolved supervisor reply even if idle needs_attention remains", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-foreground-idle-attn-"));
+		try {
+			const state = makeState("sess-1");
+			state.foregroundRuns = new Map([["foreground-working", {
+				runId: "foreground-working",
+				mode: "single",
+				cwd: root,
+				sessionId: "sess-1",
+				updatedAt: 1,
+				children: [{
+					agent: "worker",
+					index: 0,
+					status: "detached",
+					activityState: "needs_attention",
+					updatedAt: 1,
+				}],
+			}]]);
+			let polls = 0;
+			const result = await waitForSubagents({ id: "foreground-working", timeoutMs: 30_000 }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					polls += 1;
+					state.foregroundRuns!.get("foreground-working")!.children[0] = {
+						agent: "worker",
+						index: 0,
+						status: "completed",
+						updatedAt: 2,
+					};
+				},
+			}));
+
+			assert.equal(result.isError, undefined);
+			assert.match(textOf(result), /done/i);
 			assert.equal(polls, 1);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -716,6 +756,7 @@ describe("subagent_wait tool", () => {
 			setTimeout(() => {
 				const child = state.foregroundRuns!.get("foreground-repeated")!.children[0]!;
 				child.activityState = "needs_attention";
+				child.currentTool = "contact_supervisor";
 				events.emit("pi-intercom:detach-request", { runId: "foreground-repeated", childIndex: 0 });
 			}, 15);
 

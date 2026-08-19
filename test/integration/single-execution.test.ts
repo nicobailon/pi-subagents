@@ -2370,9 +2370,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(branch);
 		assert.equal(fs.existsSync(worktreePath), true, "live detached worktree must remain present");
 
-		await new Promise((resolve) => setTimeout(resolve, 750));
+		let reconciled: AsyncStatus | undefined;
+		for (let attempt = 0; attempt < 150; attempt++) {
+			reconciled = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+			if (reconciled.state === "complete" || reconciled.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(reconciled?.state, "complete", reconciled?.error);
+		assert.equal(reconciled?.activityState, undefined);
+		assert.equal(reconciled?.steps?.[0]?.status, "completed");
+		assert.equal(reconciled?.steps?.[0]?.activityState, undefined);
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "complete");
+
 		persistedResult = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-		assert.equal(persistedResult.state, "paused", "terminal async workflow result must not be overwritten by child completion");
+		assert.equal(persistedResult.state, "complete");
+		assert.equal(persistedResult.activityState, undefined);
 		execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: tempDir });
 		execFileSync("git", ["branch", "-D", branch], { cwd: tempDir, stdio: "ignore" });
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });

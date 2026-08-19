@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function writeJson(filePath: string, value: object): void {
@@ -37,6 +37,37 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves a workflow child session without a recovery descriptor", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-workflow-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "child-session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "workflow-1", "status.json"), {
+				runId: "workflow-1",
+				mode: "workflow",
+				state: "failed",
+				startedAt: 100,
+				endedAt: 200,
+				lastUpdate: 200,
+				cwd: root,
+				steps: [{ agent: "worker", status: "failed", sessionFile, runId: "child-1" }],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "workflow-1" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+
+			assert.equal(target.kind, "revive");
+			assert.equal(target.mode, "workflow");
+			assert.equal(target.agent, "worker");
+			assert.equal(target.sessionFile, sessionFile);
+			assert.equal(target.recoveryDescriptor, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(target), false);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor({ mode: "single", sessionFile }), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
