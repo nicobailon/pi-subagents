@@ -946,7 +946,7 @@ function reportEvidenceStatus(report: AcceptanceReport, kind: AcceptanceEvidence
 }
 
 function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
-	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8" });
+	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (result.status !== 0) {
 		return { id: "no-staged-files", status: "not-applicable", message: "git status unavailable; no staged-files check skipped" };
 	}
@@ -1053,11 +1053,11 @@ interface VerifyWorkspaceState {
 }
 
 function readVerifyWorkspaceState(cwd: string): VerifyWorkspaceState | undefined {
-	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8" });
+	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (repo.status !== 0 || !repo.stdout.trim()) return undefined;
 	const repoRoot = fs.realpathSync(repo.stdout.trim());
-	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8" });
-	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8", windowsHide: true });
+	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, windowsHide: true });
 	if (head.status !== 0 || diff.status !== 0 || !head.stdout.trim()) return undefined;
 	return {
 		kind: "git-tracked",

@@ -26,7 +26,7 @@ interface ResolveWorkflowChatProgressInput {
 }
 
 function git(cwd: string, args: string[]): string | undefined {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", windowsHide: true });
 	if (result.status !== 0) return undefined;
 	const output = result.stdout.trim();
 	return output || undefined;

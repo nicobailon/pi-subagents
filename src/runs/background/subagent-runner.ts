@@ -1064,7 +1064,7 @@ async function exportSessionHtml(sessionFile: string, outputDir: string, piPacka
 
 function createShareLink(htmlPath: string): { shareUrl: string; gistUrl: string } | { error: string } {
 	try {
-		const auth = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
+		const auth = spawnSync("gh", ["auth", "status"], { encoding: "utf-8", windowsHide: true });
 		if (auth.status !== 0) {
 			return { error: "GitHub CLI is not logged in. Run 'gh auth login' first." };
 		}
@@ -1073,7 +1073,7 @@ function createShareLink(htmlPath: string): { shareUrl: string; gistUrl: string 
 	}
 
 	try {
-		const result = spawnSync("gh", ["gist", "create", htmlPath], { encoding: "utf-8" });
+		const result = spawnSync("gh", ["gist", "create", htmlPath], { encoding: "utf-8", windowsHide: true });
 		if (result.status !== 0) {
 			const err = (result.stderr || "").trim() || "Failed to create gist.";
 			return { error: err };

@@ -59,7 +59,7 @@ function psProcessStartKey(pid: number): string | undefined {
 
 function windowsProcessStartKey(pid: number): string | undefined {
 	try {
-		const raw = execFileSync("powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter \"ProcessId=${pid}\").CreationDate`], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000 }).trim();
+		const raw = execFileSync("powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter \"ProcessId=${pid}\").CreationDate`], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000, windowsHide: true }).trim();
 		return raw ? `win:${raw}` : undefined;
 	} catch {
 		return undefined;

@@ -115,7 +115,7 @@ interface RepoState {
 const DEFAULT_WORKTREE_SETUP_HOOK_TIMEOUT_MS = 30000;
 
 function runGit(cwd: string, args: string[]): GitResult {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", windowsHide: true });
 	return {
 		stdout: result.stdout ?? "",
 		stderr: result.stderr ?? "",
@@ -338,6 +338,7 @@ function runWorktreeSetupHook(
 	input: WorktreeSetupHookInput,
 ): string[] {
 	const result = spawnSync(hook.hookPath, [], {
+		windowsHide: true,
 		cwd: input.worktreePath,
 		encoding: "utf-8",
 		input: JSON.stringify(input),

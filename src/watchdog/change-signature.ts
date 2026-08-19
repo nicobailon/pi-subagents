@@ -38,7 +38,7 @@ export interface WatchdogRepoChangeSignature {
 }
 
 function git(cwd: string, args: string[]): string | undefined {
-	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+	const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, windowsHide: true });
 	if (result.status !== 0) return undefined;
 	return result.stdout;
 }
