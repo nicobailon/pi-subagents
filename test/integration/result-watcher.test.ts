@@ -1680,6 +1680,124 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("delivers a later terminal result after a paused payload for the same run", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-paused-then-complete-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on() { return () => {}; },
+					emit(event: string, data: unknown) { emitted.push({ event, data }); },
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			let holdPaused: () => void = () => {};
+			const pausedHeld = new Promise<void>((resolve) => { holdPaused = resolve; });
+			let pausedDeliverStarted: () => void = () => {};
+			const pausedStarted = new Promise<void>((resolve) => { pausedDeliverStarted = resolve; });
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				notifier: {
+					async deliver(result) {
+						if (result.state === "paused") {
+							pausedDeliverStarted();
+							await pausedHeld;
+						}
+						return true;
+					},
+				},
+			});
+			try {
+				writeIndexedResult(path.join(resultsDir, "workflow-detach.json"), {
+					id: "workflow-detach",
+					runId: "workflow-detach",
+					agent: "workflow",
+					mode: "workflow",
+					success: false,
+					state: "paused",
+					summary: "Workflow paused.",
+					sessionId: "session-1",
+					timestamp: 1,
+				});
+				watcher.primeExistingResults();
+				await pausedStarted;
+				writeIndexedResult(path.join(resultsDir, "workflow-detach.json"), {
+					id: "workflow-detach",
+					runId: "workflow-detach",
+					agent: "workflow",
+					mode: "workflow",
+					success: true,
+					state: "complete",
+					summary: "Workflow completed after detached child finished.",
+					sessionId: "session-1",
+					timestamp: 2,
+				});
+				holdPaused();
+				assert.equal(await waitForPredicate(() => state.completedResults?.get("workflow-detach")?.completion.state === "complete"), true);
+				assert.equal(emitted.some((entry) => {
+					const data = entry.data as { state?: string };
+					return entry.event === "subagent:async-complete" && data.state === "complete";
+				}), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("delivers a terminal result after the paused file was already consumed", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-paused-consumed-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on() { return () => {}; },
+					emit(event: string, data: unknown) { emitted.push({ event, data }); },
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			const resultFile = path.join(resultsDir, "workflow-consumed.json");
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, { deliverIntercomResults: false });
+			try {
+				writeIndexedResult(resultFile, {
+					id: "workflow-consumed",
+					runId: "workflow-consumed",
+					agent: "workflow",
+					mode: "workflow",
+					success: false,
+					state: "paused",
+					summary: "Workflow paused.",
+					sessionId: "session-1",
+				});
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultFile)), true);
+				writeIndexedResult(resultFile, {
+					id: "workflow-consumed",
+					runId: "workflow-consumed",
+					agent: "workflow",
+					mode: "workflow",
+					success: true,
+					state: "complete",
+					summary: "Workflow completed after detached child finished.",
+					sessionId: "session-1",
+				});
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => state.completedResults?.get("workflow-consumed")?.completion.state === "complete"), true);
+				assert.equal(emitted.filter((entry) => {
+					const data = entry.data as { state?: string };
+					return entry.event === "subagent:async-complete" && data.state === "complete";
+				}).length > 0, true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("uses local completion fallback silently when no grouped-result listener is available", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
 		try {

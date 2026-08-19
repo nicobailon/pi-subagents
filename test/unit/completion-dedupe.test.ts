@@ -10,6 +10,13 @@ describe("buildCompletionKey", () => {
 		assert.notEqual(first, second);
 	});
 
+	it("treats paused and complete payloads as distinct completions", () => {
+		const paused = buildCompletionKey({ id: "run-123", sessionId: "session-a", state: "paused" }, "fallback");
+		const complete = buildCompletionKey({ id: "run-123", sessionId: "session-a", state: "complete" }, "fallback");
+		assert.equal(paused, "session:session-a:id:run-123:state:paused");
+		assert.notEqual(paused, complete);
+	});
+
 	it("builds deterministic fallback key when id is missing", () => {
 		const first = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
 		const second = buildCompletionKey({ agent: "reviewer", timestamp: 123, taskIndex: 1, totalTasks: 2, success: true }, "x");
