@@ -3840,6 +3840,37 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
+	it("background forked runs inherit a parent model outside the registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Forked async work" });
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const forkedSessionFile = path.join(tempDir, "forked.jsonl");
+		const sessionHeader = JSON.stringify({ type: "session", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${sessionHeader}\n`, "utf-8");
+		fs.writeFileSync(forkedSessionFile, `${sessionHeader}\n`, "utf-8");
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			model: { provider: "gateway", id: "parent-model" },
+			modelRegistry: { getAvailable: () => [{ provider: "openai", id: "gpt-5-mini" }] },
+			sessionManager: {
+				getSessionId: () => "session-123",
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf-current",
+				openSession: () => ({ createBranchedSession: () => forkedSessionFile }),
+			},
+		};
+		const launch = await makeAsyncExecutor([makeAgent("worker")]).execute(
+			"forked-parent-model",
+			{ agent: "worker", task: "Do work", async: true, context: "fork" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		const payload = await readAsyncPayload(launch.details.asyncId);
+		assert.equal(payload.results[0]?.model, "gateway/parent-model");
+	});
+
 	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Initial async work" });
 		const sourceId = `async-revive-parent-model-${Date.now().toString(36)}`;
