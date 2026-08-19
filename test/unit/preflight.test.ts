@@ -175,6 +175,28 @@ Project prompt.
 		);
 	});
 
+	it("trusts an inherited parent model outside the host registry", async () => {
+		const cwd = path.join(tempDir, "repo-parent-model");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+---
+Project prompt.
+`);
+
+		const result = await resolveSubagentLaunchContract({
+			agent: "worker",
+			cwd,
+			parentModel: { provider: "gateway", id: "parent-model" },
+			availableModels: [{ provider: "test", id: "primary", fullId: "test/primary" }],
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.model, "gateway/parent-model");
+		assert.deepEqual(result.contract.modelCandidates, ["gateway/parent-model"]);
+	});
+
 	it("bypasses native model validation for external CLI runners", async () => {
 		const cwd = path.join(tempDir, "repo-external-model");
 		fs.mkdirSync(cwd, { recursive: true });

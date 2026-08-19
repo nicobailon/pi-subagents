@@ -1673,7 +1673,7 @@ async function runSyncCompletionInner(
 		agent.fallbackModels,
 		options.availableModels,
 		options.preferredModelProvider,
-		{ scope: options.modelScope },
+		{ scope: options.modelScope, primaryModelFromParent: options.modelOverrideFromParent },
 	);
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];

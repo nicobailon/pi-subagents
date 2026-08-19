@@ -28,7 +28,7 @@ import { normalizePublicSubagentExecution } from "../../extension/public-executi
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
-import { buildModelCandidates, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
+import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
@@ -2801,6 +2801,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			...(params.reads !== undefined ? { reads: params.reads } : {}),
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
+			modelOverrideFromParent: inheritsParentModel(params.model as string | undefined, a.model, parentModel),
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride),
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
@@ -3260,6 +3261,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
+			modelOverrideFromParent: inheritsParentModel(params.model as string | undefined, agentConfig.model, parentModel),
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride),
 			availableModels,
 			preferredModelProvider: currentProvider,
@@ -5083,6 +5085,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					agentConfig?.fallbackModels,
 					forkAvailableModels,
 					parentModel?.provider,
+					{ primaryModelFromParent: inheritsParentModel(modelOverride, agentConfig?.model, parentModel) },
 				);
 				forkThinkingRequirements.set(
 					index,

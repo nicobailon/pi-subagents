@@ -6,7 +6,7 @@ import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, resolve
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
-import { buildModelCandidates, resolveEffectiveSubagentModel, type AvailableModelInfo, type ParentModel } from "../runs/shared/model-fallback.ts";
+import { buildModelCandidates, inheritsParentModel, resolveEffectiveSubagentModel, type AvailableModelInfo, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { applyThinkingSuffix, resolvePiLaunchToolPlan, type PiLaunchToolPlan } from "../runs/shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, normalizeSingleOutputOverride, resolveSingleOutputPath } from "../runs/shared/single-output.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
@@ -295,7 +295,10 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinkingConfig, input.thinking !== undefined);
 	const modelCandidates = externalRunner
 		? []
-		: buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, { scope: discovered.modelScope })
+		: buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, {
+			scope: discovered.modelScope,
+			primaryModelFromParent: inheritsParentModel(input.model, agent.model, input.parentModel),
+		})
 			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);
 	let toolPlan: PiLaunchToolPlan;
 	try {

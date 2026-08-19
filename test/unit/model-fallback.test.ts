@@ -84,6 +84,17 @@ describe("model fallback helpers", () => {
 		]);
 	});
 
+	it("trusts an inherited parent model outside the registry", () => {
+		assert.deepEqual(
+			buildModelCandidates("gateway/parent-model", undefined, availableModels, undefined, { primaryModelFromParent: true }),
+			["gateway/parent-model"],
+		);
+		assert.throws(
+			() => buildModelCandidates("gateway/parent-model", undefined, availableModels),
+			/Unknown subagent model 'gateway\/parent-model'/,
+		);
+	});
+
 	it("detects retryable provider/model failures", () => {
 		assert.equal(isRetryableModelFailure("rate limit exceeded for provider"), true);
 		assert.equal(isRetryableModelFailure("The usage limit has been reached"), true);

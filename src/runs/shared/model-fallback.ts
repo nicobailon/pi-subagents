@@ -272,6 +272,18 @@ export interface BuildModelCandidatesOptions {
 	/** Fallback models warn by default and throw when strict scope enforcement is enabled. */
 	scope?: ModelScopeConfig;
 	onWarn?: (violation: ModelScopeViolation) => void;
+	/** The primary model came from the running parent session, not configuration. */
+	primaryModelFromParent?: boolean;
+}
+
+export function inheritsParentModel(
+	explicitModel: string | boolean | undefined,
+	agentModel: string | boolean | undefined,
+	parentModel: ParentModel | undefined,
+): boolean {
+	const requestedModel = explicitModel ?? agentModel;
+	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
+	return Boolean(parentModel && (!trimmed || trimmed === INHERIT_MODEL));
 }
 
 export function buildModelCandidates(
@@ -289,7 +301,9 @@ export function buildModelCandidates(
 		if (!raw) continue;
 		const model = raw.trim();
 		const normalized = index === 0
-			? resolveRequiredSubagentModelCandidate(model, availableModels, preferredProvider)
+			? options?.primaryModelFromParent
+				? model
+				: resolveRequiredSubagentModelCandidate(model, availableModels, preferredProvider)
 			: resolveSubagentModelCandidate(model, availableModels, preferredProvider);
 		if (!normalized) {
 			console.warn(`[pi-subagents] Skipping fallback model '${model}' because it is unavailable in this environment.`);
