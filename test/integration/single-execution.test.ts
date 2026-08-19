@@ -2487,6 +2487,84 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	it("completes a paused async workflow after a detached child finishes while a sibling is aborted", { skip: !createSubagentExecutor ? "executor unavailable" : undefined }, async () => {
+		mockPi.onCall({
+			matchArgIncludes: "Ask then continue",
+			steps: [
+				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{ delay: 500, jsonl: [events.assistantMessage("done after coordination")] },
+			],
+		});
+		mockPi.onCall({ matchArgIncludes: "Stay running", delay: 10_000 });
+		const piEvents = createEventBus();
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const executor = makeExecutor(
+			[makeAgent("worker", { systemPrompt: "Intercom orchestration channel:" })],
+			{},
+			false,
+			undefined,
+			true,
+			asyncJobs,
+			undefined,
+			undefined,
+			piEvents,
+		);
+		let detachAccepted = false;
+		piEvents.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
+			if ((payload as { requestId?: unknown }).requestId === "async-workflow-detach-with-sibling") {
+				detachAccepted ||= (payload as { accepted?: unknown }).accepted === true;
+			}
+		});
+		const detachTimer = setInterval(() => {
+			if (!detachAccepted) piEvents.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "async-workflow-detach-with-sibling" });
+		}, 10);
+		detachTimer.unref();
+
+		const started = await executor.execute(
+			"async-scripted-workflow-detached-with-sibling",
+			{
+				workflowScript: `
+					await Promise.all([
+						runs.run("detaches", { agent: "worker", task: "Ask then continue" }),
+						runs.run("slow", { agent: "worker", task: "Stay running" })
+					]);
+					return "should not reach";
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(started.isError, undefined);
+		assert.ok(started.details.asyncDir);
+		const workflowRunId = started.details.asyncId;
+		const statusPath = path.join(started.details.asyncDir, "status.json");
+
+		let status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		for (let attempt = 0; attempt < 150 && status.state !== "paused" && status.state !== "failed" && status.state !== "complete"; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		}
+		clearInterval(detachTimer);
+		assert.equal(detachAccepted, true);
+		assert.equal(status.state, "paused", status.error);
+		assert.equal(status.steps?.find((step) => step.workflowKey === "detaches")?.status, "paused");
+		assert.equal(status.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
+
+		let reconciled: AsyncStatus | undefined;
+		for (let attempt = 0; attempt < 150; attempt++) {
+			reconciled = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+			if (reconciled.state === "complete" || reconciled.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(reconciled?.state, "complete", reconciled?.error);
+		assert.equal(reconciled?.steps?.find((step) => step.workflowKey === "detaches")?.status, "completed");
+		assert.equal(reconciled?.steps?.find((step) => step.workflowKey === "slow")?.status, "stopped");
+		assert.equal(asyncJobs.get(workflowRunId)?.status, "complete");
+		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.results, `${workflowRunId}.json`), { force: true });
+	});
+
 	it("inherits workflow-level worktree isolation and allows a child opt-out", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });

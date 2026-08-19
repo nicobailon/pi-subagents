@@ -69,28 +69,47 @@ export function promotePausedWorkflowIfSettled(status: AsyncStatus): AsyncStatus
 	return next;
 }
 
-function patchWorkflowResult(resultPath: string, status: AsyncStatus, childRunId: string, result: SingleResult): Record<string, unknown> | undefined {
-	if (!fs.existsSync(resultPath)) return undefined;
-	const existing = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>;
+function workflowResultChildren(status: AsyncStatus, childRunId: string, result: SingleResult, existingResults: unknown): unknown {
 	const output = getSingleResultOutput(result);
-	const children = Array.isArray(existing.results) ? existing.results.map((entry) => {
-		if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
-		const child = entry as Record<string, unknown>;
-		if (child.runId !== childRunId) return child;
-		return {
-			...child,
-			success: childSucceeded(result),
-			output,
-			outputState: output.trim() ? "present" : "absent",
-			detached: undefined,
-			...(result.error ? { error: result.error } : {}),
-		};
-	}) : existing.results;
+	if (Array.isArray(existingResults)) {
+		return existingResults.map((entry) => {
+			if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+			const child = entry as Record<string, unknown>;
+			if (child.runId !== childRunId) return child;
+			return {
+				...child,
+				success: childSucceeded(result),
+				output,
+				outputState: output.trim() ? "present" : "absent",
+				detached: undefined,
+				...(result.error ? { error: result.error } : {}),
+			};
+		});
+	}
+	return status.steps?.map((step) => ({
+		workflowKey: step.workflowKey,
+		agent: step.agent,
+		runId: step.runId,
+		success: step.status === "completed" || step.status === "complete",
+		output: step.runId === childRunId ? output : "",
+		outputState: step.runId === childRunId && output.trim() ? "present" : "absent",
+		...(step.error ? { error: step.error } : {}),
+	}));
+}
+
+function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>): Record<string, unknown> | undefined {
+	const sessionId = status.sessionId ?? (typeof existing?.sessionId === "string" ? existing.sessionId : undefined);
+	if (!sessionId) return undefined;
 	const summary = status.state === "complete"
 		? `Workflow completed after detached child ${childRunId} finished.`
-		: status.error ?? existing.summary;
+		: status.error ?? (typeof existing?.summary === "string" ? existing.summary : undefined);
 	return {
-		...existing,
+		...(existing ?? {}),
+		id: status.runId,
+		runId: status.runId,
+		toolCallId: status.toolCallId,
+		agent: "workflow",
+		mode: "workflow",
 		success: status.state === "complete",
 		state: status.state,
 		summary,
@@ -98,8 +117,12 @@ function patchWorkflowResult(resultPath: string, status: AsyncStatus, childRunId
 		activityState: status.activityState,
 		endedAt: status.endedAt,
 		timestamp: Date.now(),
-		results: children,
+		results: workflowResultChildren(status, childRunId, result, existing?.results),
 		workflow: status.workflow,
+		asyncDir,
+		cwd: status.cwd,
+		sessionId,
+		completionOwnerId: status.completionOwnerId,
 	};
 }
 
@@ -132,8 +155,11 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 		job.workflow = next.workflow;
 	}
 	const resultPath = resultFilePath(DIRS.results, input.workflowRunId);
-	const patched = patchWorkflowResult(resultPath, next, input.childRunId, input.result);
-	if (patched) writeAsyncResultFile(resultPath, patched);
+	const existing = fs.existsSync(resultPath)
+		? JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>
+		: undefined;
+	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing);
+	if (published) writeAsyncResultFile(resultPath, published);
 	try {
 		fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({
 			ts: Date.now(),
@@ -155,7 +181,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			agent: "workflow",
 			success: next.state === "complete",
 			state: next.state,
-			summary: patched?.summary ?? (next.state === "complete" ? "Workflow completed." : next.error),
+			summary: published?.summary ?? (next.state === "complete" ? "Workflow completed." : next.error),
 			sessionId: next.sessionId,
 			completionOwnerId: next.completionOwnerId,
 			timestamp: Date.now(),

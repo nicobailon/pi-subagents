@@ -4047,6 +4047,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				let persistClosed = false;
 				const persist = () => {
 					if (persistClosed) return;
+					const liveJob = deps.state.asyncJobs.get(workflowRunId);
+					if (liveJob && (liveJob.status === "complete" || liveJob.status === "failed") && status.state !== "complete" && status.state !== "failed") return;
 					status.lastUpdate = Date.now();
 					if (initialPersistenceComplete) runPersistence.write(statusPath, status);
 					else {
@@ -4054,26 +4056,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						initialPersistenceComplete = true;
 						queueActiveRunIndex();
 					}
-					const job = deps.state.asyncJobs.get(workflowRunId);
-					if (job) {
-						job.status = status.state;
-						job.updatedAt = status.lastUpdate;
-						job.activityState = status.activityState;
-						job.lastActivityAt = status.lastActivityAt;
-						job.currentTool = status.currentTool;
-						job.currentToolStartedAt = status.currentToolStartedAt;
-						job.currentPath = status.currentPath;
-						job.turnCount = status.turnCount;
-						job.toolCount = status.toolCount;
-						job.currentStep = status.currentStep;
+					if (liveJob) {
+						liveJob.status = status.state;
+						liveJob.updatedAt = status.lastUpdate;
+						liveJob.activityState = status.activityState;
+						liveJob.lastActivityAt = status.lastActivityAt;
+						liveJob.currentTool = status.currentTool;
+						liveJob.currentToolStartedAt = status.currentToolStartedAt;
+						liveJob.currentPath = status.currentPath;
+						liveJob.turnCount = status.turnCount;
+						liveJob.toolCount = status.toolCount;
+						liveJob.currentStep = status.currentStep;
 						if (status.steps) {
-							job.steps = status.steps.map((step, index) => ({ ...step, index }));
-							job.agents = status.steps.map((step) => step.agent);
+							liveJob.steps = status.steps.map((step, index) => ({ ...step, index }));
+							liveJob.agents = status.steps.map((step) => step.agent);
 						} else {
-							delete job.steps;
-							delete job.agents;
+							delete liveJob.steps;
+							delete liveJob.agents;
 						}
-						job.workflow = status.workflow;
+						liveJob.workflow = status.workflow;
 					}
 				};
 				const writeWorkflowResult = (payload: Record<string, unknown>): boolean => {
@@ -4330,6 +4331,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (step.status === "completed" || step.status === "complete" || step.status === "failed") continue;
 								step.status = "paused";
 								step.activityState = "needs_attention";
+							} else if (pauseForDetached && step.status === "running") {
+								step.status = "stopped";
+								step.stopped = true;
+								delete step.activityState;
 							}
 						}
 						status = compactOptional<AsyncStatus>({ ...status, state, stopped: stopped || undefined, activityState: pauseForDetached ? "needs_attention" : undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
