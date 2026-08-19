@@ -27,6 +27,7 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
+import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -36,7 +37,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
@@ -944,6 +945,98 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		assert.equal(fs.existsSync(activeMarkerPath), false);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		fs.rmSync(resultPath, { force: true });
+	});
+
+	it("notifies the parent when an async workflow child needs attention", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "src/example.ts" }), events.toolEnd("read"), events.toolResult("read", "contents")] },
+				{ delay: 2_500, jsonl: [events.assistantMessage("Done")] },
+			],
+		});
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const piEvents = createEventBus();
+		const controlPayloads: Array<{ event?: ControlEvent; source?: string }> = [];
+		piEvents.on(SUBAGENT_CONTROL_EVENT, (payload) => {
+			controlPayloads.push(payload as { event?: ControlEvent; source?: string });
+		});
+		const executor = makeExecutor([makeAgent("echo")], {
+			control: {
+				enabled: true,
+				needsAttentionAfterMs: 100,
+				activeNoticeAfterMs: 999_999,
+				activeNoticeAfterTurns: 999_999,
+				activeNoticeAfterTokens: 999_999,
+				notifyOn: ["needs_attention"],
+				notifyChannels: ["event"],
+			},
+		}, false, undefined, true, asyncJobs, undefined, undefined, piEvents);
+
+		const result = await executor.execute(
+			"workflow-child-attention-notice",
+			{ workflowScript: `return runs.run("stalled-review", { agent: "echo", task: "Inspect the file" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const { asyncId: workflowRunId, asyncDir } = result.details;
+		assert.ok(workflowRunId);
+		assert.ok(asyncDir);
+		const statusPath = path.join(asyncDir, "status.json");
+		const eventsPath = path.join(asyncDir, "events.jsonl");
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		let liveStatus: AsyncStatus | undefined;
+		const activityDeadline = Date.now() + 5_000;
+		while (Date.now() < activityDeadline && !fs.existsSync(resultPath)) {
+			if (fs.existsSync(statusPath)) {
+				const candidate = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+				if (candidate.activityState === "needs_attention" && !candidate.steps?.[0]?.currentTool) {
+					liveStatus = candidate;
+					break;
+				}
+			}
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+
+		assert.ok(liveStatus, "expected workflow status to expose idle child attention");
+		assert.equal(liveStatus.activityState, "needs_attention");
+		assert.equal(liveStatus.steps?.[0]?.activityState, "needs_attention");
+		assert.equal(liveStatus.steps?.[0]?.workflowKey, "stalled-review");
+
+		const attentionPayload = controlPayloads.find((payload) => payload.event?.type === "needs_attention");
+		assert.ok(attentionPayload, "expected a live parent control event");
+		assert.equal(attentionPayload.source, "async");
+		assert.equal(attentionPayload.event?.workflowKey, "stalled-review");
+		assert.equal(attentionPayload.event?.reason, "idle");
+		const sent: Array<{ options?: { triggerTurn?: boolean } }> = [];
+		handleSubagentControlNotice({
+			pi: { sendMessage(_message, options) { sent.push({ options: options as { triggerTurn?: boolean } }); } },
+			state: { asyncJobs } as SubagentState,
+			visibleControlNotices: new Set(),
+			details: { event: attentionPayload.event!, source: "async" },
+		});
+		assert.equal(sent.length, 1);
+		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
+
+		assert.equal(fs.existsSync(eventsPath), true);
+		const controlRecords = fs.readFileSync(eventsPath, "utf-8")
+			.split("\n")
+			.filter((line) => line.trim())
+			.map((line) => JSON.parse(line) as { type?: string; event?: ControlEvent; runId?: string })
+			.filter((record) => record.type === "subagent.control");
+		const persisted = controlRecords.find((record) => record.event?.type === "needs_attention");
+		assert.ok(persisted, "expected a persisted workflow control event");
+		assert.equal(persisted.runId, workflowRunId);
+		assert.equal(persisted.event?.workflowKey, "stalled-review");
+		assert.equal(controlRecords.filter((record) => record.event?.type === "needs_attention").length, 1);
+
+		const completionDeadline = Date.now() + 5_000;
+		while (!fs.existsSync(resultPath)) {
+			if (Date.now() > completionDeadline) assert.fail("Timed out waiting for async workflow completion");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
 	});

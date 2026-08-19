@@ -7,6 +7,7 @@
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
 
 ### Fixed
+- Wake the idle parent when an async workflow child needs attention, and persist that control event on the enclosing workflow. Status already showed the stall; the parent notice did not. Thanks to [@Yibo-Zhang](https://github.com/Yibo-Zhang) for #1266.
 - Resolve Hugging Face-style `owner/name` model ids against the registry instead of treating every slash as `provider/id`. Fully qualified `huggingface/owner/name` still wins, and a first path segment that matches a registered provider still means `provider/id`. Thanks to [@mr-brobot](https://github.com/mr-brobot) for #1264.
 - Make Surf's `gpt-pro` agent an optional package integration instead of a pi-subagents builtin. Users who disabled the old builtin workaround should remove `agentOverrides.gpt-pro.disabled` before using Surf's package agent. Thanks to [@binhex](https://github.com/binhex) for #1256.
 - Keep public structured single-child calls synchronous when `asyncByDefault:false` and `async` is omitted. Thanks to [@Nofuture123](https://github.com/Nofuture123) for #1257.

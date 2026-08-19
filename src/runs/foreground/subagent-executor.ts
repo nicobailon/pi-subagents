@@ -956,11 +956,48 @@ function emitAdvisoryControlEvent(pi: ExtensionAPI, channel: string, payload: un
 	}
 }
 
+function persistAsyncWorkflowControlEvent(input: {
+	job: AsyncJobState;
+	event: ControlEvent;
+	controlConfig: ResolvedControlConfig;
+	intercomBridge: IntercomBridgeState;
+	childIntercomTarget?: string;
+}): void {
+	const channels = input.event.type === "active_long_running"
+		? input.controlConfig.notifyChannels.filter((channel) => channel !== "intercom")
+		: input.controlConfig.notifyChannels;
+	if (channels.length === 0) return;
+	const record = {
+		ts: Date.now(),
+		runId: input.job.asyncId,
+		type: "subagent.control",
+		event: input.event,
+		channels,
+		childIntercomTarget: input.childIntercomTarget,
+		noticeText: formatControlNoticeMessage(input.event, input.childIntercomTarget),
+		...(input.intercomBridge.active && input.intercomBridge.orchestratorTarget && channels.includes("intercom")
+			? {
+				intercom: {
+					to: input.intercomBridge.orchestratorTarget,
+					message: formatControlIntercomMessage(input.event, input.childIntercomTarget),
+				},
+			}
+			: {}),
+	};
+	try {
+		fs.appendFileSync(path.join(input.job.asyncDir, "events.jsonl"), `${JSON.stringify(record)}\n`, "utf-8");
+	} catch (error) {
+		if (!isStorageCapacityError(error)) throw error;
+		console.error("Failed to append async workflow control event while storage is full:", error);
+	}
+}
+
 function emitControlNotification(input: {
 	pi: ExtensionAPI;
 	controlConfig: ResolvedControlConfig;
 	intercomBridge: IntercomBridgeState;
 	event: ControlEvent;
+	source?: "foreground" | "async";
 }): void {
 	if (!shouldNotifyControlEvent(input.controlConfig, input.event)) return;
 	const childIntercomTarget = input.intercomBridge.active
@@ -968,7 +1005,7 @@ function emitControlNotification(input: {
 		: undefined;
 	const payload = {
 		event: input.event,
-		source: "foreground" as const,
+		source: input.source ?? "foreground",
 		childIntercomTarget,
 		noticeText: formatControlNoticeMessage(input.event, childIntercomTarget),
 	};
@@ -1878,14 +1915,32 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	return lines.join("\n");
 }
 
-function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
+function createForegroundControlNotifier(data: Pick<ExecutionContextData, "controlConfig" | "intercomBridge" | "params">, deps: Pick<ExecutorDeps, "pi" | "state">): (event: ControlEvent) => void {
 	return (event) => {
 		applyControlEventToRememberedForegroundRun(deps.state, event);
+		const parentWorkflowRunId = data.params.workflowParentRunId;
+		const asyncWorkflow = typeof parentWorkflowRunId === "string" ? deps.state.asyncJobs.get(parentWorkflowRunId) : undefined;
+		const workflowKey = typeof data.params.workflowKey === "string" && data.params.workflowKey.trim()
+			? data.params.workflowKey.trim()
+			: undefined;
+		const enriched = workflowKey && !event.workflowKey ? { ...event, workflowKey } : event;
+		if (asyncWorkflow) {
+			persistAsyncWorkflowControlEvent({
+				job: asyncWorkflow,
+				event: enriched,
+				controlConfig: data.controlConfig,
+				intercomBridge: data.intercomBridge,
+				childIntercomTarget: data.intercomBridge.active
+					? resolveSubagentIntercomTarget(enriched.runId, enriched.agent, enriched.index)
+					: undefined,
+			});
+		}
 		emitControlNotification({
 			pi: deps.pi,
 			controlConfig: data.controlConfig,
 			intercomBridge: data.intercomBridge,
-			event,
+			event: enriched,
+			source: asyncWorkflow ? "async" : "foreground",
 		});
 	};
 }
