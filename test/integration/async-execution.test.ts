@@ -3840,6 +3840,43 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
+	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Initial async work" });
+		const sourceId = `async-revive-parent-model-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "sessions", "source.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Initial work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			sessionFile,
+			modelOverride: "gateway/parent-model",
+			modelOverrideFromParent: true,
+			maxSubagentDepth: 2,
+		});
+		await readAsyncPayload(sourceId);
+		const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json"), "utf-8"));
+		assert.equal(descriptor.modelOverrideFromParent, true);
+
+		mockPi.onCall({ output: "Revived async work" });
+		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(
+			"revive-parent-model",
+			{ action: "resume", id: sourceId, message: "Continue" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+		assert.ok(!result.isError, result.content[0]?.text);
+		assert.ok(result.details.asyncId);
+		const payload = await readAsyncPayload(result.details.asyncId);
+		assert.equal(payload.results[0]?.model, "gateway/parent-model");
+	});
+
 	it("background chains inherit the parent session model when no step or agent model is set", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 
