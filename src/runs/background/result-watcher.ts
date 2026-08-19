@@ -160,9 +160,19 @@ function hasDeliveredNotification(data: ResultFileData): boolean {
 	return typeof data.notificationDeliveredAt === "number" && Number.isFinite(data.notificationDeliveredAt);
 }
 
-function resultPayloadWasReplaced(delivered: ResultFileData, diskState: string | undefined): boolean {
+type PublicResultIdentity = {
+	state?: string;
+	timestamp?: number;
+};
+
+function resultPayloadWasReplaced(delivered: ResultFileData, disk: PublicResultIdentity | undefined): boolean {
+	if (!disk) return false;
 	const deliveredState = typeof delivered.state === "string" ? delivered.state : undefined;
-	return Boolean(diskState && deliveredState && diskState !== deliveredState);
+	if (disk.state && deliveredState && disk.state !== deliveredState) return true;
+	const deliveredTimestamp = typeof delivered.timestamp === "number" && Number.isFinite(delivered.timestamp)
+		? delivered.timestamp
+		: undefined;
+	return disk.timestamp !== undefined && deliveredTimestamp !== undefined && disk.timestamp !== deliveredTimestamp;
 }
 
 function markDeliveredNotification(resultPath: string, data: ResultFileData, runId: string, now: number): ResultFileData {
@@ -330,12 +340,17 @@ export function createResultWatcher(
 		processing.add(file);
 		let rereadReplacedPayload = false;
 		let resultPath = publicResultPath(file);
-		const readPublicResultState = (): string | undefined => {
+		const readPublicResultIdentity = (): PublicResultIdentity | undefined => {
 			if (!publicResultFileExists(file)) return undefined;
 			const parsed: unknown = JSON.parse(fsApi.readFileSync(publicResultPath(file), "utf-8"));
-			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || !("state" in parsed)) return undefined;
-			const state = parsed.state;
-			return typeof state === "string" && state ? state : undefined;
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+			const record = parsed as Record<string, unknown>;
+			const state = typeof record.state === "string" && record.state ? record.state : undefined;
+			const timestamp = typeof record.timestamp === "number" && Number.isFinite(record.timestamp)
+				? record.timestamp
+				: undefined;
+			if (!state && timestamp === undefined) return undefined;
+			return { state, timestamp };
 		};
 		try {
 			const payloadPath = resultPayloadPath(file, observed);
@@ -364,7 +379,7 @@ export function createResultWatcher(
 			let data = parseResult(raw);
 			const markReplacedPayload = (): boolean => {
 				try {
-					if (!resultPayloadWasReplaced(data, readPublicResultState())) return false;
+					if (!resultPayloadWasReplaced(data, readPublicResultIdentity())) return false;
 				} catch (error) {
 					if (isAccessDenied(error)) throw error;
 					if (isNotFound(error)) return false;

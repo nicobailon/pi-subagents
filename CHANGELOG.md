@@ -10,6 +10,7 @@
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
 
 ### Fixed
+- Keep a still-paused workflow result when reconcile republishes updated child output during paused delivery. The watcher compares top-level `timestamp` as well as `state`, so a same-state revision is not overwritten or deleted as the old payload.
 - Persist async terminal `status.json` before publishing the result file, so observers cannot see a completed result while the run still looks `running`.
 - Keep completed inspect RPC output available from the durable completion replay after result delivery consumes its one-shot payload, including per-child inline result tails (#1254).
 - After a workflow child detaches for supervisor coordination, clear attention once the reply is delivered, keep `subagent_wait` blocked until the child exits, and reconcile the paused workflow when that child completes. Keep the terminal result even after the paused payload was already delivered. Hosts should keep that parent session until reconcile writes `complete` or `failed`. Resume a timed-out workflow from its persisted child session even when the workflow dir has no recovery descriptor. Thanks to [@skystar567](https://github.com/skystar567) for #1263.

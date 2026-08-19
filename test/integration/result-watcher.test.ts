@@ -1749,6 +1749,81 @@ describe("result watcher", () => {
 		}
 	});
 
+	it("keeps a same-state paused replacement written during paused delivery", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-paused-same-state-"));
+		try {
+			const emitted: Array<{ event: string; data: unknown }> = [];
+			const pi = {
+				events: {
+					on() { return () => {}; },
+					emit(event: string, data: unknown) { emitted.push({ event, data }); },
+				},
+			};
+			const state = createState();
+			state.currentSessionId = "session-1";
+			let holdPaused: () => void = () => {};
+			const pausedHeld = new Promise<void>((resolve) => { holdPaused = resolve; });
+			let pausedDeliverStarted: () => void = () => {};
+			const pausedStarted = new Promise<void>((resolve) => { pausedDeliverStarted = resolve; });
+			const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				notifier: {
+					async deliver(result) {
+						if (result.state === "paused" && result.timestamp === 1) {
+							pausedDeliverStarted();
+							await pausedHeld;
+						}
+						return true;
+					},
+				},
+			});
+			try {
+				const resultFile = path.join(resultsDir, "workflow-still-paused.json");
+				writeIndexedResult(resultFile, {
+					id: "workflow-still-paused",
+					runId: "workflow-still-paused",
+					agent: "workflow",
+					mode: "workflow",
+					success: false,
+					state: "paused",
+					summary: "Workflow paused.",
+					sessionId: "session-1",
+					timestamp: 1,
+					results: [
+						{ workflowKey: "first", runId: "child-1", success: false, detached: true, output: "", outputState: "absent" },
+						{ workflowKey: "second", runId: "child-2", success: false, detached: true, output: "", outputState: "absent" },
+					],
+				});
+				watcher.primeExistingResults();
+				await pausedStarted;
+				writeIndexedResult(resultFile, {
+					id: "workflow-still-paused",
+					runId: "workflow-still-paused",
+					agent: "workflow",
+					mode: "workflow",
+					success: false,
+					state: "paused",
+					summary: "Workflow paused.",
+					sessionId: "session-1",
+					timestamp: 2,
+					results: [
+						{ workflowKey: "first", runId: "child-1", success: true, output: "first child done", outputState: "present" },
+						{ workflowKey: "second", runId: "child-2", success: false, detached: true, output: "", outputState: "absent" },
+					],
+				});
+				holdPaused();
+				assert.equal(await waitForPredicate(() => {
+					const recorded = state.completedResults?.get("workflow-still-paused")?.completion;
+					return recorded?.results?.some((child) => child.runId === "child-1" && child.success === true && child.outputState === "present") === true;
+				}), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("delivers a terminal result after the paused file was already consumed", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-paused-consumed-"));
 		try {
