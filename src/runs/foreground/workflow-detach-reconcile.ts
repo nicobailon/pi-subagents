@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
-import { getSingleResultOutput } from "../../shared/utils.ts";
+import { getSingleResultOutput, readStatus } from "../../shared/utils.ts";
 import {
 	DIRS,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -97,9 +97,8 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 	}));
 }
 
-function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>): Record<string, unknown> | undefined {
+function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>): Record<string, unknown> {
 	const sessionId = status.sessionId ?? (typeof existing?.sessionId === "string" ? existing.sessionId : undefined);
-	if (!sessionId) return undefined;
 	const summary = status.state === "complete"
 		? `Workflow completed after detached child ${childRunId} finished.`
 		: status.error ?? (typeof existing?.summary === "string" ? existing.summary : undefined);
@@ -136,9 +135,8 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 }): boolean {
 	const job = input.state.asyncJobs.get(input.workflowRunId);
 	const asyncDir = job?.asyncDir ?? path.join(DIRS.async, input.workflowRunId);
-	const statusPath = path.join(asyncDir, "status.json");
-	if (!fs.existsSync(statusPath)) return false;
-	const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+	const status = readStatus(asyncDir);
+	if (!status) return false;
 	const next = applyDetachedChildToPausedWorkflow(status, {
 		childRunId: input.childRunId,
 		result: input.result,
@@ -155,24 +153,28 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 		job.workflow = next.workflow;
 	}
 	const resultPath = resultFilePath(DIRS.results, input.workflowRunId);
-	const existing = fs.existsSync(resultPath)
-		? JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<string, unknown>
-		: undefined;
-	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing);
-	if (published) writeAsyncResultFile(resultPath, published);
+	let existing: Record<string, unknown> | undefined;
 	try {
-		fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({
-			ts: Date.now(),
-			runId: input.workflowRunId,
-			type: "subagent.workflow.completed",
-			state: next.state,
-			...(next.error ? { error: next.error } : {}),
-			reconciledFromDetachedChild: input.childRunId,
-		})}\n`, "utf-8");
+		const parsed: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) existing = parsed as Record<string, unknown>;
 	} catch (error) {
-		if (!isStorageCapacityError(error)) throw error;
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
+	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing);
+	writeAsyncResultFile(resultPath, published);
 	if (next.state === "complete" || next.state === "failed") {
+		try {
+			fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({
+				ts: Date.now(),
+				runId: input.workflowRunId,
+				type: "subagent.workflow.completed",
+				state: next.state,
+				...(next.error ? { error: next.error } : {}),
+				reconciledFromDetachedChild: input.childRunId,
+			})}\n`, "utf-8");
+		} catch (error) {
+			if (!isStorageCapacityError(error)) throw error;
+		}
 		input.events?.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: input.workflowRunId,
 			runId: input.workflowRunId,
@@ -181,7 +183,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			agent: "workflow",
 			success: next.state === "complete",
 			state: next.state,
-			summary: published?.summary ?? (next.state === "complete" ? "Workflow completed." : next.error),
+			summary: typeof published.summary === "string" ? published.summary : (next.state === "complete" ? "Workflow completed." : next.error),
 			sessionId: next.sessionId,
 			completionOwnerId: next.completionOwnerId,
 			timestamp: Date.now(),

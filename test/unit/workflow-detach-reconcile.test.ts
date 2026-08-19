@@ -131,5 +131,38 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.equal(published.state, "complete");
 		assert.equal(published.success, true);
 		assert.equal(published.sessionId, "session-1");
+		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+		assert.match(events, /"type":"subagent.workflow.completed"/);
+		assert.match(events, /"state":"complete"/);
+	});
+
+	it("does not log workflow completion while another detached child is still open", () => {
+		const workflowRunId = "workflow-still-paused";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const status = pausedWorkflow("child-1");
+		status.runId = workflowRunId;
+		status.sessionId = "session-1";
+		status.steps!.push({
+			agent: "other",
+			workflowKey: "also",
+			runId: "child-2",
+			status: "paused",
+			activityState: "needs_attention",
+		});
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		const state = {
+			asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]),
+		} as SubagentState;
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-1",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+		assert.equal(fs.existsSync(path.join(asyncDir, "events.jsonl")), false);
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string };
+		assert.equal(published.state, "paused");
 	});
 });

@@ -331,16 +331,11 @@ export function createResultWatcher(
 		let rereadReplacedPayload = false;
 		let resultPath = publicResultPath(file);
 		const readPublicResultState = (): string | undefined => {
-			try {
-				if (!publicResultFileExists(file)) return undefined;
-				const parsed: unknown = JSON.parse(fsApi.readFileSync(publicResultPath(file), "utf-8"));
-				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || !("state" in parsed)) return undefined;
-				const state = parsed.state;
-				return typeof state === "string" && state ? state : undefined;
-			} catch (error) {
-				if (!isNotFound(error)) console.error(`Failed to re-read subagent result file '${publicResultPath(file)}':`, error);
-				return undefined;
-			}
+			if (!publicResultFileExists(file)) return undefined;
+			const parsed: unknown = JSON.parse(fsApi.readFileSync(publicResultPath(file), "utf-8"));
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || !("state" in parsed)) return undefined;
+			const state = parsed.state;
+			return typeof state === "string" && state ? state : undefined;
 		};
 		try {
 			const payloadPath = resultPayloadPath(file, observed);
@@ -368,7 +363,13 @@ export function createResultWatcher(
 			}
 			let data = parseResult(raw);
 			const markReplacedPayload = (): boolean => {
-				if (!resultPayloadWasReplaced(data, readPublicResultState())) return false;
+				try {
+					if (!resultPayloadWasReplaced(data, readPublicResultState())) return false;
+				} catch (error) {
+					if (isAccessDenied(error)) throw error;
+					if (isNotFound(error)) return false;
+					console.error(`Failed to re-read subagent result file '${publicResultPath(file)}':`, error);
+				}
 				identityCache.delete(file);
 				rereadReplacedPayload = true;
 				return true;

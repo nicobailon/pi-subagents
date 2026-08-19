@@ -3343,18 +3343,14 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					}
 					const workflowParentRunId = params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId;
 					if (workflowParentRunId) {
-						try {
-							reconcileDetachedWorkflowChildCompletion({
-								state: deps.state,
-								workflowRunId: workflowParentRunId,
-								childRunId: runId,
-								result,
-								events: deps.pi.events,
-								workflowKey: params.workflowKey ?? foregroundControl?.workflowKey,
-							});
-						} catch {
-							// Paused-workflow reconcile is best-effort; the remembered child result remains authoritative.
-						}
+						reconcileDetachedWorkflowChildCompletion({
+							state: deps.state,
+							workflowRunId: workflowParentRunId,
+							childRunId: runId,
+							result,
+							events: deps.pi.events,
+							workflowKey: params.workflowKey ?? foregroundControl?.workflowKey,
+						});
 					}
 				} finally {
 					try {
