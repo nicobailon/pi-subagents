@@ -1719,6 +1719,7 @@ describe("result watcher", () => {
 					summary: "Workflow paused.",
 					sessionId: "session-1",
 					timestamp: 1,
+					workflow: { trace: [{ type: "run", key: "detaches", state: "detached" }] },
 				});
 				watcher.primeExistingResults();
 				await pausedStarted;
@@ -1732,6 +1733,7 @@ describe("result watcher", () => {
 					summary: "Workflow completed after detached child finished.",
 					sessionId: "session-1",
 					timestamp: 2,
+					workflow: { trace: [{ type: "run", key: "detaches", state: "completed" }] },
 				});
 				holdPaused();
 				assert.equal(await waitForPredicate(() => state.completedResults?.get("workflow-detach")?.completion.state === "complete"), true);
@@ -1771,9 +1773,11 @@ describe("result watcher", () => {
 					state: "paused",
 					summary: "Workflow paused.",
 					sessionId: "session-1",
+					workflow: { trace: [{ type: "run", key: "detaches", state: "detached" }] },
 				});
 				watcher.primeExistingResults();
 				assert.equal(await waitForPredicate(() => !fs.existsSync(resultFile)), true);
+				assert.equal(state.completedResults?.get("workflow-consumed")?.completion.state, "paused");
 				writeIndexedResult(resultFile, {
 					id: "workflow-consumed",
 					runId: "workflow-consumed",
@@ -1783,6 +1787,7 @@ describe("result watcher", () => {
 					state: "complete",
 					summary: "Workflow completed after detached child finished.",
 					sessionId: "session-1",
+					workflow: { trace: [{ type: "run", key: "detaches", state: "completed" }] },
 				});
 				watcher.primeExistingResults();
 				assert.equal(await waitForPredicate(() => state.completedResults?.get("workflow-consumed")?.completion.state === "complete"), true);

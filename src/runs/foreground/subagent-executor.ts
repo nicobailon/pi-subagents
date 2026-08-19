@@ -3341,11 +3341,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					} catch {
 						// Remembered foreground state is best-effort; run history and cleanup must still complete.
 					}
-					if (params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId) {
+					const workflowParentRunId = params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId;
+					if (workflowParentRunId) {
 						try {
 							reconcileDetachedWorkflowChildCompletion({
 								state: deps.state,
-								workflowRunId: params.workflowParentRunId ?? foregroundControl!.parentWorkflowRunId!,
+								workflowRunId: workflowParentRunId,
 								childRunId: runId,
 								result,
 								events: deps.pi.events,

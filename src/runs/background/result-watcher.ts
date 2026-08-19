@@ -333,7 +333,10 @@ export function createResultWatcher(
 		const readPublicResultState = (): string | undefined => {
 			try {
 				if (!publicResultFileExists(file)) return undefined;
-				return jsonStringProperty(fsApi.readFileSync(publicResultPath(file), "utf-8"), "state");
+				const parsed: unknown = JSON.parse(fsApi.readFileSync(publicResultPath(file), "utf-8"));
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || !("state" in parsed)) return undefined;
+				const state = parsed.state;
+				return typeof state === "string" && state ? state : undefined;
 			} catch (error) {
 				if (!isNotFound(error)) console.error(`Failed to re-read subagent result file '${publicResultPath(file)}':`, error);
 				return undefined;
@@ -364,6 +367,12 @@ export function createResultWatcher(
 				}
 			}
 			let data = parseResult(raw);
+			const markReplacedPayload = (): boolean => {
+				if (!resultPayloadWasReplaced(data, readPublicResultState())) return false;
+				identityCache.delete(file);
+				rereadReplacedPayload = true;
+				return true;
+			};
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
 			const completionOwnerId = data.completionOwnerId;
@@ -414,11 +423,7 @@ export function createResultWatcher(
 					return;
 				}
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
-				if (resultPayloadWasReplaced(data, readPublicResultState())) {
-					identityCache.delete(file);
-					rereadReplacedPayload = true;
-					return;
-				}
+				if (markReplacedPayload()) return;
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -474,11 +479,7 @@ export function createResultWatcher(
 					return;
 				}
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
-				if (resultPayloadWasReplaced(data, readPublicResultState())) {
-					identityCache.delete(file);
-					rereadReplacedPayload = true;
-					return;
-				}
+				if (markReplacedPayload()) return;
 				if (!removeDeliveredResult(file, sessionId, runId, toolCallId)) scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -528,11 +529,7 @@ export function createResultWatcher(
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
-			if (resultPayloadWasReplaced(data, readPublicResultState())) {
-				identityCache.delete(file);
-				rereadReplacedPayload = true;
-				return;
-			}
+			if (markReplacedPayload()) return;
 			try {
 				data = markDeliveredNotification(publicResultPath(file), data, runId, Date.now());
 				identityCache.delete(file);
