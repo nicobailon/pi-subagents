@@ -968,7 +968,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 			});
 
-			await new Promise((resolve) => setTimeout(resolve, 80));
+			await waitForCondition(() => state.asyncJobs.size === 0, "startup-crash repair cleanup");
 
 			assert.equal(state.asyncJobs.size, 0);
 			const status = JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8"));
