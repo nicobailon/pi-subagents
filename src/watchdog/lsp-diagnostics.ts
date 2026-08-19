@@ -444,6 +444,7 @@ async function collectWithTypeScriptLanguageServer(input: {
 }): Promise<WatchdogLspResult> {
 	const started = Date.now();
 	const child = spawn(input.command.command, input.command.args, {
+		windowsHide: true,
 		cwd: input.root,
 		stdio: "pipe",
 		env: { ...process.env, NO_COLOR: "1" },
