@@ -41,14 +41,19 @@ Builtins load at the lowest priority, so a user or project agent with the same n
 | `worker` | Implementation work, including approved oracle handoffs. It edits files, validates, and escalates unapproved decisions instead of guessing. |
 | `reviewer` | Code review and small fixes. It checks the implementation against the task/plan, tests, edge cases, and simplicity. |
 | `oracle` | A second opinion before acting. It challenges assumptions, catches drift, and recommends the safest next move without editing. |
-| `gpt-pro` | Read-only Surf GPT Pro advice through the `surf-oracle` external-job provider bridge. |
 | `delegate` | A lightweight general delegate when you want a child agent that behaves close to the parent session. |
 
 Rule of thumb: `scout` before you understand the code, `researcher` before you trust external facts, `worker` to implement, `reviewer` to check, and `oracle` when the decision itself feels risky.
 
 `oracle` is an advisory reviewer that critiques direction and proposes an execution prompt without editing files. `advisor` is the same bundled role under the Claude Code-compatible name.
 
-`gpt-pro` uses `runner.type: external-job` with provider `surf-oracle`. It starts through the same `subagent({ agent: "gpt-pro" })` mental model as any other agent, but the work is owned by Surf through the external-job provider bridge. The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
+### Optional Surf integration
+
+When `surf-cli` is installed and loaded, Surf can expose a `gpt-pro` package agent through the `surf-oracle` external-job provider. It starts through the same `subagent({ agent: "gpt-pro" })` mental model as any other agent, but Surf owns the package agent and provider. Surf maps `model: pro` to ChatGPT GPT-5.6 Sol Pro web mode. pi-subagents does not own that model mapping.
+
+If you disabled the old bundled `gpt-pro` workaround with `agentOverrides.gpt-pro.disabled`, remove that override before using Surf's package agent.
+
+The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
 
 Claude Code can be configured as a read-only advisor with `runner.type: external-cli` when the Claude Code CLI is installed and you have verified the flags for your local version. pi-subagents does not ship or enforce Claude Code flags. Use a project or user agent like this only after checking your CLI help:
 
@@ -69,7 +74,7 @@ Review the task and return advice only. Do not edit files.
 
 ### Advisory runner data boundary
 
-Native `oracle` runs inside Pi and can use its configured read tools. `claude-advisor` sends the assembled prompt to the configured local external CLI through stdin. `gpt-pro` sends the assembled prompt to the registered Surf provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
+Native `oracle` runs inside Pi and can use its configured read tools. `claude-advisor` sends the assembled prompt to the configured local external CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
 
 ### External-job state table
 

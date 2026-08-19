@@ -7,6 +7,7 @@
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).
 
 ### Fixed
+- Make Surf's `gpt-pro` agent an optional package integration instead of a pi-subagents builtin. Users who disabled the old builtin workaround should remove `agentOverrides.gpt-pro.disabled` before using Surf's package agent. Thanks to [@binhex](https://github.com/binhex) for #1256.
 - Keep public structured single-child calls synchronous when `asyncByDefault:false` and `async` is omitted. Thanks to [@Nofuture123](https://github.com/Nofuture123) for #1257.
 - Isolate colliding inherited workflow child output defaults while preserving explicit output collision checks. Thanks to [@Reverier-Xu](https://github.com/Reverier-Xu) for #1253.
 - Show a scheduled run's completion and name the schedule that produced it, so scheduled work no longer finishes silently in a session that cannot attribute it. Thanks to [@albertgwo](https://github.com/albertgwo) for #1246.

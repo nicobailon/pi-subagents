@@ -539,6 +539,7 @@ Do work
 		assert.match(oracle?.systemPrompt ?? "", /If no supervisor channel is available/);
 		assert.equal(agents.some((candidate) => candidate.name === "planner"), false);
 		assert.equal(agents.some((candidate) => candidate.name === "context-builder"), false);
+		assert.equal(agents.some((candidate) => candidate.name === "gpt-pro"), false);
 	});
 
 	it("keeps bundled agent definitions from module load during package file updates", () => {
@@ -554,22 +555,22 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsAll } from "./src/agents/agents.ts";
 
-const gptProPath = path.join(process.cwd(), "agents", "gpt-pro.md");
-fs.writeFileSync(gptProPath, \`---
-name: gpt-pro
-description: Future Surf GPT Pro advisor
+const scoutPath = path.join(process.cwd(), "agents", "scout.md");
+fs.writeFileSync(scoutPath, \`---
+name: scout
+description: Future scout
 runner:
-  type: future-external-job
+  type: future-runner
 ---
 
 Review with the future runner.
 \`, "utf-8");
 
 const discovered = discoverAgentsAll(process.cwd());
-const gptPro = discovered.builtin.find((candidate) => candidate.name === "gpt-pro");
+const scout = discovered.builtin.find((candidate) => candidate.name === "scout");
 
-		assert.equal(gptPro?.runner?.type, "external-job");
-		assert.equal(discovered.agentDiagnostics?.some((diagnostic) => diagnostic.filePath === gptProPath), false);
+		assert.equal(scout?.runner, undefined);
+		assert.equal(discovered.agentDiagnostics?.some((diagnostic) => diagnostic.filePath === scoutPath), false);
 `);
 
 		execFileSync(process.execPath, ["--experimental-strip-types", "challenge.mjs"], { cwd: fixture, stdio: "pipe" });

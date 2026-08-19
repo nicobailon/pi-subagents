@@ -28,7 +28,7 @@ External CLI profiles are async-only and one-shot. They support lifecycle artifa
 
 ### External job profiles
 
-An agent may set `runner.type: external-job` with a non-empty `provider` and optional JSON `options`. The bundled `gpt-pro` agent uses provider `surf-oracle`. The provider must be registered in the host Pi process through `pi-subagents/external-job-provider`; the async runner talks to that parent-owned registry through a local operation bridge.
+An agent may set `runner.type: external-job` with a non-empty `provider` and optional JSON `options`. When `surf-cli` is installed and loaded, Surf can optionally expose a `gpt-pro` package agent through provider `surf-oracle`. Surf maps `model: pro` to ChatGPT GPT-5.6 Sol Pro web mode. pi-subagents does not own that package agent or model mapping. Remove any old `agentOverrides.gpt-pro.disabled` workaround before using Surf's package agent. The provider must be registered in the host Pi process through `pi-subagents/external-job-provider`; the async runner talks to that parent-owned registry through a local operation bridge.
 
 External job profiles are async-only. The provider owns the remote job and Pi owns the async run record. Status persists provider name, provider job id, prompt digest, provider options, handle/conversation URLs when supplied, result artifact path, last known state, and provider failure code/message. Recovery uses existing provider job metadata to call `reattach` and `result`; it refuses to redispatch a prompt when the persisted provider job does not match the prompt digest.
 
