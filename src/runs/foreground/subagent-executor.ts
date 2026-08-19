@@ -4033,15 +4033,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				let initialPersistenceComplete = false;
 				let statusPersistenceDegraded = false;
-				const persist = () => {
+				// Progress journalling runs from admit, launch, the launch and progress observers,
+				// onTrace and onEmit -- all inside the promises a workflowScript awaits. Those
+				// callers pass tolerateStatusWriteFailure so a transient lock on status.json cannot
+				// mark a finished child failed or abort its still-running siblings. Initial and
+				// terminal writes stay fail-fast on purpose: no child work is at risk by then, and
+				// silently dropping a terminal write would leave status.json and the active-run
+				// index pinned at "running" after the result already says complete.
+				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}) => {
 					status.lastUpdate = Date.now();
-					if (initialPersistenceComplete) {
-						// Status updates are a progress journal, not workflow truth. persist() runs
-						// from admit/launch/onTrace/onEmit and completion handling, i.e. inside the
-						// promises the workflow script awaits. A transient lock on status.json must
-						// therefore never mark a finished child failed or abort its still-running
-						// siblings. Initial creation below stays fail-fast: a run is not accepted
-						// until its storage exists.
+					if (!initialPersistenceComplete) {
+						writeAtomicJson(statusPath, status);
+						initialPersistenceComplete = true;
+						queueActiveRunIndex();
+					} else if (options.tolerateStatusWriteFailure) {
 						try {
 							runPersistence.write(statusPath, status);
 							statusPersistenceDegraded = false;
@@ -4058,9 +4063,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}
 						}
 					} else {
-						writeAtomicJson(statusPath, status);
-						initialPersistenceComplete = true;
-						queueActiveRunIndex();
+						runPersistence.write(statusPath, status);
 					}
 					const job = deps.state.asyncJobs.get(workflowRunId);
 					if (job) {
@@ -4204,7 +4207,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						projectedTraceLength = trace.length;
 						projectedTraceTail = trace.at(-1);
 						projectWorkflowActivity();
-						persist();
+						persist({ tolerateStatusWriteFailure: true });
 						appendWorkflowEvent({ type: "subagent.workflow.trace", trace });
 					};
 					try {
@@ -4220,12 +4223,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								status.runFanoutBudget = claimRunFanoutBatch(workflowFanoutBudget, calls.map(({ key }) => `workflow[${key}]`));
 								if (outputClaims.claims) applyWorkflowChildOutputClaims(claimedOutputPaths, outputClaims.claims);
 								if (outputClaims.overrides) for (const [key, output] of outputClaims.overrides) childOutputOverrides.set(key, output);
-								persist();
+								persist({ tolerateStatusWriteFailure: true });
 							},
 							onEmit: (emits) => {
 								// Each emit is validated at the host boundary in runWorkflowScript before onEmit fires.
 								status.workflow = { ...(status.workflow ?? { trace: [], console: [] }), emits };
-								persist();
+								persist({ tolerateStatusWriteFailure: true });
 								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });
 							},
 							launch: async (key, childParams, workflowSignal, admission) => {
@@ -4254,7 +4257,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											step.sessionFile = launch.sessionFile;
 											step.async = launch.async;
 											if (launch.runId) step.runId = launch.runId;
-											persist();
+											persist({ tolerateStatusWriteFailure: true });
 										}
 										recordMissionWorkflowChild(missionBinding, workflowRunId, key, { status: "running", agent: launch.agent, ...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}) });
 									});
@@ -4277,7 +4280,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										step.thinking = progress.thinking;
 										step.error = progress.error;
 										projectWorkflowActivity();
-										persist();
+										persist({ tolerateStatusWriteFailure: true });
 										recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
 											status: step.status,
 											heartbeat: { status: step.status, ...(childPhase ? { phase: childPhase } : {}) },
