@@ -67,21 +67,65 @@ function stripTrailingDateStamp(segment: string): string {
 	return segment;
 }
 
+function isRegisteredProvider(provider: string, availableModels: AvailableModelInfo[]): boolean {
+	const normalized = normalizeModelSegment(provider);
+	return availableModels.some((entry) => normalizeModelSegment(entry.provider) === normalized);
+}
+
+/**
+ * Split `provider/id` only when the first path segment is a registered provider.
+ * Hugging Face-style `owner/name` ids therefore stay intact unless `owner` is
+ * itself a provider in the active registry. `:` and `.` keep the same rule.
+ */
+function splitQualifiedModelQuery(
+	baseModel: string,
+	availableModels: AvailableModelInfo[],
+): { queryProvider?: string; queryIdRaw: string } {
+	const slashIdx = baseModel.indexOf("/");
+	if (slashIdx !== -1) {
+		const providerPart = baseModel.slice(0, slashIdx);
+		if (isRegisteredProvider(providerPart, availableModels)) {
+			return { queryProvider: normalizeModelSegment(providerPart), queryIdRaw: baseModel.slice(slashIdx + 1) };
+		}
+		return { queryIdRaw: baseModel };
+	}
+	const providerSeparators = [":", "."];
+	for (const separator of providerSeparators) {
+		const separatorIdx = baseModel.indexOf(separator);
+		if (separatorIdx <= 0) continue;
+		const providerPart = baseModel.slice(0, separatorIdx);
+		if (!isRegisteredProvider(providerPart, availableModels)) continue;
+		return { queryProvider: normalizeModelSegment(providerPart), queryIdRaw: baseModel.slice(separatorIdx + 1) };
+	}
+	return { queryIdRaw: baseModel };
+}
+
+function resolveExactIdMatches(
+	baseModel: string,
+	availableModels: AvailableModelInfo[],
+	preferredProvider?: string,
+): string | undefined {
+	const exactMatches = availableModels.filter((entry) => entry.id === baseModel);
+	if (preferredProvider) {
+		const preferredMatch = exactMatches.find((entry) => entry.provider === preferredProvider);
+		if (preferredMatch) return preferredMatch.fullId;
+	}
+	if (exactMatches.length === 1) return exactMatches[0]!.fullId;
+	return undefined;
+}
+
 function resolveBaseModelCandidate(
 	baseModel: string,
 	availableModels: AvailableModelInfo[],
 	preferredProvider?: string,
 ): string | undefined {
-	if (baseModel.includes("/")) {
-		const exact = availableModels.find((entry) => entry.fullId === baseModel);
-		if (exact) return exact.fullId;
-	} else {
-		const exactMatches = availableModels.filter((entry) => entry.id === baseModel);
-		if (preferredProvider) {
-			const preferredMatch = exactMatches.find((entry) => entry.provider === preferredProvider);
-			if (preferredMatch) return preferredMatch.fullId;
-		}
-		if (exactMatches.length === 1) return exactMatches[0]!.fullId;
+	const exact = availableModels.find((entry) => entry.fullId === baseModel);
+	if (exact) return exact.fullId;
+
+	const { queryProvider } = splitQualifiedModelQuery(baseModel, availableModels);
+	if (queryProvider === undefined) {
+		const exactId = resolveExactIdMatches(baseModel, availableModels, preferredProvider);
+		if (exactId) return exactId;
 	}
 
 	return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
@@ -90,7 +134,9 @@ function resolveBaseModelCandidate(
 /**
  * Fuzzy-resolve a base model id (thinking suffix already stripped) against the
  * registry, tolerating separator, case, and optional date-stamp differences so
- * users do not have to spell provider/model exactly. A qualified `provider/id`
+ * users do not have to spell provider/model exactly. A slash is a provider
+ * prefix only when that prefix is a registered provider; otherwise the whole
+ * string is the model id (Hugging Face `owner/name`). A qualified provider
  * query only matches within the named provider — this never silently switches
  * providers for security/cost-sensitive configs. Returns the matched `fullId`,
  * or `undefined` when there is no match or the match is ambiguous across
@@ -101,24 +147,7 @@ export function fuzzyResolveModel(
 	availableModels: AvailableModelInfo[],
 	preferredProvider?: string,
 ): string | undefined {
-	let queryProvider: string | undefined;
-	let queryIdRaw = baseModel;
-	const slashIdx = baseModel.indexOf("/");
-	if (slashIdx !== -1) {
-		queryProvider = normalizeModelSegment(baseModel.slice(0, slashIdx));
-		queryIdRaw = baseModel.slice(slashIdx + 1);
-	} else {
-		const providerSeparators = [":", "."];
-		for (const separator of providerSeparators) {
-			const separatorIdx = baseModel.indexOf(separator);
-			if (separatorIdx <= 0) continue;
-			const providerPart = normalizeModelSegment(baseModel.slice(0, separatorIdx));
-			if (!availableModels.some((entry) => normalizeModelSegment(entry.provider) === providerPart)) continue;
-			queryProvider = providerPart;
-			queryIdRaw = baseModel.slice(separatorIdx + 1);
-			break;
-		}
-	}
+	const { queryProvider, queryIdRaw } = splitQualifiedModelQuery(baseModel, availableModels);
 	const queryId = normalizeModelSegment(queryIdRaw);
 	const queryIdNoDate = stripTrailingDateStamp(queryId);
 

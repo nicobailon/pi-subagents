@@ -20,6 +20,42 @@ describe("model fallback helpers", () => {
 		assert.equal(resolveModelCandidate("openai/gpt-5-mini", availableModels), "openai/gpt-5-mini");
 	});
 
+	it("resolves unique owner/name ids when the owner is not a registered provider", () => {
+		const registry = [
+			...availableModels,
+			{ provider: "huggingface", id: "thinkingmachines/Inkling", fullId: "huggingface/thinkingmachines/Inkling" },
+		];
+		assert.equal(resolveModelCandidate("thinkingmachines/Inkling", registry), "huggingface/thinkingmachines/Inkling");
+		assert.equal(
+			resolveModelCandidate("huggingface/thinkingmachines/Inkling", registry),
+			"huggingface/thinkingmachines/Inkling",
+		);
+		assert.equal(
+			resolveModelCandidate("thinkingmachines/Inkling:high", registry),
+			"huggingface/thinkingmachines/Inkling:high",
+		);
+	});
+
+	it("prefers the current provider for an ambiguous owner/name id", () => {
+		const registry = [
+			{ provider: "huggingface", id: "thinkingmachines/Inkling", fullId: "huggingface/thinkingmachines/Inkling" },
+			{ provider: "together", id: "thinkingmachines/Inkling", fullId: "together/thinkingmachines/Inkling" },
+		];
+		assert.equal(resolveModelCandidate("thinkingmachines/Inkling", registry), "thinkingmachines/Inkling");
+		assert.equal(
+			resolveModelCandidate("thinkingmachines/Inkling", registry, "huggingface"),
+			"huggingface/thinkingmachines/Inkling",
+		);
+	});
+
+	it("treats a registered provider prefix as provider/id, not owner/name", () => {
+		const registry = [
+			{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
+			{ provider: "huggingface", id: "openai/gpt-5-mini", fullId: "huggingface/openai/gpt-5-mini" },
+		];
+		assert.equal(resolveModelCandidate("openai/gpt-5-mini", registry), "openai/gpt-5-mini");
+	});
+
 	it("resolves a bare id when there is exactly one registry match", () => {
 		assert.equal(resolveModelCandidate("gpt-5-mini", availableModels), "openai/gpt-5-mini");
 	});
@@ -177,6 +213,17 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		);
 	});
 
+	it("resolves owner/name frontmatter models against the registry", () => {
+		const models = [
+			...availableModels,
+			{ provider: "huggingface", id: "thinkingmachines/Inkling", fullId: "huggingface/thinkingmachines/Inkling" },
+		];
+		assert.equal(
+			resolveSubagentModelOverride("thinkingmachines/Inkling", parentModel, models, "huggingface"),
+			"huggingface/thinkingmachines/Inkling",
+		);
+	});
+
 	it("rejects explicit models that the active registry cannot resolve", () => {
 		assert.throws(
 			() => resolveSubagentModelOverride("does-not-exist", parentModel, availableModels),
@@ -270,6 +317,18 @@ describe("fuzzyResolveModel / normalizeModelSegment", () => {
 		assert.equal(fuzzyResolveModel("Anthropic:Claude-Sonnet-4", registry), "anthropic/claude-sonnet-4");
 		assert.equal(fuzzyResolveModel("anthropic.claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
 		assert.equal(fuzzyResolveModel("anthropic/claude.haiku.4.5", registry), "anthropic/claude-haiku-4-5");
+	});
+
+	it("fuzzy-matches owner/name ids when the owner is not a registered provider", () => {
+		const hfRegistry = [
+			...registry,
+			{ provider: "huggingface", id: "thinkingmachines/Inkling", fullId: "huggingface/thinkingmachines/Inkling" },
+		];
+		assert.equal(fuzzyResolveModel("ThinkingMachines/Inkling", hfRegistry), "huggingface/thinkingmachines/Inkling");
+		assert.equal(
+			fuzzyResolveModel("huggingface/ThinkingMachines/Inkling", hfRegistry),
+			"huggingface/thinkingmachines/Inkling",
+		);
 	});
 
 	it("does not switch providers for a qualified query", () => {

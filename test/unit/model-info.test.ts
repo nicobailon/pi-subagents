@@ -20,6 +20,22 @@ describe("model info helpers", () => {
 		assert.equal(findModelInfo("openai/gpt-5-mini:high", ambiguousModels, "github-copilot")?.fullId, "openai/gpt-5-mini");
 	});
 
+	it("matches owner/name registry ids without treating the owner as a provider", () => {
+		const hfModels: ModelInfo[] = [
+			{
+				provider: "huggingface",
+				id: "thinkingmachines/Inkling",
+				fullId: "huggingface/thinkingmachines/Inkling",
+				reasoning: true,
+			},
+		];
+		assert.equal(findModelInfo("thinkingmachines/Inkling", hfModels)?.fullId, "huggingface/thinkingmachines/Inkling");
+		assert.equal(
+			findModelInfo("huggingface/thinkingmachines/Inkling", hfModels)?.fullId,
+			"huggingface/thinkingmachines/Inkling",
+		);
+	});
+
 	it("preserves registry API metadata", () => {
 		assert.equal(toModelInfo({ provider: "gateway", id: "model", api: "anthropic-messages" }).api, "anthropic-messages");
 	});
