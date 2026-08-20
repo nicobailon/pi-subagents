@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).
+
 ## [0.52.1] - 2026-08-20
 
 ### Highlights

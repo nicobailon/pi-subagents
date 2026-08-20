@@ -249,7 +249,7 @@ function formatRef(result) {
   return "[" + parts.join("; ") + "]";
 }
 
-const runFingerprints = new Map();
+let runFingerprints = new Map();
 
 function validateRunCall(key, params, label, fingerprints) {
   if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error(label + " has an invalid key.");
@@ -290,7 +290,7 @@ const runs = Object.freeze({
       validateRunCall(key, params, "runs.all item " + index, fingerprints);
       calls.push({ key, params });
     }
-    for (const { key, params } of calls) runFingerprints.set(key, stableRunJson(params));
+    runFingerprints = fingerprints;
     const batch = { id: "batch-" + (++nextCallId), calls };
     const launched = calls.map(({ key, params }) => runHostCall(key, params, true, batch));
     return trackRunObservation(launched.map(({ key, callId }) => ({ key, operation: "run", callId })), Promise.all(launched.map(({ promise }) => promise)));
