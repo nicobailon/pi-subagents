@@ -63,6 +63,7 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
    advisor run. This is required for fallback `oracle` and `reviewer` advisors and
    also applies to `council-*` advisors. Each advisor is read-only and must not
    spawn children, edit files, run mutating commands, commit, or push.
+   Use `{ key, agent, context: "fresh", task }` for every `runs.all` launch item.
 3. The parent synthesizes a claim matrix in session. It contains agreements,
    disputed claims, missing proof, owner decisions, and a relay set of at most five
    high-impact claims per advisor. Do not delegate this synthesis.

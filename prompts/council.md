@@ -38,6 +38,8 @@ Every advisor run sets `context: "fresh"` explicitly. This is required for fallb
 `oracle` and `reviewer` advisors and also applies to `council-*` advisors. Each task
 includes the brief, the assigned role, and these rules:
 
+Use `{ key, agent, context: "fresh", task }` for every `runs.all` launch item.
+
 - Fresh context. Inspect the repository and supplied evidence directly. You do not
   see other advisors and must not ask about them.
 - Read-only. Do not edit files, run mutating commands, commit, or push.
