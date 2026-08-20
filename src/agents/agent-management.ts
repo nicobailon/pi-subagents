@@ -36,10 +36,11 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
 import { capabilityCeilingAgentRestrictionSources, isAgentAllowedByCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
+import { listRuntimeAgentConfigs, mergeRuntimeAgents, type RuntimeAgentOwner } from "./runtime-agent-registry.ts";
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
 type ManagementScope = "user" | "project";
-type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry"> & { model?: ExtensionContext["model"]; config?: ExtensionConfig; currentSessionId?: string };
+type ManagementContext = Pick<ExtensionContext, "cwd" | "modelRegistry"> & { model?: ExtensionContext["model"]; config?: ExtensionConfig; currentSessionId?: string; runtimeAgentOwner?: RuntimeAgentOwner };
 
 interface ManagementParams {
 	action?: string;
@@ -142,7 +143,7 @@ function diagnosticsForScope(diagnostics: AgentDiscoveryDiagnostic[] | undefined
 	return diagnostics?.filter((diagnostic) => diagnostic.source !== excludedSource);
 }
 
-const AGENT_SOURCE_PRECEDENCE: Record<AgentSource, number> = { builtin: 0, package: 1, user: 2, project: 3 };
+const AGENT_SOURCE_PRECEDENCE: Record<AgentSource, number> = { builtin: 0, package: 1, user: 2, project: 3, runtime: 4 };
 
 // Returns the highest-precedence definition for a resolved canonical name (project > user > package > builtin),
 // matching mergeAgentsForScope for "both", including disabled agents so disable/enable can locate hidden targets.
@@ -631,7 +632,17 @@ function formatAgentDetail(agent: AgentConfig): string {
 export function handleList(params: ManagementParams, ctx: ManagementContext): AgentToolResult<Details> {
 	const scope = normalizeListScope(params.agentScope) ?? "both";
 	const d = discoverAgentsAll(ctx.cwd);
-	const scopedAgents = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package)
+	let scopedAgents = mergeAgentsForScope(scope, d.user, d.project, d.builtin, d.package);
+	if (ctx.runtimeAgentOwner && listRuntimeAgentConfigs(ctx.runtimeAgentOwner).length > 0) {
+		const configuredAgents: AgentConfig[] = [
+			...d.builtin,
+			...d.package,
+			...d.user,
+			...d.project,
+		];
+		scopedAgents = mergeRuntimeAgents(ctx.runtimeAgentOwner, { agents: scopedAgents }, configuredAgents).agents;
+	}
+	scopedAgents = scopedAgents
 		.sort((a, b) => a.name.localeCompare(b.name));
 	const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId);
 	const visibleAgents = scopedAgents.filter((a) => !a.disabled);

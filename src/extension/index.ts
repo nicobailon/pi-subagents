@@ -19,7 +19,8 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
-import { discoverAgents } from "../agents/agents.ts";
+import { discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope } from "../agents/agents.ts";
+import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
@@ -489,6 +490,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
+	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope) => {
+		const discovered = discoverAgents(cwd, scope);
+		if (listRuntimeAgentConfigs(pi).length === 0) return discovered;
+		const all = discoverAgentsAll(cwd);
+		const configuredAgents: AgentConfig[] = [
+			...all.builtin,
+			...all.package,
+			...all.user,
+			...all.project,
+		];
+		return mergeRuntimeAgents(pi, discovered, configuredAgents);
+	};
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
 		onJobTerminal: () => refreshResultDelivery(),
@@ -539,7 +552,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		tempArtifactsDir,
 		getSubagentSessionRoot,
 		expandTilde,
-		discoverAgents,
+		discoverAgents: discoverAgentsForRuntime,
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
 		refreshResultDelivery: () => refreshResultDelivery(),
 	});
@@ -882,6 +895,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
 			const shuttingDownParentSession = parentSessionEnvValue;
+			clearRuntimeAgentsForPi(pi);
 			clearTimeout(resultIndexCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
 			asyncRetentionAbort.abort();

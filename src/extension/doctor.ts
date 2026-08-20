@@ -141,6 +141,7 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 				package: discovered.package?.length ?? 0,
 				user: discovered.user.length,
 				project: discovered.project.length,
+				runtime: 0,
 			};
 			const diagnostics = discovered.agentDiagnostics ?? [];
 			return [

@@ -56,6 +56,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.ts")), true);
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
+		"./agents": "./src/api/agents.ts",
 		"./background-work": "./src/api/background-work.ts",
 		"./external-job-provider": "./src/api/external-job-provider.ts",
 		"./external-runs": "./src/api/external-runs.ts",

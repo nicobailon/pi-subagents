@@ -16,6 +16,7 @@ import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
+export { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
@@ -24,7 +25,7 @@ import { validatePermissionRules, type PermissionRules } from "../runs/shared/pe
 
 export type AgentScope = "user" | "project" | "both";
 
-export type AgentSource = "builtin" | "package" | "user" | "project";
+export type AgentSource = "builtin" | "package" | "user" | "project" | "runtime";
 type SystemPromptMode = "append" | "replace";
 export type AgentDefaultContext = "fresh" | "fork";
 
@@ -34,16 +35,6 @@ export interface AgentMemoryConfig {
 	scope: AgentMemoryScope;
 	path: string;
 }
-
-export const BUILTIN_AGENT_NAMES = [
-	"advisor",
-	"delegate",
-	"oracle",
-	"researcher",
-	"reviewer",
-	"scout",
-	"worker",
-] as const;
 
 export function defaultSystemPromptMode(name: string): SystemPromptMode {
 	return name === "delegate" ? "append" : "replace";
@@ -228,6 +219,7 @@ const AGENT_SOURCE_PRIORITY: Record<AgentSource, number> = {
 	package: 1,
 	user: 2,
 	project: 3,
+	runtime: 4,
 };
 
 function agentDefinitionPriority(definition: Pick<AgentConfig | AgentDiscoveryDiagnostic, "source" | "discoveryPriority">): number {
@@ -543,7 +535,7 @@ function normalizeAgentAliases(rawAliases: string[] | undefined, agentName: stri
 function effectiveAgentMatch(matches: AgentConfig[]): { agent?: AgentConfig; error?: string } {
 	const distinctNames = [...new Set(matches.map((agent) => agent.name))];
 	if (distinctNames.length === 1) {
-		const sourceRank = new Map<AgentConfig["source"], number>([["builtin", 0], ["package", 1], ["user", 2], ["project", 3]]);
+		const sourceRank = new Map<AgentConfig["source"], number>([["builtin", 0], ["package", 1], ["user", 2], ["project", 3], ["runtime", 4]]);
 		const agent = [...matches].sort((a, b) => (sourceRank.get(b.source) ?? 0) - (sourceRank.get(a.source) ?? 0))[0];
 		return agent ? { agent } : {};
 	}

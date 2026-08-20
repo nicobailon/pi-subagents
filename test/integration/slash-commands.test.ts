@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
+import { registerAgent } from "../../src/api/agents.ts";
+import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
@@ -18,6 +20,15 @@ const SLASH_SUBAGENT_RESPONSE_EVENT = "subagent:slash:response";
 interface EventBus {
 	on(event: string, handler: (data: unknown) => void): () => void;
 	emit(event: string, data: unknown): void;
+}
+
+interface RuntimeSlashPi {
+	events: EventBus;
+	on(event: string, handler: (data: unknown) => void): () => void;
+	registerTool(tool: unknown): void;
+	registerCommand(name: string, spec: RegisteredSlashCommand): void;
+	registerShortcut(key: string, spec: { handler(ctx: unknown): Promise<void> }): void;
+	sendMessage(message: unknown): void;
 }
 
 type RegisteredSlashCommand = { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?: (prefix: string) => unknown };
@@ -220,10 +231,9 @@ async function captureSlashCommandParams(
 	commandName: string,
 	args: string,
 	cwd: string,
-	setup?: () => void,
+	setup?: (pi: RuntimeSlashPi) => void,
 ): Promise<{ params: unknown; notifications: string[] }> {
 	return withIsolatedHome(async () => {
-		setup?.();
 		const commands = new Map<string, RegisteredSlashCommand>();
 		const events = createEventBus();
 		let requestedParams: unknown;
@@ -244,6 +254,8 @@ async function captureSlashCommandParams(
 
 		const pi = {
 			events,
+			on() { return () => {}; },
+			registerTool() {},
 			registerCommand(name: string, spec: RegisteredSlashCommand) {
 				commands.set(name, spec);
 			},
@@ -251,14 +263,19 @@ async function captureSlashCommandParams(
 			sendMessage(_message: unknown) {},
 		};
 
-		registerSlashCommands!(pi, createState(cwd));
-		await commands.get(commandName)!.handler(args, createCommandContext({
-			cwd,
-			notify: (message) => {
-				notifications.push(message);
-			},
-		}));
-		return { params: requestedParams, notifications };
+		try {
+			setup?.(pi);
+			registerSlashCommands!(pi, createState(cwd));
+			await commands.get(commandName)!.handler(args, createCommandContext({
+				cwd,
+				notify: (message) => {
+					notifications.push(message);
+				},
+			}));
+			return { params: requestedParams, notifications };
+		} finally {
+			clearRuntimeAgentsForPi(pi as never);
+		}
 	});
 }
 
@@ -663,6 +680,23 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 			const run = await captureSlashCommandParams("run", "code-analysis.zeta-worker", root);
 			assert.equal(run.params, undefined);
 			assert.match(run.notifications[0] ?? "", /Agent 'code-analysis\.zeta-worker' has invalid configuration: Agent 'zeta-worker' has invalid runner\.type/);
+		});
+	});
+
+	it("/run accepts runtime-registered agents", async () => {
+		await withTempProject("pi-slash-runtime-agent-", async (root) => {
+			const run = await captureSlashCommandParams("run", "runtime-helper Inspect", root, (pi) => {
+				registerAgent({
+					pi: pi as never,
+					name: "runtime-helper",
+					definition: { description: "Runtime helper", systemPrompt: "Help at runtime." },
+				});
+			});
+
+			assert.deepEqual(run.params, {
+				workflowScript: "return runs.run(\"run\", {\"agent\":\"runtime-helper\",\"task\":\"Inspect\",\"agentScope\":\"both\"})",
+				async: false,
+			});
 		});
 	});
 

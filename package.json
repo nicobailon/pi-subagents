@@ -10,6 +10,7 @@
     "./background-work": "./src/api/background-work.ts",
     "./external-job-provider": "./src/api/external-job-provider.ts",
     "./external-runs": "./src/api/external-runs.ts",
+    "./agents": "./src/api/agents.ts",
     "./delegation": "./src/api/delegation.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
     "./preflight": "./src/api/preflight.ts",
