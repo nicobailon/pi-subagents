@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Add the `resultScanLogging` config to control result scan logging. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1293.
 - Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).
 - Speed up recent terminal run history reads when the marker history is large and the requested limit is small.
 - Reduce repeated serialization while applying async status snapshot byte caps (#1288).
