@@ -1228,15 +1228,38 @@ describe("quoteExecutableForShell", () => {
 		);
 	});
 
-	it("leaves a command with a later drive-root executable argument unchanged", () => {
-		const command = "C:\\Program Files\\Tool\\verify C:\\path\\to\\file.exe";
-		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	it("quotes an extensionless spaced executable before a later drive-root argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\Tool\\verify C:\\path\\to\\file.exe", "win32"),
+			"\"C:\\Program Files\\Tool\\verify\" C:\\path\\to\\file.exe",
+		);
+	});
+
+	it("quotes an extensionless spaced executable before a flag argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\Tool\\verify --flag", "win32"),
+			"\"C:\\Program Files\\Tool\\verify\" --flag",
+		);
+	});
+
+	it("quotes an extensionless spaced executable filename before a flag argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\my tool --flag", "win32"),
+			"\"C:\\Program Files\\my tool\" --flag",
+		);
 	});
 
 	it("quotes a spaced executable before a later drive-root executable argument", () => {
 		assert.equal(
 			quoteExecutableForShell("C:\\Program Files\\Tool\\verify.exe C:\\path\\to\\file.exe", "win32"),
 			"\"C:\\Program Files\\Tool\\verify.exe\" C:\\path\\to\\file.exe",
+		);
+	});
+
+	it("quotes a spaced executable filename", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\my tool.exe --flag", "win32"),
+			"\"C:\\Program Files\\my tool.exe\" --flag",
 		);
 	});
 
@@ -1264,8 +1287,25 @@ describe("quoteExecutableForShell", () => {
 		assert.equal(quoteExecutableForShell(command, "win32"), command);
 	});
 
+	it("quotes a shallow spaced executable filename", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\node script.exe", "win32"),
+			"\"C:\\Program Files\\node script.exe\"",
+		);
+	});
+
+	it("leaves ambiguous shell syntax in extensionless commands unchanged", () => {
+		const command = "C:\\Program Files\\Tool\\verify&echo C:\\arg";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
 	it("leaves a spaced executable argument after an executable unchanged", () => {
 		const command = "C:\\tools\\tool.exe C:\\Program Files\\data\\file.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("leaves a spaced executable-looking argument after an extensionless executable unchanged", () => {
+		const command = "C:\\tools\\verify C:\\Program Files\\data\\file.exe";
 		assert.equal(quoteExecutableForShell(command, "win32"), command);
 	});
 

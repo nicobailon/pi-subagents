@@ -1161,11 +1161,26 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	if (/\.(?:exe|bat|cmd|com|ps1)$/i.test(firstToken ?? "")) return command;
 	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?\\[^"<>|&*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
 	const executable = match?.[1];
-	if (!executable || !/\s/.test(executable)) return command;
-	if (/[A-Za-z]:\\/.test(executable.slice(3))) return command;
-	const rest = trimmed.slice(executable.length);
-	const leading = command.slice(0, command.length - trimmed.length);
-	return `${leading}"${executable}"${rest}`;
+	if (executable && /\s/.test(executable) && !/[A-Za-z]:\\/.test(executable.slice(3))) {
+		const rest = trimmed.slice(executable.length);
+		const leading = command.slice(0, command.length - trimmed.length);
+		return `${leading}"${executable}"${rest}`;
+	}
+	const extensionlessSpacedFilenameMatch = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?)(?=\s+--|$)/i);
+	const extensionlessSpacedFilename = extensionlessSpacedFilenameMatch?.[1];
+	if (extensionlessSpacedFilename && /\s/.test(extensionlessSpacedFilename.slice(0, extensionlessSpacedFilename.lastIndexOf("\\"))) && !/[A-Za-z]:\\/.test(extensionlessSpacedFilename.slice(3))) {
+		const rest = trimmed.slice(extensionlessSpacedFilename.length);
+		const leading = command.slice(0, command.length - trimmed.length);
+		return `${leading}"${extensionlessSpacedFilename}"${rest}`;
+	}
+	const extensionlessMatch = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?\\[^"<>|&*?\s\r\n]+)(?=\s|$)/i);
+	const extensionlessExecutable = extensionlessMatch?.[1];
+	if (extensionlessExecutable && /\s/.test(extensionlessExecutable) && !/[A-Za-z]:\\/.test(extensionlessExecutable.slice(3)) && !/\s/.test(extensionlessExecutable.slice(extensionlessExecutable.lastIndexOf("\\") + 1))) {
+		const rest = trimmed.slice(extensionlessExecutable.length);
+		const leading = command.slice(0, command.length - trimmed.length);
+		return `${leading}"${extensionlessExecutable}"${rest}`;
+	}
+	return command;
 }
 
 function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
