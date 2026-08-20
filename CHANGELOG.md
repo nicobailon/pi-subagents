@@ -13,6 +13,9 @@
 - Speed up recent terminal run history reads when the marker history is large and the requested limit is small.
 - Reduce repeated serialization while applying async status snapshot byte caps (#1288).
 
+### Fixed
+- Keep forked subagent sessions out of top-level `pi -c` discovery by storing them under the parent session root. Thanks to [@xz-dev](https://github.com/xz-dev) for #1297.
+
 ## [0.52.1] - 2026-08-20
 
 ### Highlights
