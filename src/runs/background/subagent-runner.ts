@@ -85,7 +85,7 @@ import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
-import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
+import { formatModelAttemptNote, isRetryableModelFailure, recordRetryableModelFailure } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
 	formatSubagentExtensionConflictError,
@@ -1432,8 +1432,8 @@ async function runSingleStepInner(
 		});
 	}
 
-	const candidates = step.modelCandidates && step.modelCandidates.length > 0
-		? step.modelCandidates
+	const candidates = step.modelCandidates !== undefined
+		? step.modelCandidates.length > 0 ? step.modelCandidates : [undefined]
 		: step.model
 			? [step.model]
 			: [undefined];
@@ -1769,7 +1769,9 @@ async function runSingleStepInner(
 			finalResult.finalOutput = startupError;
 			break modelAttemptsLoop;
 		}
-		if (!isRetryableModelFailure(error) || modelIndex === candidates.length - 1) break modelAttemptsLoop;
+		const retryableModelFailure = isRetryableModelFailure(error);
+		if (retryableModelFailure) recordRetryableModelFailure(candidate ?? run.model ?? step.model, error);
+		if (!retryableModelFailure || modelIndex === candidates.length - 1) break modelAttemptsLoop;
 		attemptNotes.push(formatModelAttemptNote(attempt, candidates[modelIndex + 1]));
 		modelIndex += 1;
 		startupAttemptIndex = 0;

@@ -74,6 +74,7 @@ import {
 	buildModelCandidates,
 	formatModelAttemptNote,
 	isRetryableModelFailure,
+	recordRetryableModelFailure,
 } from "../shared/model-fallback.ts";
 import {
 	SUBAGENT_STARTUP_RETRY_DELAYS_MS,
@@ -1861,7 +1862,9 @@ async function runSyncCompletionInner(
 				attempt.error = startupError;
 				break modelAttemptsLoop;
 			}
-			if (!isRetryableModelFailure(result.error) || modelIndex === modelsToTry.length - 1) break modelAttemptsLoop;
+			const retryableModelFailure = isRetryableModelFailure(result.error);
+			if (retryableModelFailure) recordRetryableModelFailure(result.model ?? candidate, result.error);
+			if (!retryableModelFailure || modelIndex === modelsToTry.length - 1) break modelAttemptsLoop;
 			attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[modelIndex + 1]));
 			break;
 		}

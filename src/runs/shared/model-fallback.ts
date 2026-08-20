@@ -1,5 +1,6 @@
 import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
+import { filterFallbackCandidates, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeConfig, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 
 export type { AvailableModelInfo };
@@ -367,7 +368,7 @@ export function buildModelCandidates(
 		seen.add(normalized);
 		candidates.push(normalized);
 	}
-	return candidates;
+	return filterFallbackCandidates(candidates);
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
@@ -422,6 +423,12 @@ export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
 	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+}
+
+export function recordRetryableModelFailure(model: string | undefined, error: string | undefined): void {
+	if (!model || !isRetryableModelFailure(error)) return;
+	const { provider, modelId } = parseModelKey(model);
+	recordModelFailure({ modelId, reason: error, ...(provider ? { provider } : {}) });
 }
 
 /**

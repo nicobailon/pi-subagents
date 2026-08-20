@@ -16,6 +16,7 @@ let exclusions: ModelExclusion[] = [];
 let loaded = false;
 let defaultTTLMs = 24 * 60 * 60_000; // 24 hours, overridable via setDefaultTTL
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistSeq = 0;
 
 /**
  * Override the default exclusion TTL. Invalid or non-positive values are ignored.
@@ -44,7 +45,7 @@ export function flushPersist(): void {
 	const file = getExclusionsFilePath();
 	try {
 		fs.mkdirSync(path.dirname(file), { recursive: true });
-		const tmpPath = `${file}.tmp`;
+		const tmpPath = `${file}.${process.pid}.${persistSeq++}.tmp`;
 		fs.writeFileSync(tmpPath, JSON.stringify({
 			version: 1,
 			exclusions: deduplicate(exclusions),
@@ -76,8 +77,10 @@ function ensureLoaded(): void {
 			exclusions = (data.exclusions ?? []).filter((e: ModelExclusion) => e.expiresAt > now);
 			exclusions = deduplicate(exclusions);
 		}
-	} catch {
-		// File missing, corrupt, or unreadable — start fresh.
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.error(`[model-exclusions] Failed to load exclusions from ${getExclusionsFilePath()}:`, error);
+		}
 	}
 }
 
@@ -122,7 +125,7 @@ export function recordModelFailure(options: {
 	exclusions.unshift(exclusion);
 	exclusions = deduplicate(exclusions);
 	if (exclusions.length > 200) exclusions.length = 200;
-	schedulePersist();
+	flushPersist();
 }
 
 /**

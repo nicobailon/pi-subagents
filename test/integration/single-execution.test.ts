@@ -62,6 +62,7 @@ import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -320,9 +321,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		mockPi.reset();
+		clearExclusions();
 	});
 
 	afterEach(() => {
+		clearExclusions();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		removeTempDir(agentDir);

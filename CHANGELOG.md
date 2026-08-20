@@ -7,6 +7,8 @@
   model information. Thanks to [@srcKod](https://github.com/srcKod) for #1317.
 - Add runtime programmatic agent registration for Pi extensions, with fail-closed
   name and alias collision checks. Thanks to [@fmoda3](https://github.com/fmoda3) for #1310.
+- Skip recently failed fallback models for a TTL-backed window during model
+  fallback selection. Thanks to [@srcKod](https://github.com/srcKod) for #1318.
 - Let agent definitions and `agentOverrides` set a default `outputMode`, while
   call-level output mode stays higher priority. Thanks to [@bbbRye007](https://github.com/bbbRye007) for #1305.
 - Add `context: "profile"` for workflow children that should use the selected

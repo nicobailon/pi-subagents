@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	clearExclusions,
 	filterFallbackCandidates,
 	flushPersist,
 	getExcludedCount,
+	getExclusionsFilePath,
 	isExcluded,
 	parseModelKey,
 	recordModelFailure,
@@ -53,9 +55,9 @@ describe("model exclusions — record & query", () => {
 
 describe("model exclusions — TTL expiry", () => {
 	it("drops an exclusion after its TTL elapses", async () => {
-		recordModelFailure({ modelId: "gpt-4", provider: "openai", ttlMs: 1 });
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", ttlMs: 100 });
 		assert.equal(isExcluded("gpt-4", "openai"), true);
-		await new Promise((r) => setTimeout(r, 20));
+		await new Promise((r) => setTimeout(r, 150));
 		assert.equal(isExcluded("gpt-4", "openai"), false);
 	});
 });
@@ -106,9 +108,16 @@ describe("model exclusions — filtering fallback candidates", () => {
 describe("model exclusions — persistence", () => {
 	it("survives a reload from disk", () => {
 		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "429" });
-		// Force an immediate flush (the store otherwise debounces writes by 5s).
-		flushPersist();
-		// Forget in-memory state, then reload from the persisted file.
+		reloadFromDisk();
+		assert.equal(isExcluded("gpt-4", "openai"), true);
+	});
+
+	it("persists a recorded model failure before process exit", () => {
+		const file = getExclusionsFilePath();
+		fs.rmSync(file, { force: true });
+		reloadFromDisk();
+		recordModelFailure({ modelId: "gpt-4", provider: "openai", reason: "429" });
+		assert.equal(fs.existsSync(file), true);
 		reloadFromDisk();
 		assert.equal(isExcluded("gpt-4", "openai"), true);
 	});
@@ -123,5 +132,20 @@ describe("model exclusions — persistence", () => {
 				resolve();
 			}, 20);
 		});
+	});
+
+	it("reports corrupt persisted exclusions and starts empty", () => {
+		fs.writeFileSync(getExclusionsFilePath(), "not json", "utf-8");
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		console.error = (...args: unknown[]) => errors.push(args);
+		try {
+			reloadFromDisk();
+		} finally {
+			console.error = originalError;
+		}
+		assert.equal(getExcludedCount(), 0);
+		assert.equal(errors.length, 1);
+		assert.match(String(errors[0]?.[0]), /Failed to load exclusions/);
 	});
 });

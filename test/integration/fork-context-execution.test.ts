@@ -6,6 +6,7 @@ import type { MockPi } from "../support/helpers.ts";
 import { createEventBus, createMockPi, createTempDir, events, removeTempDir, tryImport } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
+import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { DEFAULT_FORK_PREAMBLE, INTERCOM_DETACH_REQUEST_EVENT, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 
 interface ExecutorModule {
@@ -106,9 +107,11 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		tempDir = createTempDir("pi-subagent-fork-test-");
 		mockPi.reset();
 		mockPi.onCall({ output: "ok" });
+		clearExclusions();
 	});
 
 	afterEach(() => {
+		clearExclusions();
 		if (originalHome === undefined) delete process.env.HOME;
 		else process.env.HOME = originalHome;
 		if (originalUserProfile === undefined) delete process.env.USERPROFILE;

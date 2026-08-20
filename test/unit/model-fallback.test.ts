@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	buildModelCandidates,
 	fuzzyResolveModel,
 	isContextOverflow,
 	isRetryableModelFailure,
 	normalizeModelSegment,
+	recordRetryableModelFailure,
 	resolveEffectiveSubagentModel,
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-fallback.ts";
+import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
+
+beforeEach(() => clearExclusions());
+afterEach(() => clearExclusions());
 
 describe("model fallback helpers", () => {
 	const availableModels = [
@@ -88,6 +93,24 @@ describe("model fallback helpers", () => {
 	it("builds a deduplicated ordered candidate list", () => {
 		assert.deepEqual(
 			buildModelCandidates("gpt-5-mini", ["openai/gpt-5-mini", "anthropic/claude-sonnet-4", "gpt-5-mini"], availableModels),
+			["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
+		);
+	});
+
+	it("excludes a candidate after a retryable model failure is recorded", () => {
+		recordRetryableModelFailure("openai/gpt-5-mini", "rate limit exceeded");
+
+		assert.deepEqual(
+			buildModelCandidates("gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels),
+			["anthropic/claude-sonnet-4"],
+		);
+	});
+
+	it("does not exclude a candidate after a task or tool failure", () => {
+		recordRetryableModelFailure("openai/gpt-5-mini", "bash failed (exit 1): command not found");
+
+		assert.deepEqual(
+			buildModelCandidates("gpt-5-mini", ["anthropic/claude-sonnet-4"], availableModels),
 			["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
 		);
 	});
