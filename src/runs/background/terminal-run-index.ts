@@ -68,11 +68,16 @@ function removeInvalidMarker(marker: string): void {
 	}
 }
 
-function markerFiles(dir: string): string[] {
+interface MarkerFile {
+	dir: string;
+	name: string;
+}
+
+function markerFiles(dir: string): MarkerFile[] {
 	try {
 		return fs.readdirSync(dir, { withFileTypes: true })
 			.filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-			.map((entry) => path.join(dir, entry.name));
+			.map((entry) => ({ dir, name: entry.name }));
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code === "ENOENT" || code === "ENOTDIR") return [];
@@ -93,12 +98,16 @@ function sessionDirs(asyncDirRoot: string, sessionId: string | undefined): strin
 	}
 }
 
+function recentMarkerFiles(dirs: string[], limit: number): string[] {
+	return dirs.flatMap(markerFiles)
+		.sort((left, right) => right.name.localeCompare(left.name))
+		.slice(0, limit)
+		.map((marker) => path.join(marker.dir, marker.name));
+}
+
 export function readRecentTerminalRunIndex(asyncDirRoot: string, options: { sessionId?: string; limit?: number } = {}): string[] {
 	const limit = options.limit === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(options.limit));
-	const candidates = sessionDirs(asyncDirRoot, options.sessionId)
-		.flatMap(markerFiles)
-		.sort((left, right) => path.basename(right).localeCompare(path.basename(left)))
-		.slice(0, limit);
+	const candidates = recentMarkerFiles(sessionDirs(asyncDirRoot, options.sessionId), limit);
 	const runIds: string[] = [];
 	const seen = new Set<string>();
 	for (const marker of candidates) {
