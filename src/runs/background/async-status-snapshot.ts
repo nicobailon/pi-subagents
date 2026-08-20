@@ -227,12 +227,21 @@ function snapshotBytes(snapshot: AsyncStatusSnapshotV1): number {
 }
 
 function enforceByteLimit(snapshot: AsyncStatusSnapshotV1): void {
-	while (snapshot.runs.length > 0 && snapshotBytes(snapshot) > snapshot.caps.maxSerializedBytes) {
-		snapshot.runs.pop();
-		snapshot.omitted.runs += 1;
-		snapshot.omitted.byteLimitExceeded = true;
+	if (snapshotBytes(snapshot) <= snapshot.caps.maxSerializedBytes) return;
+	snapshot.omitted.byteLimitExceeded = true;
+	const runs = snapshot.runs;
+	const initialOmittedRuns = snapshot.omitted.runs;
+	let lower = 0;
+	let upper = Math.max(0, runs.length - 1);
+	while (lower < upper) {
+		const retained = Math.ceil((lower + upper) / 2);
+		snapshot.runs = runs.slice(0, retained);
+		snapshot.omitted.runs = initialOmittedRuns + runs.length - retained;
+		if (snapshotBytes(snapshot) <= snapshot.caps.maxSerializedBytes) lower = retained;
+		else upper = retained - 1;
 	}
-	if (snapshotBytes(snapshot) > snapshot.caps.maxSerializedBytes) snapshot.omitted.byteLimitExceeded = true;
+	snapshot.runs = runs.slice(0, lower);
+	snapshot.omitted.runs = initialOmittedRuns + runs.length - lower;
 }
 
 export function buildAsyncStatusSnapshot(jobs: Iterable<AsyncJobState>, options: AsyncStatusSnapshotOptions = {}): AsyncStatusSnapshotV1 {

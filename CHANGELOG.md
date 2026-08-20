@@ -5,6 +5,7 @@
 ### Changed
 - Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).
 - Speed up recent terminal run history reads when the marker history is large and the requested limit is small.
+- Reduce repeated serialization while applying async status snapshot byte caps (#1288).
 
 ## [0.52.1] - 2026-08-20
 
