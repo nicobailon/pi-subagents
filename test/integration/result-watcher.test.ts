@@ -2186,4 +2186,99 @@ describe("result watcher", () => {
 		}
 	});
 
+	describe("resultScanLogging", () => {
+		const slowScan = () => {
+			const deadline = Date.now() + 700;
+			while (Date.now() < deadline) { /* busy-wait: force elapsed past 500ms threshold */ }
+			return new Set<string>();
+		};
+
+		const captureScanErrors = (): { errors: string[]; restore: () => void } => {
+			const errors: string[] = [];
+			const originalError = console.error;
+			console.error = (...args: unknown[]) => {
+				const message = args.map(String).join(" ");
+				if (message.includes("Subagent result scan")) errors.push(message);
+			};
+			return { errors, restore: () => { console.error = originalError; } };
+		};
+
+		const runScan = (deps: Record<string, unknown>) => {
+			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scanlog-"));
+			const state = createState();
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				observedCompletionRunIds: slowScan,
+				...deps,
+			} as Parameters<typeof createRawResultWatcher>[4]);
+			try {
+				watcher.primeExistingResults();
+			} finally {
+				watcher.stopResultWatcher();
+				fs.rmSync(resultsDir, { recursive: true, force: true });
+			}
+		};
+
+		it('logs empty slow scans with the default "all" mode', () => {
+			const { errors, restore } = captureScanErrors();
+			try {
+				runScan({});
+				assert.equal(errors.length, 1);
+				assert.match(errors[0], /inspected 0 indexed result file\(s\), scheduled 0/);
+			} finally {
+				restore();
+			}
+		});
+
+		it('silences empty slow scans under "activity"', () => {
+			const { errors, restore } = captureScanErrors();
+			try {
+				runScan({ resultScanLogging: "activity" });
+				assert.equal(errors.length, 0);
+			} finally {
+				restore();
+			}
+		});
+
+		it('keeps slow scans that found work under "activity"', () => {
+			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scanlog-work-"));
+			const state = createState();
+			state.currentSessionId = "session-current";
+			writeIndexedResult(path.join(resultsDir, "activity-run.json"), { id: "activity-run", sessionId: "session-current", runId: "activity-run", success: true, summary: "done" });
+			const { errors, restore } = captureScanErrors();
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				observedCompletionRunIds: slowScan,
+				resultScanLogging: "activity",
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.ok(errors.length >= 1, "expected a scan log for a scan that found work");
+				assert.match(errors[0], /inspected [1-9]/);
+			} finally {
+				watcher.stopResultWatcher();
+				restore();
+				fs.rmSync(resultsDir, { recursive: true, force: true });
+			}
+		});
+
+		it('silences all slow scans under "off"', () => {
+			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scanlog-off-"));
+			const state = createState();
+			state.currentSessionId = "session-current";
+			writeIndexedResult(path.join(resultsDir, "off-run.json"), { id: "off-run", sessionId: "session-current", runId: "off-run", success: true, summary: "done" });
+			const { errors, restore } = captureScanErrors();
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				observedCompletionRunIds: slowScan,
+				resultScanLogging: "off",
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.equal(errors.length, 0);
+			} finally {
+				watcher.stopResultWatcher();
+				restore();
+				fs.rmSync(resultsDir, { recursive: true, force: true });
+			}
+		});
+	});
+
 });

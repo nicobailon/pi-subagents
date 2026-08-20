@@ -2026,6 +2026,13 @@ export interface ExtensionConfig {
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
 	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;
 	intercomBridge?: IntercomBridgeConfig;
+	/** Control how slow result-index scans are logged. Defaults to \"all\".
+	 *  - \"all\": log every slow scan, including scans that find nothing.
+	 *  - \"activity\": log only slow scans that found or scheduled work. Silences
+	 *    the periodic healthy rescan that inspects zero files while no async runs
+	 *    are pending, which otherwise spams the session transcript.
+	 *  - \"off\": never log slow result-index scans. */
+	resultScanLogging?: "all" | "activity" | "off";
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
 	scheduledRuns?: ScheduledRunsConfig;
 	/** Durable mission behavior. Missions are automatic by default; set enabled:false to disable auto-create. Explicit mission actions/fields still work. */

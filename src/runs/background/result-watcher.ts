@@ -57,6 +57,8 @@ type ResultWatcherDeps = {
 	coalesceDelayMs?: number;
 	/** Returns true while a durable completion source needs periodic delivery checks. */
 	hasDeliveryDemand?: () => boolean;
+	/** Control how slow result-index scans are logged. Defaults to \"all\". */
+	resultScanLogging?: "all" | "activity" | "off";
 	platform?: NodeJS.Platform;
 };
 
@@ -604,6 +606,12 @@ export function createResultWatcher(
 	const logScanStats = (stats: ResultScanStats) => {
 		const elapsed = Date.now() - stats.startedAt;
 		if (elapsed < SLOW_RESULT_SCAN_MS) return;
+		if (deps.resultScanLogging === "off") return;
+		// A scan that inspected and scheduled nothing is a quiet no-op (e.g. the
+		// healthy periodic rescan while no async runs are pending). Under
+		// "activity", skip it so empty scans do not burn context tokens in the
+		// session transcript.
+		if (deps.resultScanLogging === "activity" && stats.files === 0 && stats.scheduled === 0) return;
 		console.error(`Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`);
 	};
 	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {

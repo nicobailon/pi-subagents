@@ -164,6 +164,16 @@ Blocking `subagent_wait({ id: "..." })` keeps the current tool call open until t
 
 This is different from `waitTool.enabled=false`, which returns immediately without registering any future wake. Provider items remain available only to blocking fleet-wide waits; non-blocking subscriptions require one async or remembered detached foreground run id.
 
+## `resultScanLogging`
+
+```json
+{ "resultScanLogging": "activity" }
+```
+
+Controls how slow result-index scans are logged. Defaults to `"all"`; valid values are `"all"`, `"activity"`, and `"off"`.
+
+The watcher logs `Subagent result scan inspected … scheduled …` through `console.error` whenever a result-index scan passes the slow threshold (500ms). With `"all"` (default) every slow scan is logged, including the periodic healthy rescan that inspects zero files while no async runs are pending. Those empty scans add noise to the session transcript with no signal; choose `"activity"` to log only scans that inspected or scheduled actual work, or `"off"` to silence slow-scan logging entirely. `"off"` does not disable result delivery or the watcher itself, only its slow-scan log line.
+
 ## `forceTopLevelAsync`
 
 ```json
