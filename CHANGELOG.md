@@ -16,6 +16,8 @@
 - Quote only confidently identified leading Windows executable paths in acceptance verification commands. Thanks to [@srcKod](https://github.com/srcKod) for #1294.
 
 ### Changed
+- Show bounded workflow progress in Fleet detail views while keeping workflow
+  parents as the only actionable async items (#1304).
 - Make `/council` easier to supervise with structured advisor contracts,
   aggregate pass receipts, and visible pass checkpoints (#1301).
 - Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).

@@ -776,6 +776,55 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("renders bounded workflow progress rows under the workflow parent", () => {
+		const state = stateForTest();
+		const workflowJob = {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			sessionId: "session-current",
+			status: "running" as const,
+			mode: "workflow" as const,
+			startedAt: 10,
+			updatedAt: 20,
+			steps: [
+				{ agent: "scout", workflowKey: "scan", phase: "Plan", label: "Find seams", status: "complete" as const, index: 0, tokens: { input: 10, output: 5, total: 15 } },
+				{ agent: "reviewer", workflowKey: "review", phase: "Review", status: "running" as const, index: 1, currentTool: "grep", tokens: { input: 20, output: 5, total: 25 } },
+				{ agent: "tester", workflowKey: "test", phase: "Verify", status: "pending" as const, index: 2 },
+			],
+		};
+		state.asyncJobs.set("workflow-1", workflowJob);
+		state.fleetJobs!.set("workflow-1", workflowJob);
+
+		assert.deepEqual(collectFleetStatusEntries(state).map((entry) => entry.key), ["async:workflow-1"]);
+		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), ["async:workflow-1"]);
+
+		let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				requestRender() {},
+				notify() {},
+				theme,
+			},
+		} as unknown as ExtensionContext;
+		const fleet = new SubagentFleetStatus(state, () => {}, { refreshMs: 60_000, maxAgentRows: 8 });
+		try {
+			fleet.setContext(ctx);
+			const component = widgetFactory!({ requestRender() {}, focusedComponent: Object.create(Editor.prototype) as Editor }, theme);
+			assert.deepEqual(fleet.handleKey("\x1b[B"), { consume: true });
+			const lines = component.render(140).join("\n");
+			assert.match(lines, /workflow · running/);
+			assert.match(lines, /Plan: scan · Find seams \(scout\) · complete/);
+			assert.match(lines, /Review: review \(reviewer\) · running · tool grep/);
+			assert.match(lines, /Verify: test \(tester\) · pending/);
+		} finally {
+			fleet.dispose();
+		}
+	});
+
 	it("renders recursive nested runs and steps within the existing row budget", () => {
 		const state = stateForTest();
 		state.asyncJobs.set("supervisor", {

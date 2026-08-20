@@ -324,7 +324,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
-		const widgetStateBefore = widgetRenderKey(job);
+		const widgetExpanded = state.lastUiContext?.hasUI ? state.lastUiContext.ui.getToolsExpanded?.() ?? false : false;
+		const widgetStateBefore = widgetRenderKey(job, widgetExpanded);
 		let nestedRefreshFailed = false;
 		const refreshNestedProjection = () => {
 			try {
@@ -422,7 +423,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						scheduleCleanup(job.asyncId);
 					}
 				}
-				return widgetRenderKey(job) !== widgetStateBefore;
+				return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 			}
 			if (job.status === "queued") {
 				job.status = "running";
@@ -439,7 +440,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			rememberFleetJob(state, job);
 			if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
 		}
-		return widgetRenderKey(job) !== widgetStateBefore;
+		return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 	};
 
 	const scheduleJobRefresh = (asyncId: string, delayMs = EVENT_REFRESH_DEBOUNCE_MS) => {

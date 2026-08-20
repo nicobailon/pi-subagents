@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { row } from "../../src/tui/render-helpers.ts";
-import { renderSubagentResult, truncLine } from "../../src/tui/render.ts";
+import { renderSubagentResult, truncLine, widgetRenderKey } from "../../src/tui/render.ts";
+import type { AsyncJobState } from "../../src/shared/types.ts";
 
 const theme = {
 	fg(_name: string, text: string): string {
@@ -63,6 +64,53 @@ test("truncLine respects grapheme display width", () => {
 
 test("truncLine emits no marker at zero width", () => {
 	assert.equal(truncLine("abcdef", 0), "");
+});
+
+test("widget render keys keep compact payloads quiet and expanded payloads fresh", () => {
+	const job: AsyncJobState = {
+		asyncId: "workflow-1",
+		asyncDir: "/tmp/workflow-1",
+		status: "running",
+		mode: "workflow",
+		startedAt: 100,
+		updatedAt: 200,
+		steps: [{
+			agent: "reviewer",
+			workflowKey: "review",
+			status: "running",
+			currentTool: "grep",
+			recentOutput: ["started", "x".repeat(20_000)],
+			recentTools: [
+				{ tool: "read", args: "hidden", endMs: 100 },
+				{ tool: "grep", args: "visible", endMs: 150 },
+			],
+		}],
+	};
+	const noisy = structuredClone(job);
+	noisy.steps![0]!.recentOutput = ["started", "y".repeat(20_000)];
+	noisy.steps![0]!.recentTools = [
+		{ tool: "read", args: "changed-hidden", endMs: 100 },
+		{ tool: "grep", args: "visible", endMs: 150 },
+	];
+	assert.equal(widgetRenderKey(noisy), widgetRenderKey(job));
+	assert.notEqual(widgetRenderKey(noisy, true), widgetRenderKey(job, true));
+
+	const expandedVisibleChange = structuredClone(job);
+	expandedVisibleChange.steps![0]!.recentTools![1]!.args = "changed-visible";
+	assert.equal(widgetRenderKey(expandedVisibleChange), widgetRenderKey(job));
+	assert.notEqual(widgetRenderKey(expandedVisibleChange, true), widgetRenderKey(job, true));
+
+	const visibleChange = structuredClone(job);
+	visibleChange.steps![0]!.currentTool = "bash";
+	assert.notEqual(widgetRenderKey(visibleChange), widgetRenderKey(job));
+
+	const visibleArgsChange = structuredClone(job);
+	visibleArgsChange.steps![0]!.currentToolArgs = "{\"pattern\":\"workflow\"}";
+	assert.notEqual(widgetRenderKey(visibleArgsChange), widgetRenderKey(job));
+
+	const nestedVisibleChange = structuredClone(job);
+	nestedVisibleChange.nestedChildren = [{ id: "nested-1", parentRunId: "workflow-1", depth: 1, path: [{ runId: "workflow-1" }], state: "failed", agent: "nested", error: "failed" }];
+	assert.notEqual(widgetRenderKey(nestedVisibleChange), widgetRenderKey(job));
 });
 
 test("multiline rendering omits two-column graphemes at one-column width", () => {

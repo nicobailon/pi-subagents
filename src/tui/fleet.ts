@@ -6,7 +6,7 @@ import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Compo
 import { snapshotExternalRuns, type ExternalRun } from "../api/external-runs.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../shared/formatters.ts";
-import { DIRS, type AsyncJobState, type Details, type FleetKeybindingAction, type FleetKeybindingsConfig, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
+import { DIRS, type AsyncJobState, type AsyncJobStep, type Details, type FleetKeybindingAction, type FleetKeybindingsConfig, type ForegroundChildControl, type ForegroundResumeChild, type ForegroundResumeRun, type ForegroundRunControl, type SubagentState } from "../shared/types.ts";
 import { decodeUtf8Tail } from "../shared/utf8.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
@@ -494,15 +494,68 @@ function externalElapsedEnd(run: ExternalRun): number {
 	return terminal ? (run.endedAt ?? run.updatedAt ?? Date.now()) : Date.now();
 }
 
+function workflowStepLabel(step: AsyncJobStep, index: number): string {
+	const key = step.workflowKey ?? `step ${index + 1}`;
+	const label = step.label && step.label !== key ? ` · ${step.label}` : "";
+	const phase = step.phase ? `${step.phase}: ` : "";
+	return `${phase}${key}${label} (${step.agent})`;
+}
+
+function workflowStepActivity(step: AsyncJobStep): string | undefined {
+	if (step.currentTool) return `tool ${step.currentTool}`;
+	if (step.currentPath) return shortenPath(step.currentPath);
+	if (step.activityState === "needs_attention") return "needs attention";
+	if (step.activityState === "active_long_running") return "long-running";
+	if (step.turnCount !== undefined) return `${step.turnCount} turns`;
+	if (step.toolCount !== undefined) return `${step.toolCount} tools`;
+	return undefined;
+}
+
+function visibleWorkflowProgressSteps(steps: AsyncJobStep[], visibleLimit: number): Array<{ step: AsyncJobStep; index: number } | { hidden: number }> {
+	if (steps.length <= visibleLimit) return steps.map((step, index) => ({ step, index }));
+	const selected = new Set<number>();
+	for (const [index, step] of steps.entries()) {
+		if (step.status !== "complete" && step.status !== "completed") selected.add(index);
+		if (selected.size >= visibleLimit) break;
+	}
+	for (let index = steps.length - 1; index >= 0 && selected.size < visibleLimit; index--) selected.add(index);
+	const visible = [...selected].sort((left, right) => left - right).map((index) => ({ step: steps[index]!, index }));
+	return [{ hidden: steps.length - visible.length }, ...visible];
+}
+
+function workflowProgressLines(steps: AsyncJobStep[] | undefined): string[] {
+	if (!steps?.length) return [];
+	const lines = ["Workflow progress:"];
+	for (const row of visibleWorkflowProgressSteps(steps, 8)) {
+		if ("hidden" in row) {
+			lines.push(`  +${row.hidden} hidden workflow steps`);
+			continue;
+		}
+		const activity = workflowStepActivity(row.step);
+		const context = contextModeLabel(row.step.context);
+		const details = [row.step.status, activity, context, row.step.tokens?.total !== undefined ? formatTokens(row.step.tokens.total) : undefined].filter(Boolean).join(" · ");
+		lines.push(`  ${row.index + 1}. ${workflowStepLabel(row.step, row.index)}${details ? ` — ${details}` : ""}`);
+	}
+	return lines;
+}
+
 function asyncDetail(item: Extract<FleetItem, { kind: "async" }>, state: SubagentState): string[] {
 	const status = readStatus(item.run.asyncDir);
 	if (status) {
 		const trackedJob = state.fleetJobs?.get(item.runId) ?? state.asyncJobs.get(item.runId);
-		return formatAsyncRunTranscript(status, item.run.asyncDir, {
+		const lines = formatAsyncRunTranscript(status, item.run.asyncDir, {
 			index: item.index,
 			lines: TRANSCRIPT_LINES,
 			sessionRoots: uniquePaths([...(state.trustedSessionRoots ?? []), trackedJob?.sessionRoot]),
 		}).split("\n");
+		if (status.mode === "workflow" && item.index === undefined) {
+			const progress = workflowProgressLines((status.steps ?? item.run.steps) as AsyncJobStep[]);
+			if (progress.length) {
+				const modeIndex = lines.findIndex((line) => line.startsWith("Mode:"));
+				lines.splice(modeIndex >= 0 ? modeIndex + 1 : 0, 0, "", ...progress);
+			}
+		}
+		return lines;
 	}
 	const outputPath = item.index !== undefined ? path.join(item.run.asyncDir, `output-${item.index}.log`) : undefined;
 	return [

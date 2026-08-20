@@ -486,26 +486,61 @@ describe("native subagent fleet", () => {
 	});
 
 	it("shows a scripted workflow as one fleet parent instead of unrelated children", () => {
-		const state = stateForTest();
-		state.fleetJobs = new Map([["workflow-1", {
-			asyncId: "workflow-1",
-			asyncDir: path.join(os.tmpdir(), "workflow-1"),
-			sessionId: "session-current",
-			status: "running",
-			mode: "workflow",
-			agents: ["scan", "review"],
-			steps: [
-				{ agent: "scan", workflowKey: "scan", status: "completed", index: 0 },
-				{ agent: "review", workflowKey: "review", status: "running", index: 1 },
-			],
-			workflow: { trace: [], emits: ["reviewing"], console: [] },
-			startedAt: 10,
-			updatedAt: 20,
-		}]]);
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-workflow-parent-"));
+		try {
+			const state = stateForTest();
+			const asyncDir = path.join(root, "workflow-1");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-1",
+				sessionId: "session-current",
+				mode: "workflow",
+				state: "running",
+				startedAt: 10,
+				lastUpdate: 20,
+				steps: [
+					{ agent: "scan", workflowKey: "scan", phase: "Plan", label: "Find seams", status: "completed", index: 0 },
+					{ agent: "review", workflowKey: "review", phase: "Review", status: "running", index: 1, currentTool: "grep" },
+				],
+			}, null, 2));
+			state.fleetJobs = new Map([["workflow-1", {
+				asyncId: "workflow-1",
+				asyncDir,
+				sessionId: "session-current",
+				status: "running",
+				mode: "workflow",
+				agents: ["scan", "review"],
+				steps: [
+					{ agent: "scan", workflowKey: "scan", status: "completed", index: 0 },
+					{ agent: "review", workflowKey: "review", status: "running", index: 1 },
+				],
+				workflow: { trace: [], emits: ["reviewing"], console: [] },
+				startedAt: 10,
+				updatedAt: 20,
+			}]]);
 
-		const snapshot = collectFleetSnapshot(state);
-		assert.deepEqual(snapshot.items.map((item) => item.key), ["async:workflow-1"]);
-		assert.equal(snapshot.items[0]?.agent, "workflow");
+			const snapshot = collectFleetSnapshot(state);
+			assert.deepEqual(snapshot.items.map((item) => item.key), ["async:workflow-1"]);
+			assert.equal(snapshot.items[0]?.agent, "workflow");
+
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+				theme as never,
+				state,
+				() => {},
+				{ initialKey: "async:workflow-1", refreshMs: 60_000 },
+			);
+			try {
+				const lines = component.render(120).join("\n");
+				assert.match(lines, /Workflow progress:/);
+				assert.match(lines, /Plan: scan · Find seams \(scan\) — completed/);
+				assert.match(lines, /Review: review \(review\) — running · tool grep/);
+			} finally {
+				component.dispose();
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("shows selectable workflow children only when multiple are live", async () => {
