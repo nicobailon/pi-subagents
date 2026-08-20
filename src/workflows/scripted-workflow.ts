@@ -263,7 +263,16 @@ function validateRunCall(key, params, label, fingerprints) {
   if (params.gate !== undefined && (typeof params.gate !== "string" || !params.gate.trim())) throw new Error(label + " gate must be a non-empty command string.");
   if (params.gate !== undefined && params.acceptance !== undefined) throw new Error(label + " gate cannot be combined with acceptance; use one gate command or acceptance.verify.");
   if (params.gate !== undefined && params.resume !== undefined) throw new Error(label + " gate is not supported with retained resume.");
-  if (params.resume !== undefined && (typeof params.resume !== "string" || !params.resume.trim())) throw new Error(label + " resume must be a non-empty retained run id.");
+  if (params.resume !== undefined && typeof params.resume !== "string") {
+    const reference = params.resume;
+    if (!reference || typeof reference !== "object" || Array.isArray(reference)) throw new Error(label + " resume must be a retained run id or keyed workflow receipt reference.");
+    const fields = Object.keys(reference);
+    if (fields.some((field) => field !== "workflowRunId" && field !== "key" && field !== "latest")) throw new Error(label + " keyed resume contains unsupported fields.");
+    if (typeof reference.workflowRunId !== "string" || !reference.workflowRunId.trim()) throw new Error(label + " keyed resume workflowRunId must be non-empty.");
+    if (typeof reference.key !== "string" || !runKeyPattern.test(reference.key)) throw new Error(label + " keyed resume key is invalid.");
+    if (reference.latest !== true) throw new Error(label + " keyed resume requires latest: true.");
+  }
+  if (typeof params.resume === "string" && !params.resume.trim()) throw new Error(label + " resume must be a non-empty retained run id.");
   if (params.resume !== undefined && params.agent !== undefined) throw new Error(label + " resume and agent are mutually exclusive.");
   if (params.resume !== undefined && (typeof params.task !== "string" || !params.task.trim())) throw new Error(label + " resume requires a non-empty task follow-up.");
   assertJsonValue(params, label + " params");
@@ -538,6 +547,11 @@ export interface WorkflowScriptChildResult {
 	error?: string;
 	detached?: boolean;
 	structuredOutput?: unknown;
+	requestedContext?: "fresh" | "fork";
+	resolvedContext?: "fresh" | "fork" | "mixed";
+	outputReference?: string;
+	resumability?: { state: "resumable" } | { state: "not-resumable"; reason: string };
+	continuation?: { runIds: string[] };
 	artifactPaths: string[];
 	results?: unknown[];
 }
@@ -570,6 +584,17 @@ export interface WorkflowSteerResult {
 	error?: string;
 }
 
+export interface WorkflowReceiptResumeReference {
+	workflowRunId: string;
+	key: string;
+	latest: true;
+}
+
+export interface WorkflowResolvedResumeReference {
+	runId: string;
+	runIds?: string[];
+}
+
 export interface WorkflowScriptResult {
 	value: unknown;
 	emits: unknown[];
@@ -596,6 +621,7 @@ export interface RunWorkflowScriptOptions {
 	signal?: AbortSignal;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean }) => Promise<WorkflowScriptChildResult>;
+	resolveResume?: (reference: WorkflowReceiptResumeReference, signal: AbortSignal) => string | WorkflowResolvedResumeReference | Promise<string | WorkflowResolvedResumeReference>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	steer?: (key: string, message: string, options: WorkflowSteerOptions, signal: AbortSignal) => Promise<WorkflowSteerResult>;
 	state?: {
@@ -614,6 +640,16 @@ function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
 	if (!isRecord(value)) return false;
 	const prototype = Object.getPrototypeOf(value);
 	return prototype === null || prototype === Object.prototype;
+}
+
+function parseWorkflowResumeReference(value: unknown): WorkflowReceiptResumeReference | undefined {
+	if (!isRecord(value)) return undefined;
+	const fields = Object.keys(value);
+	if (fields.some((field) => field !== "workflowRunId" && field !== "key" && field !== "latest")) throw new Error("keyed resume contains unsupported fields.");
+	if (typeof value.workflowRunId !== "string" || !value.workflowRunId.trim()) throw new Error("keyed resume workflowRunId must be non-empty.");
+	const key = validateKey(value.key, "keyed resume");
+	if (value.latest !== true) throw new Error("keyed resume requires latest: true.");
+	return { workflowRunId: value.workflowRunId.trim(), key, latest: true };
 }
 
 function omitUndefinedWorkflowValues(value: unknown, seen = new Set<object>()): unknown {
@@ -984,9 +1020,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (params.gate !== undefined && params.resume !== undefined) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') gate is not supported with retained resume.`)));
 			}
-			if (params.resume !== undefined && (typeof params.resume !== "string" || !params.resume.trim())) {
-				return respond(Promise.reject(new Error(`runs.run('${key}') resume must be a non-empty retained run id.`)));
+			let resumeReference: WorkflowReceiptResumeReference | undefined;
+			try {
+				if (params.resume !== undefined && typeof params.resume !== "string") resumeReference = parseWorkflowResumeReference(params.resume);
+			} catch (error) {
+				return respond(Promise.reject(new Error(`runs.run('${key}') ${error instanceof Error ? error.message : String(error)}`)));
 			}
+			if (typeof params.resume === "string" && !params.resume.trim()) return respond(Promise.reject(new Error(`runs.run('${key}') resume must be a non-empty retained run id.`)));
 			if (params.resume !== undefined && params.agent !== undefined) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') resume and agent are mutually exclusive.`)));
 			}
@@ -1033,15 +1073,40 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				});
 				if (batch) batchAdmissions.set(batch.id, admission);
 			}
-			const promise = admission.then(() => {
+			let resolvedResumeLineage: string[] | undefined;
+			const promise = admission.then(async () => {
 				if (settled || finishing || stoppedLaunches.has(key)) {
 					const reason = childController.signal.reason;
 					const text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.";
 					return { key, ok: false, output: text, error: text, artifactPaths: [] };
 				}
-				return options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true });
+				const resolvedResumeValue = resumeReference
+					? await Promise.resolve().then(() => {
+						if (!options.resolveResume) throw new Error("Keyed workflow receipt resume is unavailable in this host.");
+						return options.resolveResume(resumeReference, childController.signal);
+					})
+					: undefined;
+				const resolvedResume = typeof resolvedResumeValue === "string"
+					? resolvedResumeValue
+					: isRecord(resolvedResumeValue) && typeof resolvedResumeValue.runId === "string"
+						? resolvedResumeValue.runId
+						: undefined;
+				if (resumeReference && (typeof resolvedResume !== "string" || !resolvedResume.trim())) throw new Error("Keyed workflow receipt resume resolved without a retained run id.");
+				const resolvedResumeId = resolvedResume?.trim();
+				if (isRecord(resolvedResumeValue)) {
+					const lineage = Array.isArray(resolvedResumeValue.runIds)
+						? resolvedResumeValue.runIds.filter((runId): runId is string => typeof runId === "string" && Boolean(runId.trim())).map((runId) => runId.trim())
+						: [];
+					resolvedResumeLineage = [...new Set(lineage.length ? lineage : [resolvedResumeId!])];
+					if (resolvedResumeLineage.at(-1) !== resolvedResumeId) resolvedResumeLineage.push(resolvedResumeId!);
+				}
+				const launchParams = resolvedResumeId ? { ...params, resume: resolvedResumeId } : params;
+				return options.launch(key, { ...launchParams, async: launchParams.async ?? false }, childController.signal, { admitted: true });
 			}).then((result) => {
-				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
+				let normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
+				if (resolvedResumeLineage?.length && normalized.runId) {
+					normalized = { ...normalized, continuation: { runIds: [...new Set([...resolvedResumeLineage, normalized.runId])] } };
+				}
 				if (stoppedLaunches.has(key)) return normalized;
 				children.set(key, normalized);
 				const state = normalized.ok ? "completed" : normalized.detached ? "detached" : "failed";

@@ -169,6 +169,53 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(launchParams?.intercomBridge, { mode: "off" });
 	});
 
+	it("resolves a keyed workflow receipt before launching a retained child", async () => {
+		let launchParams: Record<string, unknown> | undefined;
+		let resolvedReference: unknown;
+		const result = await runWorkflowScript({
+			script: `return runs.run("cross-review", { resume: { workflowRunId: "workflow-1", key: "advisor", latest: true }, task: "Continue" });`,
+			resolveResume(reference) {
+				resolvedReference = reference;
+				return { runId: "retained-run", runIds: ["ancestor-run", "retained-run"] };
+			},
+			async launch(key, params) {
+				launchParams = params;
+				return { key, ok: true, runId: "continued-run", output: "done", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+
+		assert.deepEqual(resolvedReference, { workflowRunId: "workflow-1", key: "advisor", latest: true });
+		assert.deepEqual(launchParams, { resume: "retained-run", task: "Continue", async: false });
+		assert.equal((result.value as { runId?: string }).runId, "continued-run");
+		assert.deepEqual((result.value as { continuation?: { runIds?: string[] } }).continuation?.runIds, ["ancestor-run", "retained-run", "continued-run"]);
+	});
+
+	it("fails closed for invalid or unavailable keyed workflow receipt resume", async () => {
+		for (const resume of [
+			`{ workflowRunId: "workflow-1", key: "advisor", latest: false }`,
+			`{ workflowRunId: "workflow-1", key: "bad key", latest: true }`,
+			`{ workflowRunId: "workflow-1", key: "advisor", latest: true, extra: true }`,
+		]) {
+			await assert.rejects(
+				runWorkflowScript({
+					script: `return runs.run("cross-review", { resume: ${resume}, task: "Continue" });`,
+					async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+					async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+				}),
+				(error: unknown) => error instanceof WorkflowScriptError && /keyed resume/.test(error.message),
+			);
+		}
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return runs.run("cross-review", { resume: { workflowRunId: "workflow-1", key: "advisor", latest: true }, task: "Continue" });`,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /unavailable in this host/.test(error.message),
+		);
+	});
+
 	it("waits for every runs.all child and returns ordinary failures in input order", async () => {
 		let delayedFinished = false;
 		let delayedAborted = false;

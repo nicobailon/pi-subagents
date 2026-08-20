@@ -71,6 +71,27 @@ export interface WorkflowGraphSnapshot {
 	currentNodeId?: string;
 }
 
+export type WorkflowReceiptState = "complete" | "failed" | "paused" | "stopped";
+
+export interface WorkflowReceiptEntry {
+	key: string;
+	agent?: string;
+	requestedContext?: "fresh" | "fork";
+	resolvedContext?: "fresh" | "fork" | "mixed";
+	latestRunId?: string;
+	resumability: { state: "resumable" } | { state: "not-resumable"; reason: string };
+	outputReference?: string;
+	continuation: { runIds: string[] };
+}
+
+export interface WorkflowReceipt {
+	version: 1;
+	workflowRunId: string;
+	state: WorkflowReceiptState;
+	createdAt: number;
+	entries: Record<string, WorkflowReceiptEntry>;
+}
+
 export interface SavedOutputReference {
 	path: string;
 	bytes: number;
@@ -1101,6 +1122,8 @@ export interface Details {
 		}>;
 		emits: unknown[];
 		console: Array<{ level: "log" | "info" | "warn" | "error"; text: string }>;
+		/** Terminal keyed child receipt. Async workflows also persist it beside status.json. */
+		receipt?: WorkflowReceipt;
 	};
 	chatProgress?: {
 		mode: "off" | "live-card";

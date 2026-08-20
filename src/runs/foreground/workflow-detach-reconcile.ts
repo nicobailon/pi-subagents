@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { getSingleResultOutput, readStatus } from "../../shared/utils.ts";
 import {
 	DIRS,
@@ -13,6 +12,8 @@ import {
 } from "../../shared/types.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
+import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
+import { readWorkflowReceipt, workflowReceiptPath, writeWorkflowReceipt, type WorkflowReceipt } from "../../workflows/workflow-receipt.ts";
 
 function cloneWorkflowStatus(status: AsyncStatus): AsyncStatus {
 	return {
@@ -97,7 +98,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 	}));
 }
 
-function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>): Record<string, unknown> {
+function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string, existing?: Record<string, unknown>, receipt?: WorkflowReceipt): Record<string, unknown> {
 	const sessionId = status.sessionId ?? (typeof existing?.sessionId === "string" ? existing.sessionId : undefined);
 	const summary = status.state === "complete"
 		? `Workflow completed after detached child ${childRunId} finished.`
@@ -118,11 +119,56 @@ function publishedWorkflowResult(status: AsyncStatus, childRunId: string, result
 		timestamp: Date.now(),
 		results: workflowResultChildren(status, childRunId, result, existing?.results),
 		workflow: status.workflow,
+		...(receipt ? { workflowReceipt: { path: path.join(asyncDir, "workflow-receipt.json"), receipt } } : {}),
 		asyncDir,
 		cwd: status.cwd,
 		sessionId,
 		completionOwnerId: status.completionOwnerId,
 	};
+}
+
+function reconcileWorkflowReceipt(status: AsyncStatus, childRunId: string, result: SingleResult, asyncDir: string): WorkflowReceipt | undefined {
+	const receiptPath = workflowReceiptPath(DIRS.async, status.runId);
+	if (!fs.existsSync(receiptPath)) return undefined;
+	const receipt = readWorkflowReceipt(DIRS.async, status.runId);
+	const step = status.steps?.find((candidate) => candidate.runId === childRunId);
+	const key = step?.workflowKey;
+	if (!key) throw new Error(`Workflow receipt '${status.runId}' cannot identify detached child '${childRunId}' by stable key.`);
+	const entry = receipt.entries[key];
+	if (!entry) throw new Error(`Workflow receipt '${status.runId}' has no detached child key '${key}'.`);
+	let resumability: typeof entry.resumability;
+	try {
+		const target = resolveAsyncResumeTarget({ id: childRunId, dir: path.join(DIRS.async, childRunId) }, {}, { requireSessionFile: true, sessionId: status.sessionId });
+		resumability = target.kind === "revive" ? { state: "resumable" } : { state: "not-resumable", reason: "child is still running" };
+	} catch (error) {
+		resumability = { state: "not-resumable", reason: error instanceof Error ? error.message : String(error) };
+	}
+	const outputReference = result.savedOutputPath ?? result.outputReference?.path ?? entry.outputReference;
+	const next: WorkflowReceipt = {
+		...receipt,
+		state: status.state === "complete" ? "complete" : status.state === "stopped" ? "stopped" : status.state === "paused" ? "paused" : "failed",
+		entries: {
+			...receipt.entries,
+			[key]: {
+				...entry,
+				...(step.agent ? { agent: step.agent } : {}),
+				...(step.context ? { resolvedContext: step.context } : {}),
+				resumability,
+				...(outputReference ? { outputReference } : {}),
+			},
+		},
+	};
+	writeWorkflowReceipt(asyncDir, next);
+	return next;
+}
+
+function appendDetachedWorkflowEvent(asyncDir: string, event: Record<string, unknown>): void {
+	const eventsPath = path.join(asyncDir, "events.jsonl");
+	try {
+		fs.appendFileSync(eventsPath, `${JSON.stringify(event)}\n`, "utf-8");
+	} catch (error) {
+		console.error(`Failed to append detached workflow event '${eventsPath}':`, error);
+	}
 }
 
 export function reconcileDetachedWorkflowChildCompletion(input: {
@@ -160,21 +206,33 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
-	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing);
+	let receipt: WorkflowReceipt | undefined;
+	let receiptError: string | undefined;
+	try {
+		receipt = reconcileWorkflowReceipt(next, input.childRunId, input.result, asyncDir);
+	} catch (error) {
+		receiptError = `Failed to reconcile async workflow receipt: ${error instanceof Error ? error.message : String(error)}`;
+	}
+	const published = publishedWorkflowResult(next, input.childRunId, input.result, asyncDir, existing, receipt);
 	writeAsyncResultFile(resultPath, published);
+	if (receiptError) {
+		appendDetachedWorkflowEvent(asyncDir, {
+			ts: Date.now(),
+			runId: input.workflowRunId,
+			type: "subagent.workflow.receipt_write_failed",
+			error: receiptError,
+			reconciledFromDetachedChild: input.childRunId,
+		});
+	}
 	if (next.state === "complete" || next.state === "failed") {
-		try {
-			fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({
-				ts: Date.now(),
-				runId: input.workflowRunId,
-				type: "subagent.workflow.completed",
-				state: next.state,
-				...(next.error ? { error: next.error } : {}),
-				reconciledFromDetachedChild: input.childRunId,
-			})}\n`, "utf-8");
-		} catch (error) {
-			if (!isStorageCapacityError(error)) throw error;
-		}
+		appendDetachedWorkflowEvent(asyncDir, {
+			ts: Date.now(),
+			runId: input.workflowRunId,
+			type: "subagent.workflow.completed",
+			state: next.state,
+			...(next.error ? { error: next.error } : {}),
+			reconciledFromDetachedChild: input.childRunId,
+		});
 		input.events?.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 			id: input.workflowRunId,
 			runId: input.workflowRunId,

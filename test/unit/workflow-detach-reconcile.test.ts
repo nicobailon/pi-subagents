@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { applyDetachedChildToPausedWorkflow, promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "../../src/runs/foreground/workflow-detach-reconcile.ts";
 import { DIRS, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
+import { buildWorkflowReceipt, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 
 function pausedWorkflow(childRunId: string, extra?: Partial<NonNullable<AsyncStatus["steps"]>[number]>): AsyncStatus {
 	return {
@@ -118,6 +119,21 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		fs.mkdirSync(DIRS.results, { recursive: true });
 		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
+			workflowRunId,
+			state: "paused",
+			children: [{
+				key: "detaches",
+				ok: false,
+				agent: "worker",
+				runId: "child-1",
+				output: "paused",
+				detached: true,
+				artifactPaths: [],
+				resumability: { state: "not-resumable", reason: "child detached" },
+				continuation: { runIds: ["child-1"] },
+			}],
+		}));
 		const state = {
 			asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]),
 		} as SubagentState;
@@ -127,13 +143,79 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			childRunId: "child-1",
 			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
-		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; sessionId?: string };
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; sessionId?: string; workflowReceipt?: { receipt?: { state?: string; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
 		assert.equal(published.state, "complete");
 		assert.equal(published.success, true);
 		assert.equal(published.sessionId, "session-1");
+		assert.equal(published.workflowReceipt?.receipt?.state, "complete");
+		assert.equal(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.state, "not-resumable");
+		assert.match(published.workflowReceipt?.receipt?.entries?.detaches?.resumability?.reason ?? "", /not found|Status file|too short/);
 		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
 		assert.match(events, /"type":"subagent.workflow.completed"/);
 		assert.match(events, /"state":"complete"/);
+	});
+
+	it("publishes detached completion when the workflow receipt is malformed", () => {
+		const workflowRunId = "workflow-malformed-receipt";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({ version: 1, workflowRunId, state: "paused", createdAt: 1, entries: { detaches: { key: "wrong" } } }), "utf-8");
+		const state = {
+			asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]),
+		} as SubagentState;
+
+		assert.equal(reconcileDetachedWorkflowChildCompletion({
+			state,
+			workflowRunId,
+			childRunId: "child-1",
+			result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+		}), true);
+
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; workflowReceipt?: unknown };
+		assert.equal(published.state, "complete");
+		assert.equal(published.success, true);
+		assert.equal(published.workflowReceipt, undefined);
+		const events = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+		assert.match(events, /"type":"subagent.workflow.receipt_write_failed"/);
+		assert.match(events, /"type":"subagent.workflow.completed"/);
+	});
+
+	it("publishes detached completion when receipt error journaling fails", () => {
+		const workflowRunId = "workflow-receipt-journal-fails";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({ version: 1, workflowRunId, state: "paused", createdAt: 1, entries: { detaches: { key: "wrong" } } }), "utf-8");
+		fs.mkdirSync(path.join(asyncDir, "events.jsonl"));
+		const state = {
+			asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]),
+		} as SubagentState;
+		let emitted: { name: string; payload: unknown } | undefined;
+		const originalConsoleError = console.error;
+		console.error = () => undefined;
+		try {
+			assert.equal(reconcileDetachedWorkflowChildCompletion({
+				state,
+				workflowRunId,
+				childRunId: "child-1",
+				result: { index: 0, agent: "worker", task: "t", exitCode: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+				events: { emit: (name, payload) => { emitted = { name, payload }; } } as IntercomEventBus,
+			}), true);
+		} finally {
+			console.error = originalConsoleError;
+		}
+
+		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; workflowReceipt?: unknown };
+		assert.equal(published.state, "complete");
+		assert.equal(published.success, true);
+		assert.equal(published.workflowReceipt, undefined);
+		assert.equal(emitted?.name, "subagent:async-complete");
 	});
 
 	it("does not log workflow completion while another detached child is still open", () => {

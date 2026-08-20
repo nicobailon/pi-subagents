@@ -82,6 +82,17 @@ For one host-run verification command, pass `gate: "npm test"` on a `runs.run`/`
 
 Completed workflow children from this parent session stay addressable as retained children. `subagent({ action: "children.list" })` lists up to the last 10 with run ids and reports each row as `resumable` or `not resumable` with a reason. Resume only rows reported `resumable`. For a retained-child challenge, use `resume` instead of `steer` when the child is complete. If no retained child is resumable, launch a same-role fallback challenge and label it as fallback. A later workflow continues a resumable child with `runs.run(key, { resume: "<run-id>", task: "follow-up" })`. Inside `workflowScript`, awaiting that call waits for the revived child to finish and returns its completed output and new `runId`; top-level `{ action: "resume" }` remains detached. Pass explicit follow-up task text. Assign each returned child result back to the loop variable because every resume can return a new retained `runId`; always resume the latest returned id. `resume` and `agent` are mutually exclusive, the revived child keeps its stored agent/model/tool contract, and `gate` is rejected on retained resume items.
 
+Terminal async workflows also persist `workflow-receipt.json` beside `status.json`. It maps each stable child key to its agent, requested and resolved context when known, latest run id, resumability, output reference, and continuation lineage. A later workflow can resume the latest retained child without copying its run id:
+
+```js
+return runs.run("cross-oracle", {
+  resume: { workflowRunId: "<pass-1-workflow-id>", key: "advisor-oracle", latest: true },
+  task: "Review the focused challenge packet."
+});
+```
+
+Keyed resume reads that one exact receipt and revalidates the retained run at launch. It fails when the workflow or key is missing, the receipt is stale, `latest` is not `true`, or the recorded child is no longer resumable. Foreground workflow results expose the same receipt in `details.workflow.receipt`, but cross-workflow keyed lookup requires the durable receipt from an async workflow.
+
 ### Async/background
 
 Prefer async mode for every subagent launch. Set `async: true` no matter the task unless the parent must block until completion. This applies to scouts, researchers, workers, reviewers, validators, oracle checks, one-off delegates, final review gates, backlog gates, and scripted workflows. Keep the write path single-threaded even when the run is async.
