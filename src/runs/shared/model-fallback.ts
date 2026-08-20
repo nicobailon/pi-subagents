@@ -424,6 +424,34 @@ export function isRetryableModelFailure(error: string | undefined): boolean {
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 
+/**
+ * Context-overflow signals. These are deliberately NOT part of
+ * {@link RETRYABLE_MODEL_FAILURE_PATTERNS}: an overflow means the input was too
+ * large for the model's context window, so retrying the same input on another
+ * model (or the same model again) cannot succeed. Callers should treat overflow
+ * as a terminal, non-retryable failure and surface a clear "input too large"
+ * error instead of burning fallback attempts on a guaranteed failure.
+ */
+const CONTEXT_OVERFLOW_PATTERNS = [
+	/context(?: length| window| limit)? (?:exceed|overflow|too long)/i,
+	/maximum context length/i,
+	/too many tokens/i,
+	/token limit/i,
+	/context_length_exceeded/i,
+	/length_required/i,
+	/maximum.*tokens/i,
+	/prompt.*too long/i,
+	/input.*too long/i,
+	/exceeded.*context/i,
+	/context.*overflow/i,
+];
+
+export function isContextOverflow(error: string | undefined): boolean {
+	if (!error) return false;
+	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
+	return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(error));
+}
+
 export function formatModelAttemptNote(attempt: ModelAttemptSummary, nextModel?: string): string {
 	const failure = attempt.error?.trim() || `exit ${attempt.exitCode ?? 1}`;
 	return nextModel

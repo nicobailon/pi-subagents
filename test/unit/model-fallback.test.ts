@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
 	buildModelCandidates,
 	fuzzyResolveModel,
+	isContextOverflow,
 	isRetryableModelFailure,
 	normalizeModelSegment,
 	resolveEffectiveSubagentModel,
@@ -527,5 +528,31 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 			}),
 			/deepseek\/deepseek-v4.*outside the configured subagent model scope/,
 		);
+	});
+});
+
+describe("isContextOverflow", () => {
+	it("detects common context-overflow error shapes", () => {
+		assert.equal(isContextOverflow("This model's maximum context length is 8192 tokens"), true);
+		assert.equal(isContextOverflow("context length exceeded for the requested prompt"), true);
+		assert.equal(isContextOverflow("too many tokens in the request"), true);
+		assert.equal(isContextOverflow("context_length_exceeded"), true);
+		assert.equal(isContextOverflow("prompt is too long for this model"), true);
+		assert.equal(isContextOverflow("input too long: 40000 tokens"), true);
+	});
+
+	it("does not flag unrelated retryable failures as overflow", () => {
+		assert.equal(isContextOverflow("rate limit exceeded for provider"), false);
+		assert.equal(isContextOverflow("503 service unavailable"), false);
+		assert.equal(isContextOverflow("connection refused"), false);
+	});
+
+	it("does not flag tool failures as overflow", () => {
+		assert.equal(isContextOverflow("bash failed (exit 1): context length exceeded in output"), false);
+	});
+
+	it("returns false for empty or undefined input", () => {
+		assert.equal(isContextOverflow(undefined), false);
+		assert.equal(isContextOverflow(""), false);
 	});
 });
