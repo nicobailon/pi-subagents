@@ -67,6 +67,9 @@ Rule of thumb: `scout` before you understand the code, `researcher` before you t
 
 ## Common workflows
 
+The package includes `/council` and `council-mode`, plus documented model-based
+`council-*` profile examples that you add in your own agent directory.
+
 | Want | Ask naturally |
 |------|---------------|
 | Get a second opinion | "Ask oracle to review this plan and challenge assumptions." |

@@ -20,11 +20,35 @@ Roles such as architect, skeptic, operator, and performance reviewer belong to t
 `/council` request. A `council-*` profile defines only model, tools, context, and
 output defaults.
 
-Use 2–3 executable `council-*` profiles after `subagent({ action: "list" })` and
-filter names in the parent. The prefix is a naming convention, not runtime
-selection. If none are available, use fresh-context `oracle` and `reviewer`. If
-fewer than two advisors are available, use the normal single-oracle consultation
-loop and label the result as degraded mode. Never use more than four advisors.
+Create model-based profiles in your user or project agent directory. Do not add
+them to this package. This is a valid example; roles still come from `/council`:
+
+```markdown
+---
+name: council-sol
+description: Read-only fresh-context advisor for bounded council decisions
+tools: read, grep, find, ls
+model: openai-codex/gpt-5.6-sol
+thinking: high
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+defaultContext: fresh
+acceptanceRole: read-only
+---
+
+Analyze only the assigned council role. Inspect evidence directly. Do not edit,
+run mutating commands, commit, push, contact peers, or spawn subagents. Return
+concise, cited advice using the report contract in the council task.
+```
+
+After `subagent({ action: "list" })`, prefer 2–3 executable names that start with
+`council-`. The prefix is a naming convention, not runtime selection. If fewer
+than two profiles are available, fill the roster with fresh-context `oracle`, then
+`reviewer`, until it has two advisors. Note the fallback in the memo. Use the
+normal single-oracle consultation loop only when a requested roster or unavailable
+builtins leaves fewer than two advisors. Label that result as degraded mode. Never
+use more than four advisors.
 
 Pass 1 is independent reports. Pass 2 is one cross-exam. The default pass cap is
 2. Run pass 3 only when `--max-passes 3` was requested and a material dispute can
@@ -35,8 +59,10 @@ be settled by evidence an advisor can produce. Never run an unbounded loop.
 1. The parent writes a brief with the question, scope, non-goals, evidence targets,
    roster, roles, and pass cap.
 2. Launch one async `workflowScript` with `runs.all` for independent fresh-context
-   advisor reports. Use stable keys. Each advisor is read-only and must not spawn
-   children, edit files, run mutating commands, commit, or push.
+   advisor reports. Use stable keys and set `context: "fresh"` explicitly on every
+   advisor run. This is required for fallback `oracle` and `reviewer` advisors and
+   also applies to `council-*` advisors. Each advisor is read-only and must not
+   spawn children, edit files, run mutating commands, commit, or push.
 3. The parent synthesizes a claim matrix in session. It contains agreements,
    disputed claims, missing proof, owner decisions, and a relay set of at most five
    high-impact claims per advisor. Do not delegate this synthesis.

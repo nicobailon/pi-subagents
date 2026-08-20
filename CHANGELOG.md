@@ -4,7 +4,9 @@
 
 ### Added
 - Add the `resultScanLogging` config to control result scan logging. Thanks to [@apoapostolov](https://github.com/apoapostolov) for #1293.
-- Add packaged `/council` resources for a bounded, supervisor-mediated advisor loop, with a read-only `council-sol` profile (#1295).
+- Add packaged `/council` and `council-mode` resources for a bounded,
+  supervisor-mediated advisor loop, plus documented model-based `council-*`
+  profile examples (#1295).
 
 ### Changed
 - Reuse validated workflow launch fingerprints during `runs.all` batch setup, reducing focused fingerprint bookkeeping time by 48.7% (#1287).

@@ -20,12 +20,13 @@ the question is trivial or settled, answer directly instead of convening a counc
 
 - If `--advisors` is given, use exactly those `name:role` pairs. Fail clearly on an
   unknown agent.
-- Otherwise list agents with `subagent({ action: "list" })`, then select 2–3
+- Otherwise list agents with `subagent({ action: "list" })`, then prefer 2–3
   executable names that start with `council-`.
-- If none are available, use fresh-context `oracle` and `reviewer` and note the
-  fallback in the memo.
-- If fewer than two advisors are available, use the normal single-oracle loop and
-  label the memo as degraded mode.
+- If fewer than two profiles are available, fill the roster with fresh-context
+  `oracle`, then `reviewer`, until it has two advisors. Note the fallback in the
+  memo.
+- Use the normal single-oracle loop only when a requested roster or unavailable
+  builtins leaves fewer than two advisors. Label the memo as degraded mode.
 
 Roles belong to this request, not to the profiles. Keep the roster at 2–3 and never
 exceed 4.
@@ -33,7 +34,9 @@ exceed 4.
 ## Pass 1: independent reports
 
 Launch one async `workflowScript` with `runs.all` and a stable key for each advisor.
-Each task includes the brief, the assigned role, and these rules:
+Every advisor run sets `context: "fresh"` explicitly. This is required for fallback
+`oracle` and `reviewer` advisors and also applies to `council-*` advisors. Each task
+includes the brief, the assigned role, and these rules:
 
 - Fresh context. Inspect the repository and supplied evidence directly. You do not
   see other advisors and must not ask about them.
