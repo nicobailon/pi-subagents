@@ -13,6 +13,7 @@
   profile examples (#1295).
 
 ### Fixed
+- Add a separate classifier for model context-overflow errors. Thanks to [@srcKod](https://github.com/srcKod) for #1312.
 - Quote only confidently identified leading Windows executable paths in acceptance verification commands. Thanks to [@srcKod](https://github.com/srcKod) for #1294.
 
 ### Changed
