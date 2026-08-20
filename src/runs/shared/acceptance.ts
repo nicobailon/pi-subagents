@@ -1145,9 +1145,9 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
  * unquoted executable path containing spaces (e.g. `C:\Program Files\...\tool.exe`)
  * is split at the first space, so cmd tries to run `C:\Program` and fails.
  *
- * The command line is ambiguous, so only an unquoted absolute drive path at the
- * start is safe to identify as an executable. That path is quoted; everything
- * after it is preserved as arguments.
+ * The command line is ambiguous, so only an unquoted absolute drive path with
+ * spaces at the start is safe to identify as an executable. That path is
+ * quoted; everything after it is preserved as arguments.
  *
  * Commands that already start with a quote, single-token commands, and commands
  * whose first token already ends in an executable extension are returned
@@ -1159,7 +1159,7 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	if (trimmed.startsWith("\"")) return command;
 	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&()*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
 	const executable = match?.[1];
-	if (!executable) return command;
+	if (!executable || !/\s/.test(executable)) return command;
 	const rest = trimmed.slice(executable.length);
 	const leading = command.slice(0, command.length - trimmed.length);
 	return `${leading}"${executable}"${rest}`;
