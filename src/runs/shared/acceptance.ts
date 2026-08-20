@@ -1162,6 +1162,7 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\s[^"<>|&*?\r\n]*?\\[^"<>|&*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
 	const executable = match?.[1];
 	if (!executable || !/\s/.test(executable)) return command;
+	if (/[A-Za-z]:\\/.test(executable.slice(3))) return command;
 	const rest = trimmed.slice(executable.length);
 	const leading = command.slice(0, command.length - trimmed.length);
 	return `${leading}"${executable}"${rest}`;

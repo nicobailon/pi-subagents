@@ -1228,6 +1228,18 @@ describe("quoteExecutableForShell", () => {
 		);
 	});
 
+	it("leaves a command with a later drive-root executable argument unchanged", () => {
+		const command = "C:\\Program Files\\Tool\\verify C:\\path\\to\\file.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
+	it("quotes a spaced executable before a later drive-root executable argument", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\Tool\\verify.exe C:\\path\\to\\file.exe", "win32"),
+			"\"C:\\Program Files\\Tool\\verify.exe\" C:\\path\\to\\file.exe",
+		);
+	});
+
 	it("leaves an already-quoted command unchanged", () => {
 		const command = "\"C:\\Program Files\\vendor\\tool.exe\" --flag";
 		assert.equal(quoteExecutableForShell(command, "win32"), command);
