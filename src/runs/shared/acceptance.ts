@@ -1157,7 +1157,7 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	if (platform !== "win32") return command;
 	const trimmed = command.trimStart();
 	if (trimmed.startsWith("\"")) return command;
-	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&()*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
+	const match = trimmed.match(/^([A-Za-z]:\\[^"<>|&*?\r\n]*?\.(?:exe|bat|cmd|com|ps1))(?=\s|$)/i);
 	const executable = match?.[1];
 	if (!executable || !/\s/.test(executable)) return command;
 	const rest = trimmed.slice(executable.length);

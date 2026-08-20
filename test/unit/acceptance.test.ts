@@ -1221,6 +1221,13 @@ describe("quoteExecutableForShell", () => {
 		);
 	});
 
+	it("quotes an unquoted Windows executable path with parentheses", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files (x86)\\vendor\\tool.exe --flag", "win32"),
+			"\"C:\\Program Files (x86)\\vendor\\tool.exe\" --flag",
+		);
+	});
+
 	it("leaves an already-quoted command unchanged", () => {
 		const command = "\"C:\\Program Files\\vendor\\tool.exe\" --flag";
 		assert.equal(quoteExecutableForShell(command, "win32"), command);
