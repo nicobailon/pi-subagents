@@ -341,7 +341,7 @@ const SubagentParamProperties = {
 	})),
 	outputMode: Type.Optional(OutputModeOverride),
 	skill: Type.Optional(SkillOverride),
-	model: Type.Optional(Type.String({ description: "Default child model override (e.g. 'anthropic/claude-sonnet-4')" })),
+	model: Type.Optional(Type.String({ description: "Default child model override. Full provider/id values are accepted; bare ids resolve from the active registry." })),
 	outputSchema: Type.Optional(JsonSchemaObject),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),

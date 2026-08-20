@@ -235,6 +235,28 @@ describe("resolveSubagentModelOverride (cross-session inherit, issue #266)", () 
 		);
 	});
 
+	it("suggests a unique alternate provider without resolving across providers", () => {
+		assert.throws(
+			() => resolveSubagentModelOverride("openai/claude-sonnet-4:high", parentModel, availableModels),
+			/Unknown subagent model 'openai\/claude-sonnet-4:high'.*Did you mean 'anthropic\/claude-sonnet-4:high'\?/,
+		);
+	});
+
+	it("does not suggest an alternate provider when the bare id is ambiguous or absent", () => {
+		const ambiguous = [
+			...availableModels,
+			{ provider: "github-copilot", id: "claude-sonnet-4", fullId: "github-copilot/claude-sonnet-4" },
+		];
+		assert.throws(
+			() => resolveSubagentModelOverride("openai/claude-sonnet-4", parentModel, ambiguous),
+			(error: unknown) => !String(error).includes("Did you mean"),
+		);
+		assert.throws(
+			() => resolveSubagentModelOverride("openai/does-not-exist", parentModel, availableModels),
+			(error: unknown) => !String(error).includes("Did you mean"),
+		);
+	});
+
 	it("returns undefined when inheriting but no parent model is known", () => {
 		// No parent session model available: fall back to the prior behavior of
 		// emitting no override rather than inventing an invalid one.

@@ -205,6 +205,21 @@ function resolveSubagentModelCandidate(
 	return resolvedBase ? `${resolvedBase}${thinkingSuffix}` : undefined;
 }
 
+function suggestAlternateProviderModel(
+	model: string,
+	availableModels: AvailableModelInfo[] | undefined,
+): string | undefined {
+	if (!availableModels || availableModels.length === 0) return undefined;
+	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
+	const { queryProvider, queryIdRaw } = splitQualifiedModelQuery(baseModel, availableModels);
+	if (queryProvider === undefined) return undefined;
+	const suggestion = resolveBaseModelCandidate(queryIdRaw, availableModels);
+	if (!suggestion) return undefined;
+	const matched = availableModels.find((entry) => entry.fullId === suggestion);
+	if (!matched || normalizeModelSegment(matched.provider) === queryProvider) return undefined;
+	return `${suggestion}${thinkingSuffix}`;
+}
+
 function resolveRequiredSubagentModelCandidate(
 	model: string,
 	availableModels: AvailableModelInfo[] | undefined,
@@ -212,7 +227,10 @@ function resolveRequiredSubagentModelCandidate(
 ): string {
 	const resolved = resolveSubagentModelCandidate(model, availableModels, preferredProvider);
 	if (resolved) return resolved;
-	throw new Error(`Unknown subagent model '${model}' in the active Pi model registry.`);
+	const suggestion = suggestAlternateProviderModel(model, availableModels);
+	throw new Error(
+		`Unknown subagent model '${model}' in the active Pi model registry.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
+	);
 }
 
 export interface ResolveSubagentModelOverrideOptions {
