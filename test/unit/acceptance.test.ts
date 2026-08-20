@@ -1247,6 +1247,11 @@ describe("quoteExecutableForShell", () => {
 		assert.equal(quoteExecutableForShell(command, "win32"), command);
 	});
 
+	it("leaves an executable followed by an executable-looking argument unchanged", () => {
+		const command = "C:\\tools\\node script.exe";
+		assert.equal(quoteExecutableForShell(command, "win32"), command);
+	});
+
 	it("passes commands through unchanged on non-Windows platforms", () => {
 		const command = "/opt/my tools/runner --flag";
 		assert.equal(quoteExecutableForShell(command, "linux"), command);
